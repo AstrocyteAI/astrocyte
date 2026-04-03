@@ -1,5 +1,7 @@
 # Astrocytes design documentation
 
+Astrocytes is an open-source memory framework that sits between agents and storage—it provides a stable API for retain/recall/synthesize, pluggable retrieval and memory-engine backends, and a built-in policy layer for governance and observability.
+
 This folder (`docs/`) is the **shared design specification** for the Astrocytes framework. The same repository also contains the **parallel service implementations**: **[`astrocytes-py/`](../astrocytes-py/README.md)** (Python) and **[`astrocytes-rs/`](../astrocytes-rs/README.md)** (Rust). Those directories are the Python and Rust Astrocytes services; design documents here apply to **both** unless stated otherwise.
 
 **Scope:** The framework is **memory + governance + provider SPIs**. It is **not** an LLM gateway and **not** an agent runtime: it does not define orchestration (graphs, tool loops, checkpoints, scheduling, multi-agent routing). Agent catalogs or “agent cards” are **not** first-class Astrocytes artifacts; map them to principals and memory banks in your integration layer. See `03-architecture-framework.md` §1 and `17-agent-framework-middleware.md`.
@@ -56,3 +58,9 @@ Numbered files below define a **recommended reading order** and stable cross-ref
 - **Security and compliance:** 09, 19, 18, 23, 06.
 - **Integrations (network, identity, UI):** 05, 06, 07, 08.
 - **Production HTTP / BFF hosting Astrocytes:** 24, 03, 06, 19, 05, 09, 18, 23.
+
+---
+
+## Building this documentation site
+
+This `docs/` folder is also the [Starlight](https://starlight.astro.build/) package. From **`docs/`**, run `pnpm install`, then `pnpm dev` to preview the site or `pnpm build` to emit **`dist/`**. The script **`scripts/sync-docs.mjs`** copies the numbered `*.md` files and this `README` into **`src/content/docs/`** for Astro (generated paths are gitignored). Deployment: [`.github/workflows/docs.yml`](../.github/workflows/docs.yml).

@@ -1,0 +1,44 @@
+---
+title: Astrocytes
+description: Open-source memory framework between agents and storage—retain/recall/synthesize, pluggable backends, policy layer for governance and observability.
+template: splash
+hero:
+  title: Astrocytes
+  tagline: Astrocytes is an open-source memory framework that sits between agents and storage - it provides a stable API for retain/recall/synthesize, pluggable retrieval and memory-engine backends, and a built-in policy layer for governance and observability.
+  actions:
+    - text: Read the introduction
+      link: /introduction/
+      icon: right-arrow
+      variant: primary
+    - text: Architecture overview
+      link: /spec/03-architecture-framework/
+      icon: document
+      variant: minimal
+    - text: GitHub
+      link: https://github.com/AstrocyteAI/astrocytes
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## Pick a path
+
+<CardGrid stagger>
+  <Card title="Introduction" icon="open-book">
+    **Scope**, Python/Rust layout, and the full **01–24** reading-order table — start
+    [here](/introduction/).
+  </Card>
+  <Card title="New to the framework?" icon="rocket">
+    Short path on the site: **01 → 02 → 03 → 04** — begin with
+    [Neuroscience & vocabulary](/spec/01-neuroscience-astrocytes/).
+  </Card>
+  <Card title="Production & HTTP" icon="approve-check-circle">
+    Operating behind an API: **[24 — Production-grade HTTP](/spec/24-production-grade-http-service/)**.
+  </Card>
+  <Card title="Full specification" icon="document">
+    Every numbered doc is under **Specification** in the sidebar (same sources as the `docs/` folder in the repo).
+  </Card>
+</CardGrid>
+
+Diagrams in the specs use [Mermaid](https://mermaid.js.org/); they render here and on GitHub.
