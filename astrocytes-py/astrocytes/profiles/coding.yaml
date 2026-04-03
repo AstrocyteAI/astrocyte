@@ -1,0 +1,38 @@
+homeostasis:
+  recall_max_tokens: 8192
+  reflect_max_tokens: 8192
+  retain_max_content_bytes: 204800
+  rate_limits:
+    retain_per_minute: 120
+    recall_per_minute: 240
+    reflect_per_minute: 30
+
+barriers:
+  pii:
+    mode: regex
+    action: warn
+  validation:
+    max_content_length: 100000
+    reject_empty_content: true
+
+signal_quality:
+  dedup:
+    enabled: true
+    similarity_threshold: 0.98
+  noisy_bank:
+    enabled: true
+    action: warn
+
+escalation:
+  degraded_mode: error
+
+defaults:
+  skepticism: 3
+  literalism: 5
+  empathy: 1
+  preferred_fact_types:
+    - world
+    - experience
+  tags:
+    - code
+    - technical

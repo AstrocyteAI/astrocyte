@@ -1,0 +1,18 @@
+barriers:
+  pii:
+    mode: disabled
+  validation:
+    reject_empty_content: true
+
+signal_quality:
+  dedup:
+    enabled: false
+  noisy_bank:
+    enabled: false
+
+escalation:
+  degraded_mode: error
+
+observability:
+  otel_enabled: false
+  prometheus_enabled: false

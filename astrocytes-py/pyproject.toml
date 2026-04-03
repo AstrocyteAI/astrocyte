@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocytes"
+version = "0.1.0"
+description = "Open-source memory framework for AI agents"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+]
+prometheus = [
+    "prometheus-client>=0.20",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-xdist>=3.5",
+    "pytest-timeout>=2.2",
+    "ruff>=0.4",
+]
+all = [
+    "astrocytes[otel,prometheus]",
+]
+
+[project.scripts]
+astrocytes-mcp = "astrocytes.mcp:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["astrocytes"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-x --timeout=60 --tb=short"
+log_cli = true
+log_cli_level = "INFO"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"

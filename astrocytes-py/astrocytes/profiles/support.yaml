@@ -1,0 +1,38 @@
+homeostasis:
+  recall_max_tokens: 4096
+  reflect_max_tokens: 4096
+  retain_max_content_bytes: 51200
+  rate_limits:
+    retain_per_minute: 30
+    recall_per_minute: 60
+    reflect_per_minute: 10
+
+barriers:
+  pii:
+    mode: regex
+    action: redact
+  validation:
+    max_content_length: 10000
+    reject_empty_content: true
+
+signal_quality:
+  dedup:
+    enabled: true
+    similarity_threshold: 0.92
+  noisy_bank:
+    enabled: true
+    action: throttle
+
+escalation:
+  degraded_mode: empty_recall
+
+defaults:
+  skepticism: 2
+  literalism: 2
+  empathy: 5
+  preferred_fact_types:
+    - experience
+    - world
+  tags:
+    - support
+    - customer

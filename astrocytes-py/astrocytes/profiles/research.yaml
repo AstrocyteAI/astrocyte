@@ -1,0 +1,37 @@
+homeostasis:
+  recall_max_tokens: 16384
+  reflect_max_tokens: 16384
+  retain_max_content_bytes: 524288
+  rate_limits:
+    retain_per_minute: 200
+    recall_per_minute: 300
+    reflect_per_minute: 50
+
+barriers:
+  pii:
+    mode: disabled
+  validation:
+    max_content_length: 500000
+    reject_empty_content: true
+
+signal_quality:
+  dedup:
+    enabled: true
+    similarity_threshold: 0.97
+  noisy_bank:
+    enabled: true
+    action: warn
+
+escalation:
+  degraded_mode: error
+
+defaults:
+  skepticism: 5
+  literalism: 4
+  empathy: 1
+  preferred_fact_types:
+    - world
+    - observation
+  tags:
+    - research
+    - analysis
