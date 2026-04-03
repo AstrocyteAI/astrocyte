@@ -55,7 +55,8 @@ Send optional header **`X-Astrocytes-Principal`** (for example `user:alice`) whe
 
 | Method | Path | Body (JSON) |
 |--------|------|-------------|
-| `GET` | `/health` | - |
+| `GET` | `/live` | - (process up; no DB check) |
+| `GET` | `/health` | - (includes vector store / DB) |
 | `POST` | `/v1/retain` | `content`, `bank_id`; optional `metadata`, `tags` |
 | `POST` | `/v1/recall` | `query`; `bank_id` or `banks`; optional `max_results`, `max_tokens`, `tags` |
 | `POST` | `/v1/reflect` | `query`, `bank_id`; optional `max_tokens`, `include_sources` |
@@ -76,7 +77,7 @@ docker compose up --build
 
 Defaults expose **API** on **8080** and **Postgres** on **5433**; override with **`ASTROCYTES_HTTP_PUBLISH_PORT`** and **`POSTGRES_PUBLISH_PORT`** in [`.env.example`](../.env.example). On the host, use `postgresql://USER:PASSWORD@127.0.0.1:POSTGRES_PUBLISH_PORT/DB` matching your `.env`. Inside Compose, `DATABASE_URL` points at the `postgres` service (see `.env.example`).
 
-**Full deploy order** (`.env` → Postgres → `migrate.sh` → Compose with `bootstrap_schema: false`): see the **[Runbook](../README.md#runbook)** in the parent [`README.md`](../README.md).
+**Full deploy (one command):** from [`astrocytes-services-py/`](../), run **`./scripts/runbook-up.sh`** (see **[Runbook](../README.md#runbook)**).
 
 ### REST image only
 

@@ -11,7 +11,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocytes 
 | Folder | Role |
 |---|---|
 | **`astrocytes-py/`** | **Python** Astrocytes service; PyPI package name **`astrocytes`**; ecosystem integrations (LangChain, MCP, …). |
-| **[`astrocytes-services-py/`](../astrocytes-services-py/README.md)** | Optional **REST** ([`astrocytes-rest`](../astrocytes-services-py/astrocytes-rest/README.md)) and **[`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)**; not part of the core SPI. Docker: **[`docker-compose.yml`](../astrocytes-services-py/docker-compose.yml)**. See [§4](./24-production-grade-http-service.md). |
+| **[`astrocytes-services-py/`](../astrocytes-services-py/README.md)** | Optional **REST** ([`astrocytes-rest`](../astrocytes-services-py/astrocytes-rest/README.md)) and **[`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)**; not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocytes-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocytes-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocytes-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTES_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocytes-services-py/README.md`](../astrocytes-services-py/README.md) and [doc 24 §4](./24-production-grade-http-service.md). |
 | **`astrocytes-rs/`** | **Rust** Astrocytes service; native crate; same framework contract as Python (see `13-implementation-language-strategy.md`). |
 
 Numbered files below define a **recommended reading order** and stable cross-references.
@@ -45,7 +45,7 @@ Numbered files below define a **recommended reading order** and stable cross-ref
 | 21 | [21-memory-analytics.md](./21-memory-analytics.md) | Bank health, utilization |
 | 22 | [22-evaluation.md](./22-evaluation.md) | Benchmarks and regression testing |
 | 23 | [23-data-governance.md](./23-data-governance.md) | Classification, residency, DLP |
-| 24 | [24-production-grade-http-service.md](./24-production-grade-http-service.md) | Production HTTP checklist; reference [`astrocytes-rest`](../astrocytes-services-py/astrocytes-rest/README.md); Compose stack [`docker-compose.yml`](../astrocytes-services-py/docker-compose.yml) |
+| 24 | [24-production-grade-http-service.md](./24-production-grade-http-service.md) | Production HTTP checklist; reference [`astrocytes-rest`](../astrocytes-services-py/astrocytes-rest/README.md); Compose [`docker-compose.yml`](../astrocytes-services-py/docker-compose.yml); local ops / troubleshooting **§4.5** |
 
 ---
 

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, ClassVar
 
 import psycopg
-from pgvector.psycopg import register_vector
+from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from psycopg_pool import AsyncConnectionPool
@@ -61,7 +61,14 @@ class PgVectorStore:
 
                 async def configure(conn: psycopg.AsyncConnection) -> None:
                     await conn.execute("SELECT 1")
-                    register_vector(conn)
+                    # register_vector_async needs the `vector` type. Skip until pgvector exists (quick path:
+                    # /health can run before in-app DDL; runbook path: migrations already created the extension).
+                    async with conn.cursor() as cur:
+                        await cur.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+                        ext_present = await cur.fetchone()
+                    if ext_present:
+                        await register_vector_async(conn)
+                    await conn.commit()
 
                 self._pool = AsyncConnectionPool(
                     conninfo=self._dsn,
@@ -69,6 +76,7 @@ class PgVectorStore:
                     open=False,
                     min_size=1,
                     max_size=10,
+                    kwargs={"connect_timeout": 10},
                 )
                 await self._pool.open()
             return self._pool
@@ -96,6 +104,8 @@ class PgVectorStore:
                 await conn.execute(
                     f"CREATE INDEX IF NOT EXISTS {self._table}_bank_idx ON {self._table} (bank_id)"
                 )
+                await register_vector_async(conn)
+                await conn.commit()
             self._schema_ready = True
 
     async def store_vectors(self, items: list[VectorItem]) -> list[str]:

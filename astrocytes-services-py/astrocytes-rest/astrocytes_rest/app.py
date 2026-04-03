@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -19,6 +20,9 @@ from astrocytes.types import AstrocyteContext
 
 from astrocytes_rest.brain import build_astrocyte
 from astrocytes_rest.serialization import to_jsonable
+
+# Bounds /health latency when the vector store (e.g. pgvector) cannot connect.
+_HEALTH_TIMEOUT_S = 8.0
 
 
 def create_app() -> FastAPI:
@@ -68,9 +72,21 @@ def create_app() -> FastAPI:
             return None
         return AstrocyteContext(principal=principal)
 
+    @app.get("/live")
+    @app.get("/health/live")
+    async def live() -> dict[str, str]:
+        """Process is up; does not check PostgreSQL or other dependencies."""
+        return {"status": "ok"}
+
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        status = await brain.health()
+        try:
+            status = await asyncio.wait_for(brain.health(), timeout=_HEALTH_TIMEOUT_S)
+        except asyncio.TimeoutError as e:
+            raise HTTPException(
+                status_code=503,
+                detail="Health check timed out (dependencies such as the vector store did not respond in time).",
+            ) from e
         return to_jsonable(status)
 
     @app.post("/v1/retain")

@@ -13,48 +13,47 @@ Optional Python packages beside the core [`astrocytes-py`](../astrocytes-py/) li
 
 ## Runbook
 
-Use this for a **production-shaped** local or demo deploy (Postgres, SQL migrations, REST): apply SQL first, then run the API **without** runtime DDL (`bootstrap_schema: false`).
+Use this for a **production-shaped** local or demo deploy: SQL migrations (including **HNSW**), then **`astrocytes-rest`** with **`bootstrap_schema: false`** ([`config.runbook.example.yaml`](config.runbook.example.yaml)).
 
-### 1. Environment
+### One command
 
-From **`astrocytes-services-py/`**:
-
-```bash
-cp .env.example .env
-# Edit .env: set POSTGRES_* secrets and ports if needed.
-```
-
-### 2. Start Postgres only
+From **`astrocytes-services-py/`** (optional: `cp .env.example .env` and edit first):
 
 ```bash
-docker compose up -d postgres
+./scripts/runbook-up.sh
 ```
 
-Wait until the service is **healthy** (`docker compose ps`).
-
-### 3. Apply SQL migrations
-
-Use the same credentials and host port as in `.env` (defaults: user/password/db **`astrocytes`**, host port **`5433`**):
+From the **repository root**:
 
 ```bash
-set -a
-. ./.env
-set +a
-export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PUBLISH_PORT:-5433}/${POSTGRES_DB}"
-./astrocytes-pgvector/scripts/migrate.sh
+./astrocytes-services-py/scripts/runbook-up.sh
 ```
 
-If the password contains characters that break URLs, set **`DATABASE_URL`** explicitly in `.env` and `export DATABASE_URL` after sourcing, or paste the full URI for this step.
+This script: starts **Postgres**, waits until it accepts connections, runs [`astrocytes-pgvector/scripts/migrate.sh`](astrocytes-pgvector/scripts/migrate.sh) against **`127.0.0.1:${POSTGRES_PUBLISH_PORT}`**, then brings up **`docker-compose.yml` + [`docker-compose.runbook.yml`](docker-compose.runbook.yml)**. Requires **`psql`** on your PATH and Postgres **15+** (for concurrent index creation in [`003_indexes.sql`](astrocytes-pgvector/migrations/003_indexes.sql)).
 
-Requirements: **`psql`** on your PATH; Postgres **15+** (for concurrent index creation in [`003_indexes.sql`](astrocytes-pgvector/migrations/003_indexes.sql)).
+If the password cannot be used in a constructed URL, set **`MIGRATE_DATABASE_URL`** in `.env` (see [`.env.example`](.env.example)).
 
-### 4. Start the full stack (no in-app DDL)
+### Verify
 
-Use the optional Compose override and example config ([`config.runbook.example.yaml`](config.runbook.example.yaml) sets **`bootstrap_schema: false`**):
+- **HTTP:** `GET http://127.0.0.1:${ASTROCYTES_HTTP_PUBLISH_PORT:-8080}/health` (default **8080**).
+- **OpenAPI:** `http://127.0.0.1:8080/docs` (adjust port if overridden).
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.runbook.yml up --build
-```
+### Debugging
+
+- **`/live` vs `/health`:** `GET /live` only checks the process; `GET /health` also checks the vector store (PostgreSQL). If `/live` works but `/health` fails, inspect the API and DB (see below).
+- **Response body:** `curl -sS http://127.0.0.1:8080/health` (omit `curl -f`) so a non-2xx response still prints JSON `detail`.
+- **Logs:** `docker compose logs astrocytes-rest` (add `-f` to follow).
+- **Effective `DATABASE_URL` in the container:** `docker compose exec astrocytes-rest printenv DATABASE_URL` — must use hostname **`postgres`**, not `127.0.0.1`, for Compose networking.
+- **Resolved Compose config:** `docker compose -f docker-compose.yml -f docker-compose.runbook.yml config` (check `environment` for `astrocytes-rest`).
+- **Postgres from the API container:** `docker compose exec postgres psql -U astrocytes -d astrocytes -c 'SELECT 1'` (adjust user/db to match `.env`), or run a short `asyncio` + `psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"])` snippet inside `astrocytes-rest` to mirror what the app uses.
+
+### Manual steps (same as the script)
+
+If you prefer not to use [`scripts/runbook-up.sh`](scripts/runbook-up.sh):
+
+1. `docker compose up -d postgres` and wait until **healthy** (Compose does not run host-side `migrate.sh`; Postgres must be listening on the host port before migrations).
+2. `export DATABASE_URL=postgresql://USER:PASS@127.0.0.1:POSTGRES_PUBLISH_PORT/DB` then `./astrocytes-pgvector/scripts/migrate.sh`
+3. `docker compose -f docker-compose.yml -f docker-compose.runbook.yml up --build`
 
 Or from the repository root:
 
@@ -62,11 +61,6 @@ Or from the repository root:
 docker compose -f astrocytes-services-py/docker-compose.yml -f astrocytes-services-py/docker-compose.runbook.yml --env-file astrocytes-services-py/.env up --build
 ```
 
-### 5. Verify
-
-- **HTTP:** `GET http://127.0.0.1:${ASTROCYTES_HTTP_PUBLISH_PORT:-8080}/health` (default **8080**).
-- **OpenAPI:** `http://127.0.0.1:8080/docs` (adjust port if overridden).
-
 ### Quick path (skip migrations runbook)
 
-`docker compose up --build` alone uses in-app bootstrap DDL (no HNSW from SQL). For **ANN indexes** and strict “migrations own the schema” behavior, follow steps 2–4 above.
+`docker compose up --build` alone uses in-app bootstrap DDL (no **HNSW** from SQL). For **ANN indexes** and migrations owning the schema, use **`./scripts/runbook-up.sh`** or the manual steps above.

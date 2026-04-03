@@ -903,7 +903,8 @@ caller → brain.recall(query, budget)
    neo4j = "astrocytes_neo4j:Neo4jGraphStore"
    ```
 4. **Handle your own connection management.** Accept connection config via `__init__`, manage pools, handle reconnection.
-5. **Keep it simple.** You are implementing CRUD operations, not a memory engine. Let the pipeline handle the intelligence.
+5. **Async PostgreSQL + pgvector (when applicable):** If you use **psycopg 3** `AsyncConnection` with the [**pgvector**](https://github.com/pgvector/pgvector) Python package, use **`register_vector_async`** in pool `configure` callbacks—not the sync **`register_vector`**, which leaves coroutines unawaited on async connections. With default transaction settings, end `configure` with **`await conn.commit()`** so the pool does not discard connections left **`INTRANS`**. Register vector adapters only after the **`vector`** extension exists (migration order or `CREATE EXTENSION` before first vector I/O). Reference: [`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md).
+6. **Keep it simple.** You are implementing CRUD operations, not a memory engine. Let the pipeline handle the intelligence.
 
 ### 7.2 Building a Tier 2 memory engine provider
 
