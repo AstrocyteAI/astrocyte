@@ -53,8 +53,10 @@ flowchart TB
 
 ### 2.1 Core framework
 
+The PyPI package is **`astrocytes`**; in this repository it lives under **`astrocytes-py/`**. Design documents are in **`docs/`** at the repository root (not under `astrocytes-py/`).
+
 ```
-astrocytes/                            # Core framework (open source)
+astrocytes-py/                         # Python implementation (open source)
 ├── astrocytes/
 │   ├── __init__.py                    # Public API: Astrocyte class
 │   ├── provider.py                    # VectorStore, GraphStore, DocumentStore,
@@ -91,8 +93,7 @@ astrocytes/                            # Core framework (open source)
 │   │   ├── engine_provider_tests.py   # Tests for EngineProvider implementations
 │   │   └── llm_provider_tests.py      # Tests for LLMProvider implementations
 │   └── config.py                      # Config loading, tier detection, profile resolution
-├── pyproject.toml
-└── docs/                              # These design documents
+└── pyproject.toml
 ```
 
 ### 2.2 Tier 1 retrieval providers

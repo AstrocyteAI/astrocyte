@@ -1,17 +1,17 @@
 # Astrocytes design documentation
 
-This folder (`astrocytes/docs/`) is the **shared design specification** for the framework.
+This folder (`docs/`) is the **shared design specification** for the Astrocytes framework. The same repository also contains the **parallel service implementations**: **[`astrocytes-py/`](../astrocytes-py/README.md)** (Python) and **[`astrocytes-rs/`](../astrocytes-rs/README.md)** (Rust). Those directories are the Python and Rust Astrocytes services; design documents here apply to **both** unless stated otherwise.
 
 **Scope:** The framework is **memory + governance + provider SPIs**. It is **not** an LLM gateway and **not** an agent runtime: it does not define orchestration (graphs, tool loops, checkpoints, scheduling, multi-agent routing). Agent catalogs or “agent cards” are **not** first-class Astrocytes artifacts; map them to principals and memory banks in your integration layer. See `03-architecture-framework.md` §1 and `17-agent-framework-middleware.md`.
 
 **Diagrams:** Architecture figures use [Mermaid](https://mermaid.js.org/) (`flowchart`, etc.). They render on GitHub, in VS Code with a Mermaid preview, and in most modern Markdown tools.
 
-**Codebases:**
+**Implementations (this repository):**
 
-| Repository / folder | Implementation |
+| Folder | Role |
 |---|---|
-| **`astrocytes/`** | **Python** - PyPI package, ecosystem integrations (LangChain, MCP, …). |
-| **`astrocytes-rs/`** | **Rust** - native crate; same framework contract as Python (see `13-implementation-language-strategy.md`). |
+| **`astrocytes-py/`** | **Python** Astrocytes service; PyPI package name **`astrocytes`**; ecosystem integrations (LangChain, MCP, …). |
+| **`astrocytes-rs/`** | **Rust** Astrocytes service; native crate; same framework contract as Python (see `13-implementation-language-strategy.md`). |
 
 Numbered files below define a **recommended reading order** and stable cross-references.
 

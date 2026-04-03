@@ -23,7 +23,7 @@ Astrocytes is **not** an LLM gateway. It does not route completion requests, tra
 
 Astrocytes is **not** an agent runtime. It does **not** define agent orchestration: graphs, steps, tool loops, checkpoints, scheduling, or multi-agent routing. Those concerns belong to **agent frameworks and your application** (LangGraph, CrewAI, Pydantic AI, custom orchestrators, …). The framework contract is **memory**, **governance**, and **provider SPIs**; thin adapters connect frameworks to that API - see `17-agent-framework-middleware.md`.
 
-**Implementation language:** Astrocytes ships as **two parallel implementations** intended as **drop-in replacements** at the framework contract: **`astrocytes/`** (Python, PyPI) and **`astrocytes-rs/`** (Rust). Portable DTOs, config, and SPI versioning keep them aligned. See `13-implementation-language-strategy.md` for constraints and packaging.
+**Implementation language:** Astrocytes ships as **two parallel implementations** in this repository, intended as **drop-in replacements** at the framework contract: **`astrocytes-py/`** (Python, PyPI package `astrocytes`) and **`astrocytes-rs/`** (Rust). Portable DTOs, config, and SPI versioning keep them aligned. See `13-implementation-language-strategy.md` for constraints and packaging.
 
 Astrocytes is the **tripartite synapse** (Principle 2): an active mediator at the exchange between agents and memory, responsible for both the intelligence pipeline and continuous environmental stewardship.
 
