@@ -161,8 +161,8 @@ This repository ships an optional **`astrocytes-rest`** HTTP service that embeds
 ### 4.2 Current behavior (non-production defaults)
 
 - **Tier 1 pipeline** resolved from config: defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocytes-py`). Optional YAML / env can select other registered providers or **`module:Class`** paths (for example **`pgvector`** after installing [`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)). Data is **not** durable when using the built-in in-memory stack.
-- **Access control** is effectively **open** in the default path unless you supply config that enables it and wire **grants** in code (see §5).
-- **Identity:** **`astrocytes-rest`** does **not** validate JWTs or API keys; optional principal header is **not** authenticated.
+- **Access control** defaults to **off** when no config file is loaded; when you enable **`access_control`** in YAML, **`access_grants`** and **`banks.*.access`** are loaded from config and applied via **`set_access_grants`** (see §5). You still need a **deliberate** prod policy—do not rely on defaults.
+- **Identity:** **`ASTROCYTES_AUTH_MODE`** selects **`dev`** (trusts **`X-Astrocytes-Principal`** only—use only behind a trusted gateway), **`api_key`**, or **`jwt_hs256`** (Bearer JWT, `sub` → principal). This is a **starting point** for §3.2, not a full IdP integration (no OIDC discovery, JWKS, or per-key store yet).
 
 Treat this as a **reference implementation** of the HTTP mapping only, not as a hardened product.
 
@@ -209,7 +209,7 @@ Align **`astrocytes-rest`** with §3: real backends, verified AuthN, AuthZ with 
 - [x] **Brain wiring:** `build_astrocyte()` in `astrocytes_rest/brain.py` loads `AstrocyteConfig` and calls `build_tier1_pipeline()` in `astrocytes_rest/wiring.py`, which resolves **`vector_store`**, **`llm_provider`**, and optional graph/document stores via **`astrocytes._discovery.resolve_provider`** (entry points or `package.module:Class`). Built-in names ship in **`astrocytes-py`** `pyproject.toml` (`in_memory`, `mock`). A PostgreSQL **`pgvector`** adapter lives in **[`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)** (optional **`pgvector`** extra on `astrocytes-rest`).
 - [x] **Health routes:** **`GET /live`** and **`GET /health/live`** (liveness); **`GET /health`** (readiness / dependency check with bounded timeout). Documented in [`astrocytes-rest/README.md`](../astrocytes-services-py/astrocytes-rest/README.md).
 - [x] **pgvector + psycopg async:** Pool **`configure`** uses **`register_vector_async`**, commits after `configure`, and registers vector types only when the **`vector`** extension is present (see `04-provider-spi.md` §7.1).
-- [ ] **Grants from config:** Load `set_access_grants()` from YAML or database when access control is enabled. **Implementation placement:** `astrocytes-py` (config + types) and `astrocytes_rest/brain.py` — see `06-identity-and-external-policy.md` §8.
+- [x] **Grants from config:** When **`access_control.enabled`**, grants are loaded from YAML (**`access_grants`** and **`banks.*.access`**) via **`access_grants_for_astrocyte()`** in **`astrocytes-py`** and **`set_access_grants()`** in **`astrocytes_rest/brain.py`** — see `06-identity-and-external-policy.md` §8. **Not done here:** grants from a **database** or **external PDP** (still your integration or future work).
 - [ ] **Profiles:** Keep PII `disabled` and `access_control.enabled = False` only for explicit **dev** profile; document prod profile requirements.
 - [ ] **MCP / CLI:** If `astrocytes-mcp` is shipped, align its security model with the HTTP service (same AuthN story). See `16-mcp-server.md`.
 
