@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from astrocytes.errors import (
@@ -18,6 +18,7 @@ from astrocytes.errors import (
 )
 from astrocytes.types import AstrocyteContext
 
+from astrocytes_rest.auth import get_astrocyte_context
 from astrocytes_rest.brain import build_astrocyte
 from astrocytes_rest.serialization import to_jsonable
 
@@ -67,11 +68,6 @@ def create_app() -> FastAPI:
             content={"detail": str(exc), "provider": exc.provider},
         )
 
-    def context_from_principal(principal: str | None) -> AstrocyteContext | None:
-        if principal is None or principal == "":
-            return None
-        return AstrocyteContext(principal=principal)
-
     @app.get("/live")
     @app.get("/health/live")
     async def live() -> dict[str, str]:
@@ -92,7 +88,7 @@ def create_app() -> FastAPI:
     @app.post("/v1/retain")
     async def retain(
         body: dict[str, Any],
-        x_astrocytes_principal: Annotated[str | None, Header(alias="X-Astrocytes-Principal")] = None,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         content = body.get("content")
         bank_id = body.get("bank_id")
@@ -100,7 +96,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="content and bank_id (str) are required")
         metadata = body.get("metadata")
         tags = body.get("tags")
-        ctx = context_from_principal(x_astrocytes_principal)
         result = await brain.retain(
             content,
             bank_id,
@@ -113,7 +108,7 @@ def create_app() -> FastAPI:
     @app.post("/v1/recall")
     async def recall(
         body: dict[str, Any],
-        x_astrocytes_principal: Annotated[str | None, Header(alias="X-Astrocytes-Principal")] = None,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         query = body.get("query")
         bank_id = body.get("bank_id")
@@ -129,7 +124,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="bank_id must be a string")
         if banks is not None and not isinstance(banks, list):
             raise HTTPException(status_code=400, detail="banks must be a list of strings")
-        ctx = context_from_principal(x_astrocytes_principal)
         result = await brain.recall(
             query,
             bank_id=bank_id if isinstance(bank_id, str) else None,
@@ -144,7 +138,7 @@ def create_app() -> FastAPI:
     @app.post("/v1/reflect")
     async def reflect(
         body: dict[str, Any],
-        x_astrocytes_principal: Annotated[str | None, Header(alias="X-Astrocytes-Principal")] = None,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         query = body.get("query")
         bank_id = body.get("bank_id")
@@ -154,7 +148,6 @@ def create_app() -> FastAPI:
         if max_tokens is not None:
             max_tokens = int(max_tokens)
         include_sources = body.get("include_sources", True)
-        ctx = context_from_principal(x_astrocytes_principal)
         result = await brain.reflect(
             query,
             bank_id,
@@ -167,14 +160,13 @@ def create_app() -> FastAPI:
     @app.post("/v1/forget")
     async def forget(
         body: dict[str, Any],
-        x_astrocytes_principal: Annotated[str | None, Header(alias="X-Astrocytes-Principal")] = None,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         bank_id = body.get("bank_id")
         if not isinstance(bank_id, str):
             raise HTTPException(status_code=400, detail="bank_id (str) is required")
         memory_ids = body.get("memory_ids")
         tags = body.get("tags")
-        ctx = context_from_principal(x_astrocytes_principal)
         result = await brain.forget(
             bank_id,
             memory_ids=[str(x) for x in memory_ids] if isinstance(memory_ids, list) else None,

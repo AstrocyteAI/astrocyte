@@ -13,9 +13,14 @@ dependencies = [
     "astrocytes==0.1.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "PyJWT>=2.8",
 ]
 
 [project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
 pgvector = ["astrocytes-pgvector"]
 
 # `astrocytes` is not published to PyPI yet; resolve it from the sibling package when using uv.
@@ -28,3 +33,6 @@ astrocytes-rest = "astrocytes_rest.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["astrocytes_rest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

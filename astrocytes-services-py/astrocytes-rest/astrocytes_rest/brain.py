@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from astrocytes import Astrocyte
-from astrocytes.config import AstrocyteConfig, load_config
+from astrocytes.config import AstrocyteConfig, access_grants_for_astrocyte, load_config
 
 from astrocytes_rest.wiring import build_tier1_pipeline
 
@@ -46,6 +46,8 @@ def build_astrocyte() -> Astrocyte:
     brain = Astrocyte(config)
     pipeline = build_tier1_pipeline(config)
     brain.set_pipeline(pipeline)
+    if config.access_control.enabled:
+        brain.set_access_grants(access_grants_for_astrocyte(config))
     return brain
 
 

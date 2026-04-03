@@ -11,6 +11,7 @@ from typing import Literal
 import yaml
 
 from astrocytes.errors import ConfigError
+from astrocytes.types import AccessGrant
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -201,6 +202,9 @@ class AstrocyteConfig:
     # Per-bank overrides
     banks: dict[str, BankConfig] | None = None
 
+    # Top-level access grants (merged with banks.*.access by access_grants_for_astrocyte)
+    access_grants: list[AccessGrant] | None = None
+
 
 # ---------------------------------------------------------------------------
 # Loading
@@ -327,7 +331,54 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
     if "mcp" in data:
         config.mcp = McpConfig(**data["mcp"])
 
+    if "access_grants" in data and data["access_grants"]:
+        grants: list[AccessGrant] = []
+        for row in data["access_grants"]:
+            if not isinstance(row, dict):
+                continue
+            grants.append(
+                AccessGrant(
+                    bank_id=str(row["bank_id"]),
+                    principal=str(row["principal"]),
+                    permissions=[str(p) for p in row["permissions"]],
+                )
+            )
+        config.access_grants = grants
+
+    if "banks" in data and data["banks"]:
+        banks: dict[str, BankConfig] = {}
+        for bid, bdata in data["banks"].items():
+            if not isinstance(bdata, dict):
+                continue
+            banks[str(bid)] = BankConfig(
+                profile=bdata.get("profile"),
+                access=bdata.get("access"),
+            )
+        config.banks = banks
+
     return config
+
+
+def access_grants_for_astrocyte(config: AstrocyteConfig) -> list[AccessGrant]:
+    """Flatten ``access_grants`` and ``banks.*.access`` into one list for ``Astrocyte.set_access_grants``."""
+    out: list[AccessGrant] = []
+    if config.access_grants:
+        out.extend(config.access_grants)
+    if config.banks:
+        for bank_id, bc in config.banks.items():
+            if not bc.access:
+                continue
+            for row in bc.access:
+                if not isinstance(row, dict):
+                    continue
+                out.append(
+                    AccessGrant(
+                        bank_id=bank_id,
+                        principal=str(row["principal"]),
+                        permissions=[str(p) for p in row["permissions"]],
+                    )
+                )
+    return out
 
 
 def load_config(path: str | Path) -> AstrocyteConfig:

@@ -27,7 +27,7 @@ Numbered files below define a **recommended reading order** and stable cross-ref
 | 03 | [03-architecture-framework.md](./03-architecture-framework.md) | Layers, two-tier providers, SPI overview |
 | 04 | [04-provider-spi.md](./04-provider-spi.md) | Retrieval, Memory Engine, LLM SPIs; outbound transport §5; multimodal §4.11 |
 | 05 | [05-outbound-transport.md](./05-outbound-transport.md) | Credential gateways, HTTP/TLS proxy plugins |
-| 06 | [06-identity-and-external-policy.md](./06-identity-and-external-policy.md) | IdP integration, optional external PDP / Casbin |
+| 06 | [06-identity-and-external-policy.md](./06-identity-and-external-policy.md) | IdP integration, optional external PDP / Casbin; **§8** — repo placement (grants vs PDP vs `astrocytes-rest`) |
 | 07 | [07-presentation-layer-and-multimodal-services.md](./07-presentation-layer-and-multimodal-services.md) | Video/voice products **beside** the LLM SPI (Tavus-class) |
 | 08 | [08-multimodal-llm-spi.md](./08-multimodal-llm-spi.md) | Vision/audio **in chat** - `ContentPart`, adapters |
 | 09 | [09-policy-layer.md](./09-policy-layer.md) | Homeostasis, barriers, pruning, observability |

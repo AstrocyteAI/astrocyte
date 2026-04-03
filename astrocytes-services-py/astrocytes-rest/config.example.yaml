@@ -28,3 +28,16 @@ escalation:
 
 access_control:
   enabled: false
+  # When enabled: default_policy deny | open | owner_only
+  # default_policy: deny
+
+# Declarative grants (merged with banks.<id>.access). Example when access_control.enabled is true:
+# access_grants:
+#   - bank_id: default
+#     principal: agent:my-service
+#     permissions: [read, write]
+# banks:
+#   other_bank:
+#     access:
+#       - principal: user:alice
+#         permissions: [read]

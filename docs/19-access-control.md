@@ -4,7 +4,7 @@ Astrocytes enforces who can read, write, reflect, and administer each memory ban
 
 This maps to **Principle 6 (Barrier maintenance)** - controlling what crosses boundaries, applied to identity and authorization, not just content validation.
 
-**External IdPs and policy engines:** To plug in OIDC/SAML/API-key flows and optional enterprise PDPs (OPA, Cerbos, etc.) without coupling the core to vendors, see **`06-identity-and-external-policy.md`**.
+**External IdPs and policy engines:** To plug in OIDC/SAML/API-key flows and optional enterprise PDPs (OPA, Cerbos, etc.) without coupling the core to vendors, see **`06-identity-and-external-policy.md`**. For **which packages** implement grants vs PDP adapters vs the reference REST wiring in this repository, see **`06-identity-and-external-policy.md` §8**.
 
 ---
 

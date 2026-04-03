@@ -3,11 +3,14 @@
 
 SHELL := /bin/bash
 
+ASTRO_ROOT := $(abspath ..)
+
 DOCKER_COMPOSE ?= docker compose
 COMPOSE        := $(DOCKER_COMPOSE) -f docker-compose.yml
 COMPOSE_RB     := $(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.runbook.yml
 
-.PHONY: help runbook up down logs ps build rebuild rebuild-runbook clean live health migrate
+.PHONY: help runbook up down logs ps build rebuild rebuild-runbook clean live health migrate \
+	ci ci-checks ci-shell ci-compose ci-pytest ci-rest-tests smoke-rest
 
 help:
 	@echo "astrocytes-services-py"
@@ -24,6 +27,8 @@ help:
 	@echo "  make health           GET /health — includes vector store / DB check"
 	@echo "  make migrate          Run astrocytes-pgvector/scripts/migrate.sh (needs Postgres on host port)"
 	@echo "  make clean            down and remove volumes (wipes Postgres data)"
+	@echo "  make ci-checks        CI: pytest (astrocytes-py + astrocytes-rest), bash -n runbook-up.sh, compose config"
+	@echo "  make smoke-rest       curl retain/recall against running REST (see scripts/smoke-rest.sh)"
 	@echo ""
 
 runbook:
@@ -66,3 +71,24 @@ migrate:
 	if [[ -n "$${MIGRATE_DATABASE_URL:-}" ]]; then export DATABASE_URL="$$MIGRATE_DATABASE_URL"; \
 	else export DATABASE_URL="postgresql://$${POSTGRES_USER:-astrocytes}:$${POSTGRES_PASSWORD:-astrocytes}@127.0.0.1:$${POSTGRES_PUBLISH_PORT:-5433}/$${POSTGRES_DB:-astrocytes}"; fi; \
 	./astrocytes-pgvector/scripts/migrate.sh
+
+# CI: astrocytes-py tests + shellcheck-style + compose merge + REST unit tests (no Docker stack required).
+ci-checks: ci-shell ci-compose ci-pytest ci-rest-tests
+
+ci-shell:
+	@bash -n scripts/runbook-up.sh
+
+ci-compose:
+	@$(COMPOSE_RB) config -q
+
+ci-pytest:
+	@cd "$(ASTRO_ROOT)/astrocytes-py" && uv sync --extra dev && uv run pytest
+
+ci-rest-tests:
+	@cd astrocytes-rest && uv sync --extra dev && uv run pytest
+
+ci: ci-checks
+
+# Manual: requires stack up (`make runbook` or `make up`) and ASTROCYTES_HTTP_PUBLISH_PORT if not 8080.
+smoke-rest:
+	@./scripts/smoke-rest.sh
