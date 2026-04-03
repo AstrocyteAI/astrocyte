@@ -8,7 +8,7 @@ from pathlib import Path
 from astrocytes import Astrocyte
 from astrocytes.config import AstrocyteConfig, load_config
 
-from astrocytes_server.wiring import build_tier1_pipeline
+from astrocytes_rest.wiring import build_tier1_pipeline
 
 
 def _apply_dev_defaults_when_no_config_file(config: AstrocyteConfig) -> None:

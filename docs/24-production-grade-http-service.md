@@ -1,6 +1,6 @@
 # Production-grade HTTP service
 
-This document describes how to operate Astrocytes **behind an HTTP (or similar) API** in production: security, durability, observability, and compliance. It applies whether you **embed** `Astrocyte` in your own service or use the **reference** server in this repository.
+This document describes how to operate Astrocytes **behind an HTTP (or similar) API** in production: security, durability, observability, and compliance. It applies whether you **embed** `Astrocyte` in your own service or use the optional **`astrocytes-rest`** reference HTTP service in this repository.
 
 For the optional inbound edge and where a gateway sits relative to the core, see `03-architecture-framework.md` §3. For principals and banks, see `19-access-control.md`. For identity and external policy engines, see `06-identity-and-external-policy.md`. For outbound HTTP to LLMs and proxies, see `05-outbound-transport.md`.
 
@@ -14,9 +14,9 @@ For the optional inbound edge and where a gateway sits relative to the core, see
 
 Use the **implementation checklist** (§3) as the primary guide. You own the process (FastAPI, gRPC, Lambda, etc.), TLS termination, identity, and scaling. The Astrocytes core remains a **library**; your service maps authenticated callers to `AstrocyteContext` and invokes `retain` / `recall` / `reflect` / `forget`.
 
-**Using or hardening the reference server (`astrocytes-server-py`)**
+**Using or hardening the reference REST service (`astrocytes-rest`)**
 
-The repository includes [`astrocytes-server-py/`](../astrocytes-server-py/README.md) as an optional **REST** process built on **`astrocytes-py`**. §4 documents its purpose, current behavior, layout, and how it maps to this checklist. §5 lists **repository-specific** follow-ups for that package.
+The repository includes [`astrocytes-services-py/astrocytes-rest/`](../astrocytes-services-py/astrocytes-rest/README.md) as an optional **REST** process built on **`astrocytes-py`**. §4 documents its purpose, current behavior, layout, and how it maps to this checklist. §5 lists **repository-specific** follow-ups for that package.
 
 ---
 
@@ -25,7 +25,7 @@ The repository includes [`astrocytes-server-py/`](../astrocytes-server-py/README
 An HTTP API is **not** part of the Astrocytes core contract. Typical production shape:
 
 - **Edge:** API gateway or ingress (TLS, coarse rate limits, JWT or API-key validation).
-- **Application:** Your service (or `astrocytes-server-py`) constructs `Astrocyte`, attaches Tier 1 or Tier 2 providers, and passes an **opaque `principal`** on each call after **AuthN**.
+- **Application:** Your service (or the reference `astrocytes-rest` package) constructs `Astrocyte`, attaches Tier 1 or Tier 2 providers, and passes an **opaque `principal`** on each call after **AuthN**.
 
 The framework enforces **AuthZ** on memory banks when access control is configured. Do **not** treat unauthenticated client headers as proof of identity.
 
@@ -43,7 +43,7 @@ Track completion in your issue tracker or PRs as needed.
 
 ### 3.1 Memory backends and durability (not in-memory)
 
-- [ ] **Tier 1:** Use production **VectorStore** adapters (and optional GraphStore / DocumentStore) per `04-provider-spi.md`. Avoid in-process-only stores for durable memory.
+- [ ] **Tier 1:** Use production **VectorStore** adapters (and optional GraphStore / DocumentStore) per `04-provider-spi.md`. Avoid in-process-only stores for durable memory. This repository includes an optional **[`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)** adapter (PostgreSQL + pgvector; **[`docker-compose.yml`](../astrocytes-services-py/docker-compose.yml)** under **`astrocytes-services-py/`** runs API + Postgres); wire it via config entry point **`pgvector`** and the same **`astrocytes_rest/wiring.py`** resolution path as other Tier 1 stores.
 - [ ] **Tier 2 (optional):** If using a memory engine provider, wire **EngineProvider** and validate **capability negotiation** (`reflect`, `forget`, etc.).
 - [ ] **LLM / embeddings:** Use real **LLMProvider** (and embedding path) appropriate to latency and cost.
 - [ ] **Configuration:** Load provider entry points from **config** (YAML/env) with validation; fail fast on missing required settings in prod.
@@ -149,9 +149,9 @@ Track completion in your issue tracker or PRs as needed.
 
 ---
 
-## 4. Reference server (`astrocytes-server-py`)
+## 4. Reference REST service (`astrocytes-rest`)
 
-This repository ships an optional **REST** server that embeds **`astrocytes-py`**. It is a **convenience** for development and as a **starting point** for a custom deployment; it is **not** production-ready by default.
+This repository ships an optional **`astrocytes-rest`** HTTP service that embeds **`astrocytes-py`**. It is a **convenience** for development and as a **starting point** for a custom deployment; it is **not** production-ready by default.
 
 ### 4.1 Purpose
 
@@ -160,9 +160,9 @@ This repository ships an optional **REST** server that embeds **`astrocytes-py`*
 
 ### 4.2 Current behavior (non-production defaults)
 
-- **Tier 1 pipeline** resolved from config: defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocytes-py`). Optional YAML / env can select other registered providers or **`module:Class`** paths. Data is **not** durable when using the built-in in-memory stack.
+- **Tier 1 pipeline** resolved from config: defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocytes-py`). Optional YAML / env can select other registered providers or **`module:Class`** paths (for example **`pgvector`** after installing [`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)). Data is **not** durable when using the built-in in-memory stack.
 - **Access control** is effectively **open** in the default path unless you supply config that enables it and wire **grants** in code (see §5).
-- **Identity:** The server does **not** validate JWTs or API keys; optional principal header is **not** authenticated.
+- **Identity:** **`astrocytes-rest`** does **not** validate JWTs or API keys; optional principal header is **not** authenticated.
 
 Treat this as a **reference implementation** of the HTTP mapping only, not as a hardened product.
 
@@ -170,11 +170,12 @@ Treat this as a **reference implementation** of the HTTP mapping only, not as a 
 
 | Item | Location |
 |------|----------|
-| Package | [`astrocytes-server-py/astrocytes_server/`](../astrocytes-server-py/astrocytes_server/) |
+| Package | [`astrocytes-services-py/astrocytes-rest/astrocytes_rest/`](../astrocytes-services-py/astrocytes-rest/astrocytes_rest/) |
 | FastAPI app factory | `app.py` - `create_app()` |
 | Brain wiring | `brain.py` - `build_reference_astrocyte()` |
-| CLI | `astrocytes-server` (see [`pyproject.toml`](../astrocytes-server-py/pyproject.toml)) |
-| Container | [`Dockerfile`](../astrocytes-server-py/Dockerfile) (build from **repository root**; see [`README`](../astrocytes-server-py/README.md)) |
+| CLI | `astrocytes-rest` (see [`pyproject.toml`](../astrocytes-services-py/astrocytes-rest/pyproject.toml)) |
+| Container | [`Dockerfile`](../astrocytes-services-py/astrocytes-rest/Dockerfile) (build from **repository root**; see [`README`](../astrocytes-services-py/astrocytes-rest/README.md)) |
+| Compose (API + Postgres) | [`docker-compose.yml`](../astrocytes-services-py/docker-compose.yml) |
 
 ### 4.4 Configuration surface (today)
 
@@ -183,17 +184,17 @@ Treat this as a **reference implementation** of the HTTP mapping only, not as a 
 | `ASTROCYTES_HOST` / `ASTROCYTES_PORT` | Bind address and port |
 | `ASTROCYTES_CONFIG_PATH` | Optional YAML loaded via `load_config` for policy/homeostasis; **in-memory Tier 1 pipeline is still attached** in the reference implementation |
 
-See [`astrocytes-server-py/README.md`](../astrocytes-server-py/README.md) for run instructions, HTTP route summary, and Docker commands.
+See [`astrocytes-services-py/astrocytes-rest/README.md`](../astrocytes-services-py/astrocytes-rest/README.md) for run instructions, HTTP route summary, and Docker commands.
 
-### 4.5 Path to production for the reference server
+### 4.5 Path to production for `astrocytes-rest`
 
-Align **`astrocytes-server-py`** with §3: real backends, verified AuthN, AuthZ with grants, health/readiness, observability, hardened image, and the items in §5. Until then, run it only in **trusted** dev or demo environments.
+Align **`astrocytes-rest`** with §3: real backends, verified AuthN, AuthZ with grants, health/readiness, observability, hardened image, and the items in §5. Until then, run it only in **trusted** dev or demo environments.
 
 ---
 
-## 5. Repository-specific follow-ups (`astrocytes-server-py`)
+## 5. Repository-specific follow-ups (`astrocytes-rest`)
 
-- [x] **Brain wiring:** `build_astrocyte()` in `astrocytes_server/brain.py` loads `AstrocyteConfig` and calls `build_tier1_pipeline()` in `astrocytes_server/wiring.py`, which resolves **`vector_store`**, **`llm_provider`**, and optional graph/document stores via **`astrocytes._discovery.resolve_provider`** (entry points or `package.module:Class`). Built-in names ship in **`astrocytes-py`** `pyproject.toml` (`in_memory`, `mock`). Next: add real database adapters as separate packages and point config at them (or import paths).
+- [x] **Brain wiring:** `build_astrocyte()` in `astrocytes_rest/brain.py` loads `AstrocyteConfig` and calls `build_tier1_pipeline()` in `astrocytes_rest/wiring.py`, which resolves **`vector_store`**, **`llm_provider`**, and optional graph/document stores via **`astrocytes._discovery.resolve_provider`** (entry points or `package.module:Class`). Built-in names ship in **`astrocytes-py`** `pyproject.toml` (`in_memory`, `mock`). A PostgreSQL **`pgvector`** adapter lives in **[`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)** (optional **`pgvector`** extra on `astrocytes-rest`).
 - [ ] **Grants from config:** Load `set_access_grants()` from YAML or database when access control is enabled.
 - [ ] **Profiles:** Keep PII `disabled` and `access_control.enabled = False` only for explicit **dev** profile; document prod profile requirements.
 - [ ] **MCP / CLI:** If `astrocytes-mcp` is shipped, align its security model with the HTTP service (same AuthN story). See `16-mcp-server.md`.

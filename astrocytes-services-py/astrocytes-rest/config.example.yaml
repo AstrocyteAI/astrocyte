@@ -1,5 +1,5 @@
-# Example Astrocytes config for `astrocytes-server` (Tier 1 / storage).
-# Use: ASTROCYTES_CONFIG_PATH=/path/to/this/file astrocytes-server
+# Example Astrocytes config for `astrocytes-rest` (Tier 1 / storage).
+# Use: ASTROCYTES_CONFIG_PATH=/path/to/this/file astrocytes-rest
 #
 # Provider names resolve via Python entry points (see `astrocytes-py` pyproject.toml)
 # or as `package.module:ClassName` for custom classes.

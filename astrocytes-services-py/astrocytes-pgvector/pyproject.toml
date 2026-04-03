@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocytes-pgvector"
+version = "0.1.0"
+description = "PostgreSQL pgvector VectorStore adapter for Astrocytes"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "astrocytes>=0.1.0,<0.2",
+    "pgvector>=0.3",
+    "psycopg[binary]>=3.1",
+    "psycopg-pool>=3.2",
+]
+
+[project.entry-points."astrocytes.vector_stores"]
+pgvector = "astrocytes_pgvector.store:PgVectorStore"
+
+[tool.hatch.build.targets.wheel]
+packages = ["astrocytes_pgvector"]
+
+[tool.uv.sources]
+astrocytes = { path = "../../astrocytes-py", editable = true }

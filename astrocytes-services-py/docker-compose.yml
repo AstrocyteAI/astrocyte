@@ -1,0 +1,35 @@
+# REST service + PostgreSQL (pgvector). Run from this directory:
+#   docker compose up --build
+# Or from repo root:
+#   docker compose -f astrocytes-services-py/docker-compose.yml up --build
+#
+# Postgres is reachable on host port 5433. The API is on 8080.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: astrocytes
+      POSTGRES_PASSWORD: astrocytes
+      POSTGRES_DB: astrocytes
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astrocytes -d astrocytes"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+
+  astrocytes-rest:
+    build:
+      context: ..
+      dockerfile: astrocytes-services-py/astrocytes-rest/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ASTROCYTES_VECTOR_STORE: pgvector
+      DATABASE_URL: postgresql://astrocytes:astrocytes@postgres:5432/astrocytes
+      ASTROCYTES_HOST: "0.0.0.0"
+      ASTROCYTES_PORT: "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
