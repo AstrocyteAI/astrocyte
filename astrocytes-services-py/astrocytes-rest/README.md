@@ -76,6 +76,8 @@ docker compose up --build
 
 Defaults expose **API** on **8080** and **Postgres** on **5433**; override with **`ASTROCYTES_HTTP_PUBLISH_PORT`** and **`POSTGRES_PUBLISH_PORT`** in [`.env.example`](../.env.example). On the host, use `postgresql://USER:PASSWORD@127.0.0.1:POSTGRES_PUBLISH_PORT/DB` matching your `.env`. Inside Compose, `DATABASE_URL` points at the `postgres` service (see `.env.example`).
 
+**Full deploy order** (`.env` → Postgres → `migrate.sh` → Compose with `bootstrap_schema: false`): see the **[Runbook](../README.md#runbook)** in the parent [`README.md`](../README.md).
+
 ### REST image only
 
 From the **repository root** (`astrocytes/`):

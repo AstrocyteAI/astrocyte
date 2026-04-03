@@ -48,7 +48,7 @@ cd astrocytes-services-py/astrocytes-pgvector
 
 Requirements: **PostgreSQL 15+** (for `CREATE INDEX CONCURRENTLY IF NOT EXISTS`), **psql** on `PATH`.
 
-After migrations are applied, set **`bootstrap_schema: false`** in `vector_store_config` so the app does not run `CREATE TABLE` / indexes at runtime (see configuration table below).
+After migrations are applied, set **`bootstrap_schema: false`** in `vector_store_config` so the app does not run `CREATE TABLE` / indexes at runtime (see configuration table below). For a full ordered procedure (env → Postgres → migrate → Compose with runbook config), see **[`astrocytes-services-py/README.md` — Runbook](../README.md#runbook)**.
 
 **Embedding width:** [`migrations/002_astrocytes_vectors.sql`](migrations/002_astrocytes_vectors.sql) defines `vector(128)`. That must match **`embedding_dimensions`** in config. For another width, add a new migration (or edit before first deploy) and keep the Python config aligned.
 
