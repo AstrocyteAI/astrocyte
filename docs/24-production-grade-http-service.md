@@ -48,7 +48,7 @@ Track completion in your issue tracker or PRs as needed.
 - [ ] **LLM / embeddings:** Use real **LLMProvider** (and embedding path) appropriate to latency and cost.
 - [ ] **Configuration:** Load provider entry points from **config** (YAML/env) with validation; fail fast on missing required settings in prod.
 - [ ] **Data durability:** Define **backup, restore, and RPO/RTO** for each store; test restore drills.
-- [ ] **Migrations:** If stores require schema migrations, own a **migration** process (job or init container) and versioning.
+- [ ] **Migrations:** If stores require schema migrations, own a **migration** process (job or init container) and versioning. For **`astrocytes-pgvector`**, use the shipped **SQL** files and **`psql`** runner ([`migrate.sh`](../astrocytes-services-py/astrocytes-pgvector/scripts/migrate.sh)); set **`bootstrap_schema: false`** in `vector_store_config` after applying migrations.
 
 ### 3.2 Authentication (AuthN) - do not trust client-supplied principals
 

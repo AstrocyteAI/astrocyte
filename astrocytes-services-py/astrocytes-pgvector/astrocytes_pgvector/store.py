@@ -36,6 +36,7 @@ class PgVectorStore:
         dsn: str | None = None,
         table_name: str = "astrocytes_vectors",
         embedding_dimensions: int = 128,
+        bootstrap_schema: bool = True,
         **kwargs: Any,
     ) -> None:
         self._dsn = dsn or os.environ.get("DATABASE_URL") or os.environ.get("ASTROCYTES_PG_DSN")
@@ -47,9 +48,11 @@ class PgVectorStore:
         self._dim = int(embedding_dimensions)
         if self._dim < 1:
             raise ValueError("embedding_dimensions must be >= 1")
+        self._bootstrap_schema = bool(bootstrap_schema)
         self._pool: AsyncConnectionPool | None = None
         self._pool_lock = asyncio.Lock()
-        self._schema_ready = False
+        # When migrations own DDL, skip in-app CREATE TABLE / indexes.
+        self._schema_ready = not self._bootstrap_schema
         self._schema_lock = asyncio.Lock()
 
     async def _ensure_pool(self) -> AsyncConnectionPool:

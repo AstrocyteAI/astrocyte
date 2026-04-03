@@ -36,15 +36,32 @@ Default DSN from your host (port **5433** maps to Postgres in the compose file):
 postgresql://astrocytes:astrocytes@127.0.0.1:5433/astrocytes
 ```
 
+## Schema migrations (production)
+
+DDL is shipped as **plain SQL** under [`migrations/`](migrations/) and applied with **`psql`** via [`scripts/migrate.sh`](scripts/migrate.sh) (no Python migration framework).
+
+```bash
+export DATABASE_URL='postgresql://astrocytes:astrocytes@127.0.0.1:5433/astrocytes'
+cd astrocytes-services-py/astrocytes-pgvector
+./scripts/migrate.sh
+```
+
+Requirements: **PostgreSQL 15+** (for `CREATE INDEX CONCURRENTLY IF NOT EXISTS`), **psql** on `PATH`.
+
+After migrations are applied, set **`bootstrap_schema: false`** in `vector_store_config` so the app does not run `CREATE TABLE` / indexes at runtime (see configuration table below).
+
+**Embedding width:** [`migrations/002_astrocytes_vectors.sql`](migrations/002_astrocytes_vectors.sql) defines `vector(128)`. That must match **`embedding_dimensions`** in config. For another width, add a new migration (or edit before first deploy) and keep the Python config aligned.
+
+**Custom `table_name`:** The shipped SQL targets **`astrocytes_vectors`**. If you use another table name, copy and adjust the migration files accordingly.
+
 ## Configuration
 
 | Constructor / YAML `vector_store_config` | Meaning |
 |--------------------------------------------|---------|
 | `dsn` | PostgreSQL connection URI (or set `DATABASE_URL` / `ASTROCYTES_PG_DSN`) |
 | `table_name` | Table name (default `astrocytes_vectors`; alphanumeric + underscore only) |
-| `embedding_dimensions` | Fixed `vector(N)` width; must match your embedding model (default **128** to match the built-in mock LLM in tests) |
-
-The store creates the `vector` extension and table on first use (`CREATE IF NOT EXISTS`).
+| `embedding_dimensions` | Fixed `vector(N)` width; must match your embedding model and the **`vector(N)`** in SQL migrations (default **128**) |
+| `bootstrap_schema` | If **`true`** (default), create extension / table / btree index on first use (dev-friendly; no HNSW). If **`false`**, assume **`migrate.sh`** already applied [`migrations/`](migrations/) (production). |
 
 ## How this fits `astrocytes_rest`
 
@@ -62,6 +79,7 @@ llm_provider: mock
 vector_store_config:
   dsn: postgresql://astrocytes:astrocytes@127.0.0.1:5433/astrocytes
   embedding_dimensions: 128
+  bootstrap_schema: false
 ```
 
 Then run the REST service (from repo layout):
@@ -84,6 +102,6 @@ cd astrocytes-services-py/astrocytes-rest && uv sync --extra pgvector
 
 ## Production notes
 
-- Run **migrations** and **index tuning** (e.g. `ivfflat` / `hnsw`) outside this MVP as load grows ([`04-provider-spi.md`](../../docs/04-provider-spi.md), DBA guides).
+- **HNSW** parameters (`m`, `ef_construction`) live in [`migrations/003_indexes.sql`](migrations/003_indexes.sql); tune with DBA guidance as load grows.
 - **Embedding dimension** must match the **`LLMProvider.embed()`** output used by the pipeline.
 - Use **secrets** for `dsn`, not committed YAML.

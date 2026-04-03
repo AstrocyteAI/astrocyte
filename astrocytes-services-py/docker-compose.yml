@@ -1,20 +1,21 @@
 # REST service + PostgreSQL (pgvector). Run from this directory:
+#   cp .env.example .env   # optional: override secrets and ports
 #   docker compose up --build
 # Or from repo root:
-#   docker compose -f astrocytes-services-py/docker-compose.yml up --build
+#   docker compose -f astrocytes-services-py/docker-compose.yml --env-file astrocytes-services-py/.env up --build
 #
-# Postgres is reachable on host port 5433. The API is on 8080.
+# Postgres is reachable on host port POSTGRES_PUBLISH_PORT (default 5433). The API is on ASTROCYTES_HTTP_PUBLISH_PORT (default 8080).
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: astrocytes
-      POSTGRES_PASSWORD: astrocytes
-      POSTGRES_DB: astrocytes
+      POSTGRES_USER: ${POSTGRES_USER:-astrocytes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-astrocytes}
+      POSTGRES_DB: ${POSTGRES_DB:-astrocytes}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PUBLISH_PORT:-5433}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U astrocytes -d astrocytes"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 3s
       timeout: 5s
       retries: 5
@@ -24,12 +25,12 @@ services:
       context: ..
       dockerfile: astrocytes-services-py/astrocytes-rest/Dockerfile
     ports:
-      - "8080:8080"
+      - "${ASTROCYTES_HTTP_PUBLISH_PORT:-8080}:${ASTROCYTES_PORT:-8080}"
     environment:
-      ASTROCYTES_VECTOR_STORE: pgvector
-      DATABASE_URL: postgresql://astrocytes:astrocytes@postgres:5432/astrocytes
-      ASTROCYTES_HOST: "0.0.0.0"
-      ASTROCYTES_PORT: "8080"
+      ASTROCYTES_VECTOR_STORE: ${ASTROCYTES_VECTOR_STORE:-pgvector}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-astrocytes}:${POSTGRES_PASSWORD:-astrocytes}@postgres:5432/${POSTGRES_DB:-astrocytes}}
+      ASTROCYTES_HOST: ${ASTROCYTES_HOST:-0.0.0.0}
+      ASTROCYTES_PORT: ${ASTROCYTES_PORT:-8080}
     depends_on:
       postgres:
         condition: service_healthy

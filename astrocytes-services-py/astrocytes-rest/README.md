@@ -70,10 +70,11 @@ OpenAPI docs: `/docs` when the HTTP service is running.
 From **`astrocytes-services-py/`** (or pass `-f` from the repo root):
 
 ```bash
+cp .env.example .env   # optional: set secrets and ports
 docker compose up --build
 ```
 
-Exposes **API** on **8080** and **Postgres** on host port **5433** (same DSN pattern as local dev: `postgresql://astrocytes:astrocytes@127.0.0.1:5433/astrocytes`). Inside the Compose network the app uses `DATABASE_URL` pointing at the `postgres` service.
+Defaults expose **API** on **8080** and **Postgres** on **5433**; override with **`ASTROCYTES_HTTP_PUBLISH_PORT`** and **`POSTGRES_PUBLISH_PORT`** in [`.env.example`](../.env.example). On the host, use `postgresql://USER:PASSWORD@127.0.0.1:POSTGRES_PUBLISH_PORT/DB` matching your `.env`. Inside Compose, `DATABASE_URL` points at the `postgres` service (see `.env.example`).
 
 ### REST image only
 
