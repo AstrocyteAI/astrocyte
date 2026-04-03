@@ -1,0 +1,183 @@
+# Event hooks
+
+Astrocytes emits events at key points in the memory lifecycle. Hooks allow external systems to react to these events - for audit logging, alerting, custom workflows, and enterprise integration.
+
+---
+
+## 1. Event types
+
+| Event | When it fires | Payload includes |
+|---|---|---|
+| `on_retain` | After a successful retain | bank_id, memory_id, content_length, tags, policy_actions |
+| `on_recall` | After a successful recall | bank_id, query, result_count, top_score, latency_ms |
+| `on_reflect` | After a successful reflect | bank_id, query, answer_length, source_count, fallback_used |
+| `on_forget` | After memories are deleted | bank_id, memory_ids, reason, compliance |
+| `on_pii_detected` | When PII barrier detects sensitive content | bank_id, pii_type, action_taken (redact/reject/warn) |
+| `on_rate_limited` | When a request is rate-limited | bank_id, operation, limit, retry_after |
+| `on_circuit_breaker_open` | When provider circuit breaker trips | provider, failure_count, last_error |
+| `on_circuit_breaker_close` | When provider recovers | provider, recovery_duration |
+| `on_dedup_detected` | When signal quality detects a duplicate | bank_id, similarity_score, action_taken |
+| `on_noisy_bank` | When analytics flags a noisy bank | bank_id, signal, threshold, action_taken |
+| `on_ttl_expiry` | When TTL policy archives or deletes memories | bank_id, memory_count, action (archive/delete) |
+| `on_consolidation` | When consolidation creates observations | bank_id, observation_count, source_fact_count |
+| `on_bank_created` | When a new bank is created | bank_id, profile, created_by |
+| `on_bank_deleted` | When a bank is deleted | bank_id, memory_count, deleted_by |
+| `on_legal_hold` | When legal hold is set or released | bank_id, hold_id, action (set/released) |
+| `on_import` | When memories are imported | bank_id, memory_count, source_provider |
+| `on_export` | When memories are exported | bank_id, memory_count, destination_path |
+
+---
+
+## 2. Hook configuration
+
+```yaml
+hooks:
+  on_retain:
+    - type: webhook
+      url: https://internal.company.com/audit/memory-created
+      method: POST
+      headers:
+        Authorization: "Bearer ${AUDIT_API_KEY}"
+      timeout_ms: 5000
+      async: true                        # Non-blocking (default)
+
+  on_pii_detected:
+    - type: webhook
+      url: https://hooks.slack.com/services/T00/B00/xxx
+      method: POST
+      body_template: |
+        {"text": "PII detected in bank {{bank_id}}: {{pii_type}}, action: {{action_taken}}"}
+    - type: log
+      level: warning
+      message: "PII detected: {{pii_type}} in bank {{bank_id}}"
+
+  on_circuit_breaker_open:
+    - type: webhook
+      url: https://events.pagerduty.com/v2/enqueue
+      method: POST
+      body_template: |
+        {"routing_key": "${PD_ROUTING_KEY}", "event_action": "trigger", "payload": {"summary": "Memory provider circuit breaker open: {{provider}}", "severity": "critical"}}
+
+  on_noisy_bank:
+    - type: log
+      level: warning
+    - type: webhook
+      url: https://hooks.slack.com/services/T00/B00/yyy
+```
+
+---
+
+## 3. Hook types
+
+### 3.1 Webhook
+
+HTTP POST to an external URL.
+
+```yaml
+- type: webhook
+  url: https://example.com/hook
+  method: POST                           # POST (default) | PUT
+  headers: {}                            # Custom headers
+  body_template: null                    # Jinja2 template; if null, sends full event JSON
+  timeout_ms: 5000
+  retry_count: 2
+  retry_delay_ms: 1000
+  async: true                            # true = non-blocking (default), false = blocking
+```
+
+### 3.2 Log
+
+Emit a structured log entry.
+
+```yaml
+- type: log
+  level: info                            # debug | info | warning | error
+  message: "{{event_type}}: {{bank_id}}"  # Optional template; default: full event JSON
+```
+
+### 3.3 Python callable (advanced)
+
+For in-process hooks (not available in MCP server or the Rust implementation):
+
+```python
+from astrocytes import Astrocyte, HookEvent
+
+async def my_custom_hook(event: HookEvent) -> None:
+    if event.type == "on_pii_detected":
+        await alert_security_team(event.data)
+
+brain = Astrocyte.from_config("astrocytes.yaml")
+brain.register_hook("on_pii_detected", my_custom_hook)
+```
+
+---
+
+## 4. Event payload
+
+All events share a common envelope:
+
+```python
+@dataclass
+class HookEvent:
+    event_id: str                        # Unique event ID (UUID)
+    type: str                            # Event type (e.g., "on_retain")
+    timestamp: datetime                  # When the event occurred
+    bank_id: str | None                  # Affected bank (if applicable)
+    data: dict[str, Any]                 # Event-specific payload
+    trace_id: str | None                 # OTel trace ID for correlation
+```
+
+Payloads must be portable (see `13-implementation-language-strategy.md`): only str, int, float, bool, None, list, dict. No callables or opaque Python objects in serialized event data.
+
+---
+
+## 5. Execution semantics
+
+### 5.1 Async (default)
+
+Hooks fire asynchronously after the operation completes. The operation's response is not delayed by hook execution. If a webhook fails, it is retried according to `retry_count` but does not affect the operation.
+
+### 5.2 Sync (opt-in)
+
+```yaml
+- type: webhook
+  url: https://compliance.company.com/audit
+  async: false                           # Block until webhook returns 2xx
+```
+
+When `async: false`, the operation waits for the hook to complete. If the hook fails after retries, the operation still succeeds but a warning is logged. Use sparingly - this adds latency.
+
+### 5.3 Failure handling
+
+- **Async hooks**: failures are logged and emitted as OTel span events. No retry exhaustion alert by default (configure via `on_hook_failure` meta-hook if needed).
+- **Sync hooks**: failures are logged, operation proceeds. The response includes a `hook_warnings` field.
+- **Hooks never cause operations to fail.** A failed webhook does not roll back a retain or reject a recall.
+
+---
+
+## 6. Security
+
+- Webhook URLs are validated at config load time (must be HTTPS in production, HTTP allowed in development).
+- `body_template` uses sandboxed Jinja2 rendering (no file access, no code execution).
+- Secrets in URLs or headers use environment variable substitution (`${VAR_NAME}`), never stored in plaintext.
+- Hook payloads **never include memory content** by default. Only metadata (bank_id, memory_id, tags, scores). Content inclusion must be explicitly opted in:
+
+```yaml
+- type: webhook
+  url: https://audit.company.com/full
+  include_content: true                  # Opt-in: include memory text in payload
+```
+
+---
+
+## 7. Built-in hooks
+
+Some hooks are always active (not configurable):
+
+| Hook | Always fires | Destination |
+|---|---|---|
+| All events | OTel span events | OpenTelemetry (if enabled) |
+| Lifecycle events | Audit log | Audit trail (if enabled, see `18-memory-lifecycle.md`) |
+| Prometheus counters | Metrics | Prometheus (if enabled) |
+
+User-configured hooks add to these built-in hooks, they don't replace them.
