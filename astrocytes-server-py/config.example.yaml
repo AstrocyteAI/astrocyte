@@ -1,0 +1,30 @@
+# Example Astrocytes config for `astrocytes-server` (Tier 1 / storage).
+# Use: ASTROCYTES_CONFIG_PATH=/path/to/this/file astrocytes-server
+#
+# Provider names resolve via Python entry points (see `astrocytes-py` pyproject.toml)
+# or as `package.module:ClassName` for custom classes.
+
+provider_tier: storage
+
+# Built-in names: in_memory (vector/graph/document), mock (LLM)
+vector_store: in_memory
+llm_provider: mock
+
+# Optional Tier 1 add-ons (omit or set null to disable)
+# graph_store: in_memory
+# document_store: in_memory
+
+# Optional constructor kwargs passed to the provider class
+# vector_store_config: {}
+# llm_provider_config:
+#   default_response: "Mock LLM response"
+
+barriers:
+  pii:
+    mode: disabled
+
+escalation:
+  degraded_mode: error
+
+access_control:
+  enabled: false

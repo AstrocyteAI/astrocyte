@@ -35,6 +35,19 @@ all = [
 [project.scripts]
 astrocytes-mcp = "astrocytes.mcp:main"
 
+# Built-in dev / test providers (see `astrocytes._discovery` and `12-ecosystem-and-packaging.md`)
+[project.entry-points."astrocytes.vector_stores"]
+in_memory = "astrocytes.testing.in_memory:InMemoryVectorStore"
+
+[project.entry-points."astrocytes.graph_stores"]
+in_memory = "astrocytes.testing.in_memory:InMemoryGraphStore"
+
+[project.entry-points."astrocytes.document_stores"]
+in_memory = "astrocytes.testing.in_memory:InMemoryDocumentStore"
+
+[project.entry-points."astrocytes.llm_providers"]
+mock = "astrocytes.testing.in_memory:MockLLMProvider"
+
 [tool.hatch.build.targets.wheel]
 packages = ["astrocytes"]
 

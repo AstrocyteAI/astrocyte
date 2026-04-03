@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 from typing import Any
 
@@ -38,8 +39,6 @@ def resolve_provider(name: str, group: str) -> Any:
     if ":" in name:
         # Direct import path
         module_path, class_name = name.rsplit(":", 1)
-        import importlib
-
         module = importlib.import_module(module_path)
         return getattr(module, class_name)
 

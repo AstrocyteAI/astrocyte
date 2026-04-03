@@ -15,6 +15,10 @@ dependencies = [
     "uvicorn[standard]>=0.30",
 ]
 
+# `astrocytes` is not published to PyPI yet; resolve it from the sibling package when using uv.
+[tool.uv.sources]
+astrocytes = { path = "../astrocytes-py", editable = true }
+
 [project.scripts]
 astrocytes-server = "astrocytes_server.main:main"
 

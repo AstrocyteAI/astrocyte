@@ -17,12 +17,12 @@ from astrocytes.errors import (
 )
 from astrocytes.types import AstrocyteContext
 
-from astrocytes_server.brain import build_reference_astrocyte
+from astrocytes_server.brain import build_astrocyte
 from astrocytes_server.serialization import to_jsonable
 
 
 def create_app() -> FastAPI:
-    brain = build_reference_astrocyte()
+    brain = build_astrocyte()
 
     app = FastAPI(
         title="Astrocytes reference server",

@@ -160,7 +160,7 @@ This repository ships an optional **REST** server that embeds **`astrocytes-py`*
 
 ### 4.2 Current behavior (non-production defaults)
 
-- **Tier 1 pipeline** with **in-memory** vector storage and a **mock** LLM (same general pattern as framework tests). Data does **not** survive process restart.
+- **Tier 1 pipeline** resolved from config: defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocytes-py`). Optional YAML / env can select other registered providers or **`module:Class`** paths. Data is **not** durable when using the built-in in-memory stack.
 - **Access control** is effectively **open** in the default path unless you supply config that enables it and wire **grants** in code (see §5).
 - **Identity:** The server does **not** validate JWTs or API keys; optional principal header is **not** authenticated.
 
@@ -193,7 +193,7 @@ Align **`astrocytes-server-py`** with §3: real backends, verified AuthN, AuthZ 
 
 ## 5. Repository-specific follow-ups (`astrocytes-server-py`)
 
-- [ ] **Brain wiring:** Replace `build_reference_astrocyte()` with a **factory** that selects backends from config and optional **plugin discovery** (`astrocytes` entry points per `12-ecosystem-and-packaging.md`).
+- [x] **Brain wiring:** `build_astrocyte()` in `astrocytes_server/brain.py` loads `AstrocyteConfig` and calls `build_tier1_pipeline()` in `astrocytes_server/wiring.py`, which resolves **`vector_store`**, **`llm_provider`**, and optional graph/document stores via **`astrocytes._discovery.resolve_provider`** (entry points or `package.module:Class`). Built-in names ship in **`astrocytes-py`** `pyproject.toml` (`in_memory`, `mock`). Next: add real database adapters as separate packages and point config at them (or import paths).
 - [ ] **Grants from config:** Load `set_access_grants()` from YAML or database when access control is enabled.
 - [ ] **Profiles:** Keep PII `disabled` and `access_control.enabled = False` only for explicit **dev** profile; document prod profile requirements.
 - [ ] **MCP / CLI:** If `astrocytes-mcp` is shipped, align its security model with the HTTP service (same AuthN story). See `16-mcp-server.md`.
