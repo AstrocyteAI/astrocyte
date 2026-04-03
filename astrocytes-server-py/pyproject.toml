@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocytes-server"
+version = "0.1.0"
+description = "Reference HTTP server for the Astrocytes memory framework (REST over astrocytes-py)"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "astrocytes==0.1.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.scripts]
+astrocytes-server = "astrocytes_server.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["astrocytes_server"]

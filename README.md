@@ -27,6 +27,7 @@ Astrocytes is **not** an LLM gateway (no generic chat routing or provider normal
 |------|----------|
 | [`docs/`](docs/README.md) | Design specification: architecture, SPIs, policy, packaging, evaluation, governance. |
 | [`astrocytes-py/`](astrocytes-py/README.md) | Python implementation of the Astrocytes service. |
+| [`astrocytes-server-py/`](astrocytes-server-py/README.md) | Optional reference **REST** server over `astrocytes-py` (includes Dockerfile). Production checklist and reference-server details: [`docs/24-production-grade-http-service.md`](docs/24-production-grade-http-service.md). |
 | [`astrocytes-rs/`](astrocytes-rs/README.md) | Rust implementation of the Astrocytes service (same contract). |
 
 For scope, vocabulary, and a full reading order, start with [`docs/README.md`](docs/README.md).

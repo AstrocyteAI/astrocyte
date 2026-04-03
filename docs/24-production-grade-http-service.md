@@ -1,0 +1,209 @@
+# Production-grade HTTP service
+
+This document describes how to operate Astrocytes **behind an HTTP (or similar) API** in production: security, durability, observability, and compliance. It applies whether you **embed** `Astrocyte` in your own service or use the **reference** server in this repository.
+
+For the optional inbound edge and where a gateway sits relative to the core, see `03-architecture-framework.md` §3. For principals and banks, see `19-access-control.md`. For identity and external policy engines, see `06-identity-and-external-policy.md`. For outbound HTTP to LLMs and proxies, see `05-outbound-transport.md`.
+
+**Checklists:** Items below use `- [ ]` so they render as **checkboxes** in GitHub, GitLab, VS Code, and many Markdown previews. Copy the doc or track items in your issue tracker.
+
+---
+
+## 1. Audience
+
+**Implementing your own production service**
+
+Use the **implementation checklist** (§3) as the primary guide. You own the process (FastAPI, gRPC, Lambda, etc.), TLS termination, identity, and scaling. The Astrocytes core remains a **library**; your service maps authenticated callers to `AstrocyteContext` and invokes `retain` / `recall` / `reflect` / `forget`.
+
+**Using or hardening the reference server (`astrocytes-server-py`)**
+
+The repository includes [`astrocytes-server-py/`](../astrocytes-server-py/README.md) as an optional **REST** process built on **`astrocytes-py`**. §4 documents its purpose, current behavior, layout, and how it maps to this checklist. §5 lists **repository-specific** follow-ups for that package.
+
+---
+
+## 2. Architecture reminder
+
+An HTTP API is **not** part of the Astrocytes core contract. Typical production shape:
+
+- **Edge:** API gateway or ingress (TLS, coarse rate limits, JWT or API-key validation).
+- **Application:** Your service (or `astrocytes-server-py`) constructs `Astrocyte`, attaches Tier 1 or Tier 2 providers, and passes an **opaque `principal`** on each call after **AuthN**.
+
+The framework enforces **AuthZ** on memory banks when access control is configured. Do **not** treat unauthenticated client headers as proof of identity.
+
+---
+
+## 3. Implementation checklist
+
+Track completion in your issue tracker or PRs as needed.
+
+### 3.0 Scope and definition of done
+
+- [ ] **Product decision:** Confirm target environments (Kubernetes, VM, single-tenant SaaS, air-gapped) and **SLOs** (availability, p95 latency, error budget).
+- [ ] **Support boundary:** Document what is supported (API versions, auth modes, backends) versus experimental.
+- [ ] **Threat model:** Document trust zones (internet, VPC, mesh), who may call the API, and what data may appear in logs.
+
+### 3.1 Memory backends and durability (not in-memory)
+
+- [ ] **Tier 1:** Use production **VectorStore** adapters (and optional GraphStore / DocumentStore) per `04-provider-spi.md`. Avoid in-process-only stores for durable memory.
+- [ ] **Tier 2 (optional):** If using a memory engine provider, wire **EngineProvider** and validate **capability negotiation** (`reflect`, `forget`, etc.).
+- [ ] **LLM / embeddings:** Use real **LLMProvider** (and embedding path) appropriate to latency and cost.
+- [ ] **Configuration:** Load provider entry points from **config** (YAML/env) with validation; fail fast on missing required settings in prod.
+- [ ] **Data durability:** Define **backup, restore, and RPO/RTO** for each store; test restore drills.
+- [ ] **Migrations:** If stores require schema migrations, own a **migration** process (job or init container) and versioning.
+
+### 3.2 Authentication (AuthN) - do not trust client-supplied principals
+
+- [ ] **Remove or gate dev behavior:** A header such as `X-Astrocytes-Principal` must **not** be the only identity in production unless behind verified **mTLS** or a **trusted gateway** that strips spoofed headers.
+- [ ] **Choose and implement one primary mode:**
+  - [ ] **JWT** (OIDC): validate issuer, audience, signature, `exp`; map claims to `AstrocyteContext.principal`.
+  - [ ] **API keys:** hashed keys in store, rotation, per-key scopes.
+  - [ ] **mTLS:** client certificates mapped to principals.
+- [ ] **Service-to-service:** Use workload identity (SPIFFE, IAM) where applicable.
+- [ ] **Anonymous / public:** Explicitly forbid or allow only for specific routes; document risk.
+
+### 3.3 Authorization (AuthZ) and tenancy
+
+- [ ] **Enable framework access control:** `access_control` on with explicit policy (not `open` by default in prod).
+- [ ] **Grants:** Load **AccessGrant** (or equivalent) from config, database, or **external PDP** (OPA, Cerbos, Casbin) per `19-access-control.md`.
+- [ ] **Bank isolation:** Enforce **bank_id** scoping; prevent cross-tenant **IDOR** (validate bank belongs to tenant/principal).
+- [ ] **Admin paths:** Separate privileged operations (if any) with stricter checks.
+- [ ] **Optional external PDP:** Integrate **AccessPolicyProvider** when enterprise policy engines are required (`06-identity-and-external-policy.md`).
+
+### 3.4 Network, TLS, and edge
+
+- [ ] **TLS:** Terminate TLS at **ingress/gateway** or in-process; **HSTS** and modern cipher policy where browsers are involved.
+- [ ] **Private networking:** Prefer private subnets / mesh; no public exposure without WAF/rate limits as needed.
+- [ ] **Request limits:** Max body size, header size, URL length; **timeouts** on client and server.
+- [ ] **CORS:** If browser clients exist, **restrict** origins; avoid `*` in production.
+- [ ] **Rate limiting:** Edge (API gateway) + align with Astrocytes **homeostasis** / quotas in config (`09-policy-layer.md`).
+
+### 3.5 API design and contract
+
+- [ ] **Versioning:** Keep `/v1` (or header versioning) with a **compatibility policy**; deprecate with lead time.
+- [ ] **OpenAPI:** Publish stable **OpenAPI**; generate clients if useful; CI diff on API changes.
+- [ ] **Pagination / limits:** Cap `max_results`, `max_tokens`, and content size consistently; return **truncation** flags where applicable.
+- [ ] **Idempotency:** For `retain`, define **idempotency keys** or dedup strategy for retries (align with framework behavior).
+- [ ] **Error shape:** Stable JSON error body (`code`, `message`, `request_id`); no stack traces to clients in prod.
+- [ ] **Health endpoints:**
+  - [ ] **Liveness:** process up (`/health/live` or equivalent).
+  - [ ] **Readiness:** dependencies reachable (vector DB, engine, LLM as required).
+
+### 3.6 Observability
+
+- [ ] **Structured logs:** JSON logs with **request_id**, **principal** (hashed or opaque id if sensitive), **bank_id**, **route**, **latency**, **status**; **PII redaction** policy.
+- [ ] **Metrics:** RED (rate, errors, duration) per route; saturation (CPU, memory, queue depth); dependency health.
+- [ ] **Tracing:** **OpenTelemetry** traces across HTTP and outbound calls (LLM, stores); optional `astrocytes` OTel extras (`astrocytes-py` optional dependencies).
+- [ ] **Dashboards and alerts:** SLO-based alerts (burn rate) on error rate and latency.
+
+### 3.7 Reliability and resilience
+
+- [ ] **Graceful shutdown:** Honor SIGTERM; drain in-flight requests within a **bounded** time (uvicorn/gunicorn settings).
+- [ ] **Timeouts:** Per-route and per-outbound-call timeouts; avoid unbounded `await` chains.
+- [ ] **Retries:** Safe retries for **read** paths only unless idempotent writes are guaranteed.
+- [ ] **Circuit breaking:** Align gateway and framework **escalation** / circuit breaker settings with dependency behavior.
+- [ ] **Overload:** Backpressure (503 + `Retry-After`) when saturated; consider queue or shed load policy.
+
+### 3.8 Security hardening (application and supply chain)
+
+- [ ] **Dependencies:** Pin versions; **SBOM**; automated **CVE** scanning on images and lockfiles.
+- [ ] **Secrets:** No secrets committed in repos; use **secret manager** / K8s secrets / IAM roles.
+- [ ] **Process:** Run as **non-root** in containers; **read-only** root filesystem where possible; **capability** drop.
+- [ ] **Headers:** Strip or validate **forwarded** headers; prevent header injection in logs.
+- [ ] **Input validation:** Reject unexpected JSON fields if strict mode is desired; validate `bank_id` format and length.
+
+### 3.9 Container image and runtime
+
+- [ ] **Base image:** Minimal, pinned digest; regular rebuilds for CVE patches.
+- [ ] **Multi-stage build:** Optional, to reduce attack surface and size.
+- [ ] **Image signing:** Cosign / policy in cluster to verify signatures.
+- [ ] **Resource limits:** CPU/memory **requests and limits**; avoid OOM under load.
+- [ ] **Probes:** Kubernetes **liveness** and **readiness** using the endpoints from §3.5.
+
+### 3.10 Data governance and compliance
+
+- [ ] **Classification:** Tag banks or payloads per **data class** if required (`23-data-governance.md`).
+- [ ] **Retention and legal hold:** Align with `18-memory-lifecycle.md`; block deletes when under hold.
+- [ ] **Audit log:** Immutable audit stream for retain/forget/admin actions (who, when, bank, outcome).
+- [ ] **Residency:** Ensure stores and LLM regions meet **data residency** requirements.
+- [ ] **PII:** Configure **barriers** / PII policy deliberately; document **false positive** handling (`09-policy-layer.md`).
+
+### 3.11 Performance and capacity
+
+- [ ] **Load testing:** Establish **p95/p99** under target QPS and payload sizes; test **cold start** and **warm** pools.
+- [ ] **Connection pools:** HTTP clients to LLM and DBs use bounded pools and sane keep-alive.
+- [ ] **Horizontal scaling:** Stateless replicas; **sticky sessions** only if you introduce local-only state (avoid).
+- [ ] **Cost controls:** Token and spend caps aligned with **homeostasis** and product limits.
+
+### 3.12 Testing and quality gates
+
+- [ ] **Contract tests:** HTTP API vs OpenAPI; backward compatibility tests on `/v1`.
+- [ ] **Integration tests:** Real (or containerized) dependencies in CI for critical paths.
+- [ ] **Security tests:** AuthZ tests (tenant A cannot read tenant B), fuzzing on inputs, OWASP API checks.
+- [ ] **Chaos / failure injection:** Dependency failures (DB down, LLM timeout) produce expected errors and no data corruption.
+
+### 3.13 Operations and lifecycle
+
+- [ ] **Runbooks:** Incident response, **key rotation**, scaling, **failover**, and **rollback** of releases.
+- [ ] **Configuration rollout:** Safe rollout of config changes (feature flags or staged deploys).
+- [ ] **Backup and DR:** Documented restore tests; RPO/RTO validated annually or on change.
+- [ ] **On-call:** Alert routing and escalation paths tied to SLOs.
+
+---
+
+## 4. Reference server (`astrocytes-server-py`)
+
+This repository ships an optional **REST** server that embeds **`astrocytes-py`**. It is a **convenience** for development and as a **starting point** for a custom deployment; it is **not** production-ready by default.
+
+### 4.1 Purpose
+
+- Demonstrate mapping HTTP JSON bodies to **`Astrocyte`** calls (`retain`, `recall`, `reflect`, `forget`) and optional **`X-Astrocytes-Principal`**.
+- Provide a **Dockerfile** so the stack can be run locally or in a sandbox without writing a host app.
+
+### 4.2 Current behavior (non-production defaults)
+
+- **Tier 1 pipeline** with **in-memory** vector storage and a **mock** LLM (same general pattern as framework tests). Data does **not** survive process restart.
+- **Access control** is effectively **open** in the default path unless you supply config that enables it and wire **grants** in code (see §5).
+- **Identity:** The server does **not** validate JWTs or API keys; optional principal header is **not** authenticated.
+
+Treat this as a **reference implementation** of the HTTP mapping only, not as a hardened product.
+
+### 4.3 Layout and entrypoints
+
+| Item | Location |
+|------|----------|
+| Package | [`astrocytes-server-py/astrocytes_server/`](../astrocytes-server-py/astrocytes_server/) |
+| FastAPI app factory | `app.py` - `create_app()` |
+| Brain wiring | `brain.py` - `build_reference_astrocyte()` |
+| CLI | `astrocytes-server` (see [`pyproject.toml`](../astrocytes-server-py/pyproject.toml)) |
+| Container | [`Dockerfile`](../astrocytes-server-py/Dockerfile) (build from **repository root**; see [`README`](../astrocytes-server-py/README.md)) |
+
+### 4.4 Configuration surface (today)
+
+| Variable | Role |
+|----------|------|
+| `ASTROCYTES_HOST` / `ASTROCYTES_PORT` | Bind address and port |
+| `ASTROCYTES_CONFIG_PATH` | Optional YAML loaded via `load_config` for policy/homeostasis; **in-memory Tier 1 pipeline is still attached** in the reference implementation |
+
+See [`astrocytes-server-py/README.md`](../astrocytes-server-py/README.md) for run instructions, HTTP route summary, and Docker commands.
+
+### 4.5 Path to production for the reference server
+
+Align **`astrocytes-server-py`** with §3: real backends, verified AuthN, AuthZ with grants, health/readiness, observability, hardened image, and the items in §5. Until then, run it only in **trusted** dev or demo environments.
+
+---
+
+## 5. Repository-specific follow-ups (`astrocytes-server-py`)
+
+- [ ] **Brain wiring:** Replace `build_reference_astrocyte()` with a **factory** that selects backends from config and optional **plugin discovery** (`astrocytes` entry points per `12-ecosystem-and-packaging.md`).
+- [ ] **Grants from config:** Load `set_access_grants()` from YAML or database when access control is enabled.
+- [ ] **Profiles:** Keep PII `disabled` and `access_control.enabled = False` only for explicit **dev** profile; document prod profile requirements.
+- [ ] **MCP / CLI:** If `astrocytes-mcp` is shipped, align its security model with the HTTP service (same AuthN story). See `16-mcp-server.md`.
+
+---
+
+## 6. Sign-off (optional)
+
+| Area | Owner | Date | Notes |
+|------|--------|------|--------|
+| Security review | | | |
+| SLO agreed | | | |
+| Launch readiness | | | |

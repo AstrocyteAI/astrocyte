@@ -11,6 +11,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocytes 
 | Folder | Role |
 |---|---|
 | **`astrocytes-py/`** | **Python** Astrocytes service; PyPI package name **`astrocytes`**; ecosystem integrations (LangChain, MCP, …). |
+| **`astrocytes-server-py/`** | **Optional** reference **REST** server over `astrocytes-py` (not part of the core SPI contract); see `24-production-grade-http-service.md` §4. |
 | **`astrocytes-rs/`** | **Rust** Astrocytes service; native crate; same framework contract as Python (see `13-implementation-language-strategy.md`). |
 
 Numbered files below define a **recommended reading order** and stable cross-references.
@@ -44,6 +45,7 @@ Numbered files below define a **recommended reading order** and stable cross-ref
 | 21 | [21-memory-analytics.md](./21-memory-analytics.md) | Bank health, utilization |
 | 22 | [22-evaluation.md](./22-evaluation.md) | Benchmarks and regression testing |
 | 23 | [23-data-governance.md](./23-data-governance.md) | Classification, residency, DLP |
+| 24 | [24-production-grade-http-service.md](./24-production-grade-http-service.md) | Production HTTP service checklist; reference `astrocytes-server-py` |
 
 ---
 
@@ -53,3 +55,4 @@ Numbered files below define a **recommended reading order** and stable cross-ref
 - **Implementing a provider:** 04, 12, 13.
 - **Security and compliance:** 09, 19, 18, 23, 06.
 - **Integrations (network, identity, UI):** 05, 06, 07, 08.
+- **Production HTTP / BFF hosting Astrocytes:** 24, 03, 06, 19, 05, 09, 18, 23.
