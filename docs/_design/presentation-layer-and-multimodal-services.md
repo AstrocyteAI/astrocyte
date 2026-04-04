@@ -1,6 +1,6 @@
 # Presentation layer: multimodal, voice, and video services
 
-This document clarifies how Astrocytes relates to **commercial AI products that are not text LLM backends** - conversational video avatars, synthetic voice, real-time video APIs - and how to integrate them **alongside** the LLM Provider SPI. For **multimodal LLM** inputs (image/audio in **chat completions** with GPT-4o, Claude, Gemini, etc.), see **`08-multimodal-llm-spi.md`**. For the base SPI, see `04-provider-spi.md` section 4.
+This document clarifies how Astrocytes relates to **commercial AI products that are not text LLM backends** - conversational video avatars, synthetic voice, real-time video APIs - and how to integrate them **alongside** the LLM Provider SPI. For **multimodal LLM** inputs (image/audio in **chat completions** with GPT-4o, Claude, Gemini, etc.), see **`multimodal-llm-spi.md`**. For the base SPI, see `provider-spi.md` section 4.
 
 ---
 

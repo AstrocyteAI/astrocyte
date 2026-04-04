@@ -1,6 +1,6 @@
 # Data governance and privacy
 
-This document defines Astrocytes' unified approach to data classification, PII handling, data residency, encryption, regulatory compliance, data lineage, and data loss prevention. It consolidates and extends the scattered governance features across the policy layer (`09-policy-layer.md`), lifecycle management (`18-memory-lifecycle.md`), access control (`19-access-control.md`), and event hooks (`20-event-hooks.md`).
+This document defines Astrocytes' unified approach to data classification, PII handling, data residency, encryption, regulatory compliance, data lineage, and data loss prevention. It consolidates and extends the scattered governance features across the policy layer (`policy-layer.md`), lifecycle management (`memory-lifecycle.md`), access control (`access-control.md`), and event hooks (`event-hooks.md`).
 
 This maps to **Principle 6 (Barrier maintenance)** - the blood-brain barrier is not just a wall, it is a **selective, actively maintained boundary** that classifies what crosses, enforces rules per-substance, and adapts to threats.
 
@@ -65,7 +65,7 @@ class DataClassification:
 
 ### 2.1 Detection taxonomy
 
-The PII barrier (introduced in `09-policy-layer.md` section 2.1) detects specific PII types:
+The PII barrier (introduced in `policy-layer.md` section 2.1) detects specific PII types:
 
 | PII type | Detection method | Examples |
 |---|---|---|
@@ -286,7 +286,7 @@ Encrypted fields are stored as opaque ciphertext in the provider. They can be de
 
 ### 5.1 Pre-built compliance configurations
 
-Like use-case profiles (`10-use-case-profiles.md`), compliance profiles configure governance policies for specific regulatory regimes:
+Like use-case profiles (`use-case-profiles.md`), compliance profiles configure governance policies for specific regulatory regimes:
 
 ```yaml
 governance:
@@ -468,8 +468,8 @@ memories = await brain.recall(
 ### 6.4 Lineage storage
 
 Lineage metadata is stored alongside memory metadata. It is:
-- Included in AMA exports (`15-memory-portability.md`)
-- Included in audit trail events (`18-memory-lifecycle.md`)
+- Included in AMA exports (`memory-portability.md`)
+- Included in audit trail events (`memory-lifecycle.md`)
 - Queryable via metadata filters on recall
 - Never deleted by TTL policies (lineage of deleted memories is retained in the audit log)
 
@@ -581,7 +581,7 @@ Key panels for a governance dashboard:
 
 ### 8.3 Governance audit events
 
-All governance actions are emitted as audit events (see `18-memory-lifecycle.md` section 5):
+All governance actions are emitted as audit events (see `memory-lifecycle.md` section 5):
 
 | Event | Description |
 |---|---|
@@ -699,11 +699,11 @@ governance:
 
 | Concern | Primary doc | How this doc extends it |
 |---|---|---|
-| PII scanning mechanism | `09-policy-layer.md` section 2.1 | Adds classification taxonomy, per-type actions, reversible redaction, DLP |
-| Use-case PII presets | `10-use-case-profiles.md` | Adds compliance profiles (GDPR, HIPAA, PDPA, CCPA, PCI) |
-| Compliance forget, legal hold | `18-memory-lifecycle.md` | Adds regulatory context, retention minimums/maximums, cross-border controls |
-| Access control | `19-access-control.md` | Adds classification-based access (restricted data requires explicit grant) |
-| Audit events | `20-event-hooks.md` | Adds governance-specific event types |
-| Memory export | `15-memory-portability.md` | Adds DLP controls on export (strip metadata, block restricted) |
-| Reflect synthesis | `11-built-in-pipeline.md` | Adds DLP scanning on reflect output |
-| Portable DTO constraints | `13-implementation-language-strategy.md` | DataClassification and DataLineage DTOs follow portable-type rules |
+| PII scanning mechanism | `policy-layer.md` section 2.1 | Adds classification taxonomy, per-type actions, reversible redaction, DLP |
+| Use-case PII presets | `use-case-profiles.md` | Adds compliance profiles (GDPR, HIPAA, PDPA, CCPA, PCI) |
+| Compliance forget, legal hold | `memory-lifecycle.md` | Adds regulatory context, retention minimums/maximums, cross-border controls |
+| Access control | `access-control.md` | Adds classification-based access (restricted data requires explicit grant) |
+| Audit events | `event-hooks.md` | Adds governance-specific event types |
+| Memory export | `memory-portability.md` | Adds DLP controls on export (strip metadata, block restricted) |
+| Reflect synthesis | `built-in-pipeline.md` | Adds DLP scanning on reflect output |
+| Portable DTO constraints | `implementation-language-strategy.md` | DataClassification and DataLineage DTOs follow portable-type rules |

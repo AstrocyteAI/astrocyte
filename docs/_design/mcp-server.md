@@ -164,7 +164,7 @@ The full Astrocytes policy layer applies to MCP tool calls:
 - **Token budgets**: `memory_recall` and `memory_reflect` results are budget-enforced
 - **Circuit breaker**: if the provider is down, tools return appropriate MCP errors
 - **OTel traces**: every MCP tool call generates spans for observability
-- **Access control**: MCP server can be configured with a specific access identity (see `19-access-control.md`). For mapping richer client identity from the host or combining with external PDPs, see `06-identity-and-external-policy.md`.
+- **Access control**: MCP server can be configured with a specific access identity (see `access-control.md`). For mapping richer client identity from the host or combining with external PDPs, see `identity-and-external-policy.md`.
 
 ---
 
@@ -199,4 +199,4 @@ Agent B (review)  ──┼── astrocytes-mcp (SSE, port 8080) ── Mystiqu
 Agent C (testing) ──┘
 ```
 
-Each agent has its own bank plus access to shared team banks (see `14-multi-bank-orchestration.md`).
+Each agent has its own bank plus access to shared team banks (see `multi-bank-orchestration.md`).

@@ -1,6 +1,6 @@
 """Parallel multi-strategy retrieval — runs concurrent searches across stores.
 
-Async (I/O-bound). See docs/11-built-in-pipeline.md section 3.
+Async (I/O-bound). See docs/_design/built-in-pipeline.md section 3.
 """
 
 from __future__ import annotations

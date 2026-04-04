@@ -2,7 +2,7 @@
 
 Every type here is FFI-safe: no Any, no callables, no generators.
 Fields use only: str, int, float, bool, None, list, dict, datetime, dataclass.
-See docs/13-implementation-language-strategy.md for constraints.
+See docs/_design/implementation-language-strategy.md for constraints.
 """
 
 from __future__ import annotations

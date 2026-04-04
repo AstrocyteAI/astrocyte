@@ -127,7 +127,7 @@ class HookEvent:
     trace_id: str | None                 # OTel trace ID for correlation
 ```
 
-Payloads must be portable (see `13-implementation-language-strategy.md`): only str, int, float, bool, None, list, dict. No callables or opaque Python objects in serialized event data.
+Payloads must be portable (see `implementation-language-strategy.md`): only str, int, float, bool, None, list, dict. No callables or opaque Python objects in serialized event data.
 
 ---
 
@@ -177,7 +177,7 @@ Some hooks are always active (not configurable):
 | Hook | Always fires | Destination |
 |---|---|---|
 | All events | OTel span events | OpenTelemetry (if enabled) |
-| Lifecycle events | Audit log | Audit trail (if enabled, see `18-memory-lifecycle.md`) |
+| Lifecycle events | Audit log | Audit trail (if enabled, see `memory-lifecycle.md`) |
 | Prometheus counters | Metrics | Prometheus (if enabled) |
 
 User-configured hooks add to these built-in hooks, they don't replace them.

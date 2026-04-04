@@ -2,7 +2,7 @@
 
 Agents don't have one memory - they have several. A support agent has personal context about the current user, shared team knowledge, and org-wide policies. Astrocytes orchestrates across these banks because it sits above the provider layer.
 
-For the core API and provider architecture, see `03-architecture-framework.md`.
+For the core API and provider architecture, see `architecture-framework.md`.
 
 ---
 
@@ -157,12 +157,12 @@ multi_bank:
 
 ## 5. Per-bank policy enforcement
 
-Each bank can have its own policy overrides (see `10-use-case-profiles.md`). Multi-bank orchestration respects per-bank policies:
+Each bank can have its own policy overrides (see `use-case-profiles.md`). Multi-bank orchestration respects per-bank policies:
 
 - **Rate limits**: applied per-bank, not aggregated. A cascade across 3 banks counts as 3 rate-limited operations.
 - **PII barriers**: applied to the query before it reaches any bank. Applied once, not per-bank.
 - **Token budgets**: the overall budget is split across banks (proportional to weight, or configurable).
-- **Access control**: the caller must have read access to every bank in the query (see `19-access-control.md`).
+- **Access control**: the caller must have read access to every bank in the query (see `access-control.md`).
 
 ---
 

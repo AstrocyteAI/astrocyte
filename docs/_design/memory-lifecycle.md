@@ -130,7 +130,7 @@ While under hold:
 
 ## 4. Consolidation lifecycle
 
-Consolidation (see `11-built-in-pipeline.md` section 5) creates observations from raw facts. The lifecycle integration:
+Consolidation (see `built-in-pipeline.md` section 5) creates observations from raw facts. The lifecycle integration:
 
 1. **Pre-consolidation**: raw facts are `Active`
 2. **Consolidation runs**: observations are created from clusters of related facts
@@ -183,8 +183,8 @@ class AuditEvent:
 ### 5.2 Audit storage
 
 Audit events are:
-- Emitted as **OTel span events** (see `09-policy-layer.md`)
-- Optionally written to an **audit log** (file, database, or external system via hooks - see `20-event-hooks.md`)
+- Emitted as **OTel span events** (see `policy-layer.md`)
+- Optionally written to an **audit log** (file, database, or external system via hooks - see `event-hooks.md`)
 - **Never stored in the memory provider itself** (the audit trail must survive provider changes)
 
 ```yaml

@@ -1,7 +1,7 @@
 """Observability policies — OTel spans, structured logging, metrics.
 
 OTel and Prometheus are optional dependencies. Gracefully degrade to no-op.
-See docs/09-policy-layer.md section 5.
+See docs/_design/policy-layer.md section 5.
 """
 
 from __future__ import annotations

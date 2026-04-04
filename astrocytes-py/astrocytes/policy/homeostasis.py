@@ -1,7 +1,7 @@
 """Homeostasis policies — rate limiting, token budgets, quotas.
 
 All functions are sync (Rust migration candidates).
-See docs/09-policy-layer.md section 1 and docs/13-implementation-language-strategy.md.
+See docs/_design/policy-layer.md section 1 and docs/_design/implementation-language-strategy.md.
 """
 
 from __future__ import annotations

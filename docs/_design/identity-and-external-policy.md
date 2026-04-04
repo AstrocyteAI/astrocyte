@@ -1,6 +1,6 @@
 # Identity integration and external access policy
 
-This document defines how Astrocytes **composes** with authentication (AuthN) and external authorization (AuthZ) systems **without** becoming an identity provider or coupling to any single vendor. For the default in-framework model (opaque principals + YAML grants), see `19-access-control.md`.
+This document defines how Astrocytes **composes** with authentication (AuthN) and external authorization (AuthZ) systems **without** becoming an identity provider or coupling to any single vendor. For the default in-framework model (opaque principals + YAML grants), see `access-control.md`.
 
 ---
 
@@ -29,7 +29,7 @@ Those systems remain **infrastructure**; Astrocytes consumes their **outputs** (
 
 ## 3. Authentication: from credential to principal
 
-Astrocytes continues to accept an **opaque `principal` string** (see `19-access-control.md` §1.1). **Authentication** is the step that runs **before** `AstrocyteContext` is built:
+Astrocytes continues to accept an **opaque `principal` string** (see `access-control.md` §1.1). **Authentication** is the step that runs **before** `AstrocyteContext` is built:
 
 ```
 HTTP request / MCP session / workload attestation
@@ -44,7 +44,7 @@ HTTP request / MCP session / workload attestation
 
 1. **Application code** - After your web framework’s auth dependency runs, set `principal` from `sub`, `email`, or an internal user ID.
 2. **Optional helper packages** - e.g. `astrocytes-identity-oidc` (hypothetical) that maps standard JWT claims to a stable principal format; still **your** tokens, **your** issuer validation. If you use **[Casdoor](https://casdoor.org/)** as IdP, the same pattern applies: validate OIDC access tokens from Casdoor (or rely on Casdoor’s application integration), then map `sub` / username / organization claims to `user:{id}` or `agent:{id}` principals.
-3. **MCP / agent hosts** - Map the host’s authenticated agent or user to a principal (see `16-mcp-server.md`); extend with `21` patterns when MCP exposes richer client identity.
+3. **MCP / agent hosts** - Map the host’s authenticated agent or user to a principal (see `mcp-server.md`); extend with `21` patterns when MCP exposes richer client identity.
 
 The core **trusts** the principal the same way it does today; integration work is **wiring**, not a second memory API.
 
@@ -62,7 +62,7 @@ For organizations that **centralize** authorization in a PDP (Policy Decision Po
 
 - **Input**: `principal`, `bank_id`, `permission` (`read` | `write` | `forget` | `admin`), and optional **context** (tenant id, request metadata, resource tags - implementation-defined).
 - **Output**: allow or deny (and optional reason string for audit).
-- **Placement**: Called at the **same enforcement point** as today’s access check - **after** rate limits / sanitization, **before** pipeline or engine (see `19-access-control.md` §3.1).
+- **Placement**: Called at the **same enforcement point** as today’s access check - **after** rate limits / sanitization, **before** pipeline or engine (see `access-control.md` §3.1).
 
 **Composition rule:** The SPI can **replace** or **chain with** config grants:
 
@@ -125,7 +125,7 @@ access_control:
 
 ## 6. Audit and observability
 
-External PDP decisions must still produce **audit events** compatible with `19-access-control.md` §6:
+External PDP decisions must still produce **audit events** compatible with `access-control.md` §6:
 
 - Include `policy_provider` name in structured fields.
 - Log **deny** with reason from PDP when available.
@@ -137,11 +137,11 @@ External PDP decisions must still produce **audit events** compatible with `19-a
 
 | Document | Topic |
 |---|---|
-| `19-access-control.md` | Principals, permissions, grants, enforcement order |
-| `03-architecture-framework.md` | Where identity/policy integration sits in the layer model |
-| `12-ecosystem-and-packaging.md` | Entry points and optional package naming |
-| `16-mcp-server.md` | MCP-scoped identity today; extend with §3 above |
-| `24-production-grade-http-service.md` | Reference HTTP service; AuthN/AuthZ checklist |
+| `access-control.md` | Principals, permissions, grants, enforcement order |
+| `architecture-framework.md` | Where identity/policy integration sits in the layer model |
+| `ecosystem-and-packaging.md` | Entry points and optional package naming |
+| `mcp-server.md` | MCP-scoped identity today; extend with §3 above |
+| `production-grade-http-service.md` | Reference HTTP service; AuthN/AuthZ checklist |
 
 ---
 
@@ -154,7 +154,7 @@ This section names **which folders** own **AuthZ wiring** in [`astrocytes-py`](.
 | Responsibility | Location |
 |----------------|----------|
 | **`AccessGrant`**, **`Astrocyte.set_access_grants()`**, **`_check_access()`** | **`astrocytes-py`** — core types and enforcement (`astrocytes/types.py`, `astrocytes/_astrocyte.py`). |
-| **Parsing grants from YAML** (e.g. top-level `access_grants`, or consolidating `banks.*.access` from `19-access-control.md` §2.1 into a flat list) | **`astrocytes-py`** — extend **`AstrocyteConfig`** / **`load_config`** / `_dict_to_config` in `astrocytes/config.py` so config loading produces a **`list[AccessGrant]`** (or a helper that builds it from config). |
+| **Parsing grants from YAML** (e.g. top-level `access_grants`, or consolidating `banks.*.access` from `access-control.md` §2.1 into a flat list) | **`astrocytes-py`** — extend **`AstrocyteConfig`** / **`load_config`** / `_dict_to_config` in `astrocytes/config.py` so config loading produces a **`list[AccessGrant]`** (or a helper that builds it from config). |
 | **Calling `set_access_grants()` at process startup** | **`astrocytes-services-py/astrocytes-rest`** — **`astrocytes_rest/brain.py`** (`build_astrocyte()`): after **`Astrocyte(config)`** and **`set_pipeline(...)`**, apply grants from the loaded config. |
 | **Trusted `principal` on each HTTP request** (production) | **`astrocytes-rest`** — FastAPI dependencies / middleware: map verified JWT, API key, mTLS identity to **`AstrocyteContext`**, not an unauthenticated client header alone. |
 

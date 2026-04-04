@@ -2,9 +2,9 @@
 
 This document defines the layer boundaries, composition model, and relationship to adjacent systems (memory engines, LLM gateways, storage backends, optional outbound HTTP/credential gateways, **authentication (AuthN)** and **authorization (AuthZ)** integration) for the Astrocytes open-source framework.
 
-**AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); Astrocytes consumes a **principal** string. Deciding **what** that principal may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable grants and optional external policy engines - see section 4.5, `19-access-control.md`, and `06-identity-and-external-policy.md`.
+**AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); Astrocytes consumes a **principal** string. Deciding **what** that principal may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable grants and optional external policy engines - see section 4.5, `access-control.md`, and `identity-and-external-policy.md`.
 
-For the neuroscience foundations, see `01-neuroscience-astrocytes.md`. For the design principles these layers implement, see `02-design-principles.md`.
+For the neuroscience foundations, see `neuroscience-astrocytes.md`. For the design principles these layers implement, see `design-principles.md`.
 
 ---
 
@@ -15,15 +15,17 @@ Astrocytes is an **open-source memory framework** that sits between AI agents an
 - A **stable API** for agents to store, retrieve, and synthesize memories.
 - A **built-in intelligence pipeline** (embedding, entity extraction, multi-strategy retrieval, fusion, reranking) so users get a fully functional memory system with just Astrocytes + any storage backend.
 - A **pluggable provider interface** at two tiers: simple **storage adapters** (vector/graph DBs) and full **memory engine providers** (Mystique, Mem0, Zep) that bring their own pipeline.
-- An **optional outbound transport plugin surface** for credential gateways and enterprise proxies (HTTP/TLS/proxy configuration shared by LLM adapters and other outbound HTTP) - orthogonal to memory tiers; see section 4.4 and `05-outbound-transport.md`.
-- **AuthN / AuthZ integration:** **Authentication (AuthN)** - external IdPs and middleware map credentials to an **opaque principal**; Astrocytes does not validate passwords or issue tokens. **Authorization (AuthZ)** - per-bank `read` / `write` / `forget` / `admin` checks run in the core (`19-access-control.md`); an optional **AccessPolicyProvider** can delegate allow/deny to enterprise PDPs (OPA, Cerbos, Casbin, …) - see section 4.5 and `06-identity-and-external-policy.md`.
+- An **optional outbound transport plugin surface** for credential gateways and enterprise proxies (HTTP/TLS/proxy configuration shared by LLM adapters and other outbound HTTP) - orthogonal to memory tiers; see section 4.4 and `outbound-transport.md`.
+- **AuthN / AuthZ integration:** **Authentication (AuthN)** - external IdPs and middleware map credentials to an **opaque principal**; Astrocytes does not validate passwords or issue tokens. **Authorization (AuthZ)** - per-bank `read` / `write` / `forget` / `admin` checks run in the core (`access-control.md`); an optional **AccessPolicyProvider** can delegate allow/deny to enterprise PDPs (OPA, Cerbos, Casbin, …) - see section 4.5 and `identity-and-external-policy.md`.
 - A **policy layer** that enforces neuroscience-inspired governance (homeostasis, barriers, pruning, observability) regardless of which backend is plugged in.
 
 Astrocytes is **not** an LLM gateway. It does not route completion requests, track LLM spend, or normalize chat formats. That is the job of tools like LiteLLM.
 
-Astrocytes is **not** an agent runtime. It does **not** define agent orchestration: graphs, steps, tool loops, checkpoints, scheduling, or multi-agent routing. Those concerns belong to **agent frameworks and your application** (LangGraph, CrewAI, Pydantic AI, custom orchestrators, …). The framework contract is **memory**, **governance**, and **provider SPIs**; thin adapters connect frameworks to that API - see `17-agent-framework-middleware.md`.
+Astrocytes is **not** an agent runtime. It does **not** define agent orchestration: graphs, steps, tool loops, checkpoints, scheduling, or multi-agent routing. Those concerns belong to **agent frameworks and your application** (LangGraph, CrewAI, Pydantic AI, custom orchestrators, …). The framework contract is **memory**, **governance**, and **provider SPIs**; thin adapters connect frameworks to that API - see `agent-framework-middleware.md`.
 
-**Implementation language:** Astrocytes ships as **two parallel implementations** in this repository, intended as **drop-in replacements** at the framework contract: **`astrocytes-py/`** (Python, PyPI package `astrocytes`) and **`astrocytes-rs/`** (Rust). Portable DTOs, config, and SPI versioning keep them aligned. See `13-implementation-language-strategy.md` for constraints and packaging.
+**Agent cards and catalogs:** Many products describe agents with **agent cards** or registry metadata. Astrocytes does not execute those cards or own the catalog, but it **does** aim to understand them **at the memory boundary**: a small, explicit **mapping** from card identity to **principal + memory bank** (and optional defaults), declared in config and used by integrations, so memory calls stay consistent without one-off logic in every app. See `agent-framework-middleware.md`.
+
+**Implementation language:** Astrocytes ships as **two parallel implementations** in this repository, intended as **drop-in replacements** at the framework contract: **`astrocytes-py/`** (Python, PyPI package `astrocytes`) and **`astrocytes-rs/`** (Rust). Portable DTOs, config, and SPI versioning keep them aligned. See `implementation-language-strategy.md` for constraints and packaging.
 
 Astrocytes is the **tripartite synapse** (Principle 2): an active mediator at the exchange between agents and memory, responsible for both the intelligence pipeline and continuous environmental stewardship.
 
@@ -129,7 +131,7 @@ Low-level adapters for **retrieval backends** (see §2 Tier 1 table): dense vect
 
 Users can mix and match: one vector store + one graph store + optional document store. The pipeline coordinates across them for **hybrid retrieval**.
 
-Detailed in `04-provider-spi.md`.
+Detailed in `provider-spi.md`.
 
 ### 4.2 Memory Engine Provider SPI (Tier 2)
 
@@ -140,7 +142,7 @@ High-level interface for full memory engines. The engine handles its own storage
 
 When a memory engine provider is active, the Retrieval SPI and built-in pipeline are not used.
 
-Detailed in `04-provider-spi.md`.
+Detailed in `provider-spi.md`.
 
 ### 4.3 LLM Provider SPI
 
@@ -157,19 +159,19 @@ This is **not** an LLM gateway. It is a narrow internal dependency with two meth
 - **Self-hosted**: Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, TGI) via the OpenAI adapter with custom `api_base`
 - **Local embeddings**: Built-in sentence-transformers support (no API cost for embeddings)
 
-Completion and embedding providers can be configured **separately** - e.g., Claude for reasoning + local models for embeddings. See `04-provider-spi.md` section 4 for the full LLM SPI specification and gateway integration patterns.
+Completion and embedding providers can be configured **separately** - e.g., Claude for reasoning + local models for embeddings. See `provider-spi.md` section 4 for the full LLM SPI specification and gateway integration patterns.
 
 ### 4.4 Outbound Transport SPI (optional)
 
 Credential gateways (OneCLI-class products), corporate HTTP proxies, and TLS inspection stacks need to control **how outbound HTTP leaves the process** - proxies, custom CAs, optional gateway headers. That is **not** the job of the LLM Provider SPI (which defines `complete()` / `embed()`), and **not** a memory tier.
 
-Astrocytes exposes an **optional** `OutboundTransportProvider` interface applied at a **single choke point** when building HTTP clients for LLM adapters and other outbound HTTP. Users who only need standard environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, trust bundles) require **no** plugin. Full specification: `05-outbound-transport.md` and `04-provider-spi.md` section 5.
+Astrocytes exposes an **optional** `OutboundTransportProvider` interface applied at a **single choke point** when building HTTP clients for LLM adapters and other outbound HTTP. Users who only need standard environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, trust bundles) require **no** plugin. Full specification: `outbound-transport.md` and `provider-spi.md` section 5.
 
 ### 4.5 Authentication (AuthN) and authorization (AuthZ)
 
-**Authentication (AuthN)** - Astrocytes is **not** an identity provider. Proving identity (OIDC, SAML, API keys, workload identity, sessions) completes **outside** the framework. The application passes an **opaque `principal`** on `AstrocyteContext` after your middleware or gateway validates credentials (`19-access-control.md` §7). Open-source IAMs such as **[Casdoor](https://casdoor.org/)** fit here: you run Casdoor, validate tokens, map claims to `user:…` / `agent:…` strings.
+**Authentication (AuthN)** - Astrocytes is **not** an identity provider. Proving identity (OIDC, SAML, API keys, workload identity, sessions) completes **outside** the framework. The application passes an **opaque `principal`** on `AstrocyteContext` after your middleware or gateway validates credentials (`access-control.md` §7). Open-source IAMs such as **[Casdoor](https://casdoor.org/)** fit here: you run Casdoor, validate tokens, map claims to `user:…` / `agent:…` strings.
 
-**Authorization (AuthZ)** - Who may **read / write / forget / administer** which **memory bank** is decided by Astrocytes: default **declarative grants** in config, enforced before pipeline or engine calls. Teams may add an optional **`AccessPolicyProvider`** so allow/deny is delegated to remote PDPs (OPA, Cerbos, …) or **in-process [Casbin](https://casbin.org/)** via **`astrocytes-access-policy-*`** packages; the framework still owns **enforcement order** and **audit events**. Full integration patterns: `06-identity-and-external-policy.md`.
+**Authorization (AuthZ)** - Who may **read / write / forget / administer** which **memory bank** is decided by Astrocytes: default **declarative grants** in config, enforced before pipeline or engine calls. Teams may add an optional **`AccessPolicyProvider`** so allow/deny is delegated to remote PDPs (OPA, Cerbos, …) or **in-process [Casbin](https://casbin.org/)** via **`astrocytes-access-policy-*`** packages; the framework still owns **enforcement order** and **audit events**. Full integration patterns: `identity-and-external-policy.md`.
 
 ---
 
@@ -249,15 +251,15 @@ flowchart LR
   AST --> OT --> UP
 ```
 
-Full specification for outbound credential gateways: `05-outbound-transport.md`.
+Full specification for outbound credential gateways: `outbound-transport.md`.
 
 Skip **API gateway** when the agent embeds Astrocytes **in-process** (no public HTTP edge). **API gateway** (inbound, your API) is unrelated to **LiteLLM** (outbound to model APIs).
 
 **Key distinction**: LLM gateways are **stateless pass-through with policy**. Astrocytes is **stateful intelligence with policy**. It owns the memory pipeline (or delegates it to a memory engine provider) and enforces governance. The gateway pattern does not apply - the tripartite synapse pattern does.
 
-**Credential gateways vs. LLM gateways:** Products that inject API keys into outbound HTTP (OneCLI-class) are **outbound transport** concerns - they sit **under** whatever SDK the LLM adapter uses. They do **not** replace LiteLLM or direct provider adapters; see `05-outbound-transport.md`.
+**Credential gateways vs. LLM gateways:** Products that inject API keys into outbound HTTP (OneCLI-class) are **outbound transport** concerns - they sit **under** whatever SDK the LLM adapter uses. They do **not** replace LiteLLM or direct provider adapters; see `outbound-transport.md`.
 
-**LLM gateways vs. multimodal / video / voice APIs:** LiteLLM and OpenRouter target **text (and embedding) model** routing. **Conversational video** (Tavus, HeyGen, D-ID, …) and **voice** (ElevenLabs, …) products are **presentation or modality layers** - integrate them **next to** Astrocytes in your application, not as drop-in `LLMProvider` implementations unless they expose a **compatible chat/embedding HTTP API** you configure explicitly. See `07-presentation-layer-and-multimodal-services.md`.
+**LLM gateways vs. multimodal / video / voice APIs:** LiteLLM and OpenRouter target **text (and embedding) model** routing. **Conversational video** (Tavus, HeyGen, D-ID, …) and **voice** (ElevenLabs, …) products are **presentation or modality layers** - integrate them **next to** Astrocytes in your application, not as drop-in `LLMProvider` implementations unless they expose a **compatible chat/embedding HTTP API** you configure explicitly. See `presentation-layer-and-multimodal-services.md`.
 
 ---
 
@@ -346,20 +348,20 @@ Beyond intelligence and governance, the framework provides capabilities that no 
 
 | Capability | Value | Documentation |
 |---|---|---|
-| Multi-bank orchestration | Query across personal + team + org banks with cascade/parallel strategies | `14-multi-bank-orchestration.md` |
-| Memory portability | Export/import memories between providers; break vendor lock-in | `15-memory-portability.md` |
-| MCP server | Any MCP-capable agent gets memory without code integration | `16-mcp-server.md` |
-| Agent framework middleware | One integration per framework, works with every provider (N+M, not NxM) | `17-agent-framework-middleware.md` |
-| Memory lifecycle | TTL policies, compliance purge (GDPR/PDPA), legal hold, archival, audit trail | `18-memory-lifecycle.md` |
-| AuthZ (access control) | Per-bank read/write/forget/admin for principals; enforced in core | `19-access-control.md` |
-| Event hooks | Webhooks and alerts for retain, PII detection, circuit breaker, lifecycle events | `20-event-hooks.md` |
-| Memory analytics | Bank health scores, noisy agent detection, utilization reports, quality trends | `21-memory-analytics.md` |
-| Evaluation | Benchmark suites, provider comparison, regression detection | `22-evaluation.md` |
-| Data governance | Classification, PII taxonomy, residency, encryption, DLP, compliance profiles (GDPR/HIPAA/PDPA) | `23-data-governance.md` |
-| Outbound transport | Optional plugins for credential gateways and enterprise HTTP/TLS; env-only path without plugins | `05-outbound-transport.md` |
-| AuthN wiring + external AuthZ | Map IdP claims to principals; optional PDP/Casbin adapters beyond config grants | `06-identity-and-external-policy.md` |
-| Presentation / multimodal (non-LLM API) | How Tavus-class video, voice (e.g. ElevenLabs), and related APIs compose **beside** the LLM SPI | `07-presentation-layer-and-multimodal-services.md` |
-| Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for LiteLLM/OpenRouter-class gateways | `08-multimodal-llm-spi.md` |
+| Multi-bank orchestration | Query across personal + team + org banks with cascade/parallel strategies | `multi-bank-orchestration.md` |
+| Memory portability | Export/import memories between providers; break vendor lock-in | `memory-portability.md` |
+| MCP server | Any MCP-capable agent gets memory without code integration | `mcp-server.md` |
+| Agent framework middleware | One integration per framework, works with every provider (N+M, not NxM) | `agent-framework-middleware.md` |
+| Memory lifecycle | TTL policies, compliance purge (GDPR/PDPA), legal hold, archival, audit trail | `memory-lifecycle.md` |
+| AuthZ (access control) | Per-bank read/write/forget/admin for principals; enforced in core | `access-control.md` |
+| Event hooks | Webhooks and alerts for retain, PII detection, circuit breaker, lifecycle events | `event-hooks.md` |
+| Memory analytics | Bank health scores, noisy agent detection, utilization reports, quality trends | `memory-analytics.md` |
+| Evaluation | Benchmark suites, provider comparison, regression detection | `evaluation.md` |
+| Data governance | Classification, PII taxonomy, residency, encryption, DLP, compliance profiles (GDPR/HIPAA/PDPA) | `data-governance.md` |
+| Outbound transport | Optional plugins for credential gateways and enterprise HTTP/TLS; env-only path without plugins | `outbound-transport.md` |
+| AuthN wiring + external AuthZ | Map IdP claims to principals; optional PDP/Casbin adapters beyond config grants | `identity-and-external-policy.md` |
+| Presentation / multimodal (non-LLM API) | How Tavus-class video, voice (e.g. ElevenLabs), and related APIs compose **beside** the LLM SPI | `presentation-layer-and-multimodal-services.md` |
+| Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for LiteLLM/OpenRouter-class gateways | `multimodal-llm-spi.md` |
 
 These capabilities exist at the **framework layer** - they apply regardless of which memory provider is active. They are a major reason to use Astrocytes rather than calling a provider directly.
 
@@ -399,7 +401,7 @@ These capabilities exist at the **framework layer** - they apply regardless of w
 | **Identity helpers (optional)** | | |
 | Example: web framework → principal wiring | `astrocytes-identity-{framework}` | Apache 2.0 |
 
-Community memory and LLM providers follow the naming convention `astrocytes-{provider}`. Outbound transport plugins use **`astrocytes-transport-{name}`** and the `astrocytes.outbound_transports` entry point group (see `12-ecosystem-and-packaging.md` and `05-outbound-transport.md`). External access policy plugins use **`astrocytes-access-policy-{name}`** and `astrocytes.access_policies` (see `06-identity-and-external-policy.md`).
+Community memory and LLM providers follow the naming convention `astrocytes-{provider}`. Outbound transport plugins use **`astrocytes-transport-{name}`** and the `astrocytes.outbound_transports` entry point group (see `ecosystem-and-packaging.md` and `outbound-transport.md`). External access policy plugins use **`astrocytes-access-policy-{name}`** and `astrocytes.access_policies` (see `identity-and-external-policy.md`).
 
 ---
 
@@ -433,7 +435,7 @@ The free tier is **good enough** to build real products. The premium tier is **m
 
 ## 10. Design principle traceability
 
-Each framework layer maps to specific neuroscience principles from `02-design-principles.md`:
+Each framework layer maps to specific neuroscience principles from `design-principles.md`:
 
 | Framework Layer | Principles Applied |
 |---|---|

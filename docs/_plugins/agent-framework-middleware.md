@@ -8,7 +8,16 @@ Without Astrocytes, each agent framework needs integrations with each memory pro
 
 Astrocytes **does not** specify how an agent is structured (workflow graph, tools, checkpoints, retries, human-in-the-loop, multi-agent handoff). That is the job of **LangGraph**, **CrewAI**, **Pydantic AI**, **AG2**, the **OpenAI / Claude agent SDKs**, or **your own app**. This document only describes **thin mappers** from those frameworks’ memory hooks to `Astrocyte.retain()` / `recall()` / `reflect()` / … through the policy layer.
 
-**Agent cards** (or any vendor-specific **agent catalog** / registry UI) are **not** first-class objects in the Astrocytes framework. Nothing is “registered with Astrocytes” except what config and runtime already express: **principals** (AuthN), **memory bank IDs**, **provider tiers**, and **SPI packages** (`04-provider-spi.md`, `12-ecosystem-and-packaging.md`, `19-access-control.md`). If a product uses agent cards, map each card to **identity + bank selection** in **your** integration layer; Astrocytes stays agnostic to catalog metadata.
+**Agent cards** (and vendor **agent catalogs** / registry UIs) describe agents—capabilities, metadata, presentation—not how orchestration runs. Astrocytes still **does not** implement an agent runtime or a catalog service; every retain/recall path is keyed by the same runtime facts as today: **principal** (from your AuthN story), **memory bank id**, **provider tier**, and **SPI** config (`provider-spi.md`, `ecosystem-and-packaging.md`, `access-control.md`).
+
+What *is* in scope is making **card → memory context** boring and portable:
+
+- **Declarative mapping** — e.g. in `astrocytes.yaml` (or an included document): stable **card id** or URI → `{ principal, bank_id, … }`, with shared defaults where many cards reuse the same bank or principal pattern.
+- **Resolver helpers** in integrations so a host or framework can pass the **active card id** and obtain **principal + bank** before calling `Astrocyte`, without every product reinventing the same glue.
+
+Card payloads can follow emerging standards (for example A2A-style agent metadata) or vendor JSON; only fields needed for **identity + bank selection** need to be understood at the mapper—everything else remains opaque to the core.
+
+**Summary:** Nothing new is “stored inside the engine” as a parallel agent model. Agent cards are **input** to the existing contract via mapping, so operators get one obvious place to connect catalog identity to Astrocytes’ principals and banks.
 
 ---
 

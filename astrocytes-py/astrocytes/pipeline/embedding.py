@@ -1,6 +1,6 @@
 """Embedding generation — calls LLM Provider SPI.
 
-Async (I/O-bound). See docs/11-built-in-pipeline.md section 2.
+Async (I/O-bound). See docs/_design/built-in-pipeline.md section 2.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 # Outbound transport plugins (credential gateways)
 
-This document defines the **optional, cross-cutting** integration surface for tools that sit **between Astrocytes and the network** - for example HTTP(S) proxies that inject API credentials, corporate TLS inspection CAs, or “secret gateway” products (OneCLI-class solutions). For how this fits next to memory and LLM providers, see `03-architecture-framework.md`. For the protocol sketch in the SPI doc, see `04-provider-spi.md` section 5.
+This document defines the **optional, cross-cutting** integration surface for tools that sit **between Astrocytes and the network** - for example HTTP(S) proxies that inject API credentials, corporate TLS inspection CAs, or “secret gateway” products (OneCLI-class solutions). For how this fits next to memory and LLM providers, see `architecture-framework.md`. For the protocol sketch in the SPI doc, see `provider-spi.md` section 5.
 
 ---
 
@@ -90,7 +90,7 @@ When `outbound_transport` is absent, the core relies on **standard library / htt
 onecli = "astrocytes_transport_onecli:OneCLIOutboundTransport"
 ```
 
-Community transports follow the same pattern as other Astrocytes plugins (see `12-ecosystem-and-packaging.md`).
+Community transports follow the same pattern as other Astrocytes plugins (see `ecosystem-and-packaging.md`).
 
 ---
 
@@ -110,4 +110,4 @@ Community transports follow the same pattern as other Astrocytes plugins (see `1
 | **LLM Provider SPI** | Semantic LLM access (`complete` / `embed`) |
 | **Retrieval / Memory Engine SPIs** | Retrieval adapters and full memory engines |
 
-This keeps credential gateways **pluggable** without conflating them with memory tiers or the LLM gateway role that Astrocytes explicitly does not take (`03-architecture-framework.md`).
+This keeps credential gateways **pluggable** without conflating them with memory tiers or the LLM gateway role that Astrocytes explicitly does not take (`architecture-framework.md`).

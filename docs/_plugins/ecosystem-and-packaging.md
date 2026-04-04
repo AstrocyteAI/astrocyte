@@ -1,6 +1,6 @@
 # Ecosystem, packaging, and open-core model
 
-This document defines how Astrocytes is distributed, how providers plug in at both tiers, how optional outbound transport and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier provider model, see `03-architecture-framework.md`. For SPI definitions, see `04-provider-spi.md`. For credential gateways and proxy wiring, see `05-outbound-transport.md`. For identity wiring and external PDP integration, see `06-identity-and-external-policy.md`.
+This document defines how Astrocytes is distributed, how providers plug in at both tiers, how optional outbound transport and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier provider model, see `architecture-framework.md`. For SPI definitions, see `provider-spi.md`. For credential gateways and proxy wiring, see `outbound-transport.md`. For identity wiring and external PDP integration, see `identity-and-external-policy.md`.
 
 ---
 
@@ -152,7 +152,7 @@ astrocytes-anthropic/                  # Direct Anthropic adapter
 ├── pyproject.toml
 ```
 
-Note: AWS Bedrock, Azure OpenAI, and Google Vertex AI are accessed via `astrocytes-litellm` (which supports them natively) or via `astrocytes-openai` with a custom `api_base` for OpenAI-compatible endpoints. Self-hosted models (Ollama, vLLM, LM Studio) also work through either adapter. See `04-provider-spi.md` section 4.6-4.7 for configuration details.
+Note: AWS Bedrock, Azure OpenAI, and Google Vertex AI are accessed via `astrocytes-litellm` (which supports them natively) or via `astrocytes-openai` with a custom `api_base` for OpenAI-compatible endpoints. Self-hosted models (Ollama, vLLM, LM Studio) also work through either adapter. See `provider-spi.md` section 4.6-4.7 for configuration details.
 
 ### 2.5 Outbound transport plugins
 
@@ -163,7 +163,7 @@ astrocytes-transport-onecli/           # Example: OneCLI-oriented HTTP/proxy wir
 ├── pyproject.toml
 ```
 
-Naming: **`astrocytes-transport-{name}`** - distinct from memory providers (`astrocytes-pgvector`, `astrocytes-mem0`) so packages are recognizable as **network path** plugins, not storage or engines. See `05-outbound-transport.md`.
+Naming: **`astrocytes-transport-{name}`** - distinct from memory providers (`astrocytes-pgvector`, `astrocytes-mem0`) so packages are recognizable as **network path** plugins, not storage or engines. See `outbound-transport.md`.
 
 ### 2.6 Access policy plugins (external PDP, optional)
 
@@ -174,13 +174,13 @@ astrocytes-access-policy-opa/          # Example: OPA REST adapter
 ├── pyproject.toml
 ```
 
-Naming: **`astrocytes-access-policy-{name}`**. These are **not** memory providers - they answer allow/deny for memory permissions at the framework boundary. See `06-identity-and-external-policy.md`.
+Naming: **`astrocytes-access-policy-{name}`**. These are **not** memory providers - they answer allow/deny for memory permissions at the framework boundary. See `identity-and-external-policy.md`.
 
 ---
 
 ## 3. Plugin discovery via entry points
 
-Providers register using Python's standard entry point mechanism (`importlib.metadata`). **Six** entry point groups cover memory/LLM providers plus **optional** outbound transport and **optional** access policy providers:
+Providers register using Python's standard entry point mechanism (`importlib.metadata`). **Six** groups are resolved today by `astrocytes-py` discovery: `vector_stores`, `graph_stores`, `document_stores`, `engine_providers`, `llm_providers`, `outbound_transports`. A **seventh** group, `astrocytes.access_policies`, is specified in §3.5 for external PDP packages but is **not** in `ENTRY_POINT_GROUPS` or YAML resolution yet (see §3.8).
 
 ### 3.1 Tier 1: Retrieval providers
 
@@ -235,13 +235,15 @@ litellm = "astrocytes_litellm:LiteLLMProvider"
 onecli = "astrocytes_transport_onecli:OneCLIOutboundTransport"
 ```
 
-### 3.5 Access policy providers (optional)
+### 3.5 Access policy providers (optional, spec)
 
 ```toml
 # astrocytes-access-policy-opa/pyproject.toml
 [project.entry-points."astrocytes.access_policies"]
 opa = "astrocytes_access_policy_opa:OPAAccessPolicyProvider"
 ```
+
+**Today:** core config uses `access_control.enabled` / `default_policy` and **static access grants** under `banks.<id>.access` (see `production-grade-http-service.md`). The `astrocytes.access_policies` entry point group is the intended future hook for an external PDP; it is not yet listed in `ENTRY_POINT_GROUPS` or loaded from YAML.
 
 ### 3.6 Resolution in config
 
@@ -262,12 +264,22 @@ outbound_transport:
   config:
     gateway_url: http://localhost:10255
 
-# Optional - external PDP for access (see 19-access-control.md, 06-identity-and-external-policy.md)
+# Access control (implemented today — see [production-grade HTTP service](../_end-user/production-grade-http-service.md))
 access_control:
   enabled: true
-  policy_provider: opa           # → astrocytes.access_policies:opa
-  policy_provider_config:
-    base_url: http://localhost:8181
+  default_policy: owner_only
+
+# Optional per-bank grants (when access_control.enabled)
+# banks:
+#   my-bank:
+#     access:
+#       - principal: "team:analytics"
+#         grants: [recall]
+
+# Future — external PDP via astrocytes.access_policies (not in core discovery yet)
+# access_control:
+#   policy_provider: opa
+#   policy_provider_config: { base_url: http://localhost:8181 }
 ```
 
 Direct import paths also work for unregistered providers:
@@ -278,28 +290,26 @@ vector_store: mycompany.stores.custom:CustomVectorStore
 
 ### 3.7 Discovery in code
 
+Discovery lives in `astrocytes._discovery` (used by the reference service and tests). It returns **classes** registered under the groups in §3.1–3.4 (not `astrocytes.access_policies` until that group is added to discovery).
+
 ```python
-from astrocytes import Astrocyte
+from astrocytes._discovery import available_providers, discover_entry_points
 
-# Discover all installed providers by type
-Astrocyte.available_vector_stores()
-# → {"pgvector": <class PgVectorStore>, "qdrant": <class QdrantVectorStore>, ...}
+# All non-empty groups: {"vector_stores": {...}, "engine_providers": {...}, ...}
+available_providers()
 
-Astrocyte.available_graph_stores()
-# → {"neo4j": <class Neo4jGraphStore>, "memgraph": <class MemgraphGraphStore>, ...}
-
-Astrocyte.available_engine_providers()
-# → {"mystique": <class MystiqueProvider>, "mem0": <class Mem0Provider>, ...}
-
-Astrocyte.available_llm_providers()
-# → {"litellm": <class LiteLLMProvider>, "openai": <class OpenAIProvider>, ...}
-
-Astrocyte.available_outbound_transports()
-# → {"onecli": <class OneCLIOutboundTransport>, ...}
-
-Astrocyte.available_access_policies()
-# → {"opa": <class OPAAccessPolicyProvider>, ...}
+# Single group, same shape as YAML short names (e.g. Tier-2 `provider:` keys)
+discover_entry_points("engine_providers")
+# → {"mystique": <class MystiqueProvider>, ...}
 ```
+
+### 3.8 Reference `astrocytes-rest` vs embedding Astrocyte
+
+**Plugins and config:** Contributors ship packages with `pyproject.toml` entry points (§3.1–3.4). §3.6 shows how deployers reference those plugins in YAML (short name or `module:Class`). Discovery helpers live in `astrocytes._discovery`.
+
+**Important:** `Astrocyte.from_config(path)` loads **`AstrocyteConfig` only** — it does not instantiate vector stores, LLMs, or Tier‑2 engines. Bootstrap code must call `resolve_provider`, construct providers with `provider_config`, and attach them via `set_pipeline` and/or `set_engine_provider`. The reference HTTP app (`astrocytes-services-py`) implements **Tier 1** wiring from YAML; **Tier‑2 / engine wiring from the same config** there is optional work — see `wiring.py` / `brain.py` for what is enabled today.
+
+**HTTP extensions (auth, extra routers):** there are **no** published `astrocytes.rest.*` entry point groups yet. Identity is handled **in-process** (env-driven auth modes in the REST package). For custom auth or routes, embed `astrocyte` in your own FastAPI/ASGI app today; a narrow plugin surface for `astrocytes-rest` (e.g. optional router and auth factory entry points) is planned so third parties do not have to fork the reference app.
 
 ---
 
@@ -510,7 +520,7 @@ The core supports providers targeting the current and previous SPI version. Brea
 
 DTOs use `dataclass` with default values for all optional fields. New fields are always added as optional with defaults, so existing providers continue to work.
 
-**Portable DTO constraint:** All DTOs must use only serializable, cross-implementation types (str, int, float, bool, None, list, dict, datetime, dataclass). No `Any`, no callables, no Python-specific constructs in portable contract fields. This keeps Python and Rust implementations aligned. See `13-implementation-language-strategy.md` for the full design checklist.
+**Portable DTO constraint:** All DTOs must use only serializable, cross-implementation types (str, int, float, bool, None, list, dict, datetime, dataclass). No `Any`, no callables, no Python-specific constructs in portable contract fields. This keeps Python and Rust implementations aligned. See `implementation-language-strategy.md` for the full design checklist.
 
 ### 5.3 Compatibility matrix
 

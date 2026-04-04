@@ -1,6 +1,6 @@
 # Memory analytics
 
-The observability layer (see `09-policy-layer.md`) captures per-operation metrics and traces. Memory analytics builds on this to provide **system-level health assessment** - understanding whether memory is helping agents or just accumulating noise.
+The observability layer (see `policy-layer.md`) captures per-operation metrics and traces. Memory analytics builds on this to provide **system-level health assessment** - understanding whether memory is helping agents or just accumulating noise.
 
 This maps to **Principle 9 (Observable state)** taken to its full conclusion: not just tracing operations, but understanding the health of the memory system as a whole.
 
@@ -79,7 +79,7 @@ analytics:
     enabled: true
     action: warn                         # "warn" | "throttle" | "pause"
     throttle_to_percent: 10              # If action=throttle, allow 10% of retains through
-    alert_hook: on_noisy_agent_detected  # Trigger event hook (see 20-event-hooks.md)
+    alert_hook: on_noisy_agent_detected  # Trigger event hook (see event-hooks.md)
 ```
 
 ---
@@ -150,7 +150,7 @@ class QualityDataPoint:
 
 ## 4. Prometheus metrics (analytics-specific)
 
-In addition to the per-operation metrics in `09-policy-layer.md`, analytics exports:
+In addition to the per-operation metrics in `policy-layer.md`, analytics exports:
 
 | Metric | Type | Labels |
 |---|---|---|

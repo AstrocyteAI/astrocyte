@@ -1,6 +1,6 @@
 """Pipeline orchestrator — coordinates Tier 1 retain/recall/reflect flows.
 
-Async (coordinates I/O stages). See docs/11-built-in-pipeline.md.
+Async (coordinates I/O stages). See docs/_design/built-in-pipeline.md.
 """
 
 from __future__ import annotations

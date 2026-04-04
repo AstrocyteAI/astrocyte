@@ -4,7 +4,7 @@ Astrocytes enforces who can read, write, reflect, and administer each memory ban
 
 This maps to **Principle 6 (Barrier maintenance)** - controlling what crosses boundaries, applied to identity and authorization, not just content validation.
 
-**External IdPs and policy engines:** To plug in OIDC/SAML/API-key flows and optional enterprise PDPs (OPA, Cerbos, etc.) without coupling the core to vendors, see **`06-identity-and-external-policy.md`**. For **which packages** implement grants vs PDP adapters vs the reference REST wiring in this repository, see **`06-identity-and-external-policy.md` §8**.
+**External IdPs and policy engines:** To plug in OIDC/SAML/API-key flows and optional enterprise PDPs (OPA, Cerbos, etc.) without coupling the core to vendors, see **`identity-and-external-policy.md`**. For **which packages** implement grants vs PDP adapters vs the reference REST wiring in this repository, see **`identity-and-external-policy.md` §8**.
 
 ---
 
@@ -105,7 +105,7 @@ access_control:
 
 ### 2.3 Bank templates with access
 
-Bank templates (see `14-multi-bank-orchestration.md`) can define access patterns:
+Bank templates (see `multi-bank-orchestration.md`) can define access patterns:
 
 ```yaml
 bank_templates:
@@ -144,7 +144,7 @@ caller → brain.recall(query, bank_id, context)
 
 ### 3.2 Multi-bank access
 
-For multi-bank operations (see `14-multi-bank-orchestration.md`), the caller must have appropriate permissions on **every** bank in the query:
+For multi-bank operations (see `multi-bank-orchestration.md`), the caller must have appropriate permissions on **every** bank in the query:
 
 ```python
 # This checks "read" on all three banks
@@ -158,7 +158,7 @@ hits = await brain.recall(
 
 ### 3.3 MCP server context
 
-The MCP server (see `16-mcp-server.md`) derives the principal from its configuration:
+The MCP server (see `mcp-server.md`) derives the principal from its configuration:
 
 ```yaml
 mcp:
@@ -219,7 +219,7 @@ All access control decisions are logged:
 - **Denied access**: logged as `access.denied` audit event with principal, bank, and permission
 - **Grant/revoke changes**: logged as `access.grant_changed` audit event
 
-These events flow through the standard audit trail (see `18-memory-lifecycle.md`) and event hooks (see `20-event-hooks.md`).
+These events flow through the standard audit trail (see `memory-lifecycle.md`) and event hooks (see `event-hooks.md`).
 
 ---
 
@@ -233,7 +233,7 @@ Astrocytes does **not** authenticate callers. It receives a principal identifier
 
 This separation follows the same pattern as Kubernetes RBAC (auth middleware → identity → RBAC enforcement) and avoids coupling Astrocytes to any specific auth system.
 
-**Integrating OIDC, SAML, API keys, or commercial IdPs:** map verified credentials to a stable **principal string** (see §1.1) before constructing `AstrocyteContext`. Optional community packages may help map JWT claims or framework-specific request objects to principals; see `06-identity-and-external-policy.md` §3.
+**Integrating OIDC, SAML, API keys, or commercial IdPs:** map verified credentials to a stable **principal string** (see §1.1) before constructing `AstrocyteContext`. Optional community packages may help map JWT claims or framework-specific request objects to principals; see `identity-and-external-policy.md` §3.
 
 ---
 
@@ -242,10 +242,10 @@ This separation follows the same pattern as Kubernetes RBAC (auth middleware →
 The default model in this document is **declarative grants** stored in Astrocytes (config or `grant_access`). For enterprises that centralize authorization in a **Policy Decision Point** (OPA, Cerbos, SpiceDB-backed services, Permit.io, etc.), Astrocytes supports an optional **`AccessPolicyProvider`** SPI:
 
 - Invoked at the **same enforcement point** as §3.1 (before pipeline or engine).
-- Can **replace** or **chain with** config-based grants (product-defined modes - see `06-identity-and-external-policy.md` §4.2).
+- Can **replace** or **chain with** config-based grants (product-defined modes - see `identity-and-external-policy.md` §4.2).
 - Implemented in optional packages such as **`astrocytes-access-policy-opa`**, **`astrocytes-access-policy-casbin`** (in-process [Casbin](https://casbin.org/)), or similar, not in the core library.
 
-**Authentication (IdP) examples:** [Casdoor](https://casdoor.org/), Keycloak, Auth0 - you validate credentials **outside** Astrocytes and pass a **principal**; see `06-identity-and-external-policy.md` §3.
+**Authentication (IdP) examples:** [Casdoor](https://casdoor.org/), Keycloak, Auth0 - you validate credentials **outside** Astrocytes and pass a **principal**; see `identity-and-external-policy.md` §3.
 
 Astrocytes remains responsible for **audit events** (§6) and for **memory-specific** permissions (`read`, `write`, `forget`, `admin`); the external system supplies **allow/deny** (and optional reasons) for those checks.
 
@@ -260,4 +260,4 @@ Astrocytes remains responsible for **audit events** (§6) and for **memory-speci
 | Bank-level **permissions** | Default: §2–3; optional: external PDP via §8 |
 | Audit of access decisions | Astrocytes (§6), enriched with PDP metadata when used |
 
-For full integration patterns, package naming, and entry points, see **`06-identity-and-external-policy.md`**.
+For full integration patterns, package naming, and entry points, see **`identity-and-external-policy.md`**.

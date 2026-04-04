@@ -1,6 +1,6 @@
 """Memory consolidation — dedup and archive.
 
-Async (coordinates I/O operations). See docs/11-built-in-pipeline.md section 5.
+Async (coordinates I/O operations). See docs/_design/built-in-pipeline.md section 5.
 """
 
 from __future__ import annotations

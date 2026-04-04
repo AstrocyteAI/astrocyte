@@ -1,7 +1,7 @@
 """Barrier policies — PII scanning, content validation, metadata sanitization.
 
 All functions are sync (Rust migration candidates).
-See docs/09-policy-layer.md section 2 and docs/23-data-governance.md.
+See docs/_design/policy-layer.md section 2 and docs/_design/data-governance.md.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Reciprocal Rank Fusion (RRF) — merge results from multiple retrieval strategies.
 
 Sync, pure computation — Rust migration candidate.
-See docs/11-built-in-pipeline.md section 3.
+See docs/_design/built-in-pipeline.md section 3.
 """
 
 from __future__ import annotations

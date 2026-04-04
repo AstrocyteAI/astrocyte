@@ -35,7 +35,7 @@ all = [
 [project.scripts]
 astrocytes-mcp = "astrocytes.mcp:main"
 
-# Built-in dev / test providers (see `astrocytes._discovery` and `12-ecosystem-and-packaging.md`)
+# Built-in dev / test providers (see `astrocytes._discovery` and `ecosystem-and-packaging.md`)
 [project.entry-points."astrocytes.vector_stores"]
 in_memory = "astrocytes.testing.in_memory:InMemoryVectorStore"
 

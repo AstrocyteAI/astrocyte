@@ -113,4 +113,4 @@ The review emphasizes tools that make astrocyte biology more **dynamic and cell-
 
 Astrocytes are **distributed regulatory cells**: they shape the chemical and physical environment of neurons, coordinate with immune and myelinating glia, and interface with the vasculature. Their **diversity** and **state-dependent** behavior (homeostatic vs. reactive, protective vs. harmful) are central to both normal cognition and the progression of neurological disease.
 
-For implications when designing **computational or AI architectures** inspired by this biology, see `02-design-principles.md`.
+For implications when designing **computational or AI architectures** inspired by this biology, see `design-principles.md`.

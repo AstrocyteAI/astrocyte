@@ -1,7 +1,7 @@
 """Escalation policies — circuit breaker, degraded mode.
 
 All functions are sync (Rust migration candidates).
-See docs/09-policy-layer.md section 4.
+See docs/_design/policy-layer.md section 4.
 """
 
 from __future__ import annotations

@@ -1,18 +1,19 @@
 ---
 title: Astrocytes
 description: Open-source memory framework between agents and storage—retain/recall/synthesize, pluggable backends, policy layer for governance and observability.
+topic: end-user
 template: splash
 hero:
   title: Astrocytes
   tagline: Astrocytes is an open-source memory framework that sits between agents and storage - it provides a stable API for retain/recall/synthesize, pluggable retrieval and memory-engine backends, and a built-in policy layer for governance and observability.
   actions:
-    - text: Read the introduction
-      link: /introduction/
-      icon: right-arrow
+    - text: Quick Start
+      link: /end-user/quick-start/
+      icon: rocket
       variant: primary
-    - text: Architecture overview
-      link: /spec/03-architecture-framework/
-      icon: document
+    - text: Production REST server
+      link: /end-user/production-grade-http-service/
+      icon: approve-check-circle
       variant: minimal
     - text: GitHub
       link: https://github.com/AstrocyteAI/astrocytes
@@ -22,23 +23,27 @@ hero:
 
 import { Card, CardGrid } from "@astrojs/starlight/components";
 
-## Pick a path
+## Documentation
 
 <CardGrid stagger>
-  <Card title="Introduction" icon="open-book">
-    **Scope**, Python/Rust layout, and the full **01–24** reading-order table — start
-    [here](/introduction/).
+  <Card title="End User Documentation" icon="open-book">
+    **Install**, run the **reference server** with Docker, and operate a production-shaped deploy. Start with [Quick
+    Start](/end-user/quick-start/) and [Production-grade reference server](/end-user/production-grade-http-service/).
   </Card>
-  <Card title="New to the framework?" icon="rocket">
-    Short path on the site: **01 → 02 → 03 → 04** — begin with
-    [Neuroscience & vocabulary](/spec/01-neuroscience-astrocytes/).
+  <Card title="Plugin Developer Documentation" icon="puzzle">
+    **SPIs**, **entry points**, packaging, outbound transport, and agent-framework hooks. Begin with [Provider
+    SPI](/plugins/provider-spi/) and [Ecosystem & packaging](/plugins/ecosystem-and-packaging/).
   </Card>
-  <Card title="Production & HTTP" icon="approve-check-circle">
-    Operating behind an API: **[24 — Production-grade HTTP](/spec/24-production-grade-http-service/)**.
+  <Card title="Design Documentation" icon="document">
+    **How Astrocytes is built:** principles, architecture, policy, lifecycle, governance, MCP, and more—the sidebar lists
+    design specs in reading order (start with [Neuroscience & vocabulary](/design/neuroscience-astrocytes/)).
   </Card>
-  <Card title="Full specification" icon="document">
-    Every numbered doc is under **Specification** in the sidebar (same sources as the `docs/` folder in the repo).
+  <Card title="Tutorials & Examples" icon="star">
+    **100 Agents in 100 Days** — daily tutorials and examples for AI agents and applications using Astrocytes. [Series
+    hub](/tutorials/100-agents-in-100-days/).
   </Card>
 </CardGrid>
+
+For project scope and a full document map, see the [Introduction](/introduction/).
 
 Diagrams in the specs use [Mermaid](https://mermaid.js.org/); they render here and on GitHub.

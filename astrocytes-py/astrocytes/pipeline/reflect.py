@@ -1,6 +1,6 @@
 """Fallback reflect — recall + LLM synthesis.
 
-Async (I/O-bound). See docs/11-built-in-pipeline.md section 4.
+Async (I/O-bound). See docs/_design/built-in-pipeline.md section 4.
 """
 
 from __future__ import annotations

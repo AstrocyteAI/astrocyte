@@ -2,7 +2,7 @@
 
 This document specifies the open-source intelligence pipeline that ships with the Astrocytes core. The pipeline activates when `provider_tier: storage` - it transforms the Retrieval SPI's CRUD operations into a full memory experience.
 
-For the two-tier architecture this pipeline serves, see `03-architecture-framework.md`. For the Retrieval SPI it orchestrates, see `04-provider-spi.md`. For governance policies that wrap the pipeline, see `09-policy-layer.md`.
+For the two-tier architecture this pipeline serves, see `architecture-framework.md`. For the Retrieval SPI it orchestrates, see `provider-spi.md`. For governance policies that wrap the pipeline, see `policy-layer.md`.
 
 ---
 
@@ -20,7 +20,7 @@ The pipeline is intentionally a **good baseline**, not a competitor to premium e
 
 ```mermaid
 flowchart TD
-  IN[Content via brain.retain] --> POL[Policy: PII, validation, dedup - see 09-policy-layer.md]
+  IN[Content via brain.retain] --> POL[Policy: PII, validation, dedup - see policy-layer.md]
   POL --> S1[1. Chunking]
   S1 --> S2[2. Entity extraction - NER or LLM]
   S2 --> S3[3. Fact type classification]
@@ -33,7 +33,7 @@ Details: chunking uses sentence or fixed-size strategies; entity modes are `ner`
 
 ### Multimodal content (optional)
 
-When **`RetainRequest`** (or the public API) includes **image/audio** as `ContentPart` lists (see `08-multimodal-llm-spi.md`), the pipeline does **not** assume every stage consumes raw media:
+When **`RetainRequest`** (or the public API) includes **image/audio** as `ContentPart` lists (see `multimodal-llm-spi.md`), the pipeline does **not** assume every stage consumes raw media:
 
 - **`caption_then_embed`** (typical): one multimodal **`complete()`** produces a **text** caption or summary → chunking and **`embed(texts)`** proceed as today.
 - **`multimodal_embed`**: requires **`embed_multimodal()`** on the LLM provider; falls back if unsupported.
@@ -66,7 +66,7 @@ pipeline:
 
 ```mermaid
 flowchart TD
-  Q[Query via brain.recall] --> POL[Policy: rate limit, sanitization - see 09-policy-layer.md]
+  Q[Query via brain.recall] --> POL[Policy: rate limit, sanitization - see policy-layer.md]
   POL --> A[1. Query analysis - embedding, entities, time range, keywords]
   A --> SEM[2a. Semantic retrieval]
   A --> GRA[2b. Graph retrieval - if configured]
@@ -104,7 +104,7 @@ pipeline:
 
 ```mermaid
 flowchart TD
-  Q[Query via brain.reflect] --> POL[Policy: rate limit - see 09-policy-layer.md]
+  Q[Query via brain.reflect] --> POL[Policy: rate limit - see policy-layer.md]
   POL --> R[1. Recall - section 3, larger max_results]
   R --> SYN[2. Synthesis - LLM SPI complete with recall hits]
   SYN --> ATTR[3. Source attribution]

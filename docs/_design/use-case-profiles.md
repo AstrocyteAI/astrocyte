@@ -1,6 +1,6 @@
 # Use-case profiles: specialized astrocyte subtypes
 
-This document defines how the heterogeneity principle (Principle 4 from `02-design-principles.md`) is realized as **configuration profiles** - pre-built policy configurations tuned for specific agent use cases.
+This document defines how the heterogeneity principle (Principle 4 from `design-principles.md`) is realized as **configuration profiles** - pre-built policy configurations tuned for specific agent use cases.
 
 ---
 
@@ -323,4 +323,4 @@ banks:
 | Document analysis, RAG | `research` | Depth vs. cost (large token budgets) |
 | Development, testing | `minimal` | Speed vs. safety |
 
-Profiles are starting points. Production deployments should audit and tune settings based on observed metrics (see `09-policy-layer.md`, section 5: Observability).
+Profiles are starting points. Production deployments should audit and tune settings based on observed metrics (see `policy-layer.md`, section 5: Observability).

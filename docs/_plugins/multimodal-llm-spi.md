@@ -1,6 +1,6 @@
 # Multimodal LLM SPI and DTOs
 
-This document specifies **first-class image and audio** (and optional document) payloads for the **LLM Provider SPI** and the **built-in pipeline**, so gateways such as LiteLLM and OpenRouter can pass **vision / audio** inputs to multimodal models **without** ad-hoc string encoding. For **non-LLM** video/voice platforms (Tavus, ElevenLabs TTS-only, etc.), see `07-presentation-layer-and-multimodal-services.md`.
+This document specifies **first-class image and audio** (and optional document) payloads for the **LLM Provider SPI** and the **built-in pipeline**, so gateways such as LiteLLM and OpenRouter can pass **vision / audio** inputs to multimodal models **without** ad-hoc string encoding. For **non-LLM** video/voice platforms (Tavus, ElevenLabs TTS-only, etc.), see `presentation-layer-and-multimodal-services.md`.
 
 ---
 
@@ -252,9 +252,9 @@ Entity extraction, BM25 document store, and similar steps consume **`message_tex
 
 | Document | Role |
 |---|---|
-| `04-provider-spi.md` §4.11 | Summary of multimodal extensions in the SPI doc |
-| `07-presentation-layer-and-multimodal-services.md` | Non-LLM video/voice **products** vs LLM multimodal |
-| `11-built-in-pipeline.md` | Pipeline stages; align `multimodal` retain strategies with §6 here |
+| `provider-spi.md` §4.11 | Summary of multimodal extensions in the SPI doc |
+| `presentation-layer-and-multimodal-services.md` | Non-LLM video/voice **products** vs LLM multimodal |
+| `built-in-pipeline.md` | Pipeline stages; align `multimodal` retain strategies with §6 here |
 
 ---
 

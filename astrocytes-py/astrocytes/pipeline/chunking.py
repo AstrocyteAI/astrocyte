@@ -1,7 +1,7 @@
 """Text chunking — split content into memory-sized pieces.
 
 Sync, pure computation — Rust migration candidate.
-See docs/11-built-in-pipeline.md section 2.
+See docs/_design/built-in-pipeline.md section 2.
 """
 
 from __future__ import annotations

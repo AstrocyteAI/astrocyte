@@ -2,7 +2,7 @@
 
 This document describes how to operate Astrocytes **behind an HTTP (or similar) API** in production: security, durability, observability, and compliance. It applies whether you **embed** `Astrocyte` in your own service or use the optional **`astrocytes-rest`** reference HTTP service in this repository.
 
-For the optional inbound edge and where a gateway sits relative to the core, see `03-architecture-framework.md` §3. For principals and banks, see `19-access-control.md`. For identity and external policy engines, see `06-identity-and-external-policy.md`. For outbound HTTP to LLMs and proxies, see `05-outbound-transport.md`.
+For the optional inbound edge and where a gateway sits relative to the core, see `architecture-framework.md` §3. For principals and banks, see `access-control.md`. For identity and external policy engines, see `identity-and-external-policy.md`. For outbound HTTP to LLMs and proxies, see `outbound-transport.md`.
 
 **Checklists:** Items below use `- [ ]` so they render as **checkboxes** in GitHub, GitLab, VS Code, and many Markdown previews. Copy the doc or track items in your issue tracker.
 
@@ -43,7 +43,7 @@ Track completion in your issue tracker or PRs as needed.
 
 ### 3.1 Memory backends and durability (not in-memory)
 
-- [ ] **Tier 1:** Use production **VectorStore** adapters (and optional GraphStore / DocumentStore) per `04-provider-spi.md`. Avoid in-process-only stores for durable memory. This repository includes an optional **[`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)** adapter (PostgreSQL + pgvector; **[`docker-compose.yml`](../astrocytes-services-py/docker-compose.yml)** under **`astrocytes-services-py/`** runs API + Postgres); wire it via config entry point **`pgvector`** and the same **`astrocytes_rest/wiring.py`** resolution path as other Tier 1 stores. **Compose networking:** the API container must use a DSN with the Postgres **service hostname** (`postgres`), not a host-only URL such as `127.0.0.1:5433`. The repo’s Compose file sets **`DATABASE_URL`** from **`ASTROCYTES_REST_DATABASE_URL`** or builds `...@postgres:5432/...` from **`POSTGRES_*`**; use **`MIGRATE_DATABASE_URL`** (or a one-off `DATABASE_URL` only for the shell) for **host-side** `migrate.sh`, not for the in-cluster API—see [`astrocytes-services-py/.env.example`](../astrocytes-services-py/.env.example).
+- [ ] **Tier 1:** Use production **VectorStore** adapters (and optional GraphStore / DocumentStore) per `provider-spi.md`. Avoid in-process-only stores for durable memory. This repository includes an optional **[`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)** adapter (PostgreSQL + pgvector; **[`docker-compose.yml`](../astrocytes-services-py/docker-compose.yml)** under **`astrocytes-services-py/`** runs API + Postgres); wire it via config entry point **`pgvector`** and the same **`astrocytes_rest/wiring.py`** resolution path as other Tier 1 stores. **Compose networking:** the API container must use a DSN with the Postgres **service hostname** (`postgres`), not a host-only URL such as `127.0.0.1:5433`. The repo’s Compose file sets **`DATABASE_URL`** from **`ASTROCYTES_REST_DATABASE_URL`** or builds `...@postgres:5432/...` from **`POSTGRES_*`**; use **`MIGRATE_DATABASE_URL`** (or a one-off `DATABASE_URL` only for the shell) for **host-side** `migrate.sh`, not for the in-cluster API—see [`astrocytes-services-py/.env.example`](../astrocytes-services-py/.env.example).
 - [ ] **Tier 2 (optional):** If using a memory engine provider, wire **EngineProvider** and validate **capability negotiation** (`reflect`, `forget`, etc.).
 - [ ] **LLM / embeddings:** Use real **LLMProvider** (and embedding path) appropriate to latency and cost.
 - [ ] **Configuration:** Load provider entry points from **config** (YAML/env) with validation; fail fast on missing required settings in prod.
@@ -63,10 +63,10 @@ Track completion in your issue tracker or PRs as needed.
 ### 3.3 Authorization (AuthZ) and tenancy
 
 - [ ] **Enable framework access control:** `access_control` on with explicit policy (not `open` by default in prod).
-- [ ] **Grants:** Load **AccessGrant** (or equivalent) from config, database, or **external PDP** (OPA, Cerbos, Casbin) per `19-access-control.md`.
+- [ ] **Grants:** Load **AccessGrant** (or equivalent) from config, database, or **external PDP** (OPA, Cerbos, Casbin) per `access-control.md`.
 - [ ] **Bank isolation:** Enforce **bank_id** scoping; prevent cross-tenant **IDOR** (validate bank belongs to tenant/principal).
 - [ ] **Admin paths:** Separate privileged operations (if any) with stricter checks.
-- [ ] **Optional external PDP:** Integrate **AccessPolicyProvider** when enterprise policy engines are required (`06-identity-and-external-policy.md`).
+- [ ] **Optional external PDP:** Integrate **AccessPolicyProvider** when enterprise policy engines are required (`identity-and-external-policy.md`).
 
 ### 3.4 Network, TLS, and edge
 
@@ -74,7 +74,7 @@ Track completion in your issue tracker or PRs as needed.
 - [ ] **Private networking:** Prefer private subnets / mesh; no public exposure without WAF/rate limits as needed.
 - [ ] **Request limits:** Max body size, header size, URL length; **timeouts** on client and server.
 - [ ] **CORS:** If browser clients exist, **restrict** origins; avoid `*` in production.
-- [ ] **Rate limiting:** Edge (API gateway) + align with Astrocytes **homeostasis** / quotas in config (`09-policy-layer.md`).
+- [ ] **Rate limiting:** Edge (API gateway) + align with Astrocytes **homeostasis** / quotas in config (`policy-layer.md`).
 
 ### 3.5 API design and contract
 
@@ -120,11 +120,11 @@ Track completion in your issue tracker or PRs as needed.
 
 ### 3.10 Data governance and compliance
 
-- [ ] **Classification:** Tag banks or payloads per **data class** if required (`23-data-governance.md`).
-- [ ] **Retention and legal hold:** Align with `18-memory-lifecycle.md`; block deletes when under hold.
+- [ ] **Classification:** Tag banks or payloads per **data class** if required (`data-governance.md`).
+- [ ] **Retention and legal hold:** Align with `memory-lifecycle.md`; block deletes when under hold.
 - [ ] **Audit log:** Immutable audit stream for retain/forget/admin actions (who, when, bank, outcome).
 - [ ] **Residency:** Ensure stores and LLM regions meet **data residency** requirements.
-- [ ] **PII:** Configure **barriers** / PII policy deliberately; document **false positive** handling (`09-policy-layer.md`).
+- [ ] **PII:** Configure **barriers** / PII policy deliberately; document **false positive** handling (`policy-layer.md`).
 
 ### 3.11 Performance and capacity
 
@@ -196,7 +196,7 @@ See [`astrocytes-services-py/astrocytes-rest/README.md`](../astrocytes-services-
 - **Runbook (recommended for durable schema):** From [`astrocytes-services-py/`](../astrocytes-services-py/), `./scripts/runbook-up.sh` or **`make runbook`** starts Postgres, runs SQL migrations on the host port, then **`docker compose`** with the runbook overlay. Details: [`astrocytes-services-py/README.md`](../astrocytes-services-py/README.md) (Runbook, Verify, **Debugging**).
 - **Quick stack:** **`make up`** or `docker compose up --build` uses in-container bootstrap DDL unless you add the runbook file; for HNSW / migration-owned DDL, use the runbook path.
 - **Health checks:** **`GET /live`** (or **`GET /health/live`**) confirms the process only; **`GET /health`** checks **`Astrocyte.health()`** (with **pgvector**, a real DB round-trip). If `/live` succeeds and `/health` fails or times out, inspect **`docker compose logs astrocytes-rest`**, **`printenv DATABASE_URL`** inside the API container, and the **Debugging** section of [`astrocytes-services-py/README.md`](../astrocytes-services-py/README.md).
-- **Implementation note:** The **`astrocytes-pgvector`** adapter uses **psycopg 3** async pools with **`register_vector_async`** and explicit transaction boundaries in pool `configure` callbacks (`04-provider-spi.md` §7.1).
+- **Implementation note:** The **`astrocytes-pgvector`** adapter uses **psycopg 3** async pools with **`register_vector_async`** and explicit transaction boundaries in pool `configure` callbacks (`provider-spi.md` §7.1).
 
 ### 4.6 Path to production for `astrocytes-rest`
 
@@ -208,10 +208,10 @@ Align **`astrocytes-rest`** with §3: real backends, verified AuthN, AuthZ with 
 
 - [x] **Brain wiring:** `build_astrocyte()` in `astrocytes_rest/brain.py` loads `AstrocyteConfig` and calls `build_tier1_pipeline()` in `astrocytes_rest/wiring.py`, which resolves **`vector_store`**, **`llm_provider`**, and optional graph/document stores via **`astrocytes._discovery.resolve_provider`** (entry points or `package.module:Class`). Built-in names ship in **`astrocytes-py`** `pyproject.toml` (`in_memory`, `mock`). A PostgreSQL **`pgvector`** adapter lives in **[`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)** (optional **`pgvector`** extra on `astrocytes-rest`).
 - [x] **Health routes:** **`GET /live`** and **`GET /health/live`** (liveness); **`GET /health`** (readiness / dependency check with bounded timeout). Documented in [`astrocytes-rest/README.md`](../astrocytes-services-py/astrocytes-rest/README.md).
-- [x] **pgvector + psycopg async:** Pool **`configure`** uses **`register_vector_async`**, commits after `configure`, and registers vector types only when the **`vector`** extension is present (see `04-provider-spi.md` §7.1).
-- [x] **Grants from config:** When **`access_control.enabled`**, grants are loaded from YAML (**`access_grants`** and **`banks.*.access`**) via **`access_grants_for_astrocyte()`** in **`astrocytes-py`** and **`set_access_grants()`** in **`astrocytes_rest/brain.py`** — see `06-identity-and-external-policy.md` §8. **Not done here:** grants from a **database** or **external PDP** (still your integration or future work).
+- [x] **pgvector + psycopg async:** Pool **`configure`** uses **`register_vector_async`**, commits after `configure`, and registers vector types only when the **`vector`** extension is present (see `provider-spi.md` §7.1).
+- [x] **Grants from config:** When **`access_control.enabled`**, grants are loaded from YAML (**`access_grants`** and **`banks.*.access`**) via **`access_grants_for_astrocyte()`** in **`astrocytes-py`** and **`set_access_grants()`** in **`astrocytes_rest/brain.py`** — see `identity-and-external-policy.md` §8. **Not done here:** grants from a **database** or **external PDP** (still your integration or future work).
 - [ ] **Profiles:** Keep PII `disabled` and `access_control.enabled = False` only for explicit **dev** profile; document prod profile requirements.
-- [ ] **MCP / CLI:** If `astrocytes-mcp` is shipped, align its security model with the HTTP service (same AuthN story). See `16-mcp-server.md`.
+- [ ] **MCP / CLI:** If `astrocytes-mcp` is shipped, align its security model with the HTTP service (same AuthN story). See `mcp-server.md`.
 
 ---
 

@@ -2,7 +2,7 @@
 
 **SPI** means **Service Provider Interface**: a documented contract that third-party packages implement and register (same idea as Java’s `ServiceLoader` SPI; in Python, `typing.Protocol` plus `pyproject.toml` entry points).
 
-This document defines the **three memory-related** Service Provider Interfaces (**Retrieval** = VectorStore / GraphStore / DocumentStore adapters; **Memory Engine**; **LLM**) plus an **optional cross-cutting** Outbound Transport SPI for HTTP/TLS/proxy configuration. For the framework architecture and two-tier provider model, see `03-architecture-framework.md`. For outbound transport rationale and packaging, see `05-outbound-transport.md`.
+This document defines the **three memory-related** Service Provider Interfaces (**Retrieval** = VectorStore / GraphStore / DocumentStore adapters; **Memory Engine**; **LLM**) plus an **optional cross-cutting** Outbound Transport SPI for HTTP/TLS/proxy configuration. For the framework architecture and two-tier provider model, see `architecture-framework.md`. For outbound transport rationale and packaging, see `outbound-transport.md`.
 
 ---
 
@@ -10,9 +10,9 @@ This document defines the **three memory-related** Service Provider Interfaces (
 
 ### 1.1 Overview
 
-**Scope:** Tier 1 adapters are **retrieval-oriented** (not blob/object storage). In RAG and hybrid-search literature, the same ideas are often called **retrieval backends** or **retrieval infrastructure**: **VectorStore** ≈ dense / semantic (vector DB, ANN index), **GraphStore** ≈ structured graph traversal (knowledge graph), **DocumentStore** ≈ sparse / lexical (BM25, full-text). See `03-architecture-framework.md` §2 (Tier 1 table).
+**Scope:** Tier 1 adapters are **retrieval-oriented** (not blob/object storage). In RAG and hybrid-search literature, the same ideas are often called **retrieval backends** or **retrieval infrastructure**: **VectorStore** ≈ dense / semantic (vector DB, ANN index), **GraphStore** ≈ structured graph traversal (knowledge graph), **DocumentStore** ≈ sparse / lexical (BM25, full-text). See `architecture-framework.md` §2 (Tier 1 table).
 
-Retrieval providers are simple adapters over those systems. They handle CRUD operations on vectors, entities, and documents **as indexed for retrieval**. Astrocytes' **built-in intelligence pipeline** (see `11-built-in-pipeline.md`) orchestrates these stores to provide the full memory experience: embedding, entity extraction, multi-strategy retrieval, fusion, and synthesis.
+Retrieval providers are simple adapters over those systems. They handle CRUD operations on vectors, entities, and documents **as indexed for retrieval**. Astrocytes' **built-in intelligence pipeline** (see `built-in-pipeline.md`) orchestrates these stores to provide the full memory experience: embedding, entity extraction, multi-strategy retrieval, fusion, and synthesis.
 
 Writing a Tier 1 provider is intentionally easy. The barrier to entry is **implementing a few async methods against your database**, not building a memory engine.
 
@@ -268,7 +268,7 @@ When `provider_tier: storage`, the built-in pipeline activates and uses the retr
 | Reranking | Internal (optional cross-encoder or LLM) |
 | Reflect / synthesis | LLM Provider SPI |
 
-See `11-built-in-pipeline.md` for the full pipeline specification.
+See `built-in-pipeline.md` for the full pipeline specification.
 
 ---
 
@@ -571,7 +571,7 @@ The Astrocytes LLM SPI is intentionally minimal (`complete()` + `embed()`) so th
 | **Cloud-managed endpoints** | AWS Bedrock, Azure OpenAI, Google Vertex AI | Adapter wraps the cloud SDK. Handles cloud auth (IAM roles, managed identity, service accounts). |
 | **Self-hosted inference** | Ollama, vLLM, LM Studio, TGI, llama.cpp | Adapter calls local HTTP endpoint. No API key needed. |
 | **Enterprise proxies** | Custom API gateways, internal LLM platforms | Adapter calls an OpenAI-compatible endpoint with custom auth headers. |
-| **Presentation / multimodal** | Conversational video (Tavus, HeyGen, D-ID, …), voice (ElevenLabs, …) | **Not** the default LLM SPI - see §4.10 and `07-presentation-layer-and-multimodal-services.md`. |
+| **Presentation / multimodal** | Conversational video (Tavus, HeyGen, D-ID, …), voice (ElevenLabs, …) | **Not** the default LLM SPI - see §4.10 and `presentation-layer-and-multimodal-services.md`. |
 
 ### 4.5 Shipped adapters
 
@@ -726,7 +726,7 @@ Users install exactly one LLM provider (or none if using Tier 2 with no LLM-depe
 
 **How to combine them with Astrocytes:** keep **memory and text LLM** on the **`LLMProvider`** path; call **presentation vendors from your application** using their SDKs/REST, optionally feeding **`recall()` / `reflect()`** output into their conversations. If a vendor documents **custom LLM** or **OpenAI-compatible** URLs for *their* dialogue stack, you may reuse the **same** text endpoint for Astrocytes **when** it matches the adapter’s HTTP shape.
 
-See **`07-presentation-layer-and-multimodal-services.md`** for the competitive landscape (Tavus-class vs voice), patterns, and examples.
+See **`presentation-layer-and-multimodal-services.md`** for the competitive landscape (Tavus-class vs voice), patterns, and examples.
 
 ### 4.11 Multimodal LLM inputs (first-class image / audio)
 
@@ -741,7 +741,7 @@ See **`07-presentation-layer-and-multimodal-services.md`** for the competitive l
 
 **Pipeline:** Tier 1 uses strategies such as **caption-then-embed** (vision model → text → embed) or **multimodal embed** when implemented. Stages that need plain text (NER, BM25) consume **extracted or captioned** text.
 
-Full specification: **`08-multimodal-llm-spi.md`**.
+Full specification: **`multimodal-llm-spi.md`**.
 
 ---
 
@@ -751,7 +751,7 @@ Full specification: **`08-multimodal-llm-spi.md`**.
 
 Some deployments route **all outbound HTTP** through a **credential gateway**, corporate proxy, or MITM-capable TLS stack. That requirement is **orthogonal** to memory tiers and to the LLM Provider SPI: it concerns **how** TCP/TLS/HTTP is established, not **what** `retain()` / `recall()` mean or **which** `complete()` / `embed()` API is called.
 
-Astrocytes defines an **optional** `OutboundTransportProvider` protocol. When configured, the core applies it at a **single choke point** when building HTTP clients used by LLM adapters and other outbound HTTP. **This is not an LLM gateway** and **not** a memory provider - see `03-architecture-framework.md` section 4.4 and the full design in `05-outbound-transport.md`.
+Astrocytes defines an **optional** `OutboundTransportProvider` protocol. When configured, the core applies it at a **single choke point** when building HTTP clients used by LLM adapters and other outbound HTTP. **This is not an LLM gateway** and **not** a memory provider - see `architecture-framework.md` section 4.4 and the full design in `outbound-transport.md`.
 
 **Baseline without a plugin:** If `HTTP_PROXY` / `HTTPS_PROXY` / standard trust env vars are sufficient, users need no transport package; clients should respect the process environment.
 
@@ -926,6 +926,6 @@ caller → brain.recall(query, budget)
 3. **Register** under `astrocytes.outbound_transports` in `pyproject.toml`.
 4. **Document** env-only alternatives (`HTTP_PROXY`, trust bundles) so users can avoid a plugin when possible.
 
-Rationale, OTel, and security constraints: `05-outbound-transport.md`.
+Rationale, OTel, and security constraints: `outbound-transport.md`.
 
-Full implementation guide with examples: see `12-ecosystem-and-packaging.md`.
+Full implementation guide with examples: see `ecosystem-and-packaging.md`.

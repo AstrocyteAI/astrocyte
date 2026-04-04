@@ -29,7 +29,7 @@ A newline-delimited JSON (JSONL) file where each line is one memory unit, plus a
 - Streamable: no need to load the entire file into memory
 - Line-oriented: easy to process with standard Unix tools
 - Self-describing: each line is a valid JSON object
-- Portable DTOs: aligns with the Python/Rust drop-in contract (see `13-implementation-language-strategy.md`)
+- Portable DTOs: aligns with the Python/Rust drop-in contract (see `implementation-language-strategy.md`)
 
 ### 2.3 Schema
 

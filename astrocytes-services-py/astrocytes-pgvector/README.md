@@ -1,6 +1,6 @@
 # astrocytes-pgvector
 
-**PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)** implementation of the Astrocytes **`VectorStore`** SPI ([`04-provider-spi.md`](../../docs/04-provider-spi.md)).
+**PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)** implementation of the Astrocytes **`VectorStore`** SPI ([`provider-spi.md`](../../docs/_plugins/provider-spi.md)).
 
 ## Install
 

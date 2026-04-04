@@ -1,6 +1,6 @@
 # Policy layer: the load-bearing astrocyte
 
-This document specifies the governance policies that make the Astrocytes framework valuable regardless of which memory backend is plugged in. Each policy maps to a neuroscience design principle from `02-design-principles.md`.
+This document specifies the governance policies that make the Astrocytes framework valuable regardless of which memory backend is plugged in. Each policy maps to a neuroscience design principle from `design-principles.md`.
 
 The policy layer is not optional decoration. It is what makes the framework worth using instead of calling a memory backend directly. If these policies are thin wrappers, users will skip the framework. If they are solid, nobody will.
 
@@ -64,7 +64,7 @@ Quota state is tracked in-process (resets on restart) or via an optional externa
 
 ### 2.1 PII barrier
 
-> **Comprehensive coverage**: This section covers the PII scanning mechanism. For the full data governance framework - including data classification levels, PII detection taxonomy, per-type actions, regulatory compliance profiles (GDPR, HIPAA, PDPA), data residency, encryption, data lineage, and data loss prevention - see `23-data-governance.md`.
+> **Comprehensive coverage**: This section covers the PII scanning mechanism. For the full data governance framework - including data classification levels, PII detection taxonomy, per-type actions, regulatory compliance profiles (GDPR, HIPAA, PDPA), data residency, encryption, data lineage, and data loss prevention - see `data-governance.md`.
 
 Scans content before it reaches the memory provider. Three modes:
 
