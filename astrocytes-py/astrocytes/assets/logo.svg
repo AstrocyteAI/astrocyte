@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="body-grad" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+    <linearGradient id="arm-grad" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Arms — gentle idle sway animation on each -->
+  <g fill="none" stroke="url(#arm-grad)" stroke-width="9" stroke-linecap="round">
+
+    <path d="M 48 46 Q 30 22, 16 12">
+      <animate attributeName="d" values="M 48 46 Q 30 22, 16 12;M 48 46 Q 26 24, 13 16;M 48 46 Q 30 22, 16 12" dur="3s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+    </path>
+
+    <path d="M 72 46 Q 90 22, 104 12">
+      <animate attributeName="d" values="M 72 46 Q 90 22, 104 12;M 72 46 Q 93 19, 107 8;M 72 46 Q 90 22, 104 12" dur="3.4s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+    </path>
+
+    <path d="M 78 62 Q 100 68, 114 74">
+      <animate attributeName="d" values="M 78 62 Q 100 68, 114 74;M 78 62 Q 102 64, 116 68;M 78 62 Q 100 68, 114 74" dur="2.8s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+    </path>
+
+    <path d="M 46 76 Q 28 96, 18 110">
+      <animate attributeName="d" values="M 46 76 Q 28 96, 18 110;M 46 76 Q 24 98, 14 112;M 46 76 Q 28 96, 18 110" dur="3.2s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+    </path>
+
+    <path d="M 68 78 Q 78 98, 84 112">
+      <animate attributeName="d" values="M 68 78 Q 78 98, 84 112;M 68 78 Q 82 96, 88 108;M 68 78 Q 78 98, 84 112" dur="2.6s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+    </path>
+
+  </g>
+
+  <!-- Soma — gentle float -->
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="0,0;0,-2;0,0;0,1;0,0" dur="4s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1"/>
+
+    <circle cx="60" cy="60" r="24" fill="url(#body-grad)"/>
+
+    <!-- Eyes — big, expressive, no mouth -->
+    <circle cx="52" cy="57" r="5.5" fill="#1c1917"/>
+    <circle cx="68" cy="57" r="5.5" fill="#1c1917"/>
+    <!-- Highlights -->
+    <circle cx="50" cy="55" r="2.2" fill="#fef3c7"/>
+    <circle cx="66" cy="55" r="2.2" fill="#fef3c7"/>
+
+    <!-- Blink animation — eyes squash to lines briefly -->
+    <rect x="46" y="55.5" width="13" height="3" rx="1.5" fill="url(#body-grad)" opacity="0">
+      <animate attributeName="opacity" values="0;0;1;0;0" keyTimes="0;0.92;0.95;0.98;1" dur="4s" repeatCount="indefinite"/>
+    </rect>
+    <rect x="62" y="55.5" width="13" height="3" rx="1.5" fill="url(#body-grad)" opacity="0">
+      <animate attributeName="opacity" values="0;0;1;0;0" keyTimes="0;0.92;0.95;0.98;1" dur="4s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+</svg>

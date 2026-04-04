@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Monochrome version — works on any background with currentColor -->
+  <g fill="none" stroke="currentColor" stroke-width="28" stroke-linecap="round">
+    <path d="M 240 232 C 210 175, 170 125, 120 72"/>
+    <path d="M 276 234 C 315 180, 360 138, 420 90"/>
+    <path d="M 284 260 C 340 268, 395 285, 456 310"/>
+    <path d="M 248 282 C 225 340, 195 395, 160 448"/>
+    <path d="M 230 262 C 170 270, 115 268, 52 258"/>
+  </g>
+  <circle cx="256" cy="256" r="32" fill="currentColor"/>
+</svg>

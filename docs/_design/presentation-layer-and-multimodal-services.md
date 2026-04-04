@@ -6,7 +6,7 @@ This document clarifies how Astrocytes relates to **commercial AI products that 
 
 ## 1. What the LLM Provider SPI covers
 
-Astrocytes needs **`complete()`** (chat-style messages → text) and **`embed()`** (texts → vectors) for the built-in pipeline and policies. Adapters such as **`astrocytes-litellm`** route those calls to providers that expose **chat completion** and **embedding** APIs (directly or via OpenAI-compatible HTTP).
+Astrocytes needs **`complete()`** (chat-style messages → text) and **`embed()`** (texts → vectors) for the built-in pipeline and policies. Adapters such as **`astrocytes-litellm`** (and **`openai`** with a custom **`api_base`**) route those calls to **direct vendor SDKs**, **multi-provider gateways** (LiteLLM, Portkey, OpenRouter, cloud routers, …), or any **OpenAI-compatible HTTP** surface your deployment standardizes on.
 
 That scope **does not** include:
 
@@ -39,9 +39,9 @@ These platforms emphasize **real-time or scripted video** with AI personas, deve
 | **Voice / TTS / conversational voice** | [ElevenLabs](https://elevenlabs.io/), PlayHT, Cartesia, Amazon Polly, Google Cloud TTS | **ElevenLabs** is a **strong competitor on AI voice** (TTS, agents, dubbing), not a full **video replica CVI** in the same sense as Tavus. Pairing **ElevenLabs (voice) + separate avatar/video** is a common architecture. |
 | **STT / telephony** | Deepgram, AssemblyAI, Twilio Voice, etc. | Input/output paths for voice apps; orthogonal to memory. |
 
-### 2.3 Where LiteLLM / OpenRouter still help
+### 2.3 Where LLM gateways still help (LiteLLM, OpenRouter, Portkey, …)
 
-Unified gateways excel at **text models** (OpenAI, Anthropic, Gemini, Mistral, open models, …). If a **video platform** lets you bring your **own** model via an **OpenAI-compatible** base URL (some document “custom LLM” onboarding), that **same** LLM can often be configured as **`llm_provider: litellm`** or **`openai` + `api_base`** for Astrocytes - **provided** the endpoint implements chat completions (and optionally embeddings) the adapter expects. That is **“shared brain”** between Astrocytes and the video stack, not “Tavus as the LLMProvider” unless Tavus exposes such an endpoint **to your backend** for arbitrary calls.
+**Unified gateways and aggregators** (LiteLLM, OpenRouter, Portkey, Vercel AI Gateway, cloud model routers, …) excel at **text models** (OpenAI, Anthropic, Gemini, Mistral, open models, …). If a **video platform** lets you bring your **own** model via an **OpenAI-compatible** base URL (some document “custom LLM” onboarding), that **same** LLM can often be configured as **`llm_provider: litellm`** or **`openai` + `api_base`** for Astrocytes - **provided** the endpoint implements chat completions (and optionally embeddings) the adapter expects. That is **“shared brain”** between Astrocytes and the video stack, not “Tavus as the LLMProvider” unless Tavus exposes such an endpoint **to your backend** for arbitrary calls.
 
 ---
 
@@ -55,7 +55,7 @@ User / client
     ├─► Application orchestrator
     │       │
     │       ├─► Astrocytes brain.retain / recall / reflect
-    │       │       └─► LLMProvider → LiteLLM / OpenAI / Anthropic / …
+    │       │       └─► LLMProvider → gateway (LiteLLM, OpenRouter, …) or direct OpenAI / Anthropic / …
     │       │             (text completion + embeddings for pipeline)
     │       │
     │       └─► Presentation service API (HTTP / WebRTC / SDK)
@@ -83,12 +83,12 @@ llm_provider_config:
   model: vendor-text-model
 ```
 
-Or via LiteLLM if the provider is listed or proxied:
+Or via a **gateway adapter** (e.g. `litellm`) when the model is listed or proxied there — the same pattern applies to other aggregators you expose through an OpenAI-compatible surface your adapter supports:
 
 ```yaml
 llm_provider: litellm
 llm_provider_config:
-  model: openai/your-model   # or provider-specific slug per LiteLLM docs
+  model: openai/your-model   # or provider-specific slug per your gateway’s docs
   api_base: https://...
 ```
 
@@ -139,7 +139,7 @@ Memory writes still go through **`retain()`** based on **text** you choose to pe
 
 | Question | Answer |
 |---|---|
-| Does LiteLLM integration “include” Tavus / HeyGen / ElevenLabs automatically? | **No** - those are **not** generic chat/embedding backends for the SPI unless they expose **compatible text APIs** you configure explicitly. |
+| Does LLM-gateway integration (LiteLLM-style routing) “include” Tavus / HeyGen / ElevenLabs automatically? | **No** - those are **not** generic chat/embedding backends for the SPI unless they expose **compatible text APIs** you configure explicitly. |
 | Are they competitors? | **Partially.** Many **video avatar** platforms compete with **Tavus** on CVI or marketing video; **ElevenLabs** competes on **voice**, often as a **component** next to video or text agents. |
 | How does Astrocytes “allow” integration? | **Composition:** memory and text LLM via **`LLMProvider`**; **presentation** via **vendor SDKs/REST** in your app. Optional **shared** OpenAI-compatible LLM URL when the vendor supports it. |
 

@@ -55,7 +55,16 @@ export default defineConfig({
   base,
   integrations: [
     starlight({
+      components: {
+        ThemeSelect: "./src/components/ThemeSelect.astro",
+      },
       title: "Astrocytes",
+      logo: {
+        light: "./public/logo.svg",
+        dark: "./public/logo-dark.svg",
+        alt: "Astrocytes — memory framework for AI agents",
+      },
+      favicon: "/favicon.svg",
       description:
         "Open-source memory framework between agents and storage: retain/recall/synthesize, pluggable backends, governance and observability.",
       plugins: [

@@ -1,49 +1,204 @@
 ---
 title: Astrocytes
-description: Open-source memory framework between agents and storage—retain/recall/synthesize, pluggable backends, policy layer for governance and observability.
+description: Open-source memory framework for AI agents — retain, recall, and synthesize with any backend.
 topic: end-user
 template: splash
+tableOfContents: false
+head:
+  - tag: title
+    content: Astrocytes | Memory for every agent
 hero:
-  title: Astrocytes
-  tagline: Astrocytes is an open-source memory framework that sits between agents and storage - it provides a stable API for retain/recall/synthesize, pluggable retrieval and memory-engine backends, and a built-in policy layer for governance and observability.
+  title: Memory for every agent.
+  tagline: >
+    Astrocytes is an open-source framework that gives AI agents persistent memory — with pluggable backends,
+    built-in governance, and a pipeline that works out of the box.
+  image:
+    html: |
+      <img src="/logo.svg" alt="Astrocytes mascot" class="landing-hero-mascot dark:sl-hidden" width="280" height="280" decoding="async" loading="eager" />
+      <img src="/logo-dark.svg" alt="" class="landing-hero-mascot light:sl-hidden" width="280" height="280" decoding="async" loading="eager" aria-hidden="true" />
   actions:
     - text: Quick Start
       link: /end-user/quick-start/
       icon: rocket
       variant: primary
-    - text: Production REST server
-      link: /end-user/production-grade-http-service/
-      icon: approve-check-circle
-      variant: minimal
-    - text: GitHub
+    - text: View on GitHub
       link: https://github.com/AstrocyteAI/astrocytes
       icon: external
       variant: minimal
 ---
 
-import { Card, CardGrid } from "@astrojs/starlight/components";
+import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/components";
 
-## Documentation
+<div class="landing">
 
-<CardGrid stagger>
-  <Card title="End User Documentation" icon="open-book">
-    **Install**, run the **reference server** with Docker, and operate a production-shaped deploy. Start with [Quick
-    Start](/end-user/quick-start/) and [Production-grade reference server](/end-user/production-grade-http-service/).
+{/* ── Quick start ──────────────────────────────────── */}
+
+<span class="section-label" aria-hidden="true">⟩ Quick start</span>
+<h2 class="section-heading">Get started in seconds</h2>
+<div class="section-subheading">
+  Install extras for your stack, drop in a config, and run retain / recall with one Python client.
+</div>
+
+<div class="quickstart-panel">
+  <Tabs syncKey="astrocytes-install">
+    <TabItem label="pip">
+      <div class="quickstart-block">pip install astrocytes astrocytes-pgvector astrocytes-openai</div>
+    </TabItem>
+    <TabItem label="uv">
+      <div class="quickstart-block quickstart-block--uv">
+        <div>uv pip install astrocytes astrocytes-pgvector astrocytes-openai</div>
+        <p class="quickstart-note">
+          In a uv-managed project, use{" "}
+          <code>uv add astrocytes astrocytes-pgvector astrocytes-openai</code> to record dependencies in{" "}
+          <code>pyproject.toml</code>.
+        </p>
+      </div>
+    </TabItem>
+  </Tabs>
+
+```python
+from astrocytes import Astrocyte
+
+brain = Astrocyte.from_config("astrocytes.yaml")
+
+await brain.retain("Calvin prefers dark mode", bank_id="user-123")
+
+hits = await brain.recall("What are Calvin's preferences?", bank_id="user-123")
+```
+
+</div>
+
+{/* ── What it does ─────────────────────────────────── */}
+
+<span class="section-label" aria-hidden="true">⟩ What it does</span>
+<h2 class="section-heading">Three operations, any backend</h2>
+<div class="section-subheading">
+  Retain, recall, and reflect — with pipelines and policies that stay valid when you swap storage or engines.
+</div>
+
+<div class="feature-grid not-content feature-grid--cols-3">
+  <div class="feature-card">
+    <h3>Retain</h3>
+    <p>Store memories with automatic chunking, entity extraction, and embedding. PII scanning and content validation happen before anything reaches your backend.</p>
+  </div>
+  <div class="feature-card">
+    <h3>Recall</h3>
+    <p>Multi-strategy retrieval — semantic, graph, keyword, temporal — fused with reciprocal rank fusion and reranked. Token budgets enforced automatically.</p>
+  </div>
+  <div class="feature-card">
+    <h3>Reflect</h3>
+    <p>Synthesize answers from memory. Native engine reflect or automatic fallback via LLM. Disposition-aware personality for support, coding, or research agents.</p>
+  </div>
+</div>
+
+{/* ── Two-tier providers ───────────────────────────── */}
+
+<span class="section-label" aria-hidden="true">⟩ Works with everything</span>
+<h2 class="section-heading">Pluggable storage and engines</h2>
+<div class="section-subheading">
+  Bring your own database or plug in a full memory engine — Astrocytes keeps governance and observability consistent.
+</div>
+
+<div class="pill-row" aria-label="Example stacks and integrations">
+  <span class="pill">pgvector</span>
+  <span class="pill">Pinecone</span>
+  <span class="pill">Qdrant</span>
+  <span class="pill">Neo4j</span>
+  <span class="pill">MCP</span>
+  <span class="pill">LangGraph</span>
+  <span class="pill">LiteLLM</span>
+  <span class="pill">OpenRouter</span>
+  <span class="pill">Portkey</span>
+  <span class="pill">Mem0</span>
+  <span class="pill">Zep</span>
+</div>
+
+<CardGrid>
+  <Card title="Tier 1: Retrieval backends" icon="setting">
+    Use your existing databases. pgvector, Pinecone, Qdrant, Neo4j, Memgraph — the built-in pipeline handles
+    embedding, extraction, fusion, and synthesis on top.
   </Card>
-  <Card title="Plugin Developer Documentation" icon="puzzle">
-    **SPIs**, **entry points**, packaging, outbound transport, and agent-framework hooks. Begin with [Provider
-    SPI](/plugins/provider-spi/) and [Ecosystem & packaging](/plugins/ecosystem-and-packaging/).
-  </Card>
-  <Card title="Design Documentation" icon="document">
-    **How Astrocytes is built:** principles, architecture, policy, lifecycle, governance, MCP, and more—the sidebar lists
-    design specs in reading order (start with [Neuroscience & vocabulary](/design/neuroscience-astrocytes/)).
-  </Card>
-  <Card title="Tutorials & Examples" icon="star">
-    **100 Agents in 100 Days** — daily tutorials and examples for AI agents and applications using Astrocytes. [Series
-    hub](/tutorials/100-agents-in-100-days/).
+  <Card title="Tier 2: Memory engines" icon="rocket">
+    Full-stack engines that own the pipeline. Mystique, Mem0, Zep, Letta, Cognee — Astrocytes adds
+    governance, observability, and portability.
   </Card>
 </CardGrid>
 
-For project scope and a full document map, see the [Introduction](/introduction/).
+{/* ── Policy layer ─────────────────────────────────── */}
 
-Diagrams in the specs use [Mermaid](https://mermaid.js.org/); they render here and on GitHub.
+<span class="section-label" aria-hidden="true">⟩ Governance</span>
+<h2 class="section-heading">Built-in governance</h2>
+<div class="section-subheading">
+  Neuroscience-inspired policies that protect every operation — regardless of backend.
+</div>
+
+<div class="feature-grid not-content feature-grid--cols-3">
+  <div class="feature-card">
+    <h3>PII barriers</h3>
+    <p>Regex, NER, or LLM-based scanning. Redact, reject, or warn — before content reaches the provider.</p>
+  </div>
+  <div class="feature-card">
+    <h3>Rate limits & budgets</h3>
+    <p>Token bucket rate limiting, daily quotas, and per-operation token budgets. Prevent runaway agents.</p>
+  </div>
+  <div class="feature-card">
+    <h3>Circuit breakers</h3>
+    <p>Automatic degraded mode when backends go down. Empty recall, error, or cache — with controlled recovery.</p>
+  </div>
+  <div class="feature-card">
+    <h3>Observability</h3>
+    <p>OpenTelemetry spans and Prometheus metrics on every operation. Switch providers without rebuilding dashboards.</p>
+  </div>
+  <div class="feature-card">
+    <h3>Access control</h3>
+    <p>Per-bank read/write/forget/admin permissions. Principals, grants, and audit trails built in.</p>
+  </div>
+  <div class="feature-card">
+    <h3>Data governance</h3>
+    <p>Classification levels, compliance profiles (GDPR, HIPAA, PDPA), data residency, encryption, and DLP.</p>
+  </div>
+</div>
+
+{/* ── Integrations ─────────────────────────────────── */}
+
+<span class="section-label" aria-hidden="true">⟩ Integrations</span>
+<h2 class="section-heading">Agents, frameworks, models</h2>
+<div class="section-subheading">
+  One framework, every agent stack.
+</div>
+
+<CardGrid>
+  <Card title="MCP Server" icon="laptop">
+    Any MCP-capable agent (Claude Code, Cursor, Windsurf) gets memory via `astrocytes-mcp`. Zero code integration.
+  </Card>
+  <Card title="Agent Frameworks" icon="puzzle">
+    LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, AG2 — thin middleware wires Astrocytes into each framework's memory abstraction.
+  </Card>
+  <Card title="LLM Providers" icon="translate">
+    Multi-provider gateways (e.g. LiteLLM, Portkey, OpenRouter, Vercel AI Gateway) or direct SDKs — OpenAI, Anthropic, Bedrock, Azure, Vertex, Ollama — or bring your own via the LLM SPI.
+  </Card>
+  <Card title="Memory Portability" icon="right-arrow">
+    Export and import memories between providers using Astrocytes Memory Archive (AMA), a portable newline-delimited JSON (JSONL) format. No vendor lock-in.
+  </Card>
+</CardGrid>
+
+{/* ── Docs nav ─────────────────────────────────────── */}
+
+<span class="section-label" aria-hidden="true">⟩ Documentation</span>
+<h2 class="section-heading">Explore the docs</h2>
+
+<CardGrid>
+  <LinkCard title="Quick Start" href="/end-user/quick-start/" description="Install, configure, and run your first retain/recall in minutes." />
+  <LinkCard title="Provider SPI" href="/plugins/provider-spi/" description="Build a storage adapter or engine provider for Astrocytes." />
+  <LinkCard title="Architecture" href="/design/architecture-framework/" description="Two-tier model, layer boundaries, and design principles." />
+  <LinkCard title="100 Agents in 100 Days" href="/tutorials/100-agents-in-100-days/" description="Daily tutorials for building AI agents with persistent memory." />
+</CardGrid>
+
+{/* ── Bottom CTA ───────────────────────────────────── */}
+
+<div class="cta-row landing-footer-cta">
+  <a href="/end-user/quick-start/" class="sl-flex action primary">Quick Start</a>
+  <a href="https://github.com/AstrocyteAI/astrocytes" class="sl-flex action minimal">GitHub</a>
+</div>
+
+</div>

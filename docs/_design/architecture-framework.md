@@ -19,7 +19,7 @@ Astrocytes is an **open-source memory framework** that sits between AI agents an
 - **AuthN / AuthZ integration:** **Authentication (AuthN)** - external IdPs and middleware map credentials to an **opaque principal**; Astrocytes does not validate passwords or issue tokens. **Authorization (AuthZ)** - per-bank `read` / `write` / `forget` / `admin` checks run in the core (`access-control.md`); an optional **AccessPolicyProvider** can delegate allow/deny to enterprise PDPs (OPA, Cerbos, Casbin, …) - see section 4.5 and `identity-and-external-policy.md`.
 - A **policy layer** that enforces neuroscience-inspired governance (homeostasis, barriers, pruning, observability) regardless of which backend is plugged in.
 
-Astrocytes is **not** an LLM gateway. It does not route completion requests, track LLM spend, or normalize chat formats. That is the job of tools like LiteLLM.
+Astrocytes is **not** an LLM gateway. It does not route completion requests, track LLM spend, or normalize chat formats. That is the job of **LLM gateways and model aggregators** — for example LiteLLM, Portkey, OpenRouter, Vercel AI Gateway, or your cloud provider’s unified model APIs — and of **direct** first-party SDKs when you call each vendor without an intermediary.
 
 Astrocytes is **not** an agent runtime. It does **not** define agent orchestration: graphs, steps, tool loops, checkpoints, scheduling, or multi-agent routing. Those concerns belong to **agent frameworks and your application** (LangGraph, CrewAI, Pydantic AI, custom orchestrators, …). The framework contract is **memory**, **governance**, and **provider SPIs**; thin adapters connect frameworks to that API - see `agent-framework-middleware.md`.
 
@@ -100,7 +100,7 @@ flowchart TB
   subgraph BACK["Provider backends"]
     VEC["Vector and graph DBs - pgvector, Pinecone, Qdrant, Weaviate, Neo4j, …"]
     ENG["Full engines - Mystique, Mem0, Zep, Letta, Cognee, …"]
-    LLM["LLM backends - LiteLLM, OpenAI, Anthropic, Bedrock or Azure via adapters, local embedders, …"]
+    LLM["LLM backends - gateways or aggregators (LiteLLM, Portkey, OpenRouter, …), direct OpenAI / Anthropic / Bedrock / Azure adapters, local embedders, …"]
   end
 
   APP --> API
@@ -115,7 +115,7 @@ flowchart TB
 
 The dashed link means **omit this box** when callers embed Astrocytes **in-process** (library, local agent) with no HTTP edge.
 
-**Where an API gateway sits (inbound):** An **API gateway** (Kong, AWS API Gateway, Envoy, Azure APIM, …) is **not** part of the Astrocytes core. It appears in the diagram as **optional inbound edge** - in front of your **HTTP or gRPC service** (or BFF) that embeds Astrocytes. Typical roles: TLS termination, path routing, coarse rate limits, and sometimes **JWT or API-key validation at the edge** before requests hit your code. Your service then maps validated identity to an **opaque `principal`** on `AstrocyteContext` (section 4.5). Do **not** confuse this with the **LLM gateway** (LiteLLM et al., section 5 - **outbound** to models) or **outbound transport** plugins (section 4.4 - how **egress** HTTP is built).
+**Where an API gateway sits (inbound):** An **API gateway** (Kong, AWS API Gateway, Envoy, Azure APIM, …) is **not** part of the Astrocytes core. It appears in the diagram as **optional inbound edge** - in front of your **HTTP or gRPC service** (or BFF) that embeds Astrocytes. Typical roles: TLS termination, path routing, coarse rate limits, and sometimes **JWT or API-key validation at the edge** before requests hit your code. Your service then maps validated identity to an **opaque `principal`** on `AstrocyteContext` (section 4.5). Do **not** confuse this with **LLM gateways** (section 5 - **outbound** to models; see examples there) or **outbound transport** plugins (section 4.4 - how **egress** HTTP is built).
 
 ---
 
@@ -156,7 +156,7 @@ A secondary plugin surface for LLM access. Used by the Astrocytes core for:
 
 This is **not** an LLM gateway. It is a narrow internal dependency with two methods: `complete()` and `embed()`. Adapters exist for:
 
-- **Unified gateways**: LiteLLM (100+ models including Bedrock, Azure, Vertex, Groq, Ollama, etc.)
+- **Unified gateways and aggregators**: products that front many models behind one API or control plane — e.g. **LiteLLM**, **Portkey**, **OpenRouter**, **Vercel AI Gateway**, cloud **AI Gateway** / router services, or comparable layers — not only LiteLLM.
 - **Direct SDKs**: OpenAI, Anthropic, Google Gemini, Mistral, Cohere
 - **Self-hosted**: Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, TGI) via the OpenAI adapter with custom `api_base`
 - **Local embeddings**: Built-in sentence-transformers support (no API cost for embeddings)
@@ -177,11 +177,11 @@ Astrocytes exposes an **optional** `OutboundTransportProvider` interface applied
 
 ---
 
-## 5. Relationship to LLM gateways (LiteLLM et al.)
+## 5. Relationship to LLM gateways
 
-Astrocytes and LLM gateways occupy **different layers** with a narrow overlap:
+Astrocytes and **LLM gateways** (LiteLLM, Portkey, OpenRouter, Vercel AI Gateway, cloud model routers, …) occupy **different layers** with a narrow overlap:
 
-| Concern | LLM Gateway (LiteLLM) | Astrocytes |
+| Concern | LLM gateway / aggregator | Astrocytes |
 |---|---|---|
 | Normalize LLM provider APIs | Yes (primary job) | No |
 | Route completion/embedding requests | Yes | No |
@@ -204,7 +204,7 @@ flowchart LR
   AST --> T2[Memory Engine Provider - Tier 2]
   AST --> LLM[LLM Provider - pipeline + policies]
   LLM --> OT["Outbound Transport - optional"]
-  LLM --> SDK[LiteLLM or direct SDK]
+  LLM --> SDK[Gateway, aggregator, or direct SDK]
   SDK --> UP[Upstream models]
 ```
 
@@ -255,13 +255,13 @@ flowchart LR
 
 Full specification for outbound credential gateways: `outbound-transport.md`.
 
-Skip **API gateway** when the agent embeds Astrocytes **in-process** (no public HTTP edge). **API gateway** (inbound, your API) is unrelated to **LiteLLM** (outbound to model APIs).
+Skip **API gateway** when the agent embeds Astrocytes **in-process** (no public HTTP edge). **API gateway** (inbound, your API) is unrelated to **LLM gateways** (outbound to model APIs).
 
 **Key distinction**: LLM gateways are **stateless pass-through with policy**. Astrocytes is **stateful intelligence with policy**. It owns the memory pipeline (or delegates it to a memory engine provider) and enforces governance. The gateway pattern does not apply - the tripartite synapse pattern does.
 
-**Credential gateways vs. LLM gateways:** Products that inject API keys into outbound HTTP (OneCLI-class) are **outbound transport** concerns - they sit **under** whatever SDK the LLM adapter uses. They do **not** replace LiteLLM or direct provider adapters; see `outbound-transport.md`.
+**Credential gateways vs. LLM gateways:** Products that inject API keys into outbound HTTP (OneCLI-class) are **outbound transport** concerns - they sit **under** whatever SDK the LLM adapter uses. They do **not** replace LLM gateways or direct provider adapters; see `outbound-transport.md`.
 
-**LLM gateways vs. multimodal / video / voice APIs:** LiteLLM and OpenRouter target **text (and embedding) model** routing. **Conversational video** (Tavus, HeyGen, D-ID, …) and **voice** (ElevenLabs, …) products are **presentation or modality layers** - integrate them **next to** Astrocytes in your application, not as drop-in `LLMProvider` implementations unless they expose a **compatible chat/embedding HTTP API** you configure explicitly. See `presentation-layer-and-multimodal-services.md`.
+**LLM gateways vs. multimodal / video / voice APIs:** Gateways such as **LiteLLM**, **OpenRouter**, **Portkey**, and **Vercel AI Gateway** target **text (and embedding) model** routing. **Conversational video** (Tavus, HeyGen, D-ID, …) and **voice** (ElevenLabs, …) products are **presentation or modality layers** - integrate them **next to** Astrocytes in your application, not as drop-in `LLMProvider` implementations unless they expose a **compatible chat/embedding HTTP API** you configure explicitly. See `presentation-layer-and-multimodal-services.md`.
 
 ---
 
@@ -363,7 +363,7 @@ Beyond intelligence and governance, the framework provides capabilities that no 
 | Outbound transport | Optional plugins for credential gateways and enterprise HTTP/TLS; env-only path without plugins | `outbound-transport.md` |
 | AuthN wiring + external AuthZ | Map IdP claims to principals; optional PDP/Casbin adapters beyond config grants | `identity-and-external-policy.md` |
 | Presentation / multimodal (non-LLM API) | How Tavus-class video, voice (e.g. ElevenLabs), and related APIs compose **beside** the LLM SPI | `presentation-layer-and-multimodal-services.md` |
-| Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for LiteLLM/OpenRouter-class gateways | `multimodal-llm-spi.md` |
+| Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for multi-provider gateways (LiteLLM / OpenRouter–class and similar) | `multimodal-llm-spi.md` |
 
 These capabilities exist at the **framework layer** - they apply regardless of which memory provider is active. They are a major reason to use Astrocytes rather than calling a provider directly.
 

@@ -1,1 +1,257 @@
-/* Optional tweaks on top of Starlight defaults */
+/*
+  Astrocytes theme — light mode: calvinx-style amber (#d97706).
+  Dark mode: teal/mint accents so UI matches the logo and reads cooler on charcoal.
+*/
+
+/* ── Light mode — calvinx-style amber ───────────────── */
+:root {
+  --sl-color-accent-low:  #fffbeb;
+  --sl-color-accent:      #d97706;
+  --sl-color-accent-high: #78350f;
+  --sl-color-text-accent: #d97706;
+
+  --sl-font: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell,
+    "Noto Sans", sans-serif;
+  --sl-font-mono: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+
+  --sl-text-2xl: 1.65rem;
+
+  /* Shared corners: feature cards, Starlight Card/LinkCard, code blocks in quick start */
+  --astrocytes-radius-card: 0.75rem;
+  --astrocytes-radius-shell: 1rem;
+
+  --landing-hero-glow: radial-gradient(
+    ellipse 80% 50% at 70% 18%,
+    color-mix(in srgb, var(--sl-color-accent) 16%, transparent) 0%,
+    transparent 58%
+  );
+}
+
+/* ── Dark mode — teal (logo + OpenClaw-adjacent CTAs) ─ */
+:root[data-theme="dark"] {
+  --sl-color-accent-low:  #042f2e;
+  --sl-color-accent:      #2dd4bf;
+  --sl-color-accent-high: #ccfbf1;
+  --sl-color-text-accent: #5eead4;
+
+  --landing-hero-glow: radial-gradient(
+    ellipse 90% 55% at 75% 0%,
+    color-mix(in srgb, var(--sl-color-accent) 22%, transparent) 0%,
+    transparent 50%
+  );
+}
+
+/* ── Splash / landing atmosphere ────────────────────── */
+html[data-has-hero]:not([data-has-sidebar]) body {
+  background-image: var(--landing-hero-glow);
+  background-attachment: fixed;
+}
+
+html[data-has-hero]:not([data-has-sidebar]) .hero {
+  padding-block: clamp(1.5rem, 4vw, 3rem) 0.5rem;
+}
+
+/* Mascot in Starlight hero (hero.image html) */
+.hero .hero-html .landing-hero-mascot {
+  width: min(280px, 42vw);
+  height: auto;
+  max-width: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 12px 32px color-mix(in srgb, var(--sl-color-accent) 35%, transparent));
+}
+
+@media (min-width: 50rem) {
+  .hero .hero-html {
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* ── Landing body (below hero) ───────────────────────── */
+.landing {
+  margin-block-start: 2.5rem;
+}
+
+.landing .section-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sl-color-text-accent);
+  margin-block: 2.75rem 0.35rem;
+}
+
+.landing .section-label:first-child {
+  margin-block-start: 0;
+}
+
+.landing .section-heading {
+  text-align: start;
+  margin-block: 0 0.5rem;
+  font-size: clamp(1.35rem, 2.8vw, 1.85rem);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.landing .section-subheading {
+  text-align: start;
+  max-width: 50ch;
+  margin-inline: 0;
+  margin-block-end: 1.25rem;
+  opacity: 0.78;
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+/* ── Feature section cards ──────────────────────────── */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.25rem;
+  margin-block: 1.5rem 2.5rem;
+  align-items: stretch;
+}
+
+/* Belt-and-suspenders: Starlight content rules must not add block spacing between cards. */
+.feature-grid > .feature-card {
+  margin-block: 0;
+}
+
+/* Prefer 3-column layout on large screens (3×1 or 3×2) instead of 4+2 auto-fit. */
+@media (min-width: 60rem) {
+  .feature-grid--cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.feature-card {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: var(--astrocytes-radius-card);
+  padding: 1.5rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  background: color-mix(in srgb, var(--sl-color-bg) 88%, var(--sl-color-gray-6));
+}
+
+.feature-card:hover {
+  border-color: var(--sl-color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sl-color-accent) 35%, transparent);
+}
+
+.feature-card h3 {
+  margin-block-start: 0;
+  font-size: 1.1rem;
+}
+
+.feature-card p {
+  font-size: 0.92rem;
+  opacity: 0.82;
+  margin-block-end: 0;
+}
+
+/* Starlight MDX: Card / LinkCard outer shells (default Card has square corners) */
+.sl-markdown-content .card-grid > article.card,
+.landing .card-grid > article.card {
+  border-radius: var(--astrocytes-radius-card);
+}
+
+.sl-markdown-content .sl-link-card,
+.landing .sl-link-card {
+  border-radius: var(--astrocytes-radius-card);
+}
+
+.sl-markdown-content .starlight-aside {
+  border-radius: var(--astrocytes-radius-card);
+}
+
+/* ── Quick start (OpenClaw-style panel + tabs) ──────── */
+.quickstart-panel {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: var(--astrocytes-radius-shell);
+  padding: 0.25rem 1rem 1rem;
+  margin-block: 0.5rem 1.5rem;
+  background: color-mix(in srgb, var(--sl-color-bg-nav) 92%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--sl-color-white) 6%, transparent);
+}
+
+:root[data-theme="dark"] .quickstart-panel {
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--sl-color-white) 4%, transparent);
+}
+
+.quickstart-panel .tablist-wrapper {
+  margin-block-end: 0.35rem;
+}
+
+.quickstart-block {
+  background: var(--sl-color-gray-6);
+  border-radius: var(--astrocytes-radius-card);
+  padding: 1.1rem 1.25rem;
+  font-family: var(--sl-font-mono);
+  font-size: 0.88rem;
+  overflow-x: auto;
+  margin-block: 0.75rem 0;
+  border: 1px solid var(--sl-color-gray-5);
+}
+
+.quickstart-block--uv {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.quickstart-block .quickstart-note {
+  font-family: var(--sl-font, var(--sl-font-system)), var(--sl-font-system), system-ui, sans-serif;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--sl-color-gray-2);
+  margin: 0;
+}
+
+.quickstart-block .quickstart-note code {
+  font-family: var(--sl-font-mono);
+  font-size: 0.85em;
+}
+
+:root[data-theme="dark"] .quickstart-block {
+  background: var(--sl-color-gray-7);
+}
+
+/* Integration chips — "Works with everything" row */
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 1rem 1.75rem;
+  max-width: 52rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.28rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  border: 1px solid var(--sl-color-gray-5);
+  background: color-mix(in srgb, var(--sl-color-bg-nav) 85%, transparent);
+  color: var(--sl-color-gray-1);
+}
+
+/* ── Card grids on landing ─────────────────────────── */
+.landing .card-grid {
+  margin-block: 1rem 0.5rem;
+}
+
+/* ── Bottom CTA ───────────────────────────────────── */
+.landing-footer-cta {
+  margin-block: 3rem 1rem;
+  justify-content: flex-start;
+}
+
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}

@@ -1,0 +1,142 @@
+---
+import Icon from "../../node_modules/@astrojs/starlight/user-components/Icon.astro";
+
+const labels = {
+  dark: Astro.locals.t("themeSelect.dark"),
+  light: Astro.locals.t("themeSelect.light"),
+  auto: Astro.locals.t("themeSelect.auto"),
+  base: Astro.locals.t("themeSelect.accessibleLabel"),
+};
+---
+
+<starlight-theme-select class="theme-cycle-root">
+  <button type="button" class="theme-cycle-button">
+    <Icon name="laptop" class="label-icon" size="0.875rem" />
+  </button>
+  <select class="theme-cycle-hidden-select" aria-hidden="true" tabindex="-1" autocomplete="off">
+    <option value="dark">{labels.dark}</option>
+    <option value="light">{labels.light}</option>
+    <option value="auto" selected>{labels.auto}</option>
+  </select>
+</starlight-theme-select>
+
+{/* Ensure pickers sync after inline theme bootstrap (same as default ThemeSelect). */}
+<script is:inline>
+  StarlightThemeProvider.updatePickers();
+</script>
+
+<script define:vars={{ labels }}>
+  /** @typedef {'auto' | 'dark' | 'light'} Theme */
+  const storageKey = "starlight-theme";
+  /** @param {unknown} theme */
+  const parseTheme = (theme) =>
+    theme === "auto" || theme === "dark" || theme === "light" ? theme : "auto";
+
+  const loadTheme = () =>
+    parseTheme(typeof localStorage !== "undefined" && localStorage.getItem(storageKey));
+
+  /** @param {Theme} theme */
+  function storeTheme(theme) {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(storageKey, theme === "light" || theme === "dark" ? theme : "");
+    }
+  }
+
+  const getPreferredColorScheme = () =>
+    matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+
+  /** @param {Theme} theme */
+  function onThemeChange(theme) {
+    window.StarlightThemeProvider.updatePickers(theme);
+    document.documentElement.dataset.theme = theme === "auto" ? getPreferredColorScheme() : theme;
+    storeTheme(theme);
+  }
+
+  matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+    if (loadTheme() === "auto") onThemeChange("auto");
+  });
+
+  /** @type {Theme[]} */
+  const cycleOrder = ["light", "dark", "auto"];
+
+  class StarlightThemeSelect extends HTMLElement {
+    constructor() {
+      super();
+      onThemeChange(loadTheme());
+
+      const btn = this.querySelector("button");
+      const select = this.querySelector("select");
+      if (!(btn instanceof HTMLButtonElement) || !(select instanceof HTMLSelectElement)) return;
+
+      const syncAria = () => {
+        const t = parseTheme(select.value);
+        btn.setAttribute("aria-label", `${labels.base}: ${labels[t]}`);
+      };
+      syncAria();
+
+      btn.addEventListener("click", () => {
+        const current = parseTheme(select.value);
+        const i = cycleOrder.indexOf(current);
+        const next = cycleOrder[(i + 1) % cycleOrder.length];
+        onThemeChange(next);
+        syncAria();
+      });
+
+      select.addEventListener("change", (e) => {
+        const el = e.currentTarget;
+        if (el instanceof HTMLSelectElement) {
+          onThemeChange(parseTheme(el.value));
+          syncAria();
+        }
+      });
+    }
+  }
+
+  customElements.define("starlight-theme-select", StarlightThemeSelect);
+</script>
+
+<style>
+  @layer starlight.core {
+    .theme-cycle-root {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .theme-cycle-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.625rem;
+      margin-inline: calc(var(--sl-inline-padding, 0.5rem) * -0.5);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: var(--sl-color-gray-2);
+      border-radius: 0.25rem;
+    }
+
+    .theme-cycle-button:hover {
+      color: var(--sl-color-white);
+    }
+
+    .theme-cycle-button:focus-visible {
+      outline: 2px solid var(--sl-color-text-accent);
+      outline-offset: 2px;
+    }
+
+    .theme-cycle-hidden-select {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+  }
+</style>
