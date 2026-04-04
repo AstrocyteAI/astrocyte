@@ -5,10 +5,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from astrocytes import Astrocyte
-from astrocytes.config import AstrocyteConfig, access_grants_for_astrocyte, load_config
+from astrocyte import Astrocyte
+from astrocyte.config import AstrocyteConfig, access_grants_for_astrocyte, load_config
 
-from astrocytes_rest.wiring import build_tier1_pipeline
+from astrocyte_rest.wiring import build_tier1_pipeline
 
 
 def _apply_dev_defaults_when_no_config_file(config: AstrocyteConfig) -> None:

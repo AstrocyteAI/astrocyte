@@ -15,7 +15,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from psycopg_pool import AsyncConnectionPool
 
-from astrocytes.types import HealthStatus, VectorFilters, VectorHit, VectorItem
+from astrocyte.types import HealthStatus, VectorFilters, VectorHit, VectorItem
 
 _TABLE_SAFE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
@@ -34,7 +34,7 @@ class PgVectorStore:
     def __init__(
         self,
         dsn: str | None = None,
-        table_name: str = "astrocytes_vectors",
+        table_name: str = "astrocyte_vectors",
         embedding_dimensions: int = 128,
         bootstrap_schema: bool = True,
         **kwargs: Any,

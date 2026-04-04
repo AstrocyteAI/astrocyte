@@ -8,13 +8,13 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
-def _no_astrocytes_config_path(monkeypatch: pytest.MonkeyPatch) -> None:
+def _no_astrocyte_config_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ASTROCYTES_CONFIG_PATH", raising=False)
 
 
-def test_dev_mode_uses_x_astrocytes_principal(monkeypatch: pytest.MonkeyPatch):
+def test_dev_mode_uses_x_astrocyte_principal(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ASTROCYTES_AUTH_MODE", "dev")
-    from astrocytes_rest.app import create_app
+    from astrocyte_rest.app import create_app
 
     client = TestClient(create_app())
     r = client.post(
@@ -30,7 +30,7 @@ def test_dev_mode_uses_x_astrocytes_principal(monkeypatch: pytest.MonkeyPatch):
 def test_api_key_rejects_bad_key(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ASTROCYTES_AUTH_MODE", "api_key")
     monkeypatch.setenv("ASTROCYTES_API_KEY", "secret")
-    from astrocytes_rest.app import create_app
+    from astrocyte_rest.app import create_app
 
     client = TestClient(create_app())
     r = client.post(
@@ -44,7 +44,7 @@ def test_api_key_rejects_bad_key(monkeypatch: pytest.MonkeyPatch):
 def test_api_key_accepts_valid_key_and_principal(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ASTROCYTES_AUTH_MODE", "api_key")
     monkeypatch.setenv("ASTROCYTES_API_KEY", "good")
-    from astrocytes_rest.app import create_app
+    from astrocyte_rest.app import create_app
 
     client = TestClient(create_app())
     r = client.post(
@@ -64,7 +64,7 @@ def test_jwt_principal_from_sub(monkeypatch: pytest.MonkeyPatch):
         secret,
         algorithm="HS256",
     )
-    from astrocytes_rest.app import create_app
+    from astrocyte_rest.app import create_app
 
     client = TestClient(create_app())
     r = client.post(

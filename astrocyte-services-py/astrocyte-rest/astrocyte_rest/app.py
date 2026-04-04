@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from astrocytes.errors import (
+from astrocyte.errors import (
     AccessDenied,
     CapabilityNotSupported,
     ConfigError,
@@ -16,11 +16,11 @@ from astrocytes.errors import (
     ProviderUnavailable,
     RateLimited,
 )
-from astrocytes.types import AstrocyteContext
+from astrocyte.types import AstrocyteContext
 
-from astrocytes_rest.auth import get_astrocyte_context
-from astrocytes_rest.brain import build_astrocyte
-from astrocytes_rest.serialization import to_jsonable
+from astrocyte_rest.auth import get_astrocyte_context
+from astrocyte_rest.brain import build_astrocyte
+from astrocyte_rest.serialization import to_jsonable
 
 # Bounds /health latency when the vector store (e.g. pgvector) cannot connect.
 _HEALTH_TIMEOUT_S = 8.0
@@ -31,7 +31,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Astrocytes reference server",
-        description="REST API over astrocytes-py (Tier 1 in-memory pipeline by default).",
+        description="REST API over astrocyte-py (Tier 1 in-memory pipeline by default).",
         version="0.1.0",
     )
 

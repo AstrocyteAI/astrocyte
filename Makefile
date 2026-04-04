@@ -4,7 +4,7 @@ SHELL := /bin/bash
 .PHONY: ci test
 
 ci:
-	$(MAKE) -C astrocytes-services-py ci-checks
+	$(MAKE) -C astrocyte-services-py ci-checks
 
 test:
-	$(MAKE) -C astrocytes-py test
+	$(MAKE) -C astrocyte-py test

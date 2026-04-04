@@ -7,7 +7,7 @@ import os
 import jwt
 from fastapi import Header, HTTPException
 
-from astrocytes.types import AstrocyteContext
+from astrocyte.types import AstrocyteContext
 
 
 def _auth_mode() -> str:
@@ -18,25 +18,25 @@ def resolve_principal(
     *,
     authorization: str | None,
     x_api_key: str | None,
-    x_astrocytes_principal: str | None,
+    x_astrocyte_principal: str | None,
 ) -> str | None:
     """Return authenticated principal id, or None for anonymous (when policy allows)."""
     mode = _auth_mode()
     if mode == "dev":
-        if x_astrocytes_principal is None or x_astrocytes_principal == "":
+        if x_astrocyte_principal is None or x_astrocyte_principal == "":
             return None
-        return x_astrocytes_principal
+        return x_astrocyte_principal
 
     if mode == "api_key":
         expected = os.environ.get("ASTROCYTES_API_KEY", "")
         if not expected or x_api_key != expected:
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
-        if not x_astrocytes_principal:
+        if not x_astrocyte_principal:
             raise HTTPException(
                 status_code=401,
                 detail="X-Astrocytes-Principal required when using API key auth",
             )
-        return x_astrocytes_principal
+        return x_astrocyte_principal
 
     if mode in ("jwt_hs256", "jwt"):
         if not authorization or not authorization.startswith("Bearer "):
@@ -64,13 +64,13 @@ def resolve_principal(
 async def get_astrocyte_context(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
-    x_astrocytes_principal: str | None = Header(default=None, alias="X-Astrocytes-Principal"),
+    x_astrocyte_principal: str | None = Header(default=None, alias="X-Astrocytes-Principal"),
 ) -> AstrocyteContext | None:
     """FastAPI dependency: trusted principal from JWT/API key, or dev header."""
     principal = resolve_principal(
         authorization=authorization,
         x_api_key=x_api_key,
-        x_astrocytes_principal=x_astrocytes_principal,
+        x_astrocyte_principal=x_astrocyte_principal,
     )
     if principal is None or principal == "":
         return None

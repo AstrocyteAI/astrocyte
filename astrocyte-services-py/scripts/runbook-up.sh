@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One-shot runbook: Postgres → SQL migrations (psql) → astrocytes-rest with runbook config.
-# Run from astrocytes-services-py/:  ./scripts/runbook-up.sh
-# Or from repo root:  ./astrocytes-services-py/scripts/runbook-up.sh
+# One-shot runbook: Postgres → SQL migrations (psql) → astrocyte-rest with runbook config.
+# Run from astrocyte-services-py/:  ./scripts/runbook-up.sh
+# Or from repo root:  ./astrocyte-services-py/scripts/runbook-up.sh
 #
 # Requires: docker, docker compose, psql (PostgreSQL client), optional .env (see .env.example).
 
@@ -17,9 +17,9 @@ if [ -f .env ]; then
   set +a
 fi
 
-POSTGRES_USER="${POSTGRES_USER:-astrocytes}"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-astrocytes}"
-POSTGRES_DB="${POSTGRES_DB:-astrocytes}"
+POSTGRES_USER="${POSTGRES_USER:-astrocyte}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-astrocyte}"
+POSTGRES_DB="${POSTGRES_DB:-astrocyte}"
 POSTGRES_PUBLISH_PORT="${POSTGRES_PUBLISH_PORT:-5433}"
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -56,7 +56,7 @@ else
 fi
 
 echo "Applying SQL migrations..."
-( export DATABASE_URL="$MIGRATE_URL" && ./astrocytes-pgvector/scripts/migrate.sh )
+( export DATABASE_URL="$MIGRATE_URL" && ./astrocyte-pgvector/scripts/migrate.sh )
 
 echo "Starting full stack (runbook config)..."
 docker compose -f docker-compose.yml -f docker-compose.runbook.yml up --build -d

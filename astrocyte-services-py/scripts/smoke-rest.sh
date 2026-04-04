@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test: live + retain + recall against a running astrocytes-rest (e.g. after `make runbook`).
+# Smoke test: live + retain + recall against a running astrocyte-rest (e.g. after `make runbook`).
 set -euo pipefail
 
 : "${ASTROCYTES_HTTP_PUBLISH_PORT:=8080}"

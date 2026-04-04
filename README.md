@@ -6,7 +6,7 @@
 
 In the brain, **neurons** are the fast signaling substrate for perception, action, and learning. **Astrocytes** are glial cells that were once treated as passive support; contemporary work casts them as **active partners** in circuit function: they help regulate the **extracellular milieu** (for example ion and neurotransmitter clearance), participate in the **tripartite synapse** alongside pre- and postsynaptic elements, link activity to **metabolism and blood flow**, and take part in **pruning**, repair, and barrier-like interfaces. They operate on **slower, integrative timescales** than spike-driven signaling, shaping the conditions under which neurons operate.
 
-This project uses that picture as **engineering metaphor**, not as a literal simulation of cells. We pair **fast cognitive channels** (your agents and models) with a **mediating layer** focused on **memory, boundaries, and homeostasis** - clearing and consolidating context, enforcing limits, observing load, and maintaining stable interfaces between “neural” computation and the wider environment. The goal is **tripartite stewardship** at the agent-memory exchange: the same role the docs call the framework’s “third party” at the synapse. For the biology summary see [`docs/_design/neuroscience-astrocytes.md`](docs/_design/neuroscience-astrocytes.md); for how those ideas map to design rules see [`docs/_design/design-principles.md`](docs/_design/design-principles.md).
+This project uses that picture as **engineering metaphor**, not as a literal simulation of cells. We pair **fast cognitive channels** (your agents and models) with a **mediating layer** focused on **memory, boundaries, and homeostasis** - clearing and consolidating context, enforcing limits, observing load, and maintaining stable interfaces between “neural” computation and the wider environment. The goal is **tripartite stewardship** at the agent-memory exchange: the same role the docs call the framework’s “third party” at the synapse. For the biology summary see [`docs/_design/neuroscience-astrocyte.md`](docs/_design/neuroscience-astrocyte.md); for how those ideas map to design rules see [`docs/_design/design-principles.md`](docs/_design/design-principles.md).
 
 ## Goals
 
@@ -15,7 +15,7 @@ This project uses that picture as **engineering metaphor**, not as a literal sim
 - **Governance and safety by design.** Enforce a **policy layer** (homeostasis, barriers, pruning, signal quality, observability) inspired by the project’s design principles, so behavior stays controlled regardless of which backend is plugged in.
 - **Identity and authorization at the boundary.** Consume an **opaque principal** from your app’s authentication story; enforce **per-bank authorization** in the framework, with optional hooks to external policy engines when enterprises require them.
 - **Operational reality.** Optional **outbound transport** plugins for credential gateways and enterprise HTTP/TLS/proxy setups, shared by outbound calls that need them.
-- **Portable, parallel implementations.** Ship **the same framework contract** as [`astrocytes-py/`](astrocytes-py/README.md) (PyPI package **`astrocytes`**) and [`astrocytes-rs/`](astrocytes-rs/README.md) (Rust), so deployments can choose a runtime without redesigning memory semantics. Details: [`docs/_design/implementation-language-strategy.md`](docs/_design/implementation-language-strategy.md).
+- **Portable, parallel implementations.** Ship **the same framework contract** as [`astrocyte-py/`](astrocyte-py/README.md) (PyPI package **`astrocyte`**) and [`astrocyte-rs/`](astrocyte-rs/README.md) (Rust), so deployments can choose a runtime without redesigning memory semantics. Details: [`docs/_design/implementation-language-strategy.md`](docs/_design/implementation-language-strategy.md).
 
 ## Non-goals
 
@@ -28,8 +28,8 @@ For how this maps to vendor-neutral **applied AI / agentic-stack** teaching (mem
 | Path | Contents |
 |------|----------|
 | [`docs/`](docs/README.md) | Design specification: architecture, SPIs, policy, packaging, evaluation, governance. |
-| [`astrocytes-py/`](astrocytes-py/README.md) | Python implementation of the Astrocytes service. |
-| [`astrocytes-services-py/`](astrocytes-services-py/README.md) | Optional Python **services**: reference REST server (**[`astrocytes-rest/`](astrocytes-services-py/astrocytes-rest/README.md)**) and **PostgreSQL + pgvector** adapter (**[`astrocytes-pgvector/`](astrocytes-services-py/astrocytes-pgvector/README.md)**). Compose for API + DB: [`astrocytes-services-py/docker-compose.yml`](astrocytes-services-py/docker-compose.yml). |
-| [`astrocytes-rs/`](astrocytes-rs/README.md) | Rust implementation of the Astrocytes service (same contract). |
+| [`astrocyte-py/`](astrocyte-py/README.md) | Python implementation of the Astrocytes service. |
+| [`astrocyte-services-py/`](astrocyte-services-py/README.md) | Optional Python **services**: reference REST server (**[`astrocyte-rest/`](astrocyte-services-py/astrocyte-rest/README.md)**) and **PostgreSQL + pgvector** adapter (**[`astrocyte-pgvector/`](astrocyte-services-py/astrocyte-pgvector/README.md)**). Compose for API + DB: [`astrocyte-services-py/docker-compose.yml`](astrocyte-services-py/docker-compose.yml). |
+| [`astrocyte-rs/`](astrocyte-rs/README.md) | Rust implementation of the Astrocytes service (same contract). |
 
 For scope, vocabulary, and a full reading order, start with [`docs/README.md`](docs/README.md).

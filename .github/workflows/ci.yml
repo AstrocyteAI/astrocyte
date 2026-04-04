@@ -19,6 +19,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run CI (astrocytes-py + services checks)
+      - name: Run CI (astrocyte-py + services checks)
         run: make ci
         working-directory: ${{ github.workspace }}

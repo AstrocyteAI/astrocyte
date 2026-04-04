@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Apply SQL migrations in astrocytes-pgvector/migrations/ using psql (no Python).
+# Apply SQL migrations in astrocyte-pgvector/migrations/ using psql (no Python).
 #
 # Usage:
 #   export DATABASE_URL='postgresql://user:pass@host:5432/dbname'

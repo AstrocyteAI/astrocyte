@@ -1,4 +1,4 @@
-"""CLI entry: `astrocytes-rest` or `python -m astrocytes_rest`."""
+"""CLI entry: `astrocyte-rest` or `python -m astrocyte_rest`."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ def main() -> None:
     port = int(os.environ.get("ASTROCYTES_PORT", "8080"))
 
     uvicorn.run(
-        "astrocytes_rest.app:create_app",
+        "astrocyte_rest.app:create_app",
         host=host,
         port=port,
         factory=True,

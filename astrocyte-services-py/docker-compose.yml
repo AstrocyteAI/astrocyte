@@ -2,16 +2,16 @@
 #   cp .env.example .env   # optional: override secrets and ports
 #   docker compose up --build
 # Or from repo root:
-#   docker compose -f astrocytes-services-py/docker-compose.yml --env-file astrocytes-services-py/.env up --build
+#   docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build
 #
 # Postgres is reachable on host port POSTGRES_PUBLISH_PORT (default 5433). The API is on ASTROCYTES_HTTP_PUBLISH_PORT (default 8080).
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-astrocytes}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-astrocytes}
-      POSTGRES_DB: ${POSTGRES_DB:-astrocytes}
+      POSTGRES_USER: ${POSTGRES_USER:-astrocyte}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-astrocyte}
+      POSTGRES_DB: ${POSTGRES_DB:-astrocyte}
     ports:
       - "${POSTGRES_PUBLISH_PORT:-5433}:5432"
     healthcheck:
@@ -20,17 +20,17 @@ services:
       timeout: 5s
       retries: 5
 
-  astrocytes-rest:
+  astrocyte-rest:
     build:
       context: ..
-      dockerfile: astrocytes-services-py/astrocytes-rest/Dockerfile
+      dockerfile: astrocyte-services-py/astrocyte-rest/Dockerfile
     ports:
       - "${ASTROCYTES_HTTP_PUBLISH_PORT:-8080}:${ASTROCYTES_PORT:-8080}"
     environment:
       ASTROCYTES_VECTOR_STORE: ${ASTROCYTES_VECTOR_STORE:-pgvector}
       # In-cluster DSN only: hostname must be `postgres`. Do not reuse host-side DATABASE_URL
       # (e.g. 127.0.0.1:5433) here — Compose would pass it into this container and health checks hang.
-      DATABASE_URL: ${ASTROCYTES_REST_DATABASE_URL:-postgresql://${POSTGRES_USER:-astrocytes}:${POSTGRES_PASSWORD:-astrocytes}@postgres:5432/${POSTGRES_DB:-astrocytes}}
+      DATABASE_URL: ${ASTROCYTES_REST_DATABASE_URL:-postgresql://${POSTGRES_USER:-astrocyte}:${POSTGRES_PASSWORD:-astrocyte}@postgres:5432/${POSTGRES_DB:-astrocyte}}
       ASTROCYTES_HOST: ${ASTROCYTES_HOST:-0.0.0.0}
       ASTROCYTES_PORT: ${ASTROCYTES_PORT:-8080}
     depends_on:
