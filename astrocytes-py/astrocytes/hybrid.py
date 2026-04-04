@@ -144,7 +144,11 @@ class HybridEngineProvider:
                 tagged = replace(tagged, source=tagged.source or "tier1_pipeline")
                 all_hits.append(replace(tagged, score=tagged.score * self._pipeline_w))
 
-        merged = _dedupe_hits_prefer_score(all_hits) if self._dedup_across_sources else sorted(all_hits, key=lambda x: x.score, reverse=True)
+        merged = (
+            _dedupe_hits_prefer_score(all_hits)
+            if self._dedup_across_sources
+            else sorted(all_hits, key=lambda x: x.score, reverse=True)
+        )
         trimmed = merged[: request.max_results]
         truncated = False
         if request.max_tokens:

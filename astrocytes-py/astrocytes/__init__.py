@@ -4,7 +4,6 @@ Public API surface. Import from here, not from submodules.
 """
 
 from astrocytes._astrocyte import Astrocyte
-from astrocytes.hybrid import HybridEngineProvider
 from astrocytes.errors import (
     AccessDenied,
     AstrocyteError,
@@ -16,6 +15,7 @@ from astrocytes.errors import (
     ProviderUnavailable,
     RateLimited,
 )
+from astrocytes.hybrid import HybridEngineProvider
 from astrocytes.provider import (
     DocumentStore,
     EngineProvider,

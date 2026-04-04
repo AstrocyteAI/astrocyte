@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from astrocytes.config import AstrocyteConfig, load_config
 from astrocytes.errors import (
@@ -18,11 +21,12 @@ from astrocytes.errors import (
     CapabilityNotSupported,
     ConfigError,
     ProviderUnavailable,
+    RateLimited,
 )
 from astrocytes.policy.barriers import ContentValidator, MetadataSanitizer, PiiScanner
 from astrocytes.policy.escalation import CircuitBreaker, DegradedModeHandler
 from astrocytes.policy.homeostasis import QuotaTracker, RateLimiter, enforce_token_budget
-from astrocytes.policy.observability import StructuredLogger, span, timed
+from astrocytes.policy.observability import MetricsCollector, StructuredLogger, span, timed
 from astrocytes.types import (
     AccessGrant,
     AstrocyteContext,
@@ -30,6 +34,7 @@ from astrocytes.types import (
     ForgetRequest,
     ForgetResult,
     HealthStatus,
+    HookEvent,
     MemoryHit,
     MultiBankStrategy,
     RecallRequest,
@@ -39,6 +44,13 @@ from astrocytes.types import (
     RetainRequest,
     RetainResult,
 )
+
+if TYPE_CHECKING:
+    from astrocytes.pipeline.orchestrator import PipelineOrchestrator
+    from astrocytes.provider import EngineProvider
+
+# Hook handler type — FFI-safe: takes a HookEvent, returns an awaitable or None.
+HookHandler = Callable[[HookEvent], Awaitable[None] | None]
 
 logger = logging.getLogger("astrocytes")
 
@@ -144,16 +156,31 @@ class Astrocyte:
         )
         self._degraded_handler = DegradedModeHandler(mode=config.escalation.degraded_mode)
 
+        # Quotas (daily limits)
+        self._quota_limits: dict[str, int | None] = {
+            "retain": config.homeostasis.quotas.retain_per_day,
+            "reflect": config.homeostasis.quotas.reflect_per_day,
+        }
+
+        # Metrics
+        self._metrics = MetricsCollector(enabled=config.observability.prometheus_enabled)
+
         # Access control
         self._access_grants: list[AccessGrant] = []
 
-        # Hooks
-        self._hooks: dict[str, list[Any]] = {}
+        # Hooks — typed as HookHandler (not Any)
+        self._hooks: dict[str, list[HookHandler]] = {}
 
-        # Provider state (set during initialization)
-        self._engine_provider: Any | None = None
-        self._pipeline: Any | None = None
+        # Provider state — typed as protocols (not Any)
+        self._engine_provider: EngineProvider | None = None
+        self._pipeline: PipelineOrchestrator | None = None
         self._capabilities: EngineCapabilities | None = None
+
+    async def __aenter__(self) -> "Astrocyte":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        pass  # Future: close provider connections
 
     @classmethod
     def from_config(cls, path: str | Path) -> "Astrocyte":
@@ -162,20 +189,20 @@ class Astrocyte:
         return cls(config)
 
     @classmethod
-    def from_config_dict(cls, data: dict[str, Any]) -> "Astrocyte":
+    def from_config_dict(cls, data: dict[str, str | int | float | bool | None | dict | list]) -> "Astrocyte":
         """Create an Astrocyte instance from a config dictionary (for testing)."""
         from astrocytes.config import _dict_to_config
 
         config = _dict_to_config(data)
         return cls(config)
 
-    def set_engine_provider(self, provider: Any) -> None:
+    def set_engine_provider(self, provider: EngineProvider) -> None:
         """Set the Tier 2 engine provider (for programmatic setup)."""
         self._engine_provider = provider
         if hasattr(provider, "capabilities"):
             self._capabilities = provider.capabilities()
 
-    def set_pipeline(self, pipeline: Any) -> None:
+    def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
         self._pipeline = pipeline
 
@@ -183,11 +210,55 @@ class Astrocyte:
         """Configure access grants."""
         self._access_grants = grants
 
-    def register_hook(self, event_type: str, handler: Any) -> None:
+    def register_hook(self, event_type: str, handler: HookHandler) -> None:
         """Register an event hook handler."""
         if event_type not in self._hooks:
             self._hooks[event_type] = []
         self._hooks[event_type].append(handler)
+
+    # ---------------------------------------------------------------------------
+    # Hook dispatch
+    # ---------------------------------------------------------------------------
+
+    async def _fire_hooks(
+        self,
+        event_type: str,
+        bank_id: str | None = None,
+        data: dict[str, str | int | float | bool | None] | None = None,
+    ) -> None:
+        """Fire all registered hooks for an event type. Non-blocking, failures logged."""
+        handlers = self._hooks.get(event_type, [])
+        if not handlers:
+            return
+        event = HookEvent(
+            event_id=uuid.uuid4().hex,
+            type=event_type,
+            timestamp=datetime.now(timezone.utc),
+            bank_id=bank_id,
+            data=data,
+        )
+        for handler in handlers:
+            try:
+                result = handler(event)
+                if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                    await result
+            except Exception:
+                self._logger.log(
+                    "astrocytes.hook.error",
+                    bank_id=bank_id,
+                    data={"event_type": event_type},
+                    level=logging.WARNING,
+                )
+
+    # ---------------------------------------------------------------------------
+    # Quota enforcement
+    # ---------------------------------------------------------------------------
+
+    def _check_quota(self, bank_id: str, operation: str) -> None:
+        """Check daily quota. Raises RateLimited if exceeded."""
+        limit = self._quota_limits.get(operation)
+        if not self._quota_tracker.check(bank_id, operation, limit):
+            raise RateLimited(bank_id=bank_id, operation=operation)
 
     # ---------------------------------------------------------------------------
     # Access control
@@ -245,8 +316,9 @@ class Astrocyte:
             # Access control
             self._check_access(bank_id, "write", context)
 
-            # Rate limiting
+            # Rate limiting + quota
             self._check_rate_limit(bank_id, "retain")
+            self._check_quota(bank_id, "retain")
 
             # Content validation
             errors = self._content_validator.validate(content, kwargs.get("content_type", "text"))
@@ -261,6 +333,18 @@ class Astrocyte:
                     bank_id=bank_id,
                     operation="retain",
                     data={"pii_types": ",".join(m.pii_type for m in pii_matches), "action": self._pii_scanner.action},
+                )
+                self._metrics.inc_counter(
+                    "astrocytes_pii_detected_total",
+                    {"bank_id": bank_id, "action": self._pii_scanner.action},
+                )
+                await self._fire_hooks(
+                    "on_pii_detected",
+                    bank_id=bank_id,
+                    data={
+                        "pii_types": ",".join(m.pii_type for m in pii_matches),
+                        "action": self._pii_scanner.action,
+                    },
                 )
 
             # Metadata sanitization
@@ -280,14 +364,37 @@ class Astrocyte:
             # Route to provider
             try:
                 self._circuit_breaker.check(self._provider_name)
-                result = await self._do_retain(request)
+                with timed() as t:
+                    result = await self._do_retain(request)
                 self._circuit_breaker.record_success()
+                self._quota_tracker.record(bank_id, "retain")
+                self._metrics.inc_counter(
+                    "astrocytes_retain_total",
+                    {"bank_id": bank_id, "provider": self._provider_name, "status": "ok"},
+                )
+                self._metrics.observe_histogram(
+                    "astrocytes_retain_duration_seconds",
+                    t["elapsed_ms"] / 1000,
+                    {"bank_id": bank_id, "provider": self._provider_name},
+                )
+                await self._fire_hooks(
+                    "on_retain",
+                    bank_id=bank_id,
+                    data={
+                        "memory_id": result.memory_id or "",
+                        "content_length": len(content),
+                    },
+                )
                 return result
             except ProviderUnavailable:
                 self._degraded_handler.handle_retain(self._provider_name)
                 return RetainResult(stored=False, error="Provider unavailable (degraded mode)")
             except Exception:
                 self._circuit_breaker.record_failure()
+                self._metrics.inc_counter(
+                    "astrocytes_retain_total",
+                    {"bank_id": bank_id, "provider": self._provider_name, "status": "error"},
+                )
                 raise
 
     async def recall(
@@ -337,8 +444,26 @@ class Astrocyte:
                 )
                 try:
                     self._circuit_breaker.check(self._provider_name)
-                    result = await self._do_recall(request)
+                    with timed() as t:
+                        result = await self._do_recall(request)
                     self._circuit_breaker.record_success()
+                    self._metrics.inc_counter(
+                        "astrocytes_recall_total",
+                        {"bank_id": bank_ids[0], "provider": self._provider_name, "status": "ok"},
+                    )
+                    self._metrics.observe_histogram(
+                        "astrocytes_recall_duration_seconds",
+                        t["elapsed_ms"] / 1000,
+                        {"bank_id": bank_ids[0], "provider": self._provider_name},
+                    )
+                    await self._fire_hooks(
+                        "on_recall",
+                        bank_id=bank_ids[0],
+                        data={
+                            "query_length": len(query),
+                            "result_count": len(result.hits),
+                        },
+                    )
                     return result
                 except ProviderUnavailable:
                     return self._degraded_handler.handle_recall(self._provider_name)
@@ -372,6 +497,7 @@ class Astrocyte:
         with span("astrocytes.reflect", {"astrocytes.bank_id": bank_id}):
             self._check_access(bank_id, "read", context)
             self._check_rate_limit(bank_id, "reflect")
+            self._check_quota(bank_id, "reflect")
 
             request = ReflectRequest(
                 query=query,
@@ -383,8 +509,27 @@ class Astrocyte:
 
             try:
                 self._circuit_breaker.check(self._provider_name)
-                result = await self._do_reflect(request)
+                with timed() as t:
+                    result = await self._do_reflect(request)
                 self._circuit_breaker.record_success()
+                self._quota_tracker.record(bank_id, "reflect")
+                self._metrics.inc_counter(
+                    "astrocytes_reflect_total",
+                    {"bank_id": bank_id, "provider": self._provider_name, "status": "ok"},
+                )
+                self._metrics.observe_histogram(
+                    "astrocytes_reflect_duration_seconds",
+                    t["elapsed_ms"] / 1000,
+                    {"bank_id": bank_id, "provider": self._provider_name},
+                )
+                await self._fire_hooks(
+                    "on_reflect",
+                    bank_id=bank_id,
+                    data={
+                        "query_length": len(query),
+                        "answer_length": len(result.answer),
+                    },
+                )
                 return result
             except ProviderUnavailable:
                 return ReflectResult(answer="Memory unavailable", sources=[])
@@ -411,7 +556,16 @@ class Astrocyte:
                 tags=tags,
                 before_date=kwargs.get("before_date"),
             )
-            return await self._do_forget(request)
+            result = await self._do_forget(request)
+            await self._fire_hooks(
+                "on_forget",
+                bank_id=bank_id,
+                data={
+                    "deleted_count": result.deleted_count,
+                    "archived_count": result.archived_count,
+                },
+            )
+            return result
 
     async def health(self) -> HealthStatus:
         """Check system health."""

@@ -100,5 +100,3 @@ class TestMultiBankStrategyCoercion:
 
         s = _normalize_multi_bank_strategy("cascade")
         assert s.mode == "cascade"
-
-

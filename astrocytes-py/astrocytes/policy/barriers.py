@@ -201,12 +201,14 @@ class MetadataSanitizer:
                 continue
             cleaned[key] = value
 
-        # Size check
+        # Size check — remove keys in reverse alphabetical order (deterministic)
         serialized = json.dumps(cleaned, default=str)
         if len(serialized.encode("utf-8")) > self.max_size_bytes:
             warnings.append(f"Metadata exceeds {self.max_size_bytes} bytes, truncated")
-            # Truncate by removing keys until under limit
-            while len(json.dumps(cleaned, default=str).encode("utf-8")) > self.max_size_bytes and cleaned:
-                cleaned.pop(next(iter(cleaned)))
+            keys_by_priority = sorted(cleaned.keys(), reverse=True)  # z→a: drop least likely important first
+            for drop_key in keys_by_priority:
+                if len(json.dumps(cleaned, default=str).encode("utf-8")) <= self.max_size_bytes:
+                    break
+                cleaned.pop(drop_key)
 
         return cleaned if cleaned else None, warnings

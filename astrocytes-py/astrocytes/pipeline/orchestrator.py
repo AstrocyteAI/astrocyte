@@ -16,6 +16,7 @@ from astrocytes.pipeline.reflect import synthesize
 from astrocytes.pipeline.reranking import basic_rerank
 from astrocytes.pipeline.retrieval import parallel_retrieve
 from astrocytes.policy.homeostasis import enforce_token_budget
+from astrocytes.policy.signal_quality import DedupDetector
 from astrocytes.types import (
     EntityLink,
     MemoryEntityAssociation,
@@ -60,6 +61,7 @@ class PipelineOrchestrator:
         self.max_chunk_size = max_chunk_size
         self.rrf_k = rrf_k
         self.semantic_overfetch = semantic_overfetch
+        self._dedup = DedupDetector(similarity_threshold=0.95)
 
     async def retain(self, request: RetainRequest) -> RetainResult:
         """Retain pipeline: chunk → extract entities → embed → store."""
@@ -70,6 +72,11 @@ class PipelineOrchestrator:
 
         # 2. Generate embeddings for all chunks
         embeddings = await generate_embeddings(chunks, self.llm_provider)
+
+        # 2b. Dedup check — skip if content is near-duplicate of existing memory
+        is_dup, sim = self._dedup.is_duplicate(request.bank_id, embeddings[0])
+        if is_dup:
+            return RetainResult(stored=False, deduplicated=True, error=f"Near-duplicate (similarity={sim:.3f})")
 
         # 3. Extract entities (from full content, not per-chunk)
         entities = await extract_entities(request.content, self.llm_provider)
@@ -118,6 +125,10 @@ class PipelineOrchestrator:
                 ]
                 await self.graph_store.store_links(links, request.bank_id)
 
+        # 6. Update dedup cache with stored embeddings
+        for mem_id, emb in zip(memory_ids, embeddings):
+            self._dedup.add(request.bank_id, mem_id, emb)
+
         return RetainResult(
             stored=True,
             memory_id=memory_ids[0] if memory_ids else None,
@@ -137,6 +148,18 @@ class PipelineOrchestrator:
             time_range=request.time_range,
         )
 
+        # 2b. Extract entities from query for graph search
+        entity_ids: list[str] | None = None
+        if self.graph_store:
+            query_entities = await extract_entities(request.query, self.llm_provider)
+            if query_entities:
+                # Look up entity IDs in the graph store
+                found: list[str] = []
+                for ent in query_entities:
+                    matches = await self.graph_store.query_entities(ent.name, request.bank_id, limit=3)
+                    found.extend(m.id for m in matches)
+                entity_ids = found or None
+
         # 3. Parallel retrieval
         overfetch_limit = request.max_results * self.semantic_overfetch
         strategy_results = await parallel_retrieve(
@@ -146,6 +169,7 @@ class PipelineOrchestrator:
             vector_store=self.vector_store,
             graph_store=self.graph_store,
             document_store=self.document_store,
+            entity_ids=entity_ids,
             limit=overfetch_limit,
             filters=filters,
         )
