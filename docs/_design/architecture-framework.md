@@ -23,6 +23,18 @@ Astrocytes is **not** an LLM gateway. It does not route completion requests, tra
 
 Astrocytes is **not** an agent runtime. It does **not** define agent orchestration: graphs, steps, tool loops, checkpoints, scheduling, or multi-agent routing. Those concerns belong to **agent frameworks and your application** (LangGraph, CrewAI, Pydantic AI, custom orchestrators, …). The framework contract is **memory**, **governance**, and **provider SPIs**; thin adapters connect frameworks to that API - see `agent-framework-middleware.md`.
 
+### Context engineering vs harness engineering
+
+Two labels often separate **what the model sees** from **how the system runs around it**:
+
+- **Context engineering** — Shaping the **information** that reaches the model when it acts: prompts, message structure, truncation, which retrieval hits to include, how memory snippets are worded in the window, tool observations as text, and token discipline for what is pasted into the next completion. Success is about relevance, faithfulness, and fit inside the context window.
+
+- **Harness engineering** — Building the **runtime shell** around the model: orchestration graphs, steps, tool or MCP wiring, checkpoints, retries, scheduling, multi-agent handoff, sandbox boundaries, edge AuthN, and telemetry. Success is about reliable control flow and safe repeatability.
+
+The harness **calls** memory and tools and **assembles** the next prompt; context engineering **chooses** how results are distilled into that prompt. In practice teams blend both—the split is vocabulary, not a hard wall—but it clarifies what Astrocytes does **not** own (the harness) vs what it **enables** (governed evidence for the prompt).
+
+**Where Astrocytes sits:** It is **not** a harness (see *not an agent runtime* above). It **is** the **memory and retrieval substrate** and **policy layer** that **feeds** context engineering: durable `retain` / `recall` / `reflect`, hybrid retrieval, fusion, reranking, token budgets inside the pipeline, and governance (PII, quotas, access control). Your **application** still owns the final chat layout—how recall hits become system vs user messages—Astrocytes supplies **consistent, auditable memory**, not the entire transcript design.
+
 **Agent cards and catalogs:** Many products describe agents with **agent cards** or registry metadata. Astrocytes does not execute those cards or own the catalog, but it **does** aim to understand them **at the memory boundary**: a small, explicit **mapping** from card identity to **principal + memory bank** (and optional defaults), declared in config and used by integrations, so memory calls stay consistent without one-off logic in every app. See `agent-framework-middleware.md`.
 
 **Sandbox awareness:** Execution sandboxes (containers, gVisor, microVMs, WASM, OS permission fences) limit **code** isolation; they do not by themselves stop **memory APIs** from becoming an **exfiltration** path if recall is mis-scoped or egress is wide open. Astrocytes is **sandbox-aware** in the sense of binding **principal + bank + environment/sandbox context** consistently and documenting **BFF** and **network** expectations—see `sandbox-awareness-and-exfiltration.md`.

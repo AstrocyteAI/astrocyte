@@ -91,6 +91,77 @@ hits = await brain.recall("What are Calvin's preferences?", bank_id="user-123")
   </div>
 </div>
 
+{/* ── Harness vs context (where Astrocytes sits) ───── */}
+
+<span class="section-label" aria-hidden="true">⟩ Where it sits</span>
+<h2 class="section-heading">Harness, memory, context, LLM</h2>
+<div class="section-subheading">
+  Your agent stack runs the loop; Astrocytes is the governed memory boundary before context and completions. What you
+  paste into the next turn is still your context-engineering choice — Astrocytes makes the evidence consistent and
+  auditable.{" "}
+  <a href="/design/architecture-framework/#context-engineering-vs-harness-engineering">Read the architecture note →</a>
+</div>
+
+<div
+  class="harness-flow not-content"
+  aria-label="Flow from harness through Astrocytes and context to the LLM"
+>
+  <div class="harness-flow__step">
+    <span class="harness-flow__label">Harness</span>
+    <p class="harness-flow__text">Orchestration, tools, MCP — when to call memory and how the loop runs.</p>
+  </div>
+  <div class="harness-flow__between harness-flow__between--row" aria-hidden="true">
+    <span class="harness-flow__connector harness-flow__connector--row">
+      <span class="harness-flow__rail harness-flow__rail--h" />
+      <span class="harness-flow__head harness-flow__head--right" />
+    </span>
+  </div>
+  <div class="harness-flow__between harness-flow__between--col" aria-hidden="true">
+    <span class="harness-flow__connector harness-flow__connector--col">
+      <span class="harness-flow__rail harness-flow__rail--v" />
+      <span class="harness-flow__head harness-flow__head--down" />
+    </span>
+  </div>
+  <div class="harness-flow__step harness-flow__step--core">
+    <span class="harness-flow__label">Astrocytes</span>
+    <p class="harness-flow__text">Retain, recall, reflect — hybrid retrieval, policies, token budgets on the memory path.</p>
+  </div>
+  <div class="harness-flow__between harness-flow__between--row" aria-hidden="true">
+    <span class="harness-flow__connector harness-flow__connector--row">
+      <span class="harness-flow__rail harness-flow__rail--h" />
+      <span class="harness-flow__head harness-flow__head--right" />
+    </span>
+  </div>
+  <div class="harness-flow__between harness-flow__between--col" aria-hidden="true">
+    <span class="harness-flow__connector harness-flow__connector--col">
+      <span class="harness-flow__rail harness-flow__rail--v" />
+      <span class="harness-flow__head harness-flow__head--down" />
+    </span>
+  </div>
+  <div class="harness-flow__step">
+    <span class="harness-flow__label">Context</span>
+    <p class="harness-flow__text">Prompt layout and snippets — your app turns hits into system/user messages for the model.</p>
+  </div>
+  <div class="harness-flow__between harness-flow__between--row" aria-hidden="true">
+    <span class="harness-flow__connector harness-flow__connector--row">
+      <span class="harness-flow__rail harness-flow__rail--h" />
+      <span class="harness-flow__head harness-flow__head--right" />
+    </span>
+  </div>
+  <div class="harness-flow__between harness-flow__between--col" aria-hidden="true">
+    <span class="harness-flow__connector harness-flow__connector--col">
+      <span class="harness-flow__rail harness-flow__rail--v" />
+      <span class="harness-flow__head harness-flow__head--down" />
+    </span>
+  </div>
+  <div class="harness-flow__step">
+    <span class="harness-flow__label">LLMs</span>
+    <p class="harness-flow__text">
+      Completions and tool calls — any provider or gateway (OpenAI, Anthropic, LiteLLM, OpenRouter, and similar).
+    </p>
+  </div>
+</div>
+
 {/* ── Two-tier providers ───────────────────────────── */}
 
 <span class="section-label" aria-hidden="true">⟩ Works with everything</span>

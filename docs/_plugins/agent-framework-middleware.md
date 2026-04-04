@@ -8,6 +8,8 @@ Without Astrocytes, each agent framework needs integrations with each memory pro
 
 Astrocytes **does not** specify how an agent is structured (workflow graph, tools, checkpoints, retries, human-in-the-loop, multi-agent handoff). That is the job of **LangGraph**, **CrewAI**, **Pydantic AI**, **AG2**, the **OpenAI / Claude agent SDKs**, or **your own app**. This document only describes **thin mappers** from those frameworks’ memory hooks to `Astrocyte.retain()` / `recall()` / `reflect()` / … through the policy layer.
 
+In **harness vs context** terms (see [Architecture framework](../_design/architecture-framework.md) §1, *Context engineering vs harness engineering*): framework integrations and your app are **harness**—they decide when to call memory and how to run the loop; Astrocytes sits **below** that. Turning `recall` hits into the next system block or user message is **context engineering**, which the **app** still owns—Astrocytes returns governed hits and synthesized text, not the only valid prompt shape.
+
 **Agent cards** (and vendor **agent catalogs** / registry UIs) describe agents—capabilities, metadata, presentation—not how orchestration runs. Astrocytes still **does not** implement an agent runtime or a catalog service; every retain/recall path is keyed by the same runtime facts as today: **principal** (from your AuthN story), **memory bank id**, **provider tier**, and **SPI** config (`provider-spi.md`, `ecosystem-and-packaging.md`, `access-control.md`).
 
 What *is* in scope is making **card → memory context** boring and portable:
