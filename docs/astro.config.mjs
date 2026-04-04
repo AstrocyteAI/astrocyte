@@ -88,6 +88,7 @@ export default defineConfig({
     starlight({
       components: {
         ThemeSelect: "./src/components/ThemeSelect.astro",
+        Hero: "./src/components/Hero.astro",
       },
       title: "Astrocytes",
       logo: {
