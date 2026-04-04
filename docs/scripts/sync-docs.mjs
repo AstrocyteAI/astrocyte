@@ -110,18 +110,24 @@ function rmGeneratedDirs() {
   }
 }
 
-function copyAllMdFromSourceSection(sourceDirName) {
-  const srcDir = path.join(docsDir, sourceDirName);
+function copyAllMdFromSourceSection(sourceDirName, subDir = "") {
+  const srcDir = path.join(docsDir, sourceDirName, subDir);
   const destSection = publicSectionFromSourceDir(sourceDirName);
   if (!fs.existsSync(srcDir)) return;
   for (const ent of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (ent.isDirectory()) {
+      // Recurse into subdirectories (e.g., _plugins/integrations/)
+      copyAllMdFromSourceSection(sourceDirName, path.join(subDir, ent.name));
+      continue;
+    }
     if (!ent.isFile() || !ent.name.endsWith(".md")) continue;
     const srcPath = path.join(srcDir, ent.name);
     const raw = fs.readFileSync(srcPath, "utf8");
     let fb = extractTitle(raw);
     if (fb === "Untitled") fb = ent.name.replace(/\.md$/, "").replace(/-/g, " ");
     const body = ensureFrontmatter(raw, fb, srcPath);
-    writeIfChanged(path.join(contentDocs, destSection, ent.name), body);
+    const destDir = subDir ? path.join(contentDocs, destSection, subDir) : path.join(contentDocs, destSection);
+    writeIfChanged(path.join(destDir, ent.name), body);
   }
 }
 

@@ -1,0 +1,46 @@
+# BeeAI (IBM) integration
+
+Astrocytes memory tools for IBM's BeeAI Agent Framework.
+
+**Module:** `astrocytes.integrations.beeai`
+**Pattern:** Tool with `run()` method — name, description, input_schema, async run()
+**Framework dependency:** `beeai-framework` (optional)
+
+## Install
+
+```bash
+pip install astrocytes beeai-framework
+```
+
+## Usage
+
+```python
+from astrocytes import Astrocyte
+from astrocytes.integrations.beeai import astrocyte_bee_tools
+
+brain = Astrocyte.from_config("astrocytes.yaml")
+tools = astrocyte_bee_tools(brain, bank_id="user-123")
+
+from beeai import BeeAgent
+agent = BeeAgent(llm=llm, tools=tools)
+
+# Or call tools directly:
+result = await tools[0].run({"content": "Calvin likes Python"})
+```
+
+## Integration pattern
+
+Each tool is an `AstrocyteBeeTool` with `name`, `description`, `input_schema`, and async `run()`:
+
+| Tool | Input | Returns |
+|---|---|---|
+| `memory_retain` | `{"content": "..."}` | JSON: `{"stored": true, "memory_id": "..."}` |
+| `memory_recall` | `{"query": "..."}` | JSON: `{"hits": [...], "total": N}` |
+| `memory_reflect` | `{"query": "..."}` | Answer text |
+| `memory_forget` | `{"memory_ids": [...]}` | JSON: `{"deleted_count": N}` |
+
+## API reference
+
+### `astrocyte_bee_tools(brain, bank_id, *, include_reflect=True, include_forget=False)`
+
+Returns `list[AstrocyteBeeTool]`. Each tool has `name`, `description`, `input_schema`, and `run(input_data)`.
