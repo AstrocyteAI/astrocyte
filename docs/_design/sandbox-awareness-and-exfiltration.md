@@ -12,7 +12,7 @@ For Astrocytes, additional failure modes include:
 
 - **Wrong or overly broad memory context** — e.g. recall against a **bank** or **principal** that should not be visible from this sandbox or environment.
 - **Environment bleed** — **staging** or **trial** sandboxes reading **production-shaped** memory because **principal / bank / environment** mapping is ambiguous.
-- **Trusted but fooled BFF** — the HTTP layer forwards a **principal** or **bank_id** supplied or influenced by the sandboxed agent without binding it to **cryptographic identity** or **server-side session**.
+- **Trusted but fooled Backend for Frontend (BFF)** — the HTTP layer forwards a **principal** or **bank_id** supplied or influenced by the sandboxed agent without binding it to **cryptographic identity** or **server-side session**.
 
 Astrocytes does **not** replace **compute** or **network** sandboxes; it must **align** memory operations with the same trust boundaries the operator intends.
 
@@ -29,7 +29,7 @@ Concrete directions (spec; implementation evolves in `astrocytes-py`, `astrocyte
 | **Mapping** | **Agent card id**, **sandbox id**, **tenant**, and **environment** participate in resolving **principal** and **memory bank** (and optional defaults)—see `agent-framework-middleware.md` and `architecture-framework.md` §1. |
 | **Authorization** | Per-bank **AuthZ** and grants remain mandatory for production; sandbox or environment may feed **external PDP** inputs—see `access-control.md`, `identity-and-external-policy.md`. |
 | **Policy** | Stricter **TTL**, **barriers**, or **export** rules for non-prod or untrusted tiers—see `policy-layer.md`, `data-governance.md`. |
-| **HTTP / BFF** | **Never** trust client-supplied **principal** or **bank** as sole proof; bind identity at the edge; see `_end-user/production-grade-http-service.md` §3. |
+| **HTTP / Backend for Frontend (BFF)** | **Never** trust client-supplied **principal** or **bank** as sole proof; bind identity at the edge; see `_end-user/production-grade-http-service.md` §3. |
 | **Observability** | Logs/traces include stable **environment / sandbox** dimensions where policies require proving **who asked what, from where**. |
 
 Astrocytes still **does not** implement gVisor, Firecracker, or WASM; it **consumes** the operator’s notion of sandbox **at the memory contract**.
@@ -76,7 +76,7 @@ Even with strong **compute** isolation, **unrestricted outbound HTTP** from the 
 | **`docs/_design/`** (this doc, `architecture-framework.md`, `access-control.md`, `policy-layer.md`, `data-governance.md`) | Threat model, boundaries, policy hooks. |
 | **`docs/_plugins/agent-framework-middleware.md`** | Card + **sandbox/environment** inputs to **principal / bank** resolvers. |
 | **`docs/_plugins/outbound-transport.md`** | Enterprise **HTTP/TLS/proxy** and credential gateways for **framework** outbound calls. |
-| **`docs/_end-user/production-grade-http-service.md`** | **BFF** AuthN binding, **no trusting** client-only principal, network and **API** hardening. |
+| **`docs/_end-user/production-grade-http-service.md`** | **Backend for Frontend (BFF)** AuthN binding, **no trusting** client-only principal, network and **API** hardening. |
 | **`astrocytes-py/` / `astrocytes-rs/`** (future) | Config schema (e.g. environment/sandbox dimensions), validation helpers, optional **context** types on `Astrocyte` calls. |
 | **`astrocytes-services-py/astrocytes-rest/`** (future) | Middleware: reject or map **sandbox** headers only when **signed** or **server-side** scoped; document **trusted** vs **untrusted** headers. |
 | **CI / security tests** | **AuthZ** matrix tests (sandbox A cannot read bank B); contract tests on mapping config. |

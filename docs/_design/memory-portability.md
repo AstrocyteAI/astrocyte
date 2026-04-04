@@ -63,6 +63,10 @@ Each memory line contains:
 - Consolidation state (observations are exported as memories with `fact_type: "observation"`)
 - Bank configuration (exported separately, see below)
 
+### 2.5 Relationship to memory export sinks
+
+AMA export/import is for **portability and migration** between providers. **Ongoing** replication of memory lifecycle into a **data warehouse** or **lakehouse** uses **`MemoryExportSink`** ([`memory-export-sink.md`](./memory-export-sink.md)) or, until core wiring ships, **`event-hooks.md`** toward an ingestor. AMA snapshots can still be **scheduled** into object storage for cold backups; sinks add **row/event granularity** and SQL-curated schemas for downstream analytics.
+
 ---
 
 ## 3. API surface

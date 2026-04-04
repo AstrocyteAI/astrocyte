@@ -1,6 +1,6 @@
-# Memory analytics
+# Bank health & utilization
 
-The observability layer (see `policy-layer.md`) captures per-operation metrics and traces. Memory analytics builds on this to provide **system-level health assessment** - understanding whether memory is helping agents or just accumulating noise.
+The observability layer (see `policy-layer.md`) captures per-operation metrics and traces. This document describes **in-process memory analytics**: **system-level health assessment**—whether memory is helping agents or just accumulating noise. For warehouse / lakehouse **export** (append-only events to external tables), see [`memory-export-sink.md`](./memory-export-sink.md) and [`storage-and-data-planes.md`](./storage-and-data-planes.md); do not confuse that SPI with bank health metrics here.
 
 This maps to **Principle 9 (Observable state)** taken to its full conclusion: not just tracing operations, but understanding the health of the memory system as a whole.
 
@@ -186,3 +186,9 @@ analytics:
     enabled: true
     action: warn
 ```
+
+---
+
+## 7. Durable analytical plane (warehouses and lakehouses)
+
+In-process **bank health**, utilization, and Prometheus metrics above serve **operational** observability. For **warehouse-scale** history, BI, and compliance over **SQL**, **Parquet**, **Iceberg**, **Delta**, and similar layouts, use the **Memory Export Sink** SPI and **`memory_export_sinks:`** config (`memory-export-sink.md`, `ecosystem-and-packaging.md`). Sinks complement—do not replace—this module: sinks focus on **append-only event streams** to external tables; this document focuses on **scores and dashboards** inside the Astrocytes process.

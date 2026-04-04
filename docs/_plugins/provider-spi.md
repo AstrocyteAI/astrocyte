@@ -1,8 +1,8 @@
-# Provider SPI: Retrieval, Memory Engine, LLM, and Outbound Transport interfaces
+# Provider SPI: Retrieval, Memory Engine, LLM, Memory Export Sink, and Outbound Transport interfaces
 
 **SPI** means **Service Provider Interface**: a documented contract that third-party packages implement and register (same idea as Java’s `ServiceLoader` SPI; in Python, `typing.Protocol` plus `pyproject.toml` entry points).
 
-This document defines the **three memory-related** Service Provider Interfaces (**Retrieval** = VectorStore / GraphStore / DocumentStore adapters; **Memory Engine**; **LLM**) plus an **optional cross-cutting** Outbound Transport SPI for HTTP/TLS/proxy configuration. For the framework architecture and two-tier provider model, see `architecture-framework.md`. For outbound transport rationale and packaging, see `outbound-transport.md`.
+This document defines the **three memory-related** Service Provider Interfaces (**Retrieval** = VectorStore / GraphStore / DocumentStore adapters; **Memory Engine**; **LLM**), an **optional cross-cutting Memory Export Sink** SPI for warehouse / lakehouse / open table-format **durable export** (append events—not online `recall`), plus an **optional cross-cutting** Outbound Transport SPI for HTTP/TLS/proxy configuration. For architecture and the read vs export split, see `architecture-framework.md` §2, `storage-and-data-planes.md`, and `memory-export-sink.md`. For outbound transport rationale and packaging, see `outbound-transport.md`.
 
 ---
 
@@ -13,6 +13,8 @@ This document defines the **three memory-related** Service Provider Interfaces (
 **Scope:** Tier 1 adapters are **retrieval-oriented** (not blob/object storage). In RAG and hybrid-search literature, the same ideas are often called **retrieval backends** or **retrieval infrastructure**: **VectorStore** ≈ dense / semantic (vector DB, ANN index), **GraphStore** ≈ structured graph traversal (knowledge graph), **DocumentStore** ≈ sparse / lexical (BM25, full-text). See `architecture-framework.md` §2 (Tier 1 table).
 
 Retrieval providers are simple adapters over those systems. They handle CRUD operations on vectors, entities, and documents **as indexed for retrieval**. Astrocytes' **built-in intelligence pipeline** (see `built-in-pipeline.md`) orchestrates these stores to provide the full memory experience: embedding, entity extraction, multi-strategy retrieval, fusion, and synthesis.
+
+The **logical backend** may be a **serving layer** on top of a warehouse or lakehouse (SQL endpoint, query engine on Iceberg/Delta, OLAP tier, or your own HTTP façade), not only a dedicated vector DB—**if** you can implement the Tier 1 protocols with acceptable latency. That is **operational `recall`**. **Durable export** to the same warehouse or lake for BI/compliance uses the separate **Memory Export Sink** SPI (`memory-export-sink.md`); do not conflate `emit` / `flush` with `search_similar`.
 
 Writing a Tier 1 provider is intentionally easy. The barrier to entry is **implementing a few async methods against your database**, not building a memory engine.
 
@@ -745,17 +747,70 @@ Full specification: **`multimodal-llm-spi.md`**.
 
 ---
 
-## 5. Outbound Transport SPI (optional, cross-cutting)
+## 5. Memory Export Sink SPI (optional, cross-cutting)
 
 ### 5.1 Overview
 
+Deployments that need **warehouse-scale history**, **lakehouse tables** (Iceberg, Delta, Hudi, Paimon, …), **Parquet** layouts, or curated **SQL** fact tables for BI and compliance should use a **Memory Export Sink**—not a `VectorStore` over raw object storage.
+
+This SPI is **orthogonal** to `provider_tier` (`storage` vs `engine`). Sinks observe **successful, policy-cleared** operations (and optional explicit exports) and **emit** structured events. They do **not** implement `search_similar()`; online `recall` remains Tier 1 / Tier 2. Full design rationale and event taxonomy: **`memory-export-sink.md`**.
+
+**Relationship to webhooks:** Until core wiring lands, the same payloads can be delivered via `event-hooks.md` HTTP webhooks to a custom ingestor; packages SHOULD converge on the DTOs described in `memory-export-sink.md` for portability.
+
+### 5.2 The protocol (illustrative)
+
+```python
+class MemoryExportSink(Protocol):
+    """Optional. Durable export — warehouse / lake / open table formats."""
+
+    async def emit(self, event: MemoryExportSinkEvent) -> None:
+        """Append one governed event (at-least-once semantics typical)."""
+        ...
+
+    async def flush(self) -> None:
+        """Optional: commit buffers (micro-batch, staging files, bus flush)."""
+        ...
+
+    async def health(self) -> HealthStatus:
+        ...
+
+    def capabilities(self) -> MemoryExportSinkCapabilities:
+        """Which event kinds, whether embeddings are ever included, etc."""
+        ...
+```
+
+`MemoryExportSinkEvent` is a **versioned discriminated union** (retain committed, forget applied, bank lifecycle, export completed, optional sampled recall aggregates). Exact fields live in shared `astrocytes.types` alongside other DTOs.
+
+Register via entry point:
+
+```toml
+[project.entry-points."astrocytes.memory_export_sinks"]
+iceberg = "astrocytes_sink_iceberg:IcebergMemorySink"
+```
+
+YAML (illustrative):
+
+```yaml
+memory_export_sinks:
+  - provider: iceberg
+    config: { catalog_uri: thrift://metastore:9083, database: astrocytes, table: memory_events }
+```
+
+Packaging and naming: **`ecosystem-and-packaging.md`** (`astrocytes-sink-*` prefix).
+
+---
+
+## 6. Outbound Transport SPI (optional, cross-cutting)
+
+### 6.1 Overview
+
 Some deployments route **all outbound HTTP** through a **credential gateway**, corporate proxy, or MITM-capable TLS stack. That requirement is **orthogonal** to memory tiers and to the LLM Provider SPI: it concerns **how** TCP/TLS/HTTP is established, not **what** `retain()` / `recall()` mean or **which** `complete()` / `embed()` API is called.
 
-Astrocytes defines an **optional** `OutboundTransportProvider` protocol. When configured, the core applies it at a **single choke point** when building HTTP clients used by LLM adapters and other outbound HTTP. **This is not an LLM gateway** and **not** a memory provider - see `architecture-framework.md` section 4.4 and the full design in `outbound-transport.md`.
+Astrocytes defines an **optional** `OutboundTransportProvider` protocol. When configured, the core applies it at a **single choke point** when building HTTP clients used by LLM adapters and other outbound HTTP. **This is not an LLM gateway** and **not** a memory provider - see `architecture-framework.md` section 4.5 and the full design in `outbound-transport.md`.
 
 **Baseline without a plugin:** If `HTTP_PROXY` / `HTTPS_PROXY` / standard trust env vars are sufficient, users need no transport package; clients should respect the process environment.
 
-### 5.2 The protocol (illustrative)
+### 6.2 The protocol (illustrative)
 
 ```python
 class OutboundTransportProvider(Protocol):
@@ -788,9 +843,9 @@ outbound_transport:
 
 ---
 
-## 6. Provider lifecycle
+## 7. Provider lifecycle
 
-### 6.1 Initialization (Tier 1)
+### 7.1 Initialization (Tier 1)
 
 ```python
 brain = Astrocyte.from_config("astrocytes.yaml")
@@ -801,11 +856,11 @@ brain = Astrocyte.from_config("astrocytes.yaml")
 # 5. Discover and instantiate DocumentStore (optional)
 # 6. Discover and instantiate LLM provider (required for Tier 1) - HTTP clients use transport from step 2
 # 7. Initialize built-in pipeline with stores + LLM provider
-# 8. Initialize policy layer
+# 8. Initialize policy layer (optionally register MemoryExportSink instances from memory_export_sinks config)
 # 9. Health check all stores - warn if unhealthy
 ```
 
-### 6.2 Initialization (Tier 2)
+### 7.2 Initialization (Tier 2)
 
 ```python
 brain = Astrocyte.from_config("astrocytes.yaml")
@@ -815,11 +870,11 @@ brain = Astrocyte.from_config("astrocytes.yaml")
 # 4. Call provider.capabilities() - cache result
 # 5. Optionally discover and instantiate LLM provider (HTTP clients use transport from step 2)
 # 6. Validate: if fallback_strategy=local_llm but no LLM provider → error
-# 7. Initialize policy layer with capabilities + config
+# 7. Initialize policy layer with capabilities + config (optional MemoryExportSink wiring)
 # 8. Call provider.health() - warn if unhealthy
 ```
 
-### 6.3 Request flow: retain (Tier 1)
+### 7.3 Request flow: retain (Tier 1)
 
 ```
 caller → brain.retain(content, metadata)
@@ -839,7 +894,7 @@ caller → brain.retain(content, metadata)
   → return RetainResult
 ```
 
-### 6.4 Request flow: retain (Tier 2)
+### 7.4 Request flow: retain (Tier 2)
 
 ```
 caller → brain.retain(content, metadata)
@@ -853,7 +908,7 @@ caller → brain.retain(content, metadata)
   → return RetainResult
 ```
 
-### 6.5 Request flow: recall (Tier 1)
+### 7.5 Request flow: recall (Tier 1)
 
 ```
 caller → brain.recall(query, budget)
@@ -873,7 +928,7 @@ caller → brain.recall(query, budget)
   → return RecallResult
 ```
 
-### 6.6 Request flow: recall (Tier 2)
+### 7.6 Request flow: recall (Tier 2)
 
 ```
 caller → brain.recall(query, budget)
@@ -888,9 +943,9 @@ caller → brain.recall(query, budget)
 
 ---
 
-## 7. Provider implementation guides
+## 8. Provider implementation guides
 
-### 7.1 Building a Tier 1 retrieval provider
+### 8.1 Building a Tier 1 retrieval provider
 
 1. **Create a package** named `astrocytes-{database}` (e.g., `astrocytes-pgvector`, `astrocytes-neo4j`).
 2. **Implement one or more protocols**: `VectorStore` (required for vector DBs), `GraphStore` (for graph DBs), `DocumentStore` (for full-text search).
@@ -906,7 +961,7 @@ caller → brain.recall(query, budget)
 5. **Async PostgreSQL + pgvector (when applicable):** If you use **psycopg 3** `AsyncConnection` with the [**pgvector**](https://github.com/pgvector/pgvector) Python package, use **`register_vector_async`** in pool `configure` callbacks—not the sync **`register_vector`**, which leaves coroutines unawaited on async connections. With default transaction settings, end `configure` with **`await conn.commit()`** so the pool does not discard connections left **`INTRANS`**. Register vector adapters only after the **`vector`** extension exists (migration order or `CREATE EXTENSION` before first vector I/O). Reference: [`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md).
 6. **Keep it simple.** You are implementing CRUD operations, not a memory engine. Let the pipeline handle the intelligence.
 
-### 7.2 Building a Tier 2 memory engine provider
+### 8.2 Building a Tier 2 memory engine provider
 
 1. **Create a package** named `astrocytes-{engine}` (e.g., `astrocytes-mystique`, `astrocytes-mem0`).
 2. **Implement `EngineProvider`** protocol with at least `retain()`, `recall()`, `health()`, `capabilities()`.
@@ -919,7 +974,7 @@ caller → brain.recall(query, budget)
 5. **Declare capabilities honestly.** Over-declaring causes runtime errors; under-declaring causes unnecessary fallbacks.
 6. **Own your storage.** Your engine manages its own vector DB, graph DB, etc. Users configure those through `provider_config`, not through Astrocytes' retrieval SPIs.
 
-### 7.3 Building an outbound transport plugin
+### 8.3 Building an outbound transport plugin
 
 1. **Create a package** named `astrocytes-transport-{name}` (not `astrocytes-{name}` - that pattern is reserved for memory-related providers).
 2. **Implement `OutboundTransportProvider`**: configure shared HTTP clients only; do not implement `complete()` / `embed()` or memory operations.
@@ -927,5 +982,14 @@ caller → brain.recall(query, budget)
 4. **Document** env-only alternatives (`HTTP_PROXY`, trust bundles) so users can avoid a plugin when possible.
 
 Rationale, OTel, and security constraints: `outbound-transport.md`.
+
+### 8.4 Building a memory export sink plugin
+
+1. **Create a package** named **`astrocytes-sink-{target}`** (for example `astrocytes-sink-iceberg`, `astrocytes-sink-kafka`) — distinct from **`astrocytes-transport-*`** and from Tier 1 **`astrocytes-{database}`** packages.
+2. **Implement `MemoryExportSink`**: `emit()` at minimum; optional `flush()` for batched commits; return honest `capabilities()` (which event kinds, whether embeddings are ever serialized).
+3. **Register** under `astrocytes.memory_export_sinks` in `pyproject.toml`.
+4. **Do not** implement `search_similar()` here — that belongs to Tier 1 adapters when a warehouse exposes vector SQL suitable for online recall.
+
+Event taxonomy and governance: `memory-export-sink.md`. Packaging tables: `ecosystem-and-packaging.md`.
 
 Full implementation guide with examples: see `ecosystem-and-packaging.md`.

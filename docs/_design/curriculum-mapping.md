@@ -11,8 +11,8 @@ This note is for **educators**, **certification authors**, and **architects** wh
 | **Control** (outside the agent loop) | Deterministic policy, identity surfaces, budgets | Per-bank AuthZ, policy layer, opaque **principal** from the caller; MCP tool graphs are owned by the **harness**, not Astrocytes (repository README non-goals) |
 | **Runtime**                          | Orchestration, workers, sandboxes                | **Out of scope** — agent frameworks own the harness ([Architecture framework §1](./architecture-framework.md))                                                 |
 | **Integrations**                     | MCP, search, APIs                                | MCP as an integration surface ([MCP server](./mcp-server.md)); memory is **invoked from** the application loop                                                 |
-| **Observability**                    | Traces, evals, cost                              | Benchmarks, analytics, and operational hooks ([Evaluation](./evaluation.md), [Memory analytics](./memory-analytics.md), [Event hooks](./event-hooks.md))       |
-| **Data**                             | Tenancy, schemas, contracts                      | **Memory banks** and storage SPIs; not a replacement for full application data modeling                                                                        |
+| **Observability**                    | Traces, evals, cost                              | Benchmarks, in-process bank health ([Bank health & utilization](./memory-analytics.md)), [Evaluation](./evaluation.md), [Event hooks](./event-hooks.md)            |
+| **Data**                             | Tenancy, schemas, contracts                      | **Memory banks** and Tier 1/2 SPIs; optional **Memory export sink** for warehouse/lakehouse/history ([Memory export sink](./memory-export-sink.md), [Storage & data planes](./storage-and-data-planes.md)); not a full enterprise data platform |
 
 
 ## Memory framing

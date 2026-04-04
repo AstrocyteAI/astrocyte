@@ -93,14 +93,16 @@ hits = await brain.recall(
 
 ### 3.3 Strategy options
 
+Implemented in `astrocytes-py`: `Astrocyte.recall(..., banks=[...], strategy=...)` accepts a string (`"parallel"` \| `"cascade"` \| `"first_match"`) or a `MultiBankStrategy` instance. Omitting `strategy` with multiple banks keeps **parallel** merge (backward compatible). Cross-bank deduplication keeps the **highest-scoring** hit per distinct text.
+
 ```python
 @dataclass
 class MultiBankStrategy:
-    mode: Literal["cascade", "parallel", "first_match"]
+    mode: Literal["cascade", "parallel", "first_match"] = "parallel"
 
     # Cascade-specific
     min_results_to_stop: int = 3      # Stop widening when we have enough
-    cascade_order: list[str] | None = None  # Explicit order (default: config order)
+    cascade_order: list[str] | None = None  # Explicit order (default: banks= list order)
 
     # Parallel-specific
     bank_weights: dict[str, float] | None = None  # Weight results by bank
@@ -127,15 +129,7 @@ await brain.retain(
 
 ### 3.5 Multi-bank reflect
 
-Reflect can synthesize across banks:
-
-```python
-synthesis = await brain.reflect(
-    "What do we know about Calvin's preferences and our team's policies on UI customization?",
-    banks=["user-calvin", "team-support", "org-policies"],
-    strategy="parallel",
-)
-```
+Multi-bank `reflect` is not yet on the `Astrocyte` API; call `recall` with the desired `banks` / `strategy`, then synthesize out-of-band, or run `reflect` on a single `bank_id`. A first-class `reflect(..., banks=...)` can follow the same strategy machinery as recall.
 
 ---
 
@@ -212,3 +206,28 @@ When `brain.recall(bank_id="user-123")` is called and the bank doesn't exist, th
 | Per-bank policy enforcement | P3: Homeostasis - per-region regulation |
 | Cross-bank fusion | P2: Tripartite synapse - mediate the exchange |
 | Shared banks (users + agents) | P6: Barrier maintenance - explicit who may cross which bank |
+
+---
+
+## 8. Hybrid Tier-2 engine + Tier-1 pipeline (same `bank_id`)
+
+When both a hosted **engine** and a local **pipeline** (vector / graph / document path) should answer for the **same** logical bank, use `HybridEngineProvider` (`astrocytes-py`). It implements `EngineProvider`: `recall` fans out to both backends, applies optional per-source weights, dedupes by text (highest score wins), then ranks and applies the request token budget. `retain` targets exactly one backend via `retain_target="engine"` or `"pipeline"`.
+
+```python
+from astrocytes import Astrocyte, HybridEngineProvider
+from astrocytes.pipeline.orchestrator import PipelineOrchestrator
+
+engine = ...  # Tier-2 EngineProvider
+pipeline = PipelineOrchestrator(vector_store=..., llm_provider=...)
+hybrid = HybridEngineProvider(
+    engine=engine,
+    pipeline=pipeline,
+    retain_target="engine",
+    engine_recall_weight=1.0,
+    pipeline_recall_weight=1.0,
+)
+brain = Astrocyte.from_config("astrocytes.yaml")
+brain.set_engine_provider(hybrid)
+```
+
+`MemoryHit.source` is set to `tier2_engine` or `tier1_pipeline` when not already present, for observability.

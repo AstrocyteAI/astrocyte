@@ -1,6 +1,6 @@
 # Ecosystem, packaging, and open-core model
 
-This document defines how Astrocytes is distributed, how providers plug in at both tiers, how optional outbound transport and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier provider model, see `architecture-framework.md`. For SPI definitions, see `provider-spi.md`. For credential gateways and proxy wiring, see `outbound-transport.md`. For identity wiring and external PDP integration, see `identity-and-external-policy.md`.
+This document defines how Astrocytes is distributed, how providers plug in at both tiers, how optional **memory export sinks**, outbound transport, and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier model and the read vs export split, see `architecture-framework.md` §2 and `storage-and-data-planes.md`. For SPI definitions, see `provider-spi.md`. For warehouse / lakehouse export design, see `memory-export-sink.md`. For credential gateways and proxy wiring, see `outbound-transport.md`. For identity wiring and external PDP integration, see `identity-and-external-policy.md`.
 
 ---
 
@@ -15,6 +15,7 @@ Astrocytes follows an **open-core** distribution model with a two-tier provider 
 | `astrocytes-{engine}` (Tier 2 community) | Apache 2.0 | Community-maintained adapters for full-stack memory engines |
 | `astrocytes-{llm}` (LLM adapters) | Apache 2.0 | LLM provider adapters for pipeline + policy operations |
 | `astrocytes-transport-{name}` (optional) | Apache 2.0 | Outbound HTTP/TLS/proxy plugins for credential gateways and enterprise proxies |
+| `astrocytes-sink-{target}` (optional) | Apache 2.0 | Memory export sink — warehouses, lakehouses, Iceberg/Delta/Parquet/Kafka, … |
 | `astrocytes-access-policy-{name}` (optional) | Apache 2.0 | External PDP adapters (OPA, Cerbos, …) for `AccessPolicyProvider` |
 | `astrocytes-identity-{framework}` (optional) | Apache 2.0 | Thin helpers mapping auth middleware / JWT claims to Astrocyte principals |
 | `astrocytes-mystique` (Tier 2 premium) | Proprietary | Best-in-class engine with native reflect, dispositions, consolidation |
@@ -41,12 +42,14 @@ flowchart TB
   T2["Tier 2: astrocytes-mem0, -zep, -mystique, …"]
   LLM["LLM: astrocytes-litellm, -openai, -anthropic, …"]
   TR["Optional: astrocytes-transport-*"]
+  SK["Optional: astrocytes-sink-*"]
   AP["Optional: astrocytes-access-policy-*"]
   ID["Optional: astrocytes-identity-*"]
   CORE --> T1
   CORE --> T2
   CORE --> LLM
   CORE --> TR
+  CORE --> SK
   CORE --> AP
   CORE --> ID
 ```
@@ -165,7 +168,18 @@ astrocytes-transport-onecli/           # Example: OneCLI-oriented HTTP/proxy wir
 
 Naming: **`astrocytes-transport-{name}`** - distinct from memory providers (`astrocytes-pgvector`, `astrocytes-mem0`) so packages are recognizable as **network path** plugins, not storage or engines. See `outbound-transport.md`.
 
-### 2.6 Access policy plugins (external PDP, optional)
+### 2.6 Memory export sink plugins (optional)
+
+```
+astrocytes-sink-iceberg/                # Example: append governed events to an Iceberg table
+├── astrocytes_sink_iceberg/
+│   ├── __init__.py                    # IcebergMemorySink (implements MemoryExportSink)
+├── pyproject.toml
+```
+
+Naming: **`astrocytes-sink-{target}`** — **not** `astrocytes-{name}` (reserved for Tier 1 databases) and **not** `astrocytes-transport-*` (egress HTTP only). Sinks implement **`emit()` / `flush()`** for durable export, not `search_similar()`. See `memory-export-sink.md` and `provider-spi.md` §5.
+
+### 2.7 Access policy plugins (external PDP, optional)
 
 ```
 astrocytes-access-policy-opa/          # Example: OPA REST adapter
@@ -180,7 +194,7 @@ Naming: **`astrocytes-access-policy-{name}`**. These are **not** memory provider
 
 ## 3. Plugin discovery via entry points
 
-Providers register using Python's standard entry point mechanism (`importlib.metadata`). **Six** groups are resolved today by `astrocytes-py` discovery: `vector_stores`, `graph_stores`, `document_stores`, `engine_providers`, `llm_providers`, `outbound_transports`. A **seventh** group, `astrocytes.access_policies`, is specified in §3.5 for external PDP packages but is **not** in `ENTRY_POINT_GROUPS` or YAML resolution yet (see §3.8).
+Providers register using Python's standard entry point mechanism (`importlib.metadata`). **Six** groups are resolved today by `astrocytes-py` discovery: `vector_stores`, `graph_stores`, `document_stores`, `engine_providers`, `llm_providers`, `outbound_transports`. **Two** additional groups are specified for ecosystem packages and **core discovery / YAML wiring is not guaranteed yet**: `astrocytes.access_policies` (§3.6) and `astrocytes.memory_export_sinks` (§3.5). Treat both like transport—entry points and config shapes are stable in docs before core loaders catch up (see §3.9).
 
 ### 3.1 Tier 1: Retrieval providers
 
@@ -235,7 +249,17 @@ litellm = "astrocytes_litellm:LiteLLMProvider"
 onecli = "astrocytes_transport_onecli:OneCLIOutboundTransport"
 ```
 
-### 3.5 Access policy providers (optional, spec)
+### 3.5 Memory export sink providers (optional, spec)
+
+```toml
+# astrocytes-sink-iceberg/pyproject.toml
+[project.entry-points."astrocytes.memory_export_sinks"]
+iceberg = "astrocytes_sink_iceberg:IcebergMemorySink"
+```
+
+**Today:** the **`MemoryExportSink`** protocol and event taxonomy are specified in `memory-export-sink.md` and `provider-spi.md` §5. Core may **not** yet load `memory_export_sinks:` from YAML; until it does, use **`event-hooks.md`** webhooks to an ingestor that honors the same event shape, or embed sinks in application code after `Astrocyte` bootstrap.
+
+### 3.6 Access policy providers (optional, spec)
 
 ```toml
 # astrocytes-access-policy-opa/pyproject.toml
@@ -245,7 +269,7 @@ opa = "astrocytes_access_policy_opa:OPAAccessPolicyProvider"
 
 **Today:** core config uses `access_control.enabled` / `default_policy` and **static access grants** under `banks.<id>.access` (see `production-grade-http-service.md`). The `astrocytes.access_policies` entry point group is the intended future hook for an external PDP; it is not yet listed in `ENTRY_POINT_GROUPS` or loaded from YAML.
 
-### 3.6 Resolution in config
+### 3.7 Resolution in config
 
 ```yaml
 # Tier 1 - references storage entry points
@@ -280,6 +304,11 @@ access_control:
 # access_control:
 #   policy_provider: opa
 #   policy_provider_config: { base_url: http://localhost:8181 }
+
+# Optional — durable export (warehouse / lakehouse); core wiring TBD — see memory-export-sink.md
+# memory_export_sinks:
+#   - provider: iceberg
+#     config: { catalog_uri: thrift://metastore:9083, database: astrocytes, table: memory_events }
 ```
 
 Direct import paths also work for unregistered providers:
@@ -288,9 +317,9 @@ Direct import paths also work for unregistered providers:
 vector_store: mycompany.stores.custom:CustomVectorStore
 ```
 
-### 3.7 Discovery in code
+### 3.8 Discovery in code
 
-Discovery lives in `astrocytes._discovery` (used by the reference service and tests). It returns **classes** registered under the groups in §3.1–3.4 (not `astrocytes.access_policies` until that group is added to discovery).
+Discovery lives in `astrocytes._discovery` (used by the reference service and tests). It returns **classes** registered under the groups in §3.1–3.4 (`astrocytes.access_policies` and `astrocytes.memory_export_sinks` when added to `ENTRY_POINT_GROUPS`).
 
 ```python
 from astrocytes._discovery import available_providers, discover_entry_points
@@ -303,9 +332,9 @@ discover_entry_points("engine_providers")
 # → {"mystique": <class MystiqueProvider>, ...}
 ```
 
-### 3.8 Reference `astrocytes-rest` vs embedding Astrocyte
+### 3.9 Reference `astrocytes-rest` vs embedding Astrocyte
 
-**Plugins and config:** Contributors ship packages with `pyproject.toml` entry points (§3.1–3.4). §3.6 shows how deployers reference those plugins in YAML (short name or `module:Class`). Discovery helpers live in `astrocytes._discovery`.
+**Plugins and config:** Contributors ship packages with `pyproject.toml` entry points (§3.1–3.4 plus §3.5–3.6 when implemented). §3.7 shows how deployers reference those plugins in YAML (short name or `module:Class`). Discovery helpers live in `astrocytes._discovery`.
 
 **Important:** `Astrocyte.from_config(path)` loads **`AstrocyteConfig` only** — it does not instantiate vector stores, LLMs, or Tier‑2 engines. Bootstrap code must call `resolve_provider`, construct providers with `provider_config`, and attach them via `set_pipeline` and/or `set_engine_provider`. The reference HTTP app (`astrocytes-services-py`) implements **Tier 1** wiring from YAML; **Tier‑2 / engine wiring from the same config** there is optional work — see `wiring.py` / `brain.py` for what is enabled today.
 

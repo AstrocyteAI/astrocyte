@@ -145,7 +145,7 @@ class TestDataclassInstantiation:
 
     def test_multi_bank_strategy_defaults(self):
         s = MultiBankStrategy()
-        assert s.mode == "cascade"
+        assert s.mode == "parallel"
         assert s.min_results_to_stop == 3
         assert s.dedup_across_banks is True
 

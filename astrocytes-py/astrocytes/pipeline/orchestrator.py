@@ -169,6 +169,7 @@ class PipelineOrchestrator:
                 metadata=item.metadata,
                 tags=item.tags,
                 memory_id=item.id,
+                bank_id=request.bank_id,
             )
             for item in trimmed
         ]

@@ -177,6 +177,7 @@ class MemoryHit:
     occurred_at: datetime | None = None
     source: str | None = None
     memory_id: str | None = None
+    bank_id: str | None = None  # set by multi-bank / hybrid recall
 
 
 @dataclass
@@ -331,7 +332,9 @@ class TransportCapabilities:
 
 @dataclass
 class MultiBankStrategy:
-    mode: Literal["cascade", "parallel", "first_match"] = "cascade"
+    """Multi-bank recall behavior. Default ``parallel`` matches legacy ``banks=[...]`` without an explicit strategy."""
+
+    mode: Literal["cascade", "parallel", "first_match"] = "parallel"
     min_results_to_stop: int = 3
     cascade_order: list[str] | None = None
     bank_weights: dict[str, float] | None = None

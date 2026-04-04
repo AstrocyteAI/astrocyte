@@ -1,6 +1,6 @@
 # Outbound transport plugins (credential gateways)
 
-This document defines the **optional, cross-cutting** integration surface for tools that sit **between Astrocytes and the network** - for example HTTP(S) proxies that inject API credentials, corporate TLS inspection CAs, or “secret gateway” products (OneCLI-class solutions). For how this fits next to memory and LLM providers, see `architecture-framework.md`. For the protocol sketch in the SPI doc, see `provider-spi.md` section 5.
+This document defines the **optional, cross-cutting** integration surface for tools that sit **between Astrocytes and the network** - for example HTTP(S) proxies that inject API credentials, corporate TLS inspection CAs, or “secret gateway” products (OneCLI-class solutions). For how this fits next to memory and LLM providers, see `architecture-framework.md`. For the protocol sketch in the SPI doc, see `provider-spi.md` section 6.
 
 ---
 

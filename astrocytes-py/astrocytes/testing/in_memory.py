@@ -277,6 +277,7 @@ class InMemoryEngineProvider:
                 occurred_at=request.occurred_at,
                 source=request.source,
                 memory_id=mem_id,
+                bank_id=request.bank_id,
             )
         )
         return RetainResult(stored=True, memory_id=mem_id)
@@ -304,6 +305,7 @@ class InMemoryEngineProvider:
                 occurred_at=mem.occurred_at,
                 source=mem.source,
                 memory_id=mem.memory_id,
+                bank_id=request.bank_id,
             )
             for score, mem in scored[: request.max_results]
         ]

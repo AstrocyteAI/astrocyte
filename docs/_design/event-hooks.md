@@ -26,6 +26,10 @@ Astrocytes emits events at key points in the memory lifecycle. Hooks allow exter
 | `on_import` | When memories are imported | bank_id, memory_count, source_provider |
 | `on_export` | When memories are exported | bank_id, memory_count, destination_path |
 
+### 1.1 Warehouse and lakehouse integration
+
+Hook payloads align with the **`MemoryExportSink`** event taxonomy (`memory-export-sink.md`, `provider-spi.md` §5). **Today**, the practical path to land **Iceberg**, **Delta**, **Parquet**, or **warehouse SQL** tables is usually a **webhook** (§3.1) or **Python callable** (§3.3) that forwards events to your ingestor. When the core loads **`memory_export_sinks:`** from config, sinks should receive the same logical events in-process (at-least-once). Hooks **never** replace Tier 1 retrieval—they duplicate **metadata-oriented** signals for export and BI only unless you explicitly opt into content in payloads (§6).
+
 ---
 
 ## 2. Hook configuration

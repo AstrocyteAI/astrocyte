@@ -6,9 +6,11 @@ multi-bank orchestration, and hook dispatch.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from astrocytes.config import AstrocyteConfig, load_config
 from astrocytes.errors import (
@@ -29,6 +31,7 @@ from astrocytes.types import (
     ForgetResult,
     HealthStatus,
     MemoryHit,
+    MultiBankStrategy,
     RecallRequest,
     RecallResult,
     ReflectRequest,
@@ -38,6 +41,59 @@ from astrocytes.types import (
 )
 
 logger = logging.getLogger("astrocytes")
+
+
+def _normalize_multi_bank_strategy(
+    strategy: Literal["cascade", "parallel", "first_match"] | MultiBankStrategy | None,
+) -> MultiBankStrategy:
+    if strategy is None:
+        return MultiBankStrategy(mode="parallel")
+    if isinstance(strategy, MultiBankStrategy):
+        return strategy
+    if strategy in ("cascade", "parallel", "first_match"):
+        return MultiBankStrategy(mode=strategy)
+    raise ConfigError(f"Unknown multi-bank strategy: {strategy!r}")
+
+
+def _bank_visit_order(bank_ids: list[str], cascade_order: list[str] | None) -> list[str]:
+    if not cascade_order:
+        return list(bank_ids)
+    out: list[str] = []
+    seen: set[str] = set()
+    for b in cascade_order:
+        if b in bank_ids and b not in seen:
+            out.append(b)
+            seen.add(b)
+    for b in bank_ids:
+        if b not in seen:
+            out.append(b)
+            seen.add(b)
+    return out
+
+
+def _dedupe_hits_by_text(hits: list[MemoryHit]) -> list[MemoryHit]:
+    """One hit per distinct text, keeping the highest-scoring instance."""
+    best: dict[str, MemoryHit] = {}
+    for h in hits:
+        prev = best.get(h.text)
+        if prev is None or h.score > prev.score:
+            best[h.text] = h
+    return sorted(best.values(), key=lambda x: x.score, reverse=True)
+
+
+def _apply_bank_weights(hits: list[MemoryHit], weights: dict[str, float] | None) -> list[MemoryHit]:
+    if not weights:
+        return list(hits)
+    out: list[MemoryHit] = []
+    for h in hits:
+        bid = h.bank_id or ""
+        w = float(weights.get(bid, 1.0))
+        out.append(replace(h, score=h.score * w))
+    return out
+
+
+def _tag_hits_with_bank(hits: list[MemoryHit], bank_id: str) -> list[MemoryHit]:
+    return [replace(h, bank_id=bank_id) if h.bank_id is None else h for h in hits]
 
 
 class Astrocyte:
@@ -240,13 +296,18 @@ class Astrocyte:
         bank_id: str | None = None,
         *,
         banks: list[str] | None = None,
+        strategy: Literal["cascade", "parallel", "first_match"] | MultiBankStrategy | None = None,
         max_results: int = 10,
         max_tokens: int | None = None,
         tags: list[str] | None = None,
         context: AstrocyteContext | None = None,
         **kwargs: Any,
     ) -> RecallResult:
-        """Retrieve relevant memories for a query."""
+        """Retrieve relevant memories for a query.
+
+        With multiple ``banks``, use ``strategy`` (or a :class:`MultiBankStrategy`) to choose
+        ``parallel`` (default), ``cascade`` (widen until enough hits), or ``first_match``.
+        """
         # Resolve bank(s)
         bank_ids = banks or ([bank_id] if bank_id else [])
         if not bank_ids:
@@ -285,8 +346,16 @@ class Astrocyte:
                     self._circuit_breaker.record_failure()
                     raise
 
-            # Multi-bank — fan out and merge
-            return await self._multi_bank_recall(query, bank_ids, max_results, max_tokens, tags, kwargs)
+            strat = _normalize_multi_bank_strategy(strategy)
+            return await self._multi_bank_recall(
+                query,
+                bank_ids,
+                max_results,
+                max_tokens,
+                tags,
+                kwargs,
+                strat,
+            )
 
     async def reflect(
         self,
@@ -424,17 +493,40 @@ class Astrocyte:
         max_tokens: int | None,
         tags: list[str] | None,
         kwargs: dict[str, Any],
+        strategy: MultiBankStrategy,
     ) -> RecallResult:
-        """Multi-bank recall — fan out to each bank and merge results."""
-        import asyncio
+        """Multi-bank recall — strategy dispatch."""
+        if strategy.mode == "parallel":
+            return await self._multi_bank_recall_parallel(
+                query, bank_ids, max_results, max_tokens, tags, kwargs, strategy
+            )
+        if strategy.mode == "cascade":
+            return await self._multi_bank_recall_cascade(
+                query, bank_ids, max_results, max_tokens, tags, kwargs, strategy
+            )
+        if strategy.mode == "first_match":
+            return await self._multi_bank_recall_first_match(
+                query, bank_ids, max_results, max_tokens, tags, kwargs, strategy
+            )
+        raise ConfigError(f"Unknown multi-bank mode: {strategy.mode!r}")
 
+    async def _multi_bank_recall_parallel(
+        self,
+        query: str,
+        bank_ids: list[str],
+        max_results: int,
+        max_tokens: int | None,
+        tags: list[str] | None,
+        kwargs: dict[str, Any],
+        strategy: MultiBankStrategy,
+    ) -> RecallResult:
         tasks = [
             self._do_recall(
                 RecallRequest(
                     query=query,
                     bank_id=bid,
                     max_results=max_results,
-                    max_tokens=None,  # Apply budget after merge
+                    max_tokens=None,
                     tags=tags,
                     fact_types=kwargs.get("fact_types"),
                 )
@@ -444,35 +536,100 @@ class Astrocyte:
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Merge hits from all banks
         all_hits: list[MemoryHit] = []
         total_available = 0
-        for result in results:
+        for bid, result in zip(bank_ids, results):
             if isinstance(result, RecallResult):
-                all_hits.extend(result.hits)
+                all_hits.extend(_tag_hits_with_bank(result.hits, bid))
                 total_available += result.total_available
 
-        # Sort by score descending
-        all_hits.sort(key=lambda h: h.score, reverse=True)
+        weighted = _apply_bank_weights(all_hits, strategy.bank_weights)
+        weighted.sort(key=lambda h: h.score, reverse=True)
 
-        # Deduplicate by text content
-        seen_texts: set[str] = set()
-        deduped: list[MemoryHit] = []
-        for hit in all_hits:
-            if hit.text not in seen_texts:
-                seen_texts.add(hit.text)
-                deduped.append(hit)
+        if strategy.dedup_across_banks:
+            deduped = _dedupe_hits_by_text(weighted)
+        else:
+            deduped = weighted
 
-        # Trim to max_results
         trimmed = deduped[:max_results]
-
-        # Token budget
         truncated = False
         if max_tokens:
             trimmed, truncated = enforce_token_budget(trimmed, max_tokens)
 
-        return RecallResult(
-            hits=trimmed,
-            total_available=total_available,
-            truncated=truncated,
-        )
+        return RecallResult(hits=trimmed, total_available=total_available, truncated=truncated)
+
+    async def _multi_bank_recall_cascade(
+        self,
+        query: str,
+        bank_ids: list[str],
+        max_results: int,
+        max_tokens: int | None,
+        tags: list[str] | None,
+        kwargs: dict[str, Any],
+        strategy: MultiBankStrategy,
+    ) -> RecallResult:
+        order = _bank_visit_order(bank_ids, strategy.cascade_order)
+        accumulated: list[MemoryHit] = []
+        total_available = 0
+
+        for bid in order:
+            result = await self._do_recall(
+                RecallRequest(
+                    query=query,
+                    bank_id=bid,
+                    max_results=max_results,
+                    max_tokens=None,
+                    tags=tags,
+                    fact_types=kwargs.get("fact_types"),
+                )
+            )
+            total_available += result.total_available
+            accumulated.extend(_tag_hits_with_bank(result.hits, bid))
+
+            merged_for_stop = _dedupe_hits_by_text(accumulated) if strategy.dedup_across_banks else list(accumulated)
+            if len(merged_for_stop) >= strategy.min_results_to_stop:
+                break
+
+        working = _dedupe_hits_by_text(accumulated) if strategy.dedup_across_banks else accumulated
+        weighted = _apply_bank_weights(working, strategy.bank_weights)
+        weighted.sort(key=lambda h: h.score, reverse=True)
+        trimmed = weighted[:max_results]
+        truncated = False
+        if max_tokens:
+            trimmed, truncated = enforce_token_budget(trimmed, max_tokens)
+        return RecallResult(hits=trimmed, total_available=total_available, truncated=truncated)
+
+    async def _multi_bank_recall_first_match(
+        self,
+        query: str,
+        bank_ids: list[str],
+        max_results: int,
+        max_tokens: int | None,
+        tags: list[str] | None,
+        kwargs: dict[str, Any],
+        strategy: MultiBankStrategy,
+    ) -> RecallResult:
+        order = _bank_visit_order(bank_ids, strategy.cascade_order)
+        total_available = 0
+        for bid in order:
+            result = await self._do_recall(
+                RecallRequest(
+                    query=query,
+                    bank_id=bid,
+                    max_results=max_results,
+                    max_tokens=None,
+                    tags=tags,
+                    fact_types=kwargs.get("fact_types"),
+                )
+            )
+            total_available += result.total_available
+            if result.hits:
+                hits = _tag_hits_with_bank(result.hits, bid)
+                hits = hits[:max_results]
+                hits = _apply_bank_weights(hits, strategy.bank_weights)
+                hits.sort(key=lambda h: h.score, reverse=True)
+                truncated = False
+                if max_tokens:
+                    hits, truncated = enforce_token_budget(hits, max_tokens)
+                return RecallResult(hits=hits, total_available=total_available, truncated=truncated)
+        return RecallResult(hits=[], total_available=total_available, truncated=False)

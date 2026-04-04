@@ -2,7 +2,7 @@
 
 This document defines the layer boundaries, composition model, and relationship to adjacent systems (memory engines, LLM gateways, storage backends, optional outbound HTTP/credential gateways, **authentication (AuthN)** and **authorization (AuthZ)** integration) for the Astrocytes open-source framework.
 
-**AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); Astrocytes consumes a **principal** string. Deciding **what** that principal may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable grants and optional external policy engines - see section 4.5, `access-control.md`, and `identity-and-external-policy.md`.
+**AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); Astrocytes consumes a **principal** string. Deciding **what** that principal may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable grants and optional external policy engines - see section 4.6, `access-control.md`, and `identity-and-external-policy.md`.
 
 For the neuroscience foundations, see `neuroscience-astrocytes.md`. For the design principles these layers implement, see `design-principles.md`.
 
@@ -14,9 +14,10 @@ Astrocytes is an **open-source memory framework** that sits between AI agents an
 
 - A **stable API** for agents to store, retrieve, and synthesize memories.
 - A **built-in intelligence pipeline** (embedding, entity extraction, multi-strategy retrieval, fusion, reranking) so users get a fully functional memory system with just Astrocytes + any storage backend.
-- A **pluggable provider interface** at two tiers: simple **storage adapters** (vector/graph DBs) and full **memory engine providers** (Mystique, Mem0, Zep) that bring their own pipeline.
-- An **optional outbound transport plugin surface** for credential gateways and enterprise proxies (HTTP/TLS/proxy configuration shared by LLM adapters and other outbound HTTP) - orthogonal to memory tiers; see section 4.4 and `outbound-transport.md`.
-- **AuthN / AuthZ integration:** **Authentication (AuthN)** - external IdPs and middleware map credentials to an **opaque principal**; Astrocytes does not validate passwords or issue tokens. **Authorization (AuthZ)** - per-bank `read` / `write` / `forget` / `admin` checks run in the core (`access-control.md`); an optional **AccessPolicyProvider** can delegate allow/deny to enterprise PDPs (OPA, Cerbos, Casbin, …) - see section 4.5 and `identity-and-external-policy.md`.
+- A **pluggable provider interface** at two tiers: **Tier 1 retrieval adapters** (vector / graph / lexical stores, including **warehouse or lakehouse serving** surfaces when you implement the Retrieval SPI against their query APIs) and **Tier 2 memory engine providers** (Mystique, Mem0, Zep) that bring their own pipeline.
+- An **optional outbound transport plugin surface** for credential gateways and enterprise proxies (HTTP/TLS/proxy configuration shared by LLM adapters and other outbound HTTP) - orthogonal to memory tiers; see section 4.5 and `outbound-transport.md`.
+- An **optional memory export sink** surface for warehouses, lakehouses, and open table formats (event-oriented durability for BI and compliance—not online `recall`); see section 4.4, `storage-and-data-planes.md`, and `memory-export-sink.md`.
+- **AuthN / AuthZ integration:** **Authentication (AuthN)** - external IdPs and middleware map credentials to an **opaque principal**; Astrocytes does not validate passwords or issue tokens. **Authorization (AuthZ)** - per-bank `read` / `write` / `forget` / `admin` checks run in the core (`access-control.md`); an optional **AccessPolicyProvider** can delegate allow/deny to enterprise PDPs (OPA, Cerbos, Casbin, …) - see section 4.6 and `identity-and-external-policy.md`.
 - A **policy layer** that enforces neuroscience-inspired governance (homeostasis, barriers, pruning, observability) regardless of which backend is plugged in.
 
 Astrocytes is **not** an LLM gateway. It does not route completion requests, track LLM spend, or normalize chat formats. That is the job of **LLM gateways and model aggregators** — for example LiteLLM, Portkey, OpenRouter, Vercel AI Gateway, or your cloud provider’s unified model APIs — and of **direct** first-party SDKs when you call each vendor without an intermediary.
@@ -39,7 +40,7 @@ That boundary is the same “slot” many curricula label the **Context & Memory
 
 **Agent cards and catalogs:** Many products describe agents with **agent cards** or registry metadata. Astrocytes does not execute those cards or own the catalog, but it **does** aim to understand them **at the memory boundary**: a small, explicit **mapping** from card identity to **principal + memory bank** (and optional defaults), declared in config and used by integrations, so memory calls stay consistent without one-off logic in every app. See `agent-framework-middleware.md`.
 
-**Sandbox awareness:** Execution sandboxes (containers, gVisor, microVMs, WASM, OS permission fences) limit **code** isolation; they do not by themselves stop **memory APIs** from becoming an **exfiltration** path if recall is mis-scoped or egress is wide open. Astrocytes is **sandbox-aware** in the sense of binding **principal + bank + environment/sandbox context** consistently and documenting **BFF** and **network** expectations—see `sandbox-awareness-and-exfiltration.md`.
+**Sandbox awareness:** Execution sandboxes (containers, gVisor, microVMs, WASM, OS permission fences) limit **code** isolation; they do not by themselves stop **memory APIs** from becoming an **exfiltration** path if recall is mis-scoped or egress is wide open. Astrocytes is **sandbox-aware** in the sense of binding **principal + bank + environment/sandbox context** consistently and documenting **Backend for Frontend (BFF)** and **network** expectations—see `sandbox-awareness-and-exfiltration.md`.
 
 **Implementation language:** Astrocytes ships as **two parallel implementations** in this repository, intended as **drop-in replacements** at the framework contract: **`astrocytes-py/`** (Python, PyPI package `astrocytes`) and **`astrocytes-rs/`** (Rust). Portable DTOs, config, and SPI versioning keep them aligned. See `implementation-language-strategy.md` for constraints and packaging.
 
@@ -55,17 +56,25 @@ The central architectural decision: providers come in **two tiers**, and the fra
 
 **Tier 1 vs blob storage:** Tier 1 is **not** generic object or blob storage (e.g. S3). The **Retrieval Provider SPI** covers **retrieval backends** - databases you **query** for evidence: **dense** (embedding) search, **sparse** (lexical / keyword) search, and **graph-structured** traversal. Astrocytes splits that into three protocols:
 
-| SPI | Role in hybrid retrieval | Typical industry names |
-|-----|--------------------------|-------------------------|
-| **VectorStore** (required) | Dense retrieval - similarity over embeddings | Vector database, ANN index, “semantic search” |
-| **GraphStore** (optional) | Structured retrieval - entities and links | Knowledge graph, property graph |
-| **DocumentStore** (optional) | Sparse retrieval - keywords / full-text | BM25, inverted index, lexical search |
+| SPI | Role in hybrid retrieval | Dedicated backends (typical) | Warehouse / lakehouse **serving layers** (adapter targets) |
+|-----|--------------------------|------------------------------|---------------------------------------------------------------|
+| **VectorStore** (required) | Dense retrieval — similarity over embeddings | Vector database, ANN index, semantic search | **Warehouse** vector columns + distance SQL; **lake query engine** (e.g. [Trino](https://github.com/trinodb/trino)-class SQL over Iceberg/Delta with vector-friendly schemas); **OLAP** serving tier fed from the lake; **embedded SQL** (e.g. DuckDB) over Parquet; **Backend for Frontend (BFF)** wrapping any of these APIs |
+| **GraphStore** (optional) | Structured retrieval — entities and links | Knowledge graph, property graph | Few **native** graph traversal APIs in warehouses; common patterns: **Backend for Frontend (BFF)** to a graph database, or **SQL-shaped** entity/edge tables behind a lake/warehouse engine with an adapter that maps graph operations to joins / hops |
+| **DocumentStore** (optional) | Sparse retrieval — keywords / full-text | BM25, inverted index, lexical search | **Warehouse** search / JSON / full-text features where available; **sidecar** lexical search (often beside lake exports); **Backend for Frontend (BFF)** to OpenSearch- or Elasticsearch-class indexes |
 
-Together these are the **retrieval substrate** the built-in pipeline orchestrates (multi-strategy retrieval, fusion, reranking). Adapters implement **CRUD against those indexes**, not arbitrary file buckets.
+**Serving layer** is a **deployment pattern**, not a fourth SPI: whatever **query or search API** sits in front of curated tables (native warehouse endpoint, distributed SQL on the lake, OLAP acceleration, embedded analytics SQL, or your own HTTP façade). The three rows above stay the **contract**; the fourth column is **where** vendors often host those operations for warehouse / lakehouse estates.
 
-**Examples:** pgvector, Pinecone, Qdrant, Weaviate, Neo4j, Memgraph
+Together these are the **retrieval substrate** the built-in pipeline orchestrates (multi-strategy retrieval, fusion, reranking). Adapters implement **protocol methods** against those surfaces, not raw object buckets.
+
+**Examples (dedicated retrieval infrastructure):** pgvector, Pinecone, Qdrant, Weaviate, Neo4j, Memgraph. **Plus** custom Tier 1 packages that target **warehouse / lakehouse serving** (vector SQL, Trino-class lake SQL, OLAP, DuckDB-on-Parquet, …) when your adapter implements the protocols above with acceptable recall latency—see the fourth column of the table and **`Lakehouse and warehouse-backed recall`** below.
 
 **When to use:** Users who want a fully functional memory system using their existing **retrieval** database infrastructure, without purchasing a commercial memory engine.
+
+#### Lakehouse and warehouse-backed recall (serving layers)
+
+Tier 1 adapters target **`VectorStore` / `GraphStore` / `DocumentStore`**, not a vendor brand. **Lakehouse- or warehouse-backed `recall`** is in scope when a **serving layer** exposes a query or search surface the adapter can implement: native warehouse vector SQL, a **query engine** on open tables (Trino-class), **OLAP** in front of the lake, or an HTTP **Backend for Frontend (BFF)** that runs the right calls—see `storage-and-data-planes.md` §1.
+
+That online path is **not** the **Memory export sink** SPI: sinks **`emit` / `flush`** governed events for analytics; they do not substitute for `search_similar` unless you **also** operate this Tier 1-style retrieval integration with suitable latency SLOs. Teams often combine both—e.g. Tier 1 recall on pgvector **and** a sink to Iceberg/BigQuery—or Tier 1 backed by warehouse SQL **and** the same sink for long-term tables.
 
 ### Tier 2: Memory Engine Providers
 
@@ -75,17 +84,66 @@ Full-stack memory engines that handle the entire pipeline internally - from cont
 
 **When to use:** Users who want a specialized memory engine with its own retrieval strategies, fusion algorithms, and synthesis capabilities.
 
+### Operational retrieval vs analytical persistence
+
+This frame contrasts **both** agent-time tiers (Tier 1 and Tier 2) with the **export** plane—it is not a Tier-1-only topic.
+
+**Tier 1 / Tier 2** answer **agent-time memory**: indexed `recall` and hybrid retrieval backed by vector, graph, and lexical stores—or a full engine that owns those concerns.
+
+**Analytical persistence** answers **durable history and warehouse-scale analysis**: writing **governed events or snapshots** to **SQL warehouses**, **lakehouse tables** (Iceberg, Delta, Hudi, Paimon, …; Parquet files), and similar systems for BI, compliance, and ML datasets. That path is **orthogonal** to the two-tier model: it does not replace `VectorStore`, and it is **not** generic blob storage for unstructured dumps. It uses a separate **Memory Export Sink** SPI (see §4.4 and `memory-export-sink.md`)—event-oriented (`emit` / `flush`), not `search_similar`.
+
+When the **built-in pipeline** is active (`provider_tier: storage`), warehouse- or lake-backed **online** `recall` is implemented via **Tier 1** Retrieval adapters—see **Lakehouse and warehouse-backed recall (serving layers)** above and `storage-and-data-planes.md` §1. A **Tier 2** memory engine may still use a warehouse or lake **internally**; that storage choice is **opaque** to the Retrieval SPI (the engine replaces Tier 1 from Astrocytes’ perspective).
+
 ### How the tiers interact
 
 ```mermaid
 flowchart TD
   C["Caller: brain.recall(query)"] --> PL["Policy layer - always active"]
-  PL --> T{provider_tier?}
-  T -->|storage| S["Built-in pipeline: embed, multi-strategy retrieval, fusion, rerank, token budget"]
-  T -->|memory_engine| E["Forward to memory engine provider; token budget still enforced"]
+  PL --> T{Which tier?}
+  T -->|Tier 1| S["Built-in pipeline: embed, multi-strategy retrieval, fusion, rerank, token budget"]
+  T -->|Tier 2| E["Forward to memory engine provider; token budget still enforced"]
   S --> R["Return results"]
   E --> R
 ```
+
+**Config mapping:** **Tier 1** is `provider_tier: storage` (Retrieval SPI + built-in pipeline). **Tier 2** is `provider_tier: engine` (memory engine provider).
+
+### Organization data vs user / agent context (banks—not tiers)
+
+**Tier 1 vs Tier 2** answers *who runs the recall pipeline*. **Organization-facing corpora** (policies, KBs, team playbooks) vs **user- or agent-scoped context** (episodic traces, preferences, session) is modeled with **`bank_id`s**, **grants**, and optional **multi-bank** orchestration—not by picking Tier 1 for one and Tier 2 for the other.
+
+Typical pattern:
+
+- Declare separate banks (e.g. `org-policies`, `team-docs`, `user-calvin-episodic`, `agent-session`) and grant each **principal** the right **read / write / forget** on the banks they should see (`access-control.md`).
+- Use **single-bank** recall when only one slice is needed, or **multi-bank** `cascade` / `parallel` so one `recall` fans out across allowed banks and merges hits (`multi-bank-orchestration.md`).
+- **Tier 1** still means the built-in pipeline issues retrieval against the stores backing those banks; **Tier 2** means the engine does the same *logical* job using its internal storage—either way, **which** org vs personal vs agent data appears is **which banks are in scope**, filtered by **AuthZ**.
+
+```mermaid
+flowchart TD
+  C["recall(query) + AstrocyteContext — principal, bank_ids, optional multi-bank strategy"]
+
+  C --> POL["Policy layer — always active"]
+
+  POL --> AZ["Access control — only banks this principal may READ"]
+
+  AZ --> SCOPE["In scope: you define the mix — e.g. org corpus, team KB, user episodic, agent session"]
+
+  SCOPE --> MB{Multi-bank?}
+
+  MB -->|no| ONE["Single bank — one slice of memory"]
+  MB -->|yes| ORC["Cascade or parallel + cross-bank merge — see multi-bank-orchestration.md"]
+
+  ONE --> TIER{Which tier?}
+  ORC --> TIER
+
+  TIER -->|Tier 1| P1["Built-in pipeline — hybrid retrieval + in-pipeline fusion of strategies"]
+  TIER -->|Tier 2| P2["Memory engine — retrieval + fusion internal to provider"]
+
+  P1 --> R["Return results"]
+  P2 --> R
+```
+
+**Cross-bank “fusion”** (parallel multi-bank) merges **evidence from different banks** the principal may read. **In-pipeline “fusion”** on Tier 1 merges **vector / graph / lexical** hits **within** one recall path—the diagram’s diamond and two tier branches are unchanged; this block adds **bank scoping** *above* that split.
 
 ---
 
@@ -109,12 +167,14 @@ flowchart TB
     CAP["Capability negotiation - Tier 1 vs Tier 2"]
     SPI["SPIs: Retrieval, Memory Engine, LLM"]
     OTX["Outbound Transport SPI - optional shared HTTP or TLS for LLM and outbound HTTP"]
+    MSK["Memory Export Sink SPI - optional warehouse / lake / table-format events"]
   end
 
   subgraph BACK["Provider backends"]
     VEC["Vector and graph DBs - pgvector, Pinecone, Qdrant, Weaviate, Neo4j, …"]
     ENG["Full engines - Mystique, Mem0, Zep, Letta, Cognee, …"]
     LLM["LLM backends - gateways or aggregators (LiteLLM, Portkey, OpenRouter, …), direct OpenAI / Anthropic / Bedrock / Azure adapters, local embedders, …"]
+    WH["Warehouse / lakehouse sinks - Snowflake, BigQuery, Iceberg, Delta, … (analytics)"]
   end
 
   APP --> API
@@ -122,6 +182,8 @@ flowchart TB
   SPI --> VEC
   SPI --> ENG
   SPI --> LLM
+  POL -.-> MSK
+  MSK -.-> WH
   OTX -.-> LLM
 
   APIGW -.-> APP
@@ -129,13 +191,13 @@ flowchart TB
 
 The dashed link means **omit this box** when callers embed Astrocytes **in-process** (library, local agent) with no HTTP edge.
 
-**Where an API gateway sits (inbound):** An **API gateway** (Kong, AWS API Gateway, Envoy, Azure APIM, …) is **not** part of the Astrocytes core. It appears in the diagram as **optional inbound edge** - in front of your **HTTP or gRPC service** (or BFF) that embeds Astrocytes. Typical roles: TLS termination, path routing, coarse rate limits, and sometimes **JWT or API-key validation at the edge** before requests hit your code. Your service then maps validated identity to an **opaque `principal`** on `AstrocyteContext` (section 4.5). Do **not** confuse this with **LLM gateways** (section 5 - **outbound** to models; see examples there) or **outbound transport** plugins (section 4.4 - how **egress** HTTP is built).
+**Where an API gateway sits (inbound):** An **API gateway** (Kong, AWS API Gateway, Envoy, Azure APIM, …) is **not** part of the Astrocytes core. It appears in the diagram as **optional inbound edge** - in front of your **HTTP or gRPC service** (or **Backend for Frontend (BFF)**) that embeds Astrocytes. Typical roles: TLS termination, path routing, coarse rate limits, and sometimes **JWT or API-key validation at the edge** before requests hit your code. Your service then maps validated identity to an **opaque `principal`** on `AstrocyteContext` (section 4.6). Do **not** confuse this with **LLM gateways** (section 5 - **outbound** to models; see examples there) or **outbound transport** plugins (section 4.5 - how **egress** HTTP is built).
 
 ---
 
-## 4. Memory SPIs and outbound transport
+## 4. Memory SPIs, optional sinks, and outbound transport
 
-Astrocytes defines **three memory-related** provider interfaces (Retrieval, Memory Engine, LLM) plus an **optional** Outbound Transport SPI that does not participate in memory tiers.
+Astrocytes defines **three memory-related** provider interfaces (Retrieval, Memory Engine, LLM), an **optional Memory Export Sink** SPI for warehouse / lakehouse / open table formats (durable export—not online retrieval), plus an **optional** Outbound Transport SPI that does not participate in memory tiers.
 
 ### 4.1 Retrieval Provider SPI (Tier 1)
 
@@ -177,13 +239,22 @@ This is **not** an LLM gateway. It is a narrow internal dependency with two meth
 
 Completion and embedding providers can be configured **separately** - e.g., Claude for reasoning + local models for embeddings. See `provider-spi.md` section 4 for the full LLM SPI specification and gateway integration patterns.
 
-### 4.4 Outbound Transport SPI (optional)
+### 4.4 Memory Export Sink SPI (optional)
+
+**Scope:** Event-oriented adapters that persist **governed memory lifecycle data** to **data warehouses**, **lakehouses**, and **open table formats** (SQL engines, Parquet, Iceberg, Delta, Hudi, Paimon, …) for analytics, compliance, and ML—not to serve low-latency `recall`.
+
+- **MemoryExportSink**: `emit()`, optional `flush()`, `health()`, optional `capabilities()`
+- **Orthogonal** to Tier 1 and Tier 2: sinks do not participate in `provider_tier` negotiation and are **not** `VectorStore` implementations over raw object storage
+
+Wired from the policy / observability path (and aligned with `event-hooks.md`) after successful operations. Full specification: `storage-and-data-planes.md` (hub), `memory-export-sink.md`, and `provider-spi.md` section 5.
+
+### 4.5 Outbound Transport SPI (optional)
 
 Credential gateways (OneCLI-class products), corporate HTTP proxies, and TLS inspection stacks need to control **how outbound HTTP leaves the process** - proxies, custom CAs, optional gateway headers. That is **not** the job of the LLM Provider SPI (which defines `complete()` / `embed()`), and **not** a memory tier.
 
-Astrocytes exposes an **optional** `OutboundTransportProvider` interface applied at a **single choke point** when building HTTP clients for LLM adapters and other outbound HTTP. Users who only need standard environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, trust bundles) require **no** plugin. Full specification: `outbound-transport.md` and `provider-spi.md` section 5.
+Astrocytes exposes an **optional** `OutboundTransportProvider` interface applied at a **single choke point** when building HTTP clients for LLM adapters and other outbound HTTP. Users who only need standard environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, trust bundles) require **no** plugin. Full specification: `outbound-transport.md` and `provider-spi.md` section 6.
 
-### 4.5 Authentication (AuthN) and authorization (AuthZ)
+### 4.6 Authentication (AuthN) and authorization (AuthZ)
 
 **Authentication (AuthN)** - Astrocytes is **not** an identity provider. Proving identity (OIDC, SAML, API keys, workload identity, sessions) completes **outside** the framework. The application passes an **opaque `principal`** on `AstrocyteContext` after your middleware or gateway validates credentials (`access-control.md` §7). Open-source IAMs such as **[Casdoor](https://casdoor.org/)** fit here: you run Casdoor, validate tokens, map claims to `user:…` / `agent:…` strings.
 
@@ -279,17 +350,17 @@ Skip **API gateway** when the agent embeds Astrocytes **in-process** (no public 
 
 ---
 
-## 6. Relationship to storage backends (Vector DBs, Graph DBs)
+## 6. Relationship to storage backends (Vector DBs, Graph DBs, warehouse / lake serving)
 
-Storage backends are **pluggable infrastructure** underneath the Astrocytes pipeline, not a separate integration concern for callers.
+Storage backends are **pluggable infrastructure** underneath the Astrocytes pipeline (when Tier 1 + built-in pipeline are active), not a separate integration concern for callers. That includes **dedicated** vector and graph databases **and** **serving-layer** SQL or search APIs over warehouse or lakehouse tables—still behind the same Retrieval SPI (`provider-spi.md` §1, §2 Tier 1 table).
 
 ### 6.1 Storage is an implementation detail
 
-When a caller does `brain.recall("What do we know about Calvin?")`, they don't know or care whether the answer came from a pgvector similarity search, a Neo4j graph traversal, or both fused together. That's retrieval strategy - it belongs inside the pipeline (either Astrocytes' built-in or the memory engine provider's).
+When a caller does `brain.recall("What do we know about Calvin?")`, they don't know or care whether the answer came from a pgvector similarity search, a Neo4j graph traversal, a warehouse vector query, or several strategies fused together. That's retrieval strategy—it belongs inside the pipeline (either Astrocytes' built-in or the memory engine provider's).
 
 ### 6.2 Two paths to retrieval backends
 
-**Tier 1 (Retrieval providers):** The user configures which vector DB and optional graph DB to use. Astrocytes' built-in pipeline manages them.
+**Tier 1 (Retrieval providers):** The user configures which vector store and optional graph / document stores to use (dedicated DBs **or** warehouse/lake serving surfaces via adapters). Astrocytes' built-in pipeline manages them.
 
 ```yaml
 # astrocytes.yaml - Tier 1 example
@@ -371,7 +442,7 @@ Beyond intelligence and governance, the framework provides capabilities that no 
 | Memory lifecycle | TTL policies, compliance purge (GDPR/PDPA), legal hold, archival, audit trail | `memory-lifecycle.md` |
 | AuthZ (access control) | Per-bank read/write/forget/admin for principals; enforced in core | `access-control.md` |
 | Event hooks | Webhooks and alerts for retain, PII detection, circuit breaker, lifecycle events | `event-hooks.md` |
-| Memory analytics | Bank health scores, noisy agent detection, utilization reports, quality trends | `memory-analytics.md` |
+| Bank health & utilization | In-process bank health scores, noisy agent detection, utilization reports, quality trends | `memory-analytics.md` |
 | Evaluation | Benchmark suites, provider comparison, regression detection | `evaluation.md` |
 | Data governance | Classification, PII taxonomy, residency, encryption, DLP, compliance profiles (GDPR/HIPAA/PDPA) | `data-governance.md` |
 | Outbound transport | Optional plugins for credential gateways and enterprise HTTP/TLS; env-only path without plugins | `outbound-transport.md` |
@@ -412,12 +483,14 @@ These capabilities exist at the **framework layer** - they apply regardless of w
 | Anthropic direct adapter | `astrocytes-anthropic` | Apache 2.0 |
 | **Outbound transport** | | |
 | Example: gateway-specific transport adapter | `astrocytes-transport-{name}` | Apache 2.0 |
+| **Memory export sink (warehouse / lake / open tables)** | | |
+| Example: Iceberg / warehouse sink adapter | `astrocytes-sink-{target}` | Apache 2.0 |
 | **Access policy (external PDP)** | | |
 | Example: OPA / Cerbos adapters | `astrocytes-access-policy-{name}` | Apache 2.0 |
 | **Identity helpers (optional)** | | |
 | Example: web framework → principal wiring | `astrocytes-identity-{framework}` | Apache 2.0 |
 
-Community memory and LLM providers follow the naming convention `astrocytes-{provider}`. Outbound transport plugins use **`astrocytes-transport-{name}`** and the `astrocytes.outbound_transports` entry point group (see `ecosystem-and-packaging.md` and `outbound-transport.md`). External access policy plugins use **`astrocytes-access-policy-{name}`** and `astrocytes.access_policies` (see `identity-and-external-policy.md`).
+Community memory and LLM providers follow the naming convention `astrocytes-{provider}`. Outbound transport plugins use **`astrocytes-transport-{name}`** and the `astrocytes.outbound_transports` entry point group (see `ecosystem-and-packaging.md` and `outbound-transport.md`). Memory export sink packages use **`astrocytes-sink-{target}`** and `astrocytes.memory_export_sinks` (see `memory-export-sink.md` and `ecosystem-and-packaging.md` §2.6 / §3.5). External access policy plugins use **`astrocytes-access-policy-{name}`** and `astrocytes.access_policies` (see `identity-and-external-policy.md`).
 
 ---
 
@@ -470,7 +543,7 @@ Each framework layer maps to specific neuroscience principles from `design-princ
 | Memory lifecycle (TTL, archival, pruning) | P7: Structured forgetting / phagocytosis |
 | AuthZ (access control) | P6: Barrier maintenance (identity boundaries) |
 | Optional external PDP (`AccessPolicyProvider`) | P6: Same barrier - delegated decision, framework-enforced audit |
-| Memory analytics | P9: Observable state (system-level health) |
+| Bank health & utilization (`memory-analytics.md`) | P9: Observable state (system-level health) |
 | Event hooks / escalation alerts | P8: Inflammation with controlled channels |
 | Data governance (classification, DLP, residency) | P6: BBB - selective, actively maintained boundary |
 
