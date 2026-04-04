@@ -24,6 +24,9 @@ prometheus = [
 mcp = [
     "fastmcp>=3.0",
 ]
+eval = [
+    "deepeval>=2.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -31,9 +34,10 @@ dev = [
     "pytest-timeout>=2.2",
     "ruff>=0.4",
     "fastmcp>=3.0",
+    "deepeval>=2.0",
 ]
 all = [
-    "astrocytes[otel,prometheus,mcp]",
+    "astrocytes[otel,prometheus,mcp,eval]",
 ]
 
 [project.scripts]
