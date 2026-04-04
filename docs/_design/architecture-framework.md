@@ -25,6 +25,8 @@ Astrocytes is **not** an agent runtime. It does **not** define agent orchestrati
 
 **Agent cards and catalogs:** Many products describe agents with **agent cards** or registry metadata. Astrocytes does not execute those cards or own the catalog, but it **does** aim to understand them **at the memory boundary**: a small, explicit **mapping** from card identity to **principal + memory bank** (and optional defaults), declared in config and used by integrations, so memory calls stay consistent without one-off logic in every app. See `agent-framework-middleware.md`.
 
+**Sandbox awareness:** Execution sandboxes (containers, gVisor, microVMs, WASM, OS permission fences) limit **code** isolation; they do not by themselves stop **memory APIs** from becoming an **exfiltration** path if recall is mis-scoped or egress is wide open. Astrocytes is **sandbox-aware** in the sense of binding **principal + bank + environment/sandbox context** consistently and documenting **BFF** and **network** expectations—see `sandbox-awareness-and-exfiltration.md`.
+
 **Implementation language:** Astrocytes ships as **two parallel implementations** in this repository, intended as **drop-in replacements** at the framework contract: **`astrocytes-py/`** (Python, PyPI package `astrocytes`) and **`astrocytes-rs/`** (Rust). Portable DTOs, config, and SPI versioning keep them aligned. See `implementation-language-strategy.md` for constraints and packaging.
 
 Astrocytes is the **tripartite synapse** (Principle 2): an active mediator at the exchange between agents and memory, responsible for both the intelligence pipeline and continuous environmental stewardship.

@@ -16,6 +16,8 @@ A single bank per agent is limiting:
 
 Without multi-bank orchestration, callers must query each bank individually, merge results, and handle per-bank policies themselves. That logic belongs in the framework.
 
+The same patterns support **human–agent collaboration**: an agent’s `bank_groups` often include a **per-user** bank plus **team** and **org** banks. That is only safe when **access control** grants the **agent principal** read (and optionally write) on those banks; see `access-control.md` §1.4 and `sandbox-awareness-and-exfiltration.md` for wiring identity so this stays **intentional**, not **cross-environment bleed**.
+
 ---
 
 ## 2. Bank topology
@@ -58,6 +60,16 @@ flowchart LR
   O[Org] --> F
   F --> R[Results]
 ```
+
+### 2.4 Shared banks (multi-principal, same data)
+
+**Sharing** does not mean two principals in one API call. Each request has one `AstrocyteContext.principal`. **Shared memory** means the **same `bank_id`** appears in two principals’ effective grants—for example `user:calvin` and `agent:support-bot-1` both have **read** (and possibly **write**) on `user-calvin`.
+
+Implications:
+
+- **Recall:** When the **user** runs a recall against `user-calvin` and when the **agent** runs a recall against `user-calvin` (with its own principal), both see **consistent** content subject to **their** permission bits (e.g. agent without **forget**).
+- **Multi-bank recall:** Strategies like `cascade` / `parallel` only include banks the **current** principal may read. A user might have **admin** on personal + team + org; an agent might be limited to personal **read** + team **read**—orchestration config must match those grant shapes or calls will **AccessDenied** mid-query.
+- **Retain:** Writes target one `bank_id`; provenance and audit should record **which** principal retained (see `access-control.md` §6 and `memory-lifecycle.md`).
 
 ---
 
@@ -177,8 +189,10 @@ bank_templates:
     profile: personal
     auto_create: true
     access:
-      read: ["{agent_id}"]
-      write: ["{agent_id}"]
+      - principal: "user:{user_id}"
+        permissions: [read, write, forget, admin]
+      - principal: "agent:{agent_id}"
+        permissions: [read, write]
   team:
     name_pattern: "team-{team_id}"
     profile: support
@@ -197,3 +211,4 @@ When `brain.recall(bank_id="user-123")` is called and the bank doesn't exist, th
 | Cascade strategy (widen when thin) | P5: Metabolic coupling - adapt retrieval depth to supply |
 | Per-bank policy enforcement | P3: Homeostasis - per-region regulation |
 | Cross-bank fusion | P2: Tripartite synapse - mediate the exchange |
+| Shared banks (users + agents) | P6: Barrier maintenance - explicit who may cross which bank |

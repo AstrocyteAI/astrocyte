@@ -19,6 +19,10 @@ Card payloads can follow emerging standards (for example A2A-style agent metadat
 
 **Summary:** Nothing new is “stored inside the engine” as a parallel agent model. Agent cards are **input** to the existing contract via mapping, so operators get one obvious place to connect catalog identity to Astrocytes’ principals and banks.
 
+### Sandbox context and exfiltration
+
+Integrations should treat **sandbox id**, **environment** (e.g. dev/staging/prod), or **deployment tier** as first-class inputs alongside the **agent card** when resolving **principal** and **bank_id**. That keeps **recall** from crossing boundaries the compute sandbox was supposed to enforce. Strong **compute** isolation does not remove the need for **network egress** controls or a **trustworthy BFF** that does not let the agent pick an arbitrary production **principal**—see `sandbox-awareness-and-exfiltration.md` and [Let’s discuss sandbox isolation](https://www.shayon.dev/post/2026/52/lets-discuss-sandbox-isolation/).
+
 ---
 
 ## 1. Supported frameworks

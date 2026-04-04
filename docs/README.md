@@ -61,10 +61,11 @@ This folder (`docs/`) is the **shared design specification** for the Astrocytes 
 | 12 | [MCP server integration](./_design/mcp-server.md) | MCP tool integration |
 | 13 | [Memory lifecycle management](./_design/memory-lifecycle.md) | TTL, compliance, legal hold, audit |
 | 14 | [Access control](./_design/access-control.md) | Principals, permissions, banks |
-| 15 | [Event hooks](./_design/event-hooks.md) | Webhooks and alerts |
-| 16 | [Memory analytics](./_design/memory-analytics.md) | Bank health, utilization |
-| 17 | [Evaluation and benchmarking](./_design/evaluation.md) | Benchmarks and regression testing |
-| 18 | [Data governance and privacy](./_design/data-governance.md) | Classification, residency, DLP |
+| 15 | [Sandbox awareness and memory-API exfiltration](./_design/sandbox-awareness-and-exfiltration.md) | Sandbox context, egress, BFF; related reading on isolation |
+| 16 | [Event hooks](./_design/event-hooks.md) | Webhooks and alerts |
+| 17 | [Memory analytics](./_design/memory-analytics.md) | Bank health, utilization |
+| 18 | [Evaluation and benchmarking](./_design/evaluation.md) | Benchmarks and regression testing |
+| 19 | [Data governance and privacy](./_design/data-governance.md) | Classification, residency, DLP |
 
 ---
 
@@ -84,9 +85,9 @@ Numbers below refer to the **#** column within each section’s table above (§1
 
 - **New to the framework:** Design **1 → 2 → 3**, then Plugins **1** or End user **2**.
 - **Implementing a provider:** Plugins **1**, **4**; Design **9** (*implementation language strategy*).
-- **Security and compliance:** Design **6**, **14**, **13**, **18**, **4** (*policy, access control, memory lifecycle, data governance, identity*).
+- **Security and compliance:** Design **6**, **14**, **13**, **19**, **15**, **4** (*policy, access control, memory lifecycle, data governance, sandbox/exfiltration, identity*).
 - **Integrations (network, identity, UI):** Plugins **2**, Design **4**, **5**, Plugins **3**.
-- **Production HTTP / BFF hosting Astrocytes:** End user **2**; Design **3**, **4**, **14**, **6**, **13**, **18**; Plugins **2**.
+- **Production HTTP / BFF hosting Astrocytes:** End user **2**; Design **3**, **4**, **14**, **6**, **13**, **19**, **15**; Plugins **2**.
 
 ---
 

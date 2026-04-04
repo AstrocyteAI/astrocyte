@@ -39,6 +39,7 @@ const topicItems = {
     { label: "MCP server", link: "/design/mcp-server/" },
     { label: "Memory lifecycle", link: "/design/memory-lifecycle/" },
     { label: "Access control", link: "/design/access-control/" },
+    { label: "Sandbox awareness & exfiltration", link: "/design/sandbox-awareness-and-exfiltration/" },
     { label: "Event hooks", link: "/design/event-hooks/" },
     { label: "Memory analytics", link: "/design/memory-analytics/" },
     { label: "Evaluation", link: "/design/evaluation/" },

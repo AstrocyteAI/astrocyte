@@ -70,6 +70,7 @@ Track completion in your issue tracker or PRs as needed.
 
 ### 3.4 Network, TLS, and edge
 
+- [ ] **Memory API exfiltration:** Treat Astrocytes like any **sensitive backend**: bind **AuthN** at the BFF (do not let sandboxed clients freely choose a production **principal** or bank); combine with **network egress** policy for agent workloads so **recall** cannot be relayed to the public internet—see `sandbox-awareness-and-exfiltration.md` and [Let’s discuss sandbox isolation](https://www.shayon.dev/post/2026/52/lets-discuss-sandbox-isolation/).
 - [ ] **TLS:** Terminate TLS at **ingress/gateway** or in-process; **HSTS** and modern cipher policy where browsers are involved.
 - [ ] **Private networking:** Prefer private subnets / mesh; no public exposure without WAF/rate limits as needed.
 - [ ] **Request limits:** Max body size, header size, URL length; **timeouts** on client and server.

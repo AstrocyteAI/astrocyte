@@ -53,6 +53,17 @@ class AccessGrant:
     permissions: list[str]               # ["read", "write", "forget", "admin"]
 ```
 
+### 1.4 Sharing memory between users and agents
+
+Many products need **humans and agents to see the same bank**—not a bypass of isolation, but **explicit** overlap in who holds **which permissions** on **`bank_id`**.
+
+- **One bank, multiple principals:** Grant both `user:{id}` and `agent:{id}` **read** and/or **write** on the same bank (with asymmetric permissions if you want—for example user gets **admin**, agent only **read** and **write**, no **forget**).
+- **One principal per request:** Each `recall` / `retain` still runs under a **single** `AstrocyteContext.principal`. Sharing is expressed in **config grants** (or PDP rules), not by merging identities in one call.
+- **Revocation:** When an agent must lose access, **revoke** or narrow grants (§5); do not rely on the model to “forget” the API.
+- **Contrast with accidental access:** If the **wrong** principal or **wrong** bank is chosen—especially from an **untrusted** execution environment—recall becomes an **exfiltration** channel. Bind **identity at the BFF** and align **agent card → principal + bank** mapping with environment/sandbox context; see `sandbox-awareness-and-exfiltration.md`.
+
+Multi-bank orchestration (cascade, parallel) still requires **read** on **every** bank in the query (§3.2); shared memory is “the same bank appears in two principals’ worlds because both are authorized,” not a special API mode—see `multi-bank-orchestration.md` §2.4.
+
 ---
 
 ## 2. Configuration
@@ -258,6 +269,8 @@ Astrocytes remains responsible for **audit events** (§6) and for **memory-speci
 | Prove identity (login, token validation) | **Your** middleware, API gateway, or agent host |
 | Stable **principal** for memory | String in `AstrocyteContext` |
 | Bank-level **permissions** | Default: §2–3; optional: external PDP via §8 |
+| Intentional **user + agent** sharing | Same bank, multiple grants (§1.4); templates in §2.3 and `multi-bank-orchestration.md` §2.4, §6 |
+| Sandbox / exfiltration vs policy | `sandbox-awareness-and-exfiltration.md` |
 | Audit of access decisions | Astrocytes (§6), enriched with PDP metadata when used |
 
 For full integration patterns, package naming, and entry points, see **`identity-and-external-policy.md`**.
