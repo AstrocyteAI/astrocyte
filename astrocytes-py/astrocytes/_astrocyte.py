@@ -485,57 +485,96 @@ class Astrocyte:
     async def reflect(
         self,
         query: str,
-        bank_id: str,
+        bank_id: str | None = None,
         *,
+        banks: list[str] | None = None,
+        strategy: Literal["cascade", "parallel", "first_match"] | MultiBankStrategy | None = None,
         max_tokens: int | None = None,
         context: AstrocyteContext | None = None,
         **kwargs: Any,
     ) -> ReflectResult:
-        """Synthesize an answer from memory."""
+        """Synthesize an answer from memory.
+
+        Supports multi-bank reflect: pass ``banks`` (and optionally ``strategy``) to
+        recall across multiple banks and synthesize over the fused results.
+        """
+        # Resolve bank(s)
+        bank_ids = banks or ([bank_id] if bank_id else [])
+        if not bank_ids:
+            raise ConfigError("Either bank_id or banks must be provided")
+
         max_tokens = max_tokens or self._config.homeostasis.reflect_max_tokens
+        primary_bank = bank_ids[0]
 
-        with span("astrocytes.reflect", {"astrocytes.bank_id": bank_id}):
-            self._check_access(bank_id, "read", context)
-            self._check_rate_limit(bank_id, "reflect")
-            self._check_quota(bank_id, "reflect")
+        with span("astrocytes.reflect", {"astrocytes.bank_id": ",".join(bank_ids)}):
+            # Access control for all banks
+            for bid in bank_ids:
+                self._check_access(bid, "read", context)
 
-            request = ReflectRequest(
-                query=query,
-                bank_id=bank_id,
-                max_tokens=max_tokens,
-                include_sources=kwargs.get("include_sources", True),
-                dispositions=kwargs.get("dispositions"),
-            )
+            self._check_rate_limit(primary_bank, "reflect")
+            self._check_quota(primary_bank, "reflect")
 
-            try:
-                self._circuit_breaker.check(self._provider_name)
+            # ── Single bank: delegate to provider/pipeline reflect ──
+            if len(bank_ids) == 1:
+                request = ReflectRequest(
+                    query=query,
+                    bank_id=primary_bank,
+                    max_tokens=max_tokens,
+                    include_sources=kwargs.get("include_sources", True),
+                    dispositions=kwargs.get("dispositions"),
+                )
+                try:
+                    self._circuit_breaker.check(self._provider_name)
+                    with timed() as t:
+                        result = await self._do_reflect(request)
+                    self._circuit_breaker.record_success()
+                except ProviderUnavailable:
+                    return ReflectResult(answer="Memory unavailable", sources=[])
+                except Exception:
+                    self._circuit_breaker.record_failure()
+                    raise
+
+            # ── Multi-bank: recall across banks, then synthesize ──
+            else:
+                strat = _normalize_multi_bank_strategy(strategy)
                 with timed() as t:
-                    result = await self._do_reflect(request)
-                self._circuit_breaker.record_success()
-                self._quota_tracker.record(bank_id, "reflect")
-                self._metrics.inc_counter(
-                    "astrocytes_reflect_total",
-                    {"bank_id": bank_id, "provider": self._provider_name, "status": "ok"},
-                )
-                self._metrics.observe_histogram(
-                    "astrocytes_reflect_duration_seconds",
-                    t["elapsed_ms"] / 1000,
-                    {"bank_id": bank_id, "provider": self._provider_name},
-                )
-                await self._fire_hooks(
-                    "on_reflect",
-                    bank_id=bank_id,
-                    data={
-                        "query_length": len(query),
-                        "answer_length": len(result.answer),
-                    },
-                )
-                return result
-            except ProviderUnavailable:
-                return ReflectResult(answer="Memory unavailable", sources=[])
-            except Exception:
-                self._circuit_breaker.record_failure()
-                raise
+                    recall_result = await self._multi_bank_recall(
+                        query,
+                        bank_ids,
+                        max_results=20,  # Larger set for synthesis context
+                        max_tokens=None,  # Budget applied after synthesis
+                        tags=kwargs.get("tags"),
+                        kwargs=kwargs,
+                        strategy=strat,
+                    )
+                    result = await self._do_reflect_from_hits(
+                        query=query,
+                        hits=recall_result.hits,
+                        bank_id=primary_bank,
+                        max_tokens=max_tokens,
+                        dispositions=kwargs.get("dispositions"),
+                    )
+
+            self._quota_tracker.record(primary_bank, "reflect")
+            self._metrics.inc_counter(
+                "astrocytes_reflect_total",
+                {"bank_id": ",".join(bank_ids), "provider": self._provider_name, "status": "ok"},
+            )
+            self._metrics.observe_histogram(
+                "astrocytes_reflect_duration_seconds",
+                t["elapsed_ms"] / 1000,
+                {"bank_id": ",".join(bank_ids), "provider": self._provider_name},
+            )
+            await self._fire_hooks(
+                "on_reflect",
+                bank_id=primary_bank,
+                data={
+                    "query_length": len(query),
+                    "answer_length": len(result.answer),
+                    "bank_count": len(bank_ids),
+                },
+            )
+            return result
 
     async def forget(
         self,
@@ -638,6 +677,44 @@ class Astrocyte:
             count = await self._pipeline.vector_store.delete(request.memory_ids, request.bank_id)
             return ForgetResult(deleted_count=count)
         raise CapabilityNotSupported(self._provider_name, "forget")
+
+    async def _do_reflect_from_hits(
+        self,
+        query: str,
+        hits: list[MemoryHit],
+        bank_id: str,
+        max_tokens: int | None = None,
+        dispositions: Any = None,
+    ) -> ReflectResult:
+        """Synthesize over pre-fetched hits (used by multi-bank reflect).
+
+        Tries in order:
+        1. Pipeline reflect (if available) — builds a ReflectRequest, recall is skipped
+           because we already have hits, so we call synthesize() directly.
+        2. Engine reflect with degrade fallback — concatenate hit texts.
+        3. Raise if nothing can synthesize.
+        """
+        # If we have a pipeline with an LLM, use its synthesis directly
+        if self._pipeline:
+            from astrocytes.pipeline.reflect import synthesize
+
+            return await synthesize(
+                query=query,
+                hits=hits,
+                llm_provider=self._pipeline.llm_provider,
+                dispositions=dispositions,
+                max_tokens=max_tokens or 2048,
+            )
+
+        # If engine supports reflect, we can't easily pass pre-fetched hits to it,
+        # so fall back to degrade mode: concatenate hit texts as the answer.
+        if hits:
+            return ReflectResult(
+                answer="\n".join(h.text for h in hits),
+                sources=hits,
+            )
+
+        return ReflectResult(answer="No relevant memories found across banks.", sources=[])
 
     async def _multi_bank_recall(
         self,

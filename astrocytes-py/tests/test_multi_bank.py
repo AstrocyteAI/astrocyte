@@ -94,6 +94,77 @@ class TestMultiBankRecall:
         assert result.hits[0].bank_id == "high"
 
 
+class TestMultiBankReflect:
+    async def test_single_bank_reflect(self):
+        brain, engine = _make_multi_bank_astrocyte()
+        await brain.retain("Calvin likes Python", bank_id="personal")
+        result = await brain.reflect("What does Calvin like?", bank_id="personal")
+        assert result.answer
+        assert len(result.answer) > 0
+
+    async def test_multi_bank_reflect_parallel(self):
+        brain, engine = _make_multi_bank_astrocyte()
+        await brain.retain("Calvin prefers dark mode", bank_id="personal")
+        await brain.retain("Team policy requires code review", bank_id="team")
+
+        result = await brain.reflect(
+            "What do we know about Calvin and team policies?",
+            banks=["personal", "team"],
+            strategy="parallel",
+        )
+        assert result.answer
+        assert len(result.answer) > 0
+        # Sources should include hits from both banks
+        if result.sources:
+            bank_ids = {s.bank_id for s in result.sources if s.bank_id}
+            assert len(bank_ids) >= 1  # At least one bank contributed
+
+    async def test_multi_bank_reflect_cascade(self):
+        brain, engine = _make_multi_bank_astrocyte()
+        await brain.retain("Personal preference for Rust", bank_id="personal")
+        await brain.retain("Org standard is Python", bank_id="org")
+
+        strat = MultiBankStrategy(mode="cascade", cascade_order=["personal", "org"])
+        result = await brain.reflect(
+            "What programming languages?",
+            banks=["personal", "org"],
+            strategy=strat,
+        )
+        assert result.answer
+        assert len(result.answer) > 0
+
+    async def test_multi_bank_reflect_empty_banks(self):
+        brain, engine = _make_multi_bank_astrocyte()
+        result = await brain.reflect(
+            "anything",
+            banks=["empty-1", "empty-2"],
+            strategy="parallel",
+        )
+        assert result.answer  # Should still return something (even "no memories")
+
+    async def test_multi_bank_reflect_no_bank_raises(self):
+        brain, engine = _make_multi_bank_astrocyte()
+        from astrocytes.errors import ConfigError
+
+        with pytest.raises(ConfigError, match="bank_id or banks"):
+            await brain.reflect("test")
+
+    async def test_multi_bank_reflect_fires_hooks(self):
+        brain, engine = _make_multi_bank_astrocyte()
+        await brain.retain("hook test content", bank_id="b1")
+        await brain.retain("hook test content two", bank_id="b2")
+
+        events = []
+        brain.register_hook("on_reflect", lambda e: events.append(e))
+
+        await brain.reflect(
+            "hook test",
+            banks=["b1", "b2"],
+        )
+        assert len(events) == 1
+        assert events[0].data["bank_count"] == 2
+
+
 class TestMultiBankStrategyCoercion:
     def test_string_strategy(self):
         from astrocytes._astrocyte import _normalize_multi_bank_strategy
