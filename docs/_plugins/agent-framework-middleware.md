@@ -29,90 +29,280 @@ Integrations should treat **sandbox id**, **environment** (e.g. dev/staging/prod
 
 ## 1. Supported frameworks
 
-| Framework | Integration package | Memory abstraction |
-|---|---|---|
-| LangGraph / LangChain | `astrocytes[langgraph]` | `BaseCheckpointSaver` / `BaseMemory` |
-| CrewAI | `astrocytes[crewai]` | `CrewMemory` interface |
-| Pydantic AI | `astrocytes[pydantic-ai]` | Dependency injection via `Deps` |
-| AG2 (AutoGen) | `astrocytes[ag2]` | `MemoryProvider` interface |
-| LlamaIndex | `astrocytes[llamaindex]` | `BaseMemory` / `ChatMemoryBuffer` |
-| Claude Agent SDK | `astrocytes[claude-sdk]` | Tool-based via MCP or direct |
-| OpenAI Agents SDK | `astrocytes[openai-agents]` | Tool definitions |
+| Framework | Module | Pattern | Status |
+|---|---|---|---|
+| LangGraph / LangChain | `astrocytes.integrations.langgraph` | Memory store (save_context, search, load_memory_variables) | Implemented |
+| CrewAI | `astrocytes.integrations.crewai` | Crew/agent memory (save, search, reset, per-agent banks) | Implemented |
+| Pydantic AI | `astrocytes.integrations.pydantic_ai` | Agent tools (retain, recall, reflect as tool functions) | Implemented |
+| OpenAI Agents SDK | `astrocytes.integrations.openai_agents` | Function calling (OpenAI-format tool definitions + handlers) | Implemented |
+| Claude Agent SDK | `astrocytes.integrations.claude_agent_sdk` | Native @tool + create_sdk_mcp_server (in-process MCP) | Implemented |
+| Google ADK | `astrocytes.integrations.google_adk` | Callable tools (async functions with type annotations) | Implemented |
+| AutoGen / AG2 | `astrocytes.integrations.autogen` | Memory + tools (save/query/get_context + OpenAI tool defs) | Implemented |
+| Smolagents (HuggingFace) | `astrocytes.integrations.smolagents` | Code-centric tools (Tool protocol: name, inputs, forward) | Implemented |
+| LlamaIndex | `astrocytes.integrations.llamaindex` | Memory store (put, get, get_all, search, reset) | Implemented |
+| Strands Agents (AWS) | `astrocytes.integrations.strands` | Spec + handler tools (JSON Schema spec + async handler) | Implemented |
+| MCP (Claude Code, Cursor, Windsurf) | `astrocytes.mcp` | MCP server (6 tools via FastMCP, stdio/SSE) | Implemented |
 
-Integrations ship as **optional dependencies** of the `astrocytes` package, not separate packages. This keeps the ecosystem simple.
+All integrations are **zero-dependency on the framework** — they use duck typing, not base class inheritance. Testable and functional without installing the target framework.
 
 ---
 
-## 2. Integration patterns
+## 2. Integration examples
 
-### 2.1 LangGraph
+All examples below assume:
 
 ```python
 from astrocytes import Astrocyte
-from astrocytes.integrations.langgraph import AstrocyteMemory
-
 brain = Astrocyte.from_config("astrocytes.yaml")
-
-# As a LangGraph memory store
-memory = AstrocyteMemory(brain, bank_id="user-123")
-
-graph = StateGraph(AgentState)
-graph.add_node("agent", agent_node)
-# Memory is available in state
-app = graph.compile(checkpointer=memory)
 ```
 
-The integration maps:
-- LangGraph `put` → `brain.retain()`
-- LangGraph `get` / `search` → `brain.recall()`
-- Thread ID → bank ID mapping (configurable)
+### 2.1 LangGraph / LangChain
+
+```python
+from astrocytes.integrations.langgraph import AstrocyteMemory
+
+memory = AstrocyteMemory(brain, bank_id="user-123")
+
+# Save interaction context
+await memory.save_context(
+    inputs={"question": "What is dark mode?"},
+    outputs={"answer": "A UI theme with dark background"},
+    thread_id="thread-abc",
+)
+
+# Search memory
+results = await memory.search("dark mode", max_results=5)
+
+# Load formatted memories for prompt injection
+variables = await memory.load_memory_variables({"topic": "UI preferences"})
+# → {"memory": "- Calvin prefers dark mode\n- ..."}
+
+# Thread → bank mapping
+memory = AstrocyteMemory(
+    brain,
+    bank_id="default-bank",
+    thread_to_bank={"thread-abc": "custom-bank"},
+)
+```
 
 ### 2.2 CrewAI
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.crewai import AstrocyteMemory
+from astrocytes.integrations.crewai import AstrocyteCrewMemory
 
-brain = Astrocyte.from_config("astrocytes.yaml")
-
-crew = Crew(
-    agents=[support_agent, research_agent],
-    memory=AstrocyteMemory(brain, bank_id="team-support"),
+# Shared crew memory + per-agent banks
+memory = AstrocyteCrewMemory(
+    brain,
+    bank_id="team-shared",
+    agent_banks={"devops": "devops-bank", "researcher": "research-bank"},
 )
-```
 
-The integration maps:
-- CrewAI memory save → `brain.retain()`
-- CrewAI memory search → `brain.recall()`
-- Crew-level memory is a shared bank; agent-level memory uses per-agent banks
+# Save with agent attribution
+await memory.save(
+    "Kubernetes deploys via Helm charts",
+    agent_id="devops",
+    tags=["infrastructure"],
+)
+
+# Search across the crew's shared bank
+results = await memory.search("deployment strategy")
+
+# Reset a specific agent's memory
+await memory.reset(agent_id="devops")
+```
 
 ### 2.3 Pydantic AI
 
 ```python
-from astrocytes import Astrocyte
 from astrocytes.integrations.pydantic_ai import astrocyte_tools
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+tools = astrocyte_tools(brain, bank_id="user-123")
+# → [{"name": "memory_retain", "function": ..., "description": ...}, ...]
 
-agent = Agent(
-    model="claude-sonnet-4-20250514",
-    tools=astrocyte_tools(brain, bank_id="user-123"),
-)
+# Register with Pydantic AI agent
+agent = Agent(model="claude-sonnet-4-20250514", tools=tools)
+
+# The agent can now call these during execution:
+#   memory_retain("Calvin prefers dark mode", tags=["preference"])
+#   memory_recall("What are Calvin's preferences?")
+#   memory_reflect("Summarize what we know about Calvin")
 ```
 
-Exposes `retain`, `recall`, `reflect` as Pydantic AI tools that the agent can call during execution.
-
-### 2.4 OpenAI Agents SDK / Claude Agent SDK
+### 2.4 OpenAI Agents SDK
 
 ```python
-from astrocytes import Astrocyte
 from astrocytes.integrations.openai_agents import astrocyte_tool_definitions
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+tools, handlers = astrocyte_tool_definitions(brain, bank_id="user-123")
 
-tools = astrocyte_tool_definitions(brain, bank_id="user-123")
-# Returns OpenAI-compatible tool definitions for retain/recall/reflect
+# tools → list of OpenAI function-calling format dicts
+# handlers → {"memory_retain": async fn, "memory_recall": async fn, ...}
+
+# Pass tools to OpenAI API
+response = client.chat.completions.create(
+    model="gpt-4o",
+    tools=tools,
+    messages=[...],
+)
+
+# Dispatch tool calls
+for call in response.choices[0].message.tool_calls:
+    handler = handlers[call.function.name]
+    result = await handler(**json.loads(call.function.arguments))
 ```
+
+### 2.5 Claude Agent SDK (Anthropic)
+
+```python
+from astrocytes.integrations.claude_agent_sdk import astrocyte_claude_agent_server
+
+# Option A: Native SDK MCP server (requires claude_agent_sdk installed)
+memory_server = astrocyte_claude_agent_server(brain, bank_id="user-123")
+
+from claude_agent_sdk import query, ClaudeAgentOptions
+
+options = ClaudeAgentOptions(
+    mcp_servers={"memory": memory_server},
+    allowed_tools=["mcp__astrocytes_memory__*"],  # Allow all memory tools
+)
+
+async for message in query(
+    prompt="What do you remember about my preferences?",
+    options=options,
+):
+    if isinstance(message, ResultMessage) and message.subtype == "success":
+        print(message.result)
+```
+
+```python
+# Option B: Tool definitions without SDK (for testing or custom integration)
+from astrocytes.integrations.claude_agent_sdk import astrocyte_claude_agent_tools
+
+tools = astrocyte_claude_agent_tools(brain, bank_id="user-123")
+# Each tool returns SDK format: {"content": [{"type": "text", "text": "..."}]}
+
+result = await tools[0]["handler"]({"content": "Calvin prefers dark mode"})
+# → {"content": [{"type": "text", "text": '{"stored": true, "memory_id": "..."}'}]}
+```
+
+### 2.6 Google ADK (Google)
+
+```python
+from astrocytes.integrations.google_adk import astrocyte_adk_tools
+
+tools = astrocyte_adk_tools(brain, bank_id="user-123")
+# → list of async callable functions with type annotations + docstrings
+
+# Register with Google ADK agent
+from google.adk import Agent
+agent = Agent(model="gemini-2.0-flash", tools=tools)
+
+# Tools available: memory_retain, memory_recall, memory_reflect
+# Each is an async function with proper type annotations for ADK schema generation
+```
+
+### 2.7 AutoGen / AG2 (Microsoft)
+
+```python
+from astrocytes.integrations.autogen import AstrocyteAutoGenMemory
+
+memory = AstrocyteAutoGenMemory(
+    brain,
+    bank_id="team",
+    agent_banks={"agent-a": "bank-a", "agent-b": "bank-b"},
+)
+
+# Direct API for conversation hooks
+await memory.save("User prefers Python", agent_id="agent-a")
+context = await memory.get_context("What does the user prefer?")
+# → "- User prefers Python"
+
+# Or register as OpenAI-format tools for function calling
+tools = memory.as_tools()
+handlers = memory.get_handlers()
+
+# Use with ConversableAgent
+agent = ConversableAgent("assistant", llm_config=llm_config)
+# Register tools via AutoGen's tool registration pattern
+```
+
+### 2.8 Smolagents (HuggingFace)
+
+```python
+from astrocytes.integrations.smolagents import astrocyte_smolagent_tools
+
+tools = astrocyte_smolagent_tools(brain, bank_id="user-123")
+# → list of AstrocyteSmolTool instances
+
+# Each tool has: name, description, inputs (schema), output_type, forward()
+# Compatible with smolagents' Tool protocol
+
+from smolagents import CodeAgent, HfApiModel
+agent = CodeAgent(tools=tools, model=HfApiModel())
+
+# The agent writes Python code that calls:
+#   memory_retain(content="...", tags="pref,ui")
+#   memory_recall(query="...", max_results=5)
+#   memory_reflect(query="...")
+```
+
+### 2.9 LlamaIndex
+
+```python
+from astrocytes.integrations.llamaindex import AstrocyteLlamaMemory
+
+memory = AstrocyteLlamaMemory(brain, bank_id="user-123", max_results=10)
+
+# Store and retrieve
+await memory.put("Calvin prefers dark mode", tags=["preference"])
+context = await memory.get("UI preferences")
+# → "- Calvin prefers dark mode"
+
+# Get all memories in the bank
+all_mems = await memory.get_all()
+
+# Structured search
+results = await memory.search("dark mode", tags=["preference"])
+
+# Use with LlamaIndex chat engine
+chat_engine = index.as_chat_engine(memory=memory)
+```
+
+### 2.10 Strands Agents (AWS)
+
+```python
+from astrocytes.integrations.strands import astrocyte_strands_tools
+
+tools = astrocyte_strands_tools(brain, bank_id="user-123")
+# → list of {"spec": {...}, "handler": async fn}
+
+# Each tool has a JSON Schema spec + async handler function
+# Compatible with Strands Agents' tool registration pattern
+
+from strands import Agent
+agent = Agent(model=model, tools=tools)
+
+# Handler dispatch:
+for tool in tools:
+    print(tool["spec"]["name"])  # "memory_retain", "memory_recall", ...
+    result = await tool["handler"]({"content": "test"})
+```
+
+### 2.11 MCP (Claude Code, Cursor, Windsurf)
+
+```json
+// .claude/settings.json or MCP client config
+{
+  "mcpServers": {
+    "memory": {
+      "command": "astrocytes-mcp",
+      "args": ["--config", "astrocytes.yaml"]
+    }
+  }
+}
+```
+
+The MCP server exposes 6 tools: `memory_retain`, `memory_recall`, `memory_reflect`, `memory_forget`, `memory_banks`, `memory_health`. Full policy layer applies. See `mcp-server.md` for details.
 
 ---
 
@@ -144,20 +334,21 @@ Auto-retain is **opt-in** and respects all policies (PII scanning, signal qualit
 
 ## 5. Packaging
 
-Integrations are optional dependencies:
-
-```toml
-# pyproject.toml
-[project.optional-dependencies]
-langgraph = ["langgraph>=0.2"]
-crewai = ["crewai>=0.80"]
-pydantic-ai = ["pydantic-ai>=0.1"]
-ag2 = ["ag2>=0.6"]
-llamaindex = ["llama-index-core>=0.11"]
-all-integrations = ["astrocytes[langgraph,crewai,pydantic-ai,ag2,llamaindex]"]
-```
+All integrations ship inside the `astrocytes` package — no separate packages to install. The integration modules use **duck typing** (not base class inheritance), so they work **without** installing the target framework. Install the framework only when you actually use the integration:
 
 ```bash
-pip install astrocytes[langgraph]       # LangGraph integration only
-pip install astrocytes[all-integrations] # Everything
+# The integrations themselves are always available
+pip install astrocytes
+
+# Install framework dependencies as needed
+pip install langgraph        # for astrocytes.integrations.langgraph
+pip install crewai           # for astrocytes.integrations.crewai
+pip install pydantic-ai      # for astrocytes.integrations.pydantic_ai
+pip install ag2              # for astrocytes.integrations.autogen
+pip install smolagents       # for astrocytes.integrations.smolagents
+pip install llama-index-core # for astrocytes.integrations.llamaindex
+pip install strands-agents   # for astrocytes.integrations.strands
+pip install fastmcp          # for astrocytes.mcp (MCP server)
 ```
+
+**Note:** `openai_agents` and `google_adk` integrations produce tool definitions as plain dicts/functions — they don't import any framework code, so no extra install is needed.
