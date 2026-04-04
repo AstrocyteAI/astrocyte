@@ -21,6 +21,8 @@ This project uses that picture as **engineering metaphor**, not as a literal sim
 
 Astrocytes is **not** an LLM gateway (no generic chat routing or provider normalization) and **not** an **agent runtime** (no orchestration graphs, tool loops, checkpoints, or multi-agent scheduling). Those belong in your application or in agent frameworks; Astrocytes integrates as **memory + governance + provider SPIs**. For **agent cards** and similar catalog metadata, the design centers on a **simple mapping** to **principals and memory banks** (config + integration helpers), not on hosting the catalog—see [`docs/_design/architecture-framework.md`](docs/_design/architecture-framework.md) §1 and [`docs/_plugins/agent-framework-middleware.md`](docs/_plugins/agent-framework-middleware.md).
 
+For how this maps to vendor-neutral **applied AI / agentic-stack** teaching (memory vs RAG, planes, harness vs context), see [`docs/_design/curriculum-mapping.md`](docs/_design/curriculum-mapping.md) and the public [Applied AI Fellowship](https://calvinchengx.github.io/applied-ai/) syllabus.
+
 ## Repository layout
 
 | Path | Contents |

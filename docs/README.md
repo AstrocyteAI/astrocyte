@@ -66,6 +66,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocytes 
 | 17 | [Memory analytics](./_design/memory-analytics.md) | Bank health, utilization |
 | 18 | [Evaluation and benchmarking](./_design/evaluation.md) | Benchmarks and regression testing |
 | 19 | [Data governance and privacy](./_design/data-governance.md) | Classification, residency, DLP |
+| 20 | [Applied AI fellowship ↔ Astrocytes](./_design/curriculum-mapping.md) | Crosswalk: stack planes, memory vs RAG, teaching hooks |
 
 ---
 

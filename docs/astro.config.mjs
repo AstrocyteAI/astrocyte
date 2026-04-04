@@ -25,6 +25,7 @@ const topicItems = {
     { label: "Neuroscience & vocabulary", link: "/design/neuroscience-astrocytes/" },
     { label: "Design principles", link: "/design/design-principles/" },
     { label: "Architecture framework", link: "/design/architecture-framework/" },
+    { label: "Fellowship curriculum mapping", link: "/design/curriculum-mapping/" },
     { label: "Identity & external policy", link: "/design/identity-and-external-policy/" },
     {
       label: "Presentation layer & multimodal services",
