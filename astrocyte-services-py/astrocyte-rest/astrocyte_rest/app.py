@@ -1,4 +1,4 @@
-"""FastAPI application exposing Astrocytes over REST."""
+"""FastAPI application exposing Astrocyte over REST."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def create_app() -> FastAPI:
     brain = build_astrocyte()
 
     app = FastAPI(
-        title="Astrocytes reference server",
+        title="Astrocyte reference server",
         description="REST API over astrocyte-py (Tier 1 in-memory pipeline by default).",
         version="0.1.0",
     )

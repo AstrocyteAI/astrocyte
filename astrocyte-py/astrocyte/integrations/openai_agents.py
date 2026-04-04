@@ -1,4 +1,4 @@
-"""OpenAI-compatible tool definitions for Astrocytes memory.
+"""OpenAI-compatible tool definitions for Astrocyte memory.
 
 Works with OpenAI Agents SDK, Claude Agent SDK, or any system
 that accepts OpenAI-format function/tool definitions.
@@ -34,7 +34,7 @@ def astrocyte_tool_definitions(
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, ToolHandler]]:
-    """Create OpenAI-format tool definitions backed by Astrocytes.
+    """Create OpenAI-format tool definitions backed by Astrocyte.
 
     Returns:
         (tools, handlers) where:

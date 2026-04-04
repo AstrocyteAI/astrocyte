@@ -1,4 +1,4 @@
-"""Strands Agents (AWS) integration — Astrocytes as agent tools.
+"""Strands Agents (AWS) integration — Astrocyte as agent tools.
 
 Usage:
     from astrocyte import Astrocyte
@@ -32,7 +32,7 @@ def astrocyte_strands_tools(
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> list[dict[str, Any]]:
-    """Create Strands-compatible tool definitions backed by Astrocytes.
+    """Create Strands-compatible tool definitions backed by Astrocyte.
 
     Returns a list of dicts, each with 'spec' (JSON Schema) and 'handler' (async callable).
     Strands Agents registers tools with this pattern.

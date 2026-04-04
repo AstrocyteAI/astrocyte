@@ -1,4 +1,4 @@
-"""CrewAI integration — Astrocytes as crew/agent memory.
+"""CrewAI integration — Astrocyte as crew/agent memory.
 
 Usage:
     from astrocyte import Astrocyte
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 class AstrocyteCrewMemory:
-    """Astrocytes-backed memory for CrewAI crews and agents.
+    """Astrocyte-backed memory for CrewAI crews and agents.
 
     Implements the interface pattern expected by CrewAI's memory system:
     save(), search(), reset().

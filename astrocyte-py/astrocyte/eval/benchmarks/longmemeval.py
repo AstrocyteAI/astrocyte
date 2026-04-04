@@ -42,7 +42,7 @@ class LongMemEvalResult:
     total_questions: int
     correct: int
     per_question: list[dict[str, Any]]
-    eval_result: EvalResult  # Standard Astrocytes EvalResult
+    eval_result: EvalResult  # Standard Astrocyte EvalResult
 
 
 @dataclass
@@ -58,7 +58,7 @@ class LongMemEvalQuestion:
 
 
 class LongMemEvalBenchmark:
-    """Adapter for running LongMemEval against Astrocytes.
+    """Adapter for running LongMemEval against Astrocyte.
 
     Loads the LongMemEval dataset, retains conversation sessions,
     then evaluates recall/reflect against the 500 questions.

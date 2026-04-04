@@ -1,6 +1,6 @@
 # AutoGen / AG2 integration
 
-Astrocytes memory for Microsoft AutoGen multi-agent conversations, with both direct API and tool registration.
+Astrocyte memory for Microsoft AutoGen multi-agent conversations, with both direct API and tool registration.
 
 **Module:** `astrocyte.integrations.autogen`
 **Pattern:** Memory API (save/query/get_context) + OpenAI-format tool export
@@ -46,7 +46,7 @@ agent = ConversableAgent("assistant", llm_config=llm_config)
 
 ## Integration pattern
 
-| Method | Astrocytes call |
+| Method | Astrocyte call |
 |---|---|
 | `save(content, agent_id=...)` | `brain.retain()` with agent metadata |
 | `query(query, agent_id=...)` | `brain.recall()` → list of hit dicts |

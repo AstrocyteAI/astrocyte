@@ -20,7 +20,7 @@ def test_dev_mode_uses_x_astrocyte_principal(monkeypatch: pytest.MonkeyPatch):
     r = client.post(
         "/v1/retain",
         json={"content": "x", "bank_id": "b1"},
-        headers={"X-Astrocytes-Principal": "agent:dev"},
+        headers={"X-Astrocyte-Principal": "agent:dev"},
     )
     assert r.status_code == 200
     body = r.json()
@@ -36,7 +36,7 @@ def test_api_key_rejects_bad_key(monkeypatch: pytest.MonkeyPatch):
     r = client.post(
         "/v1/retain",
         json={"content": "x", "bank_id": "b1"},
-        headers={"X-Api-Key": "wrong", "X-Astrocytes-Principal": "agent:x"},
+        headers={"X-Api-Key": "wrong", "X-Astrocyte-Principal": "agent:x"},
     )
     assert r.status_code == 401
 
@@ -50,7 +50,7 @@ def test_api_key_accepts_valid_key_and_principal(monkeypatch: pytest.MonkeyPatch
     r = client.post(
         "/v1/retain",
         json={"content": "x", "bank_id": "b1"},
-        headers={"X-Api-Key": "good", "X-Astrocytes-Principal": "agent:key-user"},
+        headers={"X-Api-Key": "good", "X-Astrocyte-Principal": "agent:key-user"},
     )
     assert r.status_code == 200
 

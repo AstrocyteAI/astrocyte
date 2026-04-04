@@ -1,14 +1,14 @@
 # Agent framework middleware
 
-Astrocytes provides thin integration layers for popular agent frameworks. Each integration wires the Astrocytes API into the framework's memory abstraction, giving every framework access to every memory provider through one adapter.
+Astrocyte provides thin integration layers for popular agent frameworks. Each integration wires the Astrocyte API into the framework's memory abstraction, giving every framework access to every memory provider through one adapter.
 
-Without Astrocytes, each agent framework needs integrations with each memory provider (N x M). With Astrocytes, it's N + M.
+Without Astrocyte, each agent framework needs integrations with each memory provider (N x M). With Astrocyte, it's N + M.
 
 ### Scope: memory integration, not orchestration
 
-Astrocytes **does not** specify how an agent is structured (workflow graph, tools, checkpoints, retries, human-in-the-loop, multi-agent handoff). That is the job of **LangGraph**, **CrewAI**, **Pydantic AI**, **AG2**, the **OpenAI / Claude agent SDKs**, or **your own app**. This document only describes **thin mappers** from those frameworks' memory hooks to `Astrocyte.retain()` / `recall()` / `reflect()` / … through the policy layer.
+Astrocyte **does not** specify how an agent is structured (workflow graph, tools, checkpoints, retries, human-in-the-loop, multi-agent handoff). That is the job of **LangGraph**, **CrewAI**, **Pydantic AI**, **AG2**, the **OpenAI / Claude agent SDKs**, or **your own app**. This document only describes **thin mappers** from those frameworks' memory hooks to `Astrocyte.retain()` / `recall()` / `reflect()` / … through the policy layer.
 
-In **harness vs context** terms (see [Architecture framework](../_design/architecture-framework.md) §1, *Context engineering vs harness engineering*): framework integrations and your app are **harness**—they decide when to call memory and how to run the loop; Astrocytes sits **below** that. Turning `recall` hits into the next system block or user message is **context engineering**, which the **app** still owns—Astrocytes returns governed hits and synthesized text, not the only valid prompt shape.
+In **harness vs context** terms (see [Architecture framework](../_design/architecture-framework.md) §1, *Context engineering vs harness engineering*): framework integrations and your app are **harness**—they decide when to call memory and how to run the loop; Astrocyte sits **below** that. Turning `recall` hits into the next system block or user message is **context engineering**, which the **app** still owns—Astrocyte returns governed hits and synthesized text, not the only valid prompt shape.
 
 ### Sandbox context and exfiltration
 
@@ -52,9 +52,9 @@ brain = Astrocyte.from_config("astrocyte.yaml")
 
 ## 2. What the integration layer does NOT do
 
-- **No business logic.** Integrations are thin mappers. They translate framework-specific interfaces to Astrocytes API calls.
-- **No policy bypass.** All calls go through the full Astrocytes policy layer.
-- **No framework-specific storage.** Conversation history managed by the framework stays in the framework. Astrocytes stores long-term memory, not turn-by-turn chat logs.
+- **No business logic.** Integrations are thin mappers. They translate framework-specific interfaces to Astrocyte API calls.
+- **No policy bypass.** All calls go through the full Astrocyte policy layer.
+- **No framework-specific storage.** Conversation history managed by the framework stays in the framework. Astrocyte stores long-term memory, not turn-by-turn chat logs.
 - **No provider-specific code.** Integrations talk to `Astrocyte`, never to providers directly.
 
 ---

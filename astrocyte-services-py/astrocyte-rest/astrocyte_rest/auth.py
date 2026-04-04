@@ -34,7 +34,7 @@ def resolve_principal(
         if not x_astrocyte_principal:
             raise HTTPException(
                 status_code=401,
-                detail="X-Astrocytes-Principal required when using API key auth",
+                detail="X-Astrocyte-Principal required when using API key auth",
             )
         return x_astrocyte_principal
 
@@ -64,7 +64,7 @@ def resolve_principal(
 async def get_astrocyte_context(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
-    x_astrocyte_principal: str | None = Header(default=None, alias="X-Astrocytes-Principal"),
+    x_astrocyte_principal: str | None = Header(default=None, alias="X-Astrocyte-Principal"),
 ) -> AstrocyteContext | None:
     """FastAPI dependency: trusted principal from JWT/API key, or dev header."""
     principal = resolve_principal(

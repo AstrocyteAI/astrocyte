@@ -1,4 +1,4 @@
-"""LlamaIndex integration — Astrocytes as a memory store for LlamaIndex agents.
+"""LlamaIndex integration — Astrocyte as a memory store for LlamaIndex agents.
 
 Usage:
     from astrocyte import Astrocyte
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 class AstrocyteLlamaMemory:
-    """Astrocytes-backed memory for LlamaIndex agents and chat engines.
+    """Astrocyte-backed memory for LlamaIndex agents and chat engines.
 
     Implements the interface pattern expected by LlamaIndex's memory system:
     put(), get(), get_all(), reset().

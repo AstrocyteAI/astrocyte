@@ -1,6 +1,6 @@
 # Quick Start
 
-Get **Astrocytes** running locally: core library in Python, then an optional **Postgres + pgvector** stack with the **reference REST** API (`astrocyte-rest`).
+Get **Astrocyte** running locally: core library in Python, then an optional **Postgres + pgvector** stack with the **reference REST** API (`astrocyte-rest`).
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Use **`Astrocyte.from_config(...)`** and attach Tier 1 / Tier 2 providers in cod
 
 ### Use the same client from an AI agent
 
-Astrocytes does **not** run the agent loop (tools, checkpoints, multi-step graphs). Your framework does. Integrations map each framework’s memory hooks to `retain` / `recall` / `reflect` through the same policy layer — see **[agent framework middleware](/plugins/agent-framework-middleware/)** for the full matrix (LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, Claude Agent SDK, MCP, …).
+Astrocyte does **not** run the agent loop (tools, checkpoints, multi-step graphs). Your framework does. Integrations map each framework’s memory hooks to `retain` / `recall` / `reflect` through the same policy layer — see **[agent framework middleware](/plugins/agent-framework-middleware/)** for the full matrix (LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, Claude Agent SDK, MCP, …).
 
 Minimal **LangGraph / LangChain** shape (install `langgraph` when you build a graph):
 

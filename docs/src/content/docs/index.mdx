@@ -1,20 +1,20 @@
 ---
-title: Astrocytes
+title: Astrocyte
 description: Open-source memory framework for AI agents — retain, recall, and synthesize with any backend.
 topic: end-user
 template: splash
 tableOfContents: false
 head:
   - tag: title
-    content: Astrocytes | Memory for every agent
+    content: Astrocyte | Memory for every agent
 hero:
   title: Memory for every agent.
   tagline: >
-    Astrocytes is an open-source framework that gives AI agents persistent memory — with pluggable backends,
+    Astrocyte is an open-source framework that gives AI agents persistent memory — with pluggable backends,
     built-in governance, and a pipeline that works out of the box.
   image:
     html: |
-      <img src="./logo.svg" alt="Astrocytes mascot" class="landing-hero-mascot dark:sl-hidden" width="280" height="280" decoding="async" loading="eager" />
+      <img src="./logo.svg" alt="Astrocyte mascot" class="landing-hero-mascot dark:sl-hidden" width="280" height="280" decoding="async" loading="eager" />
       <img src="./logo-dark.svg" alt="" class="landing-hero-mascot light:sl-hidden" width="280" height="280" decoding="async" loading="eager" aria-hidden="true" />
   actions:
     - text: Quick Start
@@ -120,20 +120,20 @@ prompt_vars = await memory.load_memory_variables({})
   </div>
 </div>
 
-{/* ── Harness vs context (where Astrocytes sits) ───── */}
+{/* ── Harness vs context (where Astrocyte sits) ───── */}
 
 <span class="section-label" aria-hidden="true">⟩ Where it sits</span>
 <h2 class="section-heading">Harness, memory, context, LLM</h2>
 <div class="section-subheading">
-  Your agent stack runs the loop; Astrocytes is the governed memory boundary before context and completions. What you
-  paste into the next turn is still your context-engineering choice — Astrocytes makes the evidence consistent and
+  Your agent stack runs the loop; Astrocyte is the governed memory boundary before context and completions. What you
+  paste into the next turn is still your context-engineering choice — Astrocyte makes the evidence consistent and
   auditable.{" "}
   <a href="design/architecture-framework/#context-engineering-vs-harness-engineering">Read the architecture note →</a>
 </div>
 
 <div
   class="harness-flow not-content"
-  aria-label="Flow from harness through Astrocytes and context to the LLM"
+  aria-label="Flow from harness through Astrocyte and context to the LLM"
 >
   <div class="harness-flow__step">
     <span class="harness-flow__label">Harness</span>
@@ -152,7 +152,7 @@ prompt_vars = await memory.load_memory_variables({})
     </span>
   </div>
   <div class="harness-flow__step harness-flow__step--core">
-    <span class="harness-flow__label">Astrocytes</span>
+    <span class="harness-flow__label">Astrocyte</span>
     <p class="harness-flow__text">Retain, recall, reflect — hybrid retrieval, policies, token budgets on the memory path.</p>
   </div>
   <div class="harness-flow__between harness-flow__between--row" aria-hidden="true">
@@ -279,7 +279,7 @@ prompt_vars = await memory.load_memory_variables({})
 <span class="section-label" aria-hidden="true">⟩ Works with everything</span>
 <h2 class="section-heading">Pluggable storage and engines</h2>
 <div class="section-subheading">
-  Bring your own database or plug in a full memory engine — Astrocytes keeps governance and observability consistent.
+  Bring your own database or plug in a full memory engine — Astrocyte keeps governance and observability consistent.
 </div>
 
 <div class="pill-row" aria-label="Example stacks and integrations">
@@ -302,7 +302,7 @@ prompt_vars = await memory.load_memory_variables({})
     embedding, extraction, fusion, and synthesis on top.
   </Card>
   <Card title="Tier 2: Memory engines" icon="rocket">
-    Full-stack engines that own the pipeline. Mystique, Mem0, Zep, Letta, Cognee — Astrocytes adds
+    Full-stack engines that own the pipeline. Mystique, Mem0, Zep, Letta, Cognee — Astrocyte adds
     governance, observability, and portability.
   </Card>
 </CardGrid>
@@ -355,13 +355,13 @@ prompt_vars = await memory.load_memory_variables({})
     Any MCP-capable agent (Claude Code, Cursor, Windsurf) gets memory via `astrocytes-mcp`. Zero code integration.
   </Card>
   <Card title="Agent Frameworks" icon="puzzle">
-    LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, AG2 — thin middleware wires Astrocytes into each framework's memory abstraction.
+    LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, AG2 — thin middleware wires Astrocyte into each framework's memory abstraction.
   </Card>
   <Card title="LLM Providers" icon="translate">
     Multi-provider gateways (e.g. LiteLLM, Portkey, OpenRouter, Vercel AI Gateway) or direct SDKs — OpenAI, Anthropic, Bedrock, Azure, Vertex, Ollama — or bring your own via the LLM SPI.
   </Card>
   <Card title="Memory Portability" icon="right-arrow">
-    Export and import memories between providers using Astrocytes Memory Archive (AMA), a portable newline-delimited JSON (JSONL) format. No vendor lock-in.
+    Export and import memories between providers using Astrocyte Memory Archive (AMA), a portable newline-delimited JSON (JSONL) format. No vendor lock-in.
   </Card>
 </CardGrid>
 
@@ -372,7 +372,7 @@ prompt_vars = await memory.load_memory_variables({})
 
 <CardGrid>
   <LinkCard title="Quick Start" href="end-user/quick-start/" description="Install, configure, and run your first retain/recall in minutes." />
-  <LinkCard title="Provider SPI" href="plugins/provider-spi/" description="Build a storage adapter or engine provider for Astrocytes." />
+  <LinkCard title="Provider SPI" href="plugins/provider-spi/" description="Build a storage adapter or engine provider for Astrocyte." />
   <LinkCard title="Architecture" href="design/architecture-framework/" description="Two-tier model, layer boundaries, and design principles." />
   <LinkCard title="100 Agents in 100 Days" href="tutorials/100-agents-in-100-days/" description="Daily tutorials for building AI agents with persistent memory." />
 </CardGrid>

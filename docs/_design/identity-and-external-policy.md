@@ -1,6 +1,6 @@
 # Identity integration and external access policy
 
-This document defines how Astrocytes **composes** with authentication (AuthN) and external authorization (AuthZ) systems **without** becoming an identity provider or coupling to any single vendor. For the default in-framework model (opaque principals + YAML grants), see `access-control.md`.
+This document defines how Astrocyte **composes** with authentication (AuthN) and external authorization (AuthZ) systems **without** becoming an identity provider or coupling to any single vendor. For the default in-framework model (opaque principals + YAML grants), see `access-control.md`.
 
 ---
 
@@ -8,28 +8,28 @@ This document defines how Astrocytes **composes** with authentication (AuthN) an
 
 | Goal | Approach |
 |---|---|
-| **Adoption** | Teams using OIDC, SAML, API keys, workload identity, or commercial IdPs should integrate with **patterns and optional thin adapters**, not forks of Astrocytes. |
+| **Adoption** | Teams using OIDC, SAML, API keys, workload identity, or commercial IdPs should integrate with **patterns and optional thin adapters**, not forks of Astrocyte. |
 | **Stability** | Core ships **interfaces + default behavior**; vendor-specific code lives in **`astrocyte-access-policy-*`** or **`astrocyte-identity-*`** optional packages. |
-| **Clear boundaries** | Astrocytes **never** replaces your IdP. It **enforces memory permissions** at the framework boundary and emits **audit events** for allow/deny. |
-| **Optional central policy** | Enterprises using OPA, **Casbin**, Cedar, SpiceDB, Cerbos, Permit.io, etc. can plug a **policy decision** behind a small SPI while keeping bank semantics and auditing in Astrocytes. |
+| **Clear boundaries** | Astrocyte **never** replaces your IdP. It **enforces memory permissions** at the framework boundary and emits **audit events** for allow/deny. |
+| **Optional central policy** | Enterprises using OPA, **Casbin**, Cedar, SpiceDB, Cerbos, Permit.io, etc. can plug a **policy decision** behind a small SPI while keeping bank semantics and auditing in Astrocyte. |
 
 ---
 
-## 2. What Astrocytes does not do
+## 2. What Astrocyte does not do
 
 - **Run an OAuth2 / OIDC server**, issue sessions, or store passwords.
 - **Validate JWTs or API keys** inside the memory engine by default (that stays in middleware or sidecar).
 - **Embed** Keycloak, **Casdoor**, Auth0, Okta, or commercial PDP SDKs in the `astrocyte` core package.
 
-**Casdoor** (open-source IAM / OIDC-SAML-ldap) and similar IdPs are **deployed by you**; Astrocytes only receives the resulting **principal** after your middleware validates tokens or sessions.
+**Casdoor** (open-source IAM / OIDC-SAML-ldap) and similar IdPs are **deployed by you**; Astrocyte only receives the resulting **principal** after your middleware validates tokens or sessions.
 
-Those systems remain **infrastructure**; Astrocytes consumes their **outputs** (identity attributes, allow/deny decisions) through documented extension points.
+Those systems remain **infrastructure**; Astrocyte consumes their **outputs** (identity attributes, allow/deny decisions) through documented extension points.
 
 ---
 
 ## 3. Authentication: from credential to principal
 
-Astrocytes continues to accept an **opaque `principal` string** (see `access-control.md` §1.1). **Authentication** is the step that runs **before** `AstrocyteContext` is built:
+Astrocyte continues to accept an **opaque `principal` string** (see `access-control.md` §1.1). **Authentication** is the step that runs **before** `AstrocyteContext` is built:
 
 ```
 HTTP request / MCP session / workload attestation
@@ -52,13 +52,13 @@ The core **trusts** the principal the same way it does today; integration work i
 
 ## 4. Authorization: config grants vs. external policy (PDP)
 
-### 4.1 Default: declarative grants in Astrocytes
+### 4.1 Default: declarative grants in Astrocyte
 
 The **default** authorizer evaluates **per-bank grants** from config or programmatic APIs (`grant_access`, etc.). No external call. This remains the right default for most open-source users.
 
 ### 4.2 Optional: `AccessPolicyProvider` SPI
 
-For organizations that **centralize** authorization in a PDP (Policy Decision Point), Astrocytes defines an **optional** interface:
+For organizations that **centralize** authorization in a PDP (Policy Decision Point), Astrocyte defines an **optional** interface:
 
 - **Input**: `principal`, `bank_id`, `permission` (`read` | `write` | `forget` | `admin`), and optional **context** (tenant id, request metadata, resource tags - implementation-defined).
 - **Output**: allow or deny (and optional reason string for audit).
@@ -79,7 +79,7 @@ Exact chaining modes are **configuration** on `Astrocyte`; the SPI remains a sin
 | Style | Examples | `AccessPolicyProvider` adapter |
 |---|---|---|
 | **Remote / service PDP** | OPA (REST), Cerbos (gRPC/HTTP), Permit API | Network client in **`astrocyte-access-policy-opa`**, etc. |
-| **In-process enforcer** | **[Casbin](https://casbin.org/)** (RBAC/ABAC/ReBAC via model + policy files) | Thin wrapper: `check()` calls `enforcer.enforce(subject, object, action)` with Astrocytes’ `principal`, `bank_id`, and `permission` mapped to Casbin tuples - package e.g. **`astrocyte-access-policy-casbin`**. No HTTP hop; policies ship with your app or load from your store. |
+| **In-process enforcer** | **[Casbin](https://casbin.org/)** (RBAC/ABAC/ReBAC via model + policy files) | Thin wrapper: `check()` calls `enforcer.enforce(subject, object, action)` with Astrocyte’ `principal`, `bank_id`, and `permission` mapped to Casbin tuples - package e.g. **`astrocyte-access-policy-casbin`**. No HTTP hop; policies ship with your app or load from your store. |
 
 Casbin is a common choice when teams want **embedded** authorization with explicit CSV/model files; OPA/Cerbos when policy is **centralized** and shared across services.
 
@@ -183,5 +183,5 @@ This section names **which folders** own **AuthZ wiring** in [`astrocyte-py`](..
 
 - **AuthN** → **your** middleware or optional **`astrocyte-identity-*`** helpers → **principal string**.
 - **AuthZ** → **default** YAML grants, or **optional** **`AccessPolicyProvider`** + **`astrocyte-access-policy-*`** for OPA, Cerbos, **Casbin**, etc.
-- **Astrocytes** stays the **memory barrier** and **audit anchor**; IdPs and PDPs stay **pluggable**.
+- **Astrocyte** stays the **memory barrier** and **audit anchor**; IdPs and PDPs stay **pluggable**.
 - **Repository placement** for grants vs PDP vs storage: see **§8** above.

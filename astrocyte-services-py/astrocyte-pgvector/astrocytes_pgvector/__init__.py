@@ -1,4 +1,4 @@
-"""PostgreSQL + pgvector adapter for Astrocytes Tier 1."""
+"""PostgreSQL + pgvector adapter for Astrocyte Tier 1."""
 
 from astrocyte_pgvector.store import PgVectorStore
 

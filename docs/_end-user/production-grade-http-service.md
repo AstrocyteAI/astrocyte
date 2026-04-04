@@ -1,6 +1,6 @@
 # Production-grade HTTP service
 
-This document describes how to operate Astrocytes **behind an HTTP (or similar) API** in production: security, durability, observability, and compliance. It applies whether you **embed** `Astrocyte` in your own service or use the optional **`astrocyte-rest`** reference HTTP service in this repository.
+This document describes how to operate Astrocyte **behind an HTTP (or similar) API** in production: security, durability, observability, and compliance. It applies whether you **embed** `Astrocyte` in your own service or use the optional **`astrocyte-rest`** reference HTTP service in this repository.
 
 For the optional inbound edge and where a gateway sits relative to the core, see `architecture-framework.md` §3. For principals and banks, see `access-control.md`. For identity and external policy engines, see `identity-and-external-policy.md`. For outbound HTTP to LLMs and proxies, see `outbound-transport.md`.
 
@@ -12,7 +12,7 @@ For the optional inbound edge and where a gateway sits relative to the core, see
 
 **Implementing your own production service**
 
-Use the **implementation checklist** (§3) as the primary guide. You own the process (FastAPI, gRPC, Lambda, etc.), TLS termination, identity, and scaling. The Astrocytes core remains a **library**; your service maps authenticated callers to `AstrocyteContext` and invokes `retain` / `recall` / `reflect` / `forget`.
+Use the **implementation checklist** (§3) as the primary guide. You own the process (FastAPI, gRPC, Lambda, etc.), TLS termination, identity, and scaling. The Astrocyte core remains a **library**; your service maps authenticated callers to `AstrocyteContext` and invokes `retain` / `recall` / `reflect` / `forget`.
 
 **Using or hardening the reference REST service (`astrocyte-rest`)**
 
@@ -22,7 +22,7 @@ The repository includes [`astrocyte-services-py/astrocyte-rest/`](../astrocyte-s
 
 ## 2. Architecture reminder
 
-An HTTP API is **not** part of the Astrocytes core contract. Typical production shape:
+An HTTP API is **not** part of the Astrocyte core contract. Typical production shape:
 
 - **Edge:** API gateway or ingress (TLS, coarse rate limits, JWT or API-key validation).
 - **Application:** Your service (or the reference `astrocyte-rest` package) constructs `Astrocyte`, attaches Tier 1 or Tier 2 providers, and passes an **opaque `principal`** on each call after **AuthN**.
@@ -52,7 +52,7 @@ Track completion in your issue tracker or PRs as needed.
 
 ### 3.2 Authentication (AuthN) - do not trust client-supplied principals
 
-- [ ] **Remove or gate dev behavior:** A header such as `X-Astrocytes-Principal` must **not** be the only identity in production unless behind verified **mTLS** or a **trusted gateway** that strips spoofed headers.
+- [ ] **Remove or gate dev behavior:** A header such as `X-Astrocyte-Principal` must **not** be the only identity in production unless behind verified **mTLS** or a **trusted gateway** that strips spoofed headers.
 - [ ] **Choose and implement one primary mode:**
   - [ ] **JWT** (OIDC): validate issuer, audience, signature, `exp`; map claims to `AstrocyteContext.principal`.
   - [ ] **API keys:** hashed keys in store, rotation, per-key scopes.
@@ -70,12 +70,12 @@ Track completion in your issue tracker or PRs as needed.
 
 ### 3.4 Network, TLS, and edge
 
-- [ ] **Memory API exfiltration:** Treat Astrocytes like any **sensitive backend**: bind **AuthN** at the **Backend for Frontend (BFF)** (do not let sandboxed clients freely choose a production **principal** or bank); combine with **network egress** policy for agent workloads so **recall** cannot be relayed to the public internet—see `sandbox-awareness-and-exfiltration.md` and [Let’s discuss sandbox isolation](https://www.shayon.dev/post/2026/52/lets-discuss-sandbox-isolation/).
+- [ ] **Memory API exfiltration:** Treat Astrocyte like any **sensitive backend**: bind **AuthN** at the **Backend for Frontend (BFF)** (do not let sandboxed clients freely choose a production **principal** or bank); combine with **network egress** policy for agent workloads so **recall** cannot be relayed to the public internet—see `sandbox-awareness-and-exfiltration.md` and [Let’s discuss sandbox isolation](https://www.shayon.dev/post/2026/52/lets-discuss-sandbox-isolation/).
 - [ ] **TLS:** Terminate TLS at **ingress/gateway** or in-process; **HSTS** and modern cipher policy where browsers are involved.
 - [ ] **Private networking:** Prefer private subnets / mesh; no public exposure without WAF/rate limits as needed.
 - [ ] **Request limits:** Max body size, header size, URL length; **timeouts** on client and server.
 - [ ] **CORS:** If browser clients exist, **restrict** origins; avoid `*` in production.
-- [ ] **Rate limiting:** Edge (API gateway) + align with Astrocytes **homeostasis** / quotas in config (`policy-layer.md`).
+- [ ] **Rate limiting:** Edge (API gateway) + align with Astrocyte **homeostasis** / quotas in config (`policy-layer.md`).
 
 ### 3.5 API design and contract
 
@@ -156,14 +156,14 @@ This repository ships an optional **`astrocyte-rest`** HTTP service that embeds 
 
 ### 4.1 Purpose
 
-- Demonstrate mapping HTTP JSON bodies to **`Astrocyte`** calls (`retain`, `recall`, `reflect`, `forget`) and optional **`X-Astrocytes-Principal`**.
+- Demonstrate mapping HTTP JSON bodies to **`Astrocyte`** calls (`retain`, `recall`, `reflect`, `forget`) and optional **`X-Astrocyte-Principal`**.
 - Provide a **Dockerfile** so the stack can be run locally or in a sandbox without writing a host app.
 
 ### 4.2 Current behavior (non-production defaults)
 
 - **Tier 1 pipeline** resolved from config: defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocyte-py`). Optional YAML / env can select other registered providers or **`module:Class`** paths (for example **`pgvector`** after installing [`astrocyte-pgvector`](../astrocyte-services-py/astrocyte-pgvector/README.md)). Data is **not** durable when using the built-in in-memory stack.
 - **Access control** defaults to **off** when no config file is loaded; when you enable **`access_control`** in YAML, **`access_grants`** and **`banks.*.access`** are loaded from config and applied via **`set_access_grants`** (see §5). You still need a **deliberate** prod policy—do not rely on defaults.
-- **Identity:** **`ASTROCYTES_AUTH_MODE`** selects **`dev`** (trusts **`X-Astrocytes-Principal`** only—use only behind a trusted gateway), **`api_key`**, or **`jwt_hs256`** (Bearer JWT, `sub` → principal). This is a **starting point** for §3.2, not a full IdP integration (no OIDC discovery, JWKS, or per-key store yet).
+- **Identity:** **`ASTROCYTES_AUTH_MODE`** selects **`dev`** (trusts **`X-Astrocyte-Principal`** only—use only behind a trusted gateway), **`api_key`**, or **`jwt_hs256`** (Bearer JWT, `sub` → principal). This is a **starting point** for §3.2, not a full IdP integration (no OIDC discovery, JWKS, or per-key store yet).
 
 Treat this as a **reference implementation** of the HTTP mapping only, not as a hardened product.
 

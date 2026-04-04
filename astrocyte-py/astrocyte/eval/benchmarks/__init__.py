@@ -1,5 +1,5 @@
-"""External benchmark adapters for Astrocytes evaluation.
+"""External benchmark adapters for Astrocyte evaluation.
 
 Each adapter loads an external benchmark dataset and evaluates
-Astrocytes through its standard API (retain/recall/reflect).
+Astrocyte through its standard API (retain/recall/reflect).
 """

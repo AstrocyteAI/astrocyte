@@ -1,6 +1,6 @@
 # CAMEL-AI integration
 
-Astrocytes as role-based memory for CAMEL-AI multi-agent role-playing systems.
+Astrocyte as role-based memory for CAMEL-AI multi-agent role-playing systems.
 
 **Module:** `astrocyte.integrations.camel_ai`
 **Pattern:** Role-scoped memory — write/read with role attribution and per-role banks
@@ -46,7 +46,7 @@ await memory.clear(role="patient")
 
 Memories are tagged with `role:{role_name}` and `camel-ai` for filtering. Each role can have its own bank or share a common bank.
 
-| Method | Astrocytes call |
+| Method | Astrocyte call |
 |---|---|
 | `write(content, role=...)` | `brain.retain()` with role metadata + tags |
 | `read(query, role=...)` | `brain.recall()` scoped to role's bank |

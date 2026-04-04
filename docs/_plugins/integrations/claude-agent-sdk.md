@@ -1,6 +1,6 @@
 # Claude Agent SDK integration
 
-Native Astrocytes memory tools for the Anthropic Claude Agent SDK, using the `@tool` decorator and in-process MCP servers.
+Native Astrocyte memory tools for the Anthropic Claude Agent SDK, using the `@tool` decorator and in-process MCP servers.
 
 **Module:** `astrocyte.integrations.claude_agent_sdk`
 **Pattern:** Native `@tool` + `create_sdk_mcp_server` (in-process MCP)

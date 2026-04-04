@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 class AstrocyteBeeTool:
-    """A single Astrocytes tool compatible with BeeAI's Tool interface.
+    """A single Astrocyte tool compatible with BeeAI's Tool interface.
 
     BeeAI expects tools with: name, description, input_schema, and a run() method.
     """
@@ -54,7 +54,7 @@ def astrocyte_bee_tools(
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> list[AstrocyteBeeTool]:
-    """Create BeeAI-compatible tools backed by Astrocytes."""
+    """Create BeeAI-compatible tools backed by Astrocyte."""
     tools: list[AstrocyteBeeTool] = []
 
     async def _retain(input_data: dict[str, Any]) -> str:

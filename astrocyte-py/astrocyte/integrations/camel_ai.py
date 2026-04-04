@@ -1,4 +1,4 @@
-"""CAMEL-AI integration — Astrocytes memory for multi-agent role-playing.
+"""CAMEL-AI integration — Astrocyte memory for multi-agent role-playing.
 
 Usage:
     from astrocyte import Astrocyte
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 class AstrocyteCamelMemory:
-    """Astrocytes-backed memory for CAMEL-AI multi-agent systems.
+    """Astrocyte-backed memory for CAMEL-AI multi-agent systems.
 
     Supports role-based memory scoping: each role can have its own bank
     or share a common bank. Memory is tagged with role and agent_id for filtering.

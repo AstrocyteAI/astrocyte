@@ -1,4 +1,4 @@
-"""Astrocytes configuration — YAML loading, profile resolution, env var substitution."""
+"""Astrocyte configuration — YAML loading, profile resolution, env var substitution."""
 
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ class BankConfig:
 
 @dataclass
 class AstrocyteConfig:
-    """Top-level Astrocytes configuration."""
+    """Top-level Astrocyte configuration."""
 
     # Provider tier
     provider_tier: Literal["storage", "engine"] = "engine"
@@ -382,7 +382,7 @@ def access_grants_for_astrocyte(config: AstrocyteConfig) -> list[AccessGrant]:
 
 
 def load_config(path: str | Path) -> AstrocyteConfig:
-    """Load Astrocytes configuration from a YAML file.
+    """Load Astrocyte configuration from a YAML file.
 
     Resolution order: profile defaults → user config → per-bank overrides.
     Environment variables are substituted (${VAR_NAME}).

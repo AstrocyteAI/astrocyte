@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "astrocyte-rest"
 version = "0.1.0"
-description = "Reference HTTP server for the Astrocytes memory framework (REST over astrocyte-py)"
+description = "Reference HTTP server for the Astrocyte memory framework (REST over astrocyte-py)"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"

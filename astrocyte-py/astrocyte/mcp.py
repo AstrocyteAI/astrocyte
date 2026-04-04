@@ -1,4 +1,4 @@
-"""Astrocytes MCP server — exposes memory tools via Model Context Protocol.
+"""Astrocyte MCP server — exposes memory tools via Model Context Protocol.
 
 Usage:
     astrocyte-mcp --config astrocyte.yaml
@@ -32,7 +32,7 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
     mcp = FastMCP(
         name="astrocyte-memory",
         instructions=(
-            "Astrocytes memory server. Use memory_retain to store information, "
+            "Astrocyte memory server. Use memory_retain to store information, "
             "memory_recall to search memories, memory_reflect to synthesize answers, "
             "and memory_forget to remove memories."
         ),
@@ -265,7 +265,7 @@ def main() -> None:
     """CLI entry point for astrocyte-mcp."""
     parser = argparse.ArgumentParser(
         prog="astrocyte-mcp",
-        description="Astrocytes MCP server — memory tools for AI agents",
+        description="Astrocyte MCP server — memory tools for AI agents",
     )
     parser.add_argument(
         "--config",

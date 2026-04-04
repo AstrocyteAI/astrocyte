@@ -1,6 +1,6 @@
 # Pydantic AI integration
 
-Astrocytes memory exposed as tool functions for Pydantic AI agents.
+Astrocyte memory exposed as tool functions for Pydantic AI agents.
 
 **Module:** `astrocyte.integrations.pydantic_ai`
 **Pattern:** Agent tools — retain, recall, reflect as callable tool functions

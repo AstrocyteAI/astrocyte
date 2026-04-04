@@ -1,6 +1,6 @@
 # Built-in intelligence pipeline
 
-This document specifies the open-source intelligence pipeline that ships with the Astrocytes core. The pipeline activates when `provider_tier: storage` - it transforms the Retrieval SPI's CRUD operations into a full memory experience.
+This document specifies the open-source intelligence pipeline that ships with the Astrocyte core. The pipeline activates when `provider_tier: storage` - it transforms the Retrieval SPI's CRUD operations into a full memory experience.
 
 For the two-tier architecture this pipeline serves, see `architecture-framework.md`. For the Retrieval SPI it orchestrates, see `provider-spi.md`. For governance policies that wrap the pipeline, see `policy-layer.md`.
 

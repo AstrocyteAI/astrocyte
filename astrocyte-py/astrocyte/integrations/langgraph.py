@@ -1,4 +1,4 @@
-"""LangGraph / LangChain integration — Astrocytes as a memory store.
+"""LangGraph / LangChain integration — Astrocyte as a memory store.
 
 Usage:
     from astrocyte import Astrocyte
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class AstrocyteMemory:
-    """Astrocytes-backed memory for LangGraph / LangChain agents.
+    """Astrocyte-backed memory for LangGraph / LangChain agents.
 
     Implements the interface pattern expected by LangGraph's memory store:
     save_context(), load_memory_variables(), search().

@@ -1,4 +1,4 @@
-"""Astrocytes — open-source memory framework for AI agents.
+"""Astrocyte — open-source memory framework for AI agents.
 
 Public API surface. Import from here, not from submodules.
 """

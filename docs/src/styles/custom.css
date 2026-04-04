@@ -1,5 +1,5 @@
 /*
-  Astrocytes theme — light mode: calvinx-style amber (#d97706).
+  Astrocyte theme — light mode: calvinx-style amber (#d97706).
   Dark mode: teal/mint accents so UI matches the logo and reads cooler on charcoal.
 */
 
@@ -155,7 +155,7 @@ html[data-has-hero]:not([data-has-sidebar]) .hero {
   margin-block-end: 0;
 }
 
-/* Harness → Astrocytes → Context → LLMs flow (landing) */
+/* Harness → Astrocyte → Context → LLMs flow (landing) */
 .harness-flow {
   display: flex;
   flex-direction: column;

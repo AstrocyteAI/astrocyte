@@ -1,6 +1,6 @@
 # MCP server integration
 
-Astrocytes as a Model Context Protocol server for Claude Code, Cursor, Windsurf, and any MCP-capable agent.
+Astrocyte as a Model Context Protocol server for Claude Code, Cursor, Windsurf, and any MCP-capable agent.
 
 **Module:** `astrocyte.mcp`
 **Pattern:** MCP server with 6 tools — stdio or SSE transport
@@ -68,7 +68,7 @@ memory_reflect(query="summarize everything", banks=["personal", "team", "org"])
 
 ## Policy enforcement
 
-The full Astrocytes policy layer applies: PII scanning, rate limits, quotas, token budgets, circuit breakers, access control, hooks, metrics. See [Policy layer](../../design/policy-layer/) and [MCP server design](../../design/mcp-server/).
+The full Astrocyte policy layer applies: PII scanning, rate limits, quotas, token budgets, circuit breakers, access control, hooks, metrics. See [Policy layer](../../design/policy-layer/) and [MCP server design](../../design/mcp-server/).
 
 ## Multi-agent with shared memory
 

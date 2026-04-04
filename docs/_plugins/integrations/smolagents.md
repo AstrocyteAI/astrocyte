@@ -1,6 +1,6 @@
 # Smolagents (HuggingFace) integration
 
-Astrocytes memory as code-centric tools for HuggingFace Smolagents.
+Astrocyte memory as code-centric tools for HuggingFace Smolagents.
 
 **Module:** `astrocyte.integrations.smolagents`
 **Pattern:** Tool protocol — name, description, inputs schema, output_type, forward()

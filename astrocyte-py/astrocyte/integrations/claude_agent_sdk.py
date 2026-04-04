@@ -1,4 +1,4 @@
-"""Claude Agent SDK integration — Astrocytes memory as native SDK tools.
+"""Claude Agent SDK integration — Astrocyte memory as native SDK tools.
 
 Usage:
     from astrocyte import Astrocyte
@@ -177,7 +177,7 @@ def astrocyte_claude_agent_server(
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> Any:
-    """Create a Claude Agent SDK in-process MCP server backed by Astrocytes.
+    """Create a Claude Agent SDK in-process MCP server backed by Astrocyte.
 
     Requires claude_agent_sdk to be installed.
     Returns an MCP server that can be passed to ClaudeAgentOptions.mcp_servers.

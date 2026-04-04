@@ -1,4 +1,4 @@
-"""Smolagents (HuggingFace) integration — Astrocytes as @tool functions.
+"""Smolagents (HuggingFace) integration — Astrocyte as @tool functions.
 
 Usage:
     from astrocyte import Astrocyte
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 class AstrocyteSmolTool:
-    """A single Astrocytes tool compatible with smolagents' Tool protocol.
+    """A single Astrocyte tool compatible with smolagents' Tool protocol.
 
     Smolagents expects tools with: name, description, inputs (schema), output_type,
     and a __call__ or forward method.
@@ -69,7 +69,7 @@ def astrocyte_smolagent_tools(
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> list[AstrocyteSmolTool]:
-    """Create smolagents-compatible tools backed by Astrocytes.
+    """Create smolagents-compatible tools backed by Astrocyte.
 
     Returns a list of AstrocyteSmolTool instances that implement the
     smolagents Tool protocol (name, description, inputs, output_type, forward).

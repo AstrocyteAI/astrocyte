@@ -1,4 +1,4 @@
-"""Haystack (deepset) integration — Astrocytes as a retriever component.
+"""Haystack (deepset) integration — Astrocyte as a retriever component.
 
 Usage:
     from astrocyte import Astrocyte
@@ -42,7 +42,7 @@ class AstrocyteDocument:
 
 
 class AstrocyteRetriever:
-    """Astrocytes-backed retriever for Haystack pipelines.
+    """Astrocyte-backed retriever for Haystack pipelines.
 
     Implements Haystack's Retriever component pattern:
     - run(query, top_k) → {"documents": list[Document]}
@@ -108,7 +108,7 @@ class AstrocyteRetriever:
 
 
 class AstrocyteWriter:
-    """Astrocytes-backed document writer for Haystack pipelines.
+    """Astrocyte-backed document writer for Haystack pipelines.
 
     Implements a Writer component: run(documents) → {"written": count}.
     """
@@ -122,7 +122,7 @@ class AstrocyteWriter:
         self.bank_id = bank_id
 
     async def arun(self, documents: list[AstrocyteDocument | dict[str, Any]]) -> dict[str, int]:
-        """Write documents to Astrocytes memory."""
+        """Write documents to Astrocyte memory."""
         written = 0
         for doc in documents:
             if isinstance(doc, AstrocyteDocument):

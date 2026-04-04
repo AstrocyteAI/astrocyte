@@ -1,6 +1,6 @@
 # LlamaIndex integration
 
-Astrocytes as a memory store for LlamaIndex agents and chat engines.
+Astrocyte as a memory store for LlamaIndex agents and chat engines.
 
 **Module:** `astrocyte.integrations.llamaindex`
 **Pattern:** Memory store — put, get, get_all, search, reset
@@ -38,7 +38,7 @@ await memory.reset()
 
 ## Integration pattern
 
-| LlamaIndex method | Astrocytes call |
+| LlamaIndex method | Astrocyte call |
 |---|---|
 | `put(content)` | `brain.retain()` → returns memory_id |
 | `get(query)` | `brain.recall()` → formatted string for prompts |

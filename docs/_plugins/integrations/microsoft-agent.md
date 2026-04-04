@@ -1,6 +1,6 @@
 # Microsoft Agent Framework integration
 
-Astrocytes memory tools for the Microsoft Agent Framework.
+Astrocyte memory tools for the Microsoft Agent Framework.
 
 **Module:** `astrocyte.integrations.microsoft_agent`
 **Pattern:** OpenAI-compatible tool definitions + handler dispatch
@@ -33,7 +33,7 @@ result = await handlers["memory_recall"](query="preferences")
 
 Uses the same OpenAI-compatible format as the OpenAI Agents SDK integration. See [OpenAI Agents SDK](./openai-agents.md) for the full tool schema format.
 
-| Tool | Handler | Astrocytes call |
+| Tool | Handler | Astrocyte call |
 |---|---|---|
 | `memory_retain` | `handlers["memory_retain"]` | `brain.retain()` |
 | `memory_recall` | `handlers["memory_recall"]` | `brain.recall()` |

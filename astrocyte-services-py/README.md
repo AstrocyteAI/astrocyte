@@ -1,4 +1,4 @@
-# Astrocytes services (Python)
+# Astrocyte services (Python)
 
 Optional Python packages beside the core [`astrocyte-py`](../astrocyte-py/) library:
 

@@ -14,14 +14,14 @@ echo
 echo "POST ${BASE_URL}/v1/retain"
 curl -fsS --max-time 60 -X POST "${BASE_URL}/v1/retain" \
   -H "Content-Type: application/json" \
-  -H "X-Astrocytes-Principal: ${PRINCIPAL}" \
+  -H "X-Astrocyte-Principal: ${PRINCIPAL}" \
   -d "{\"content\":\"smoke retain $(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"bank_id\":\"${BANK_ID}\"}"
 
 echo
 echo "POST ${BASE_URL}/v1/recall"
 curl -fsS --max-time 60 -X POST "${BASE_URL}/v1/recall" \
   -H "Content-Type: application/json" \
-  -H "X-Astrocytes-Principal: ${PRINCIPAL}" \
+  -H "X-Astrocyte-Principal: ${PRINCIPAL}" \
   -d "{\"query\":\"smoke\",\"bank_id\":\"${BANK_ID}\",\"max_results\":5}"
 
 echo

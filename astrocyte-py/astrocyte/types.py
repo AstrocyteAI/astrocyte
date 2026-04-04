@@ -1,4 +1,4 @@
-"""Astrocytes core types — all DTOs for the framework.
+"""Astrocyte core types — all DTOs for the framework.
 
 Every type here is FFI-safe: no Any, no callables, no generators.
 Fields use only: str, int, float, bool, None, list, dict, datetime, dataclass.

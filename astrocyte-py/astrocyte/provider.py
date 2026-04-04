@@ -1,4 +1,4 @@
-"""Astrocytes provider protocols — the SPIs that backends implement.
+"""Astrocyte provider protocols — the SPIs that backends implement.
 
 Each protocol has a SPI_VERSION ClassVar for compatibility checking.
 All methods are async except capabilities() and transport methods.
@@ -190,7 +190,7 @@ class EngineProvider(Protocol):
 
 @runtime_checkable
 class LLMProvider(Protocol):
-    """SPI for LLM access needed by the Astrocytes core."""
+    """SPI for LLM access needed by the Astrocyte core."""
 
     SPI_VERSION: ClassVar[int] = 1
 

@@ -1,6 +1,6 @@
 # Access control
 
-Astrocytes enforces who can read, write, reflect, and administer each memory bank. The framework is the natural enforcement point - it sits between every caller and every provider.
+Astrocyte enforces who can read, write, reflect, and administer each memory bank. The framework is the natural enforcement point - it sits between every caller and every provider.
 
 This maps to **Principle 6 (Barrier maintenance)** - controlling what crosses boundaries, applied to identity and authorization, not just content validation.
 
@@ -12,7 +12,7 @@ This maps to **Principle 6 (Barrier maintenance)** - controlling what crosses bo
 
 ### 1.1 Principals
 
-A principal is an identity that accesses memory. Principals are **opaque strings** - Astrocytes does not manage user databases or authentication. It receives a principal identifier from the caller and enforces policies against it.
+A principal is an identity that accesses memory. Principals are **opaque strings** - Astrocyte does not manage user databases or authentication. It receives a principal identifier from the caller and enforces policies against it.
 
 ```python
 # Principal comes from caller context
@@ -139,7 +139,7 @@ Variables (`{user_id}`, `{agent_id}`) are resolved when the bank is created.
 
 ### 3.1 Where enforcement happens
 
-Access control is enforced in the **Astrocytes core**, after policy checks but before any provider or pipeline call:
+Access control is enforced in the **Astrocyte core**, after policy checks but before any provider or pipeline call:
 
 ```
 caller → brain.recall(query, bank_id, context)
@@ -184,10 +184,10 @@ Or from the MCP client's metadata if available.
 
 Access control is **framework-level only**. It is not delegated to providers.
 
-- **Tier 1 (Storage)**: The pipeline calls retrieval SPIs with bank_id. The storage layer does not check permissions - Astrocytes already did.
-- **Tier 2 (Memory Engine)**: The memory engine receives requests from Astrocytes. It may have its own access control (e.g., Mystique tenant isolation), but Astrocytes' access control is the outer layer.
+- **Tier 1 (Storage)**: The pipeline calls retrieval SPIs with bank_id. The storage layer does not check permissions - Astrocyte already did.
+- **Tier 2 (Memory Engine)**: The memory engine receives requests from Astrocyte. It may have its own access control (e.g., Mystique tenant isolation), but Astrocyte' access control is the outer layer.
 
-This means switching providers does not change access policies. Policies are defined in Astrocytes config, not in provider config.
+This means switching providers does not change access policies. Policies are defined in Astrocyte config, not in provider config.
 
 ---
 
@@ -236,13 +236,13 @@ These events flow through the standard audit trail (see `memory-lifecycle.md`) a
 
 ## 7. Relationship to authentication
 
-Astrocytes does **not** authenticate callers. It receives a principal identifier and trusts it. Authentication is the caller's responsibility:
+Astrocyte does **not** authenticate callers. It receives a principal identifier and trusts it. Authentication is the caller's responsibility:
 
 - **Library usage**: the calling application asserts the principal
 - **MCP server**: the MCP config asserts the principal
 - **HTTP service** (if wrapped in a web framework): the auth middleware asserts the principal
 
-This separation follows the same pattern as Kubernetes RBAC (auth middleware → identity → RBAC enforcement) and avoids coupling Astrocytes to any specific auth system.
+This separation follows the same pattern as Kubernetes RBAC (auth middleware → identity → RBAC enforcement) and avoids coupling Astrocyte to any specific auth system.
 
 **Integrating OIDC, SAML, API keys, or commercial IdPs:** map verified credentials to a stable **principal string** (see §1.1) before constructing `AstrocyteContext`. Optional community packages may help map JWT claims or framework-specific request objects to principals; see `identity-and-external-policy.md` §3.
 
@@ -250,15 +250,15 @@ This separation follows the same pattern as Kubernetes RBAC (auth middleware →
 
 ## 8. Optional external authorization (PDP)
 
-The default model in this document is **declarative grants** stored in Astrocytes (config or `grant_access`). For enterprises that centralize authorization in a **Policy Decision Point** (OPA, Cerbos, SpiceDB-backed services, Permit.io, etc.), Astrocytes supports an optional **`AccessPolicyProvider`** SPI:
+The default model in this document is **declarative grants** stored in Astrocyte (config or `grant_access`). For enterprises that centralize authorization in a **Policy Decision Point** (OPA, Cerbos, SpiceDB-backed services, Permit.io, etc.), Astrocyte supports an optional **`AccessPolicyProvider`** SPI:
 
 - Invoked at the **same enforcement point** as §3.1 (before pipeline or engine).
 - Can **replace** or **chain with** config-based grants (product-defined modes - see `identity-and-external-policy.md` §4.2).
 - Implemented in optional packages such as **`astrocyte-access-policy-opa`**, **`astrocyte-access-policy-casbin`** (in-process [Casbin](https://casbin.org/)), or similar, not in the core library.
 
-**Authentication (IdP) examples:** [Casdoor](https://casdoor.org/), Keycloak, Auth0 - you validate credentials **outside** Astrocytes and pass a **principal**; see `identity-and-external-policy.md` §3.
+**Authentication (IdP) examples:** [Casdoor](https://casdoor.org/), Keycloak, Auth0 - you validate credentials **outside** Astrocyte and pass a **principal**; see `identity-and-external-policy.md` §3.
 
-Astrocytes remains responsible for **audit events** (§6) and for **memory-specific** permissions (`read`, `write`, `forget`, `admin`); the external system supplies **allow/deny** (and optional reasons) for those checks.
+Astrocyte remains responsible for **audit events** (§6) and for **memory-specific** permissions (`read`, `write`, `forget`, `admin`); the external system supplies **allow/deny** (and optional reasons) for those checks.
 
 ---
 
@@ -271,6 +271,6 @@ Astrocytes remains responsible for **audit events** (§6) and for **memory-speci
 | Bank-level **permissions** | Default: §2–3; optional: external PDP via §8 |
 | Intentional **user + agent** sharing | Same bank, multiple grants (§1.4); templates in §2.3 and `multi-bank-orchestration.md` §2.4, §6 |
 | Sandbox / exfiltration vs policy | `sandbox-awareness-and-exfiltration.md` |
-| Audit of access decisions | Astrocytes (§6), enriched with PDP metadata when used |
+| Audit of access decisions | Astrocyte (§6), enriched with PDP metadata when used |
 
 For full integration patterns, package naming, and entry points, see **`identity-and-external-policy.md`**.

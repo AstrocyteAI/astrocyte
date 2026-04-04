@@ -1,4 +1,4 @@
-"""Memory portability — AMA (Astrocytes Memory Archive) export and import.
+"""Memory portability — AMA (Astrocyte Memory Archive) export and import.
 
 AMA is a newline-delimited JSON (JSONL) format. Line 1 is the header,
 subsequent lines are individual memories. Streamable, self-describing,

@@ -1,12 +1,12 @@
 # Ecosystem, packaging, and open-core model
 
-This document defines how Astrocytes is distributed, how providers plug in at both tiers, how optional **memory export sinks**, outbound transport, and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier model and the read vs export split, see `architecture-framework.md` §2 and `storage-and-data-planes.md`. For SPI definitions, see `provider-spi.md`. For warehouse / lakehouse export design, see `memory-export-sink.md`. For credential gateways and proxy wiring, see `outbound-transport.md`. For identity wiring and external PDP integration, see `identity-and-external-policy.md`.
+This document defines how Astrocyte is distributed, how providers plug in at both tiers, how optional **memory export sinks**, outbound transport, and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier model and the read vs export split, see `architecture-framework.md` §2 and `storage-and-data-planes.md`. For SPI definitions, see `provider-spi.md`. For warehouse / lakehouse export design, see `memory-export-sink.md`. For credential gateways and proxy wiring, see `outbound-transport.md`. For identity wiring and external PDP integration, see `identity-and-external-policy.md`.
 
 ---
 
 ## 1. Open-core model
 
-Astrocytes follows an **open-core** distribution model with a two-tier provider architecture:
+Astrocyte follows an **open-core** distribution model with a two-tier provider architecture:
 
 | Layer | License | Value |
 |---|---|---|
@@ -126,13 +126,13 @@ astrocyte-qdrant/                     # Vector store via Qdrant
 astrocyte-mystique/                   # Proprietary engine
 ├── astrocyte_mystique/
 │   ├── __init__.py                    # MystiqueProvider (implements EngineProvider)
-│   └── adapter.py                     # Maps Astrocytes DTOs ↔ Mystique/Hindsight types
+│   └── adapter.py                     # Maps Astrocyte DTOs ↔ Mystique/Hindsight types
 ├── pyproject.toml
 
 astrocyte-mem0/                       # Community engine
 ├── astrocyte_mem0/
 │   ├── __init__.py                    # Mem0Provider (implements EngineProvider)
-│   └── adapter.py                     # Maps Astrocytes DTOs ↔ Mem0 types
+│   └── adapter.py                     # Maps Astrocyte DTOs ↔ Mem0 types
 ├── pyproject.toml
 ```
 
@@ -416,7 +416,7 @@ from astrocyte.capabilities import EngineCapabilities
 
 
 class ExampleEngine(EngineProvider):
-    """Wraps an external memory engine with Astrocytes DTOs."""
+    """Wraps an external memory engine with Astrocyte DTOs."""
 
     def __init__(self, config: dict):
         self._client = ExternalEngineClient(config["endpoint"], config["api_key"])
@@ -434,7 +434,7 @@ class ExampleEngine(EngineProvider):
         return HealthStatus(healthy=ok, message="connected" if ok else "unreachable")
 
     async def retain(self, request: RetainRequest) -> RetainResult:
-        # Map Astrocytes DTO → engine's native format
+        # Map Astrocyte DTO → engine's native format
         result = await self._client.add_memory(
             text=request.content,
             user_id=request.bank_id,
@@ -443,7 +443,7 @@ class ExampleEngine(EngineProvider):
         return RetainResult(stored=True, memory_id=result["id"])
 
     async def recall(self, request: RecallRequest) -> RecallResult:
-        # Map engine results → Astrocytes DTOs
+        # Map engine results → Astrocyte DTOs
         raw = await self._client.search(
             query=request.query,
             user_id=request.bank_id,
@@ -732,7 +732,7 @@ llm_provider_config:
 
 1. **Name your package `astrocyte-{engine}`** (e.g., `astrocyte-mem0`, `astrocyte-zep`).
 2. **Register the entry point** under `astrocyte.engine_providers`.
-3. **Own your DTOs mapping.** Accept Astrocytes types, return Astrocytes types. Never expose your engine's internal types through the SPI.
+3. **Own your DTOs mapping.** Accept Astrocyte types, return Astrocyte types. Never expose your engine's internal types through the SPI.
 4. **Declare capabilities honestly.** Under-declare rather than over-declare. The core's fallback layer handles the gaps.
 5. **Own your storage.** Your engine manages its own vector DB, graph DB, etc. Users configure database choices through `provider_config`.
 6. **Run the conformance test suite** and include results in your README.
@@ -750,6 +750,6 @@ llm_provider_config:
 - The `astrocyte` core is maintained by the AstrocyteAI team.
 - Official retrieval providers (pgvector, Neo4j, Qdrant) are maintained by the AstrocyteAI team.
 - Community providers are maintained by their respective authors.
-- The conformance test suites are the contract - if your provider passes them, it works with Astrocytes.
+- The conformance test suites are the contract - if your provider passes them, it works with Astrocyte.
 - SPI changes go through an RFC process with community input before implementation.
 - Provider authors are encouraged to open issues on the core repo for SPI feature requests.

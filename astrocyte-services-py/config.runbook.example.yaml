@@ -1,4 +1,4 @@
-# Example Astrocytes config for the runbook (Postgres + pgvector, no runtime DDL).
+# Example Astrocyte config for the runbook (Postgres + pgvector, no runtime DDL).
 # Use with docker-compose.runbook.yml so the container sees this file at ASTROCYTES_CONFIG_PATH.
 # Copy and edit if you need different providers or dimensions.
 

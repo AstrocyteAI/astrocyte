@@ -1,6 +1,6 @@
-# Astrocytes
+# Astrocyte
 
-**Astrocytes** is an open-source **memory framework** for AI systems. It sits between agents (or applications) and memory storage, and aims to give you a **production-shaped memory layer**: retrieval, governance, observability, and pluggable backends, with a **stable contract** you can implement twice (Python and Rust) without changing integrations.
+**Astrocyte** is an open-source **memory framework** for AI systems. It sits between agents (or applications) and memory storage, and aims to give you a **production-shaped memory layer**: retrieval, governance, observability, and pluggable backends, with a **stable contract** you can implement twice (Python and Rust) without changing integrations.
 
 ## Neuroscience inspiration
 
@@ -10,7 +10,7 @@ This project uses that picture as **engineering metaphor**, not as a literal sim
 
 ## Goals
 
-- **Memory as a first-class product.** Expose a clear API for retaining, recalling, and synthesizing memories, with a **built-in intelligence pipeline** when you use Tier 1 retrieval providers (embedding, multi-strategy retrieval, fusion, reranking, and related stages) so the core stays useful with “just Astrocytes + a database,” not only with a full external memory engine.
+- **Memory as a first-class product.** Expose a clear API for retaining, recalling, and synthesizing memories, with a **built-in intelligence pipeline** when you use Tier 1 retrieval providers (embedding, multi-strategy retrieval, fusion, reranking, and related stages) so the core stays useful with “just Astrocyte + a database,” not only with a full external memory engine.
 - **Pluggable infrastructure.** Support a **two-tier provider model**: Tier 1 **retrieval** adapters (vector, graph, document stores) and Tier 2 **memory engine** providers that own the full pipeline; the framework negotiates behavior and still applies **policy** and **access control**.
 - **Governance and safety by design.** Enforce a **policy layer** (homeostasis, barriers, pruning, signal quality, observability) inspired by the project’s design principles, so behavior stays controlled regardless of which backend is plugged in.
 - **Identity and authorization at the boundary.** Consume an **opaque principal** from your app’s authentication story; enforce **per-bank authorization** in the framework, with optional hooks to external policy engines when enterprises require them.
@@ -19,7 +19,7 @@ This project uses that picture as **engineering metaphor**, not as a literal sim
 
 ## Non-goals
 
-Astrocytes is **not** an LLM gateway (no generic chat routing or provider normalization) and **not** an **agent runtime** (no orchestration graphs, tool loops, checkpoints, or multi-agent scheduling). Those belong in your application or in agent frameworks; Astrocytes integrates as **memory + governance + provider SPIs**. For **agent cards** and similar catalog metadata, the design centers on a **simple mapping** to **principals and memory banks** (config + integration helpers), not on hosting the catalog—see [`docs/_design/architecture-framework.md`](docs/_design/architecture-framework.md) §1 and [`docs/_plugins/agent-framework-middleware.md`](docs/_plugins/agent-framework-middleware.md).
+Astrocyte is **not** an LLM gateway (no generic chat routing or provider normalization) and **not** an **agent runtime** (no orchestration graphs, tool loops, checkpoints, or multi-agent scheduling). Those belong in your application or in agent frameworks; Astrocyte integrates as **memory + governance + provider SPIs**. For **agent cards** and similar catalog metadata, the design centers on a **simple mapping** to **principals and memory banks** (config + integration helpers), not on hosting the catalog—see [`docs/_design/architecture-framework.md`](docs/_design/architecture-framework.md) §1 and [`docs/_plugins/agent-framework-middleware.md`](docs/_plugins/agent-framework-middleware.md).
 
 For how this maps to vendor-neutral **applied AI / agentic-stack** teaching (memory vs RAG, planes, harness vs context), see [`docs/_design/curriculum-mapping.md`](docs/_design/curriculum-mapping.md) and the public [Applied AI Fellowship](https://calvinchengx.github.io/applied-ai/) syllabus.
 
@@ -28,8 +28,8 @@ For how this maps to vendor-neutral **applied AI / agentic-stack** teaching (mem
 | Path | Contents |
 |------|----------|
 | [`docs/`](docs/README.md) | Design specification: architecture, SPIs, policy, packaging, evaluation, governance. |
-| [`astrocyte-py/`](astrocyte-py/README.md) | Python implementation of the Astrocytes service. |
+| [`astrocyte-py/`](astrocyte-py/README.md) | Python implementation of the Astrocyte service. |
 | [`astrocyte-services-py/`](astrocyte-services-py/README.md) | Optional Python **services**: reference REST server (**[`astrocyte-rest/`](astrocyte-services-py/astrocyte-rest/README.md)**) and **PostgreSQL + pgvector** adapter (**[`astrocyte-pgvector/`](astrocyte-services-py/astrocyte-pgvector/README.md)**). Compose for API + DB: [`astrocyte-services-py/docker-compose.yml`](astrocyte-services-py/docker-compose.yml). |
-| [`astrocyte-rs/`](astrocyte-rs/README.md) | Rust implementation of the Astrocytes service (same contract). |
+| [`astrocyte-rs/`](astrocyte-rs/README.md) | Rust implementation of the Astrocyte service (same contract). |
 
 For scope, vocabulary, and a full reading order, start with [`docs/README.md`](docs/README.md).

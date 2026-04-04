@@ -1,6 +1,6 @@
 # OpenAI Agents SDK integration
 
-Astrocytes memory as OpenAI function-calling tool definitions with async handler dispatch.
+Astrocyte memory as OpenAI function-calling tool definitions with async handler dispatch.
 
 **Module:** `astrocyte.integrations.openai_agents`
 **Pattern:** Function calling — OpenAI-format tool schemas + handler functions
@@ -37,7 +37,7 @@ for call in response.choices[0].message.tool_calls:
 
 ## Integration pattern
 
-| Tool name | OpenAI function | Astrocytes call |
+| Tool name | OpenAI function | Astrocyte call |
 |---|---|---|
 | `memory_retain` | `{"content": "...", "tags": [...]}` | `brain.retain()` |
 | `memory_recall` | `{"query": "...", "max_results": 5}` | `brain.recall()` |

@@ -12,7 +12,7 @@ This document defines the **three memory-related** Service Provider Interfaces (
 
 **Scope:** Tier 1 adapters are **retrieval-oriented** (not blob/object storage). In RAG and hybrid-search literature, the same ideas are often called **retrieval backends** or **retrieval infrastructure**: **VectorStore** ≈ dense / semantic (vector DB, ANN index), **GraphStore** ≈ structured graph traversal (knowledge graph), **DocumentStore** ≈ sparse / lexical (BM25, full-text). See `architecture-framework.md` §2 (Tier 1 table).
 
-Retrieval providers are simple adapters over those systems. They handle CRUD operations on vectors, entities, and documents **as indexed for retrieval**. Astrocytes' **built-in intelligence pipeline** (see `built-in-pipeline.md`) orchestrates these stores to provide the full memory experience: embedding, entity extraction, multi-strategy retrieval, fusion, and synthesis.
+Retrieval providers are simple adapters over those systems. They handle CRUD operations on vectors, entities, and documents **as indexed for retrieval**. Astrocyte' **built-in intelligence pipeline** (see `built-in-pipeline.md`) orchestrates these stores to provide the full memory experience: embedding, entity extraction, multi-strategy retrieval, fusion, and synthesis.
 
 The **logical backend** may be a **serving layer** on top of a warehouse or lakehouse (SQL endpoint, query engine on Iceberg/Delta, OLAP tier, or your own HTTP façade), not only a dedicated vector DB—**if** you can implement the Tier 1 protocols with acceptable latency. That is **operational `recall`**. **Durable export** to the same warehouse or lake for BI/compliance uses the separate **Memory Export Sink** SPI (`memory-export-sink.md`); do not conflate `emit` / `flush` with `search_similar`.
 
@@ -278,9 +278,9 @@ See `built-in-pipeline.md` for the full pipeline specification.
 
 ### 2.1 Overview
 
-Memory engine providers are full-stack memory systems that handle the entire pipeline internally - from content ingestion through retrieval and synthesis. When a memory engine provider is active, Astrocytes' built-in pipeline **steps aside**. The framework only applies **governance** (policy layer), not intelligence.
+Memory engine providers are full-stack memory systems that handle the entire pipeline internally - from content ingestion through retrieval and synthesis. When a memory engine provider is active, Astrocyte' built-in pipeline **steps aside**. The framework only applies **governance** (policy layer), not intelligence.
 
-Memory engine providers own their own storage backends (vector DBs, graph DBs, etc.) internally. Users configure database choices through the memory engine's `provider_config`, not through Astrocytes' retrieval SPIs.
+Memory engine providers own their own storage backends (vector DBs, graph DBs, etc.) internally. Users configure database choices through the memory engine's `provider_config`, not through Astrocyte' retrieval SPIs.
 
 ### 2.2 The protocol
 
@@ -499,15 +499,15 @@ This prevents callers from needing to know which tier or provider is active. The
 
 ### 4.1 Overview
 
-The built-in pipeline (Tier 1) and certain policy features (both tiers) need LLM access for completions and embeddings. Rather than hardcode a specific LLM SDK, Astrocytes defines a narrow SPI that adapters implement for any LLM gateway or provider.
+The built-in pipeline (Tier 1) and certain policy features (both tiers) need LLM access for completions and embeddings. Rather than hardcode a specific LLM SDK, Astrocyte defines a narrow SPI that adapters implement for any LLM gateway or provider.
 
-This is **not** an LLM gateway. Astrocytes does not normalize chat APIs, route between models, or track LLM spend. It delegates those concerns to whatever LLM system the user already has. The SPI is just the interface between Astrocytes and that system.
+This is **not** an LLM gateway. Astrocyte does not normalize chat APIs, route between models, or track LLM spend. It delegates those concerns to whatever LLM system the user already has. The SPI is just the interface between Astrocyte and that system.
 
 ### 4.2 The protocol
 
 ```python
 class LLMProvider(Protocol):
-    """SPI for LLM access needed by the Astrocytes core."""
+    """SPI for LLM access needed by the Astrocyte core."""
 
     async def complete(
         self,
@@ -564,7 +564,7 @@ If no LLM provider is configured and a feature requires one, the core raises a c
 
 ### 4.4 LLM gateway and provider landscape
 
-The Astrocytes LLM SPI is intentionally minimal (`complete()` + `embed()`) so that adapters for any LLM system are trivial to write. The landscape includes:
+The Astrocyte LLM SPI is intentionally minimal (`complete()` + `embed()`) so that adapters for any LLM system are trivial to write. The landscape includes:
 
 | Category | Examples | Adapter approach |
 |---|---|---|
@@ -649,7 +649,7 @@ Most self-hosted inference servers expose an OpenAI-compatible API, so `astrocyt
 
 ### 4.8 Separate completion and embedding providers
 
-Some architectures use different services for completions vs embeddings (e.g., Claude for reasoning + a local model for embeddings to minimize API costs). Astrocytes supports this via split configuration:
+Some architectures use different services for completions vs embeddings (e.g., Claude for reasoning + a local model for embeddings to minimize API costs). Astrocyte supports this via split configuration:
 
 ```yaml
 llm_provider: anthropic
@@ -726,13 +726,13 @@ Users install exactly one LLM provider (or none if using Tier 2 with no LLM-depe
 
 **LiteLLM**, **OpenRouter**, and direct adapters integrate **text** completion and **embedding** APIs. Products such as **conversational video avatars** (e.g. Tavus, HeyGen, D-ID), **enterprise avatar video** (e.g. Synthesia, Hour One), and **voice-first** platforms (e.g. ElevenLabs for TTS/agents) are **different**: they expose **session, video, audio, or avatar** APIs, not a substitute for `complete()` / `embed()` unless they also publish an **OpenAI-compatible chat** (or similar) endpoint you deliberately configure.
 
-**How to combine them with Astrocytes:** keep **memory and text LLM** on the **`LLMProvider`** path; call **presentation vendors from your application** using their SDKs/REST, optionally feeding **`recall()` / `reflect()`** output into their conversations. If a vendor documents **custom LLM** or **OpenAI-compatible** URLs for *their* dialogue stack, you may reuse the **same** text endpoint for Astrocytes **when** it matches the adapter’s HTTP shape.
+**How to combine them with Astrocyte:** keep **memory and text LLM** on the **`LLMProvider`** path; call **presentation vendors from your application** using their SDKs/REST, optionally feeding **`recall()` / `reflect()`** output into their conversations. If a vendor documents **custom LLM** or **OpenAI-compatible** URLs for *their* dialogue stack, you may reuse the **same** text endpoint for Astrocyte **when** it matches the adapter’s HTTP shape.
 
 See **`presentation-layer-and-multimodal-services.md`** for the competitive landscape (Tavus-class vs voice), patterns, and examples.
 
 ### 4.11 Multimodal LLM inputs (first-class image / audio)
 
-**Gateways** (LiteLLM, OpenRouter, …) can route **vision and audio** models when messages use **structured content parts**, not only strings. Astrocytes extends the DTOs accordingly:
+**Gateways** (LiteLLM, OpenRouter, …) can route **vision and audio** models when messages use **structured content parts**, not only strings. Astrocyte extends the DTOs accordingly:
 
 - **`ContentPart`** - tagged union: `TextPart`, `ImageUrlPart`, `ImageBase64Part`, `AudioUrlPart`, `AudioBase64Part`, optional `DocumentUrlPart`.
 - **`Message.content`** - `str` (**backward compatible**) or `list[ContentPart]`.
@@ -806,7 +806,7 @@ Packaging and naming: **`ecosystem-and-packaging.md`** (`astrocyte-sink-*` prefi
 
 Some deployments route **all outbound HTTP** through a **credential gateway**, corporate proxy, or MITM-capable TLS stack. That requirement is **orthogonal** to memory tiers and to the LLM Provider SPI: it concerns **how** TCP/TLS/HTTP is established, not **what** `retain()` / `recall()` mean or **which** `complete()` / `embed()` API is called.
 
-Astrocytes defines an **optional** `OutboundTransportProvider` protocol. When configured, the core applies it at a **single choke point** when building HTTP clients used by LLM adapters and other outbound HTTP. **This is not an LLM gateway** and **not** a memory provider - see `architecture-framework.md` section 4.5 and the full design in `outbound-transport.md`.
+Astrocyte defines an **optional** `OutboundTransportProvider` protocol. When configured, the core applies it at a **single choke point** when building HTTP clients used by LLM adapters and other outbound HTTP. **This is not an LLM gateway** and **not** a memory provider - see `architecture-framework.md` section 4.5 and the full design in `outbound-transport.md`.
 
 **Baseline without a plugin:** If `HTTP_PROXY` / `HTTPS_PROXY` / standard trust env vars are sufficient, users need no transport package; clients should respect the process environment.
 
@@ -970,9 +970,9 @@ caller → brain.recall(query, budget)
    [project.entry-points."astrocyte.engine_providers"]
    mystique = "astrocyte_mystique:MystiqueProvider"
    ```
-4. **Use Astrocytes DTOs** for all inputs and outputs. Map to/from your engine's native types inside your provider.
+4. **Use Astrocyte DTOs** for all inputs and outputs. Map to/from your engine's native types inside your provider.
 5. **Declare capabilities honestly.** Over-declaring causes runtime errors; under-declaring causes unnecessary fallbacks.
-6. **Own your storage.** Your engine manages its own vector DB, graph DB, etc. Users configure those through `provider_config`, not through Astrocytes' retrieval SPIs.
+6. **Own your storage.** Your engine manages its own vector DB, graph DB, etc. Users configure those through `provider_config`, not through Astrocyte' retrieval SPIs.
 
 ### 8.3 Building an outbound transport plugin
 

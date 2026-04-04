@@ -1,6 +1,6 @@
 # Memory lifecycle management
 
-Memories are not permanent. They have a lifecycle: creation, active use, consolidation, archival, and deletion. Astrocytes manages this lifecycle with policy-driven automation and compliance-grade controls.
+Memories are not permanent. They have a lifecycle: creation, active use, consolidation, archival, and deletion. Astrocyte manages this lifecycle with policy-driven automation and compliance-grade controls.
 
 This maps to **Principle 7 (Pruning / phagocytosis)** - structured forgetting is a first-class concern, not an afterthought.
 
@@ -224,5 +224,5 @@ await brain.run_consolidation(bank_id="user-123")
 
 ### 6.3 Provider interaction
 
-- **Tier 1 (Storage)**: Astrocytes orchestrates lifecycle by calling retrieval SPI methods (delete, update metadata).
-- **Tier 2 (Memory Engine)**: Astrocytes delegates lifecycle to the memory engine if it supports it (`supports_consolidation` in capabilities). Falls back to Astrocytes-managed lifecycle if not.
+- **Tier 1 (Storage)**: Astrocyte orchestrates lifecycle by calling retrieval SPI methods (delete, update metadata).
+- **Tier 2 (Memory Engine)**: Astrocyte delegates lifecycle to the memory engine if it supports it (`supports_consolidation` in capabilities). Falls back to Astrocyte-managed lifecycle if not.

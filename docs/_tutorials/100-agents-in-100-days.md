@@ -1,12 +1,12 @@
 # 100 Agents in 100 Days
 
-_Planned series — implementing AI agents and AI-enabled applications with Astrocytes._
+_Planned series — implementing AI agents and AI-enabled applications with Astrocyte._
 
 Each day adds **one** focused tutorial or example: runnable demos, integration patterns, and production-minded snippets. **First** we maintain a working catalog of **use cases** (consumer and enterprise). Daily tutorials will be chosen from this list and linked below as they ship.
 
 ## What to expect
 
-- Agent patterns (tool use, multi-step flows) **with durable memory** via Astrocytes
+- Agent patterns (tool use, multi-step flows) **with durable memory** via Astrocyte
 - Pairings with the [reference REST server](/end-user/production-grade-http-service/) where it helps
 - Occasional deep links into the [plugin SPIs](/plugins/provider-spi/) and [design docs](/design/architecture-framework/)
 

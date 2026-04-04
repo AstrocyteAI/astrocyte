@@ -1,6 +1,6 @@
 # Strands Agents (AWS) integration
 
-Astrocytes memory tools for AWS Strands Agents framework.
+Astrocyte memory tools for AWS Strands Agents framework.
 
 **Module:** `astrocyte.integrations.strands`
 **Pattern:** Spec + handler — JSON Schema tool spec with async handler functions

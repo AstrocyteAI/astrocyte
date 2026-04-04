@@ -1,6 +1,6 @@
 # Storage and data planes
 
-This page is a **routing hub**: it explains how Astrocytes splits **operational retrieval** (including recall against **serving / query layers** on top of warehouses and lakehouses), **durable export** to those systems for analytics, and **in-process bank health**—and which document to read next.
+This page is a **routing hub**: it explains how Astrocyte splits **operational retrieval** (including recall against **serving / query layers** on top of warehouses and lakehouses), **durable export** to those systems for analytics, and **in-process bank health**—and which document to read next.
 
 **Canonical architecture:** [`architecture-framework.md`](./architecture-framework.md) §2 (*operational retrieval vs analytical persistence*) and §4 (*SPI overview*).
 
@@ -36,7 +36,7 @@ This page is a **routing hub**: it explains how Astrocytes splits **operational 
 
 ## 3. In-process bank health and utilization
 
-**What:** Metrics inside Astrocytes—health scores, utilization, Prometheus—documented as **memory analytics** historically; sidebar label **Bank health & utilization**.
+**What:** Metrics inside Astrocyte—health scores, utilization, Prometheus—documented as **memory analytics** historically; sidebar label **Bank health & utilization**.
 
 **Not:** Warehouse fact tables. For external analytical tables, use §2.
 

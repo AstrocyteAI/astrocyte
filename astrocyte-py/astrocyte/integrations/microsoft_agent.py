@@ -12,7 +12,7 @@ Usage:
 
 Microsoft Agent Framework uses OpenAI-compatible tool definitions with
 handler functions, similar to the OpenAI Agents SDK pattern. This integration
-provides the same format with Astrocytes-specific tool names.
+provides the same format with Astrocyte-specific tool names.
 """
 
 from __future__ import annotations

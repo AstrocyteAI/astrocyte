@@ -1,6 +1,6 @@
 # Haystack (deepset) integration
 
-Astrocytes as Retriever and Writer pipeline components for Haystack.
+Astrocyte as Retriever and Writer pipeline components for Haystack.
 
 **Module:** `astrocyte.integrations.haystack`
 **Pattern:** Pipeline components — `arun()` returning `{"documents": [...]}` or `{"written": N}`

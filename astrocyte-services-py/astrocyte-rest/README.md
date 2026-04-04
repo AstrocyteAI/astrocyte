@@ -1,8 +1,8 @@
-# Astrocytes REST reference server (Python)
+# Astrocyte REST reference server (Python)
 
 Optional **REST** front end for [`astrocyte-py`](../../astrocyte-py/). It embeds the `Astrocyte` API behind HTTP so you can try the framework without writing a host app.
 
-**Defaults:** Tier 1 providers resolve from **`Astrocytes` config** (built-in **`in_memory`** vector / graph / document stores and **`mock`** LLM unless you override). Same pattern as conformance tests when defaults are used. Data is **not** durable with in-memory backends. This package is **not** production-ready as shipped; see below.
+**Defaults:** Tier 1 providers resolve from **`Astrocyte` config** (built-in **`in_memory`** vector / graph / document stores and **`mock`** LLM unless you override). Same pattern as conformance tests when defaults are used. Data is **not** durable with in-memory backends. This package is **not** production-ready as shipped; see below.
 
 **Production and operations:** The full checklist, architecture context, and documentation of **`astrocyte-rest`** as a **starting point** for a hardened deployment are in **[`docs/_end-user/production-grade-http-service.md`](../../docs/_end-user/production-grade-http-service.md)** (especially §3 checklist and §4 reference REST service).
 
@@ -49,7 +49,7 @@ If **`ASTROCYTES_CONFIG_PATH`** is **not** set, the process uses an empty `Astro
 
 ## Identity
 
-Send optional header **`X-Astrocytes-Principal`** (for example `user:alice`) when `access_control` is enabled in config and grants are configured on the `Astrocyte` instance. **This header is not authenticated** in the reference server; do not rely on it for production security (see [`docs/_end-user/production-grade-http-service.md`](../../docs/_end-user/production-grade-http-service.md)).
+Send optional header **`X-Astrocyte-Principal`** (for example `user:alice`) when `access_control` is enabled in config and grants are configured on the `Astrocyte` instance. **This header is not authenticated** in the reference server; do not rely on it for production security (see [`docs/_end-user/production-grade-http-service.md`](../../docs/_end-user/production-grade-http-service.md)).
 
 ## HTTP API (summary)
 

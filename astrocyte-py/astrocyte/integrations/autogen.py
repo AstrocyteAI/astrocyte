@@ -1,4 +1,4 @@
-"""AutoGen / AG2 integration — Astrocytes memory for multi-agent conversations.
+"""AutoGen / AG2 integration — Astrocyte memory for multi-agent conversations.
 
 Usage:
     from astrocyte import Astrocyte
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class AstrocyteAutoGenMemory:
-    """Astrocytes-backed memory for AutoGen / AG2 agents.
+    """Astrocyte-backed memory for AutoGen / AG2 agents.
 
     Provides both a direct API (save/query/get_context) and tool registration
     for AutoGen's function-calling pattern.

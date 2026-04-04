@@ -1,6 +1,6 @@
 # Evaluation and benchmarking
 
-Astrocytes ships built-in tools to measure memory quality, compare providers, and monitor accuracy over time. This enables data-driven provider selection and regression detection.
+Astrocyte ships built-in tools to measure memory quality, compare providers, and monitor accuracy over time. This enables data-driven provider selection and regression detection.
 
 ---
 
@@ -41,7 +41,7 @@ class EvalResult:
     timestamp: datetime
     metrics: EvalMetrics
     per_query_results: list[QueryResult]
-    config_snapshot: dict                # Astrocytes config at eval time
+    config_snapshot: dict                # Astrocyte config at eval time
 
 @dataclass
 class EvalMetrics:

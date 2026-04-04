@@ -1,6 +1,6 @@
-# Astrocytes (Python)
+# Astrocyte (Python)
 
-This directory is the **Python** implementation of the Astrocytes service: memory, governance, and provider SPIs as defined in the shared specification.
+This directory is the **Python** implementation of the Astrocyte service: memory, governance, and provider SPIs as defined in the shared specification.
 
 - **Published package name:** `astrocyte` (PyPI), when released.
 - **Parallel implementation:** [`astrocyte-rs`](../astrocyte-rs/) (Rust), same framework contract.

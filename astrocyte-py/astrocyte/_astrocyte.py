@@ -109,7 +109,7 @@ def _tag_hits_with_bank(hits: list[MemoryHit], bank_id: str) -> list[MemoryHit]:
 
 
 class Astrocyte:
-    """The Astrocytes memory framework — unified API for AI agent memory.
+    """The Astrocyte memory framework — unified API for AI agent memory.
 
     Usage:
         brain = Astrocyte.from_config("astrocyte.yaml")
@@ -631,7 +631,7 @@ class Astrocyte:
         include_entities: bool = True,
         context: AstrocyteContext | None = None,
     ) -> int:
-        """Export a memory bank to AMA (Astrocytes Memory Archive) JSONL format.
+        """Export a memory bank to AMA (Astrocyte Memory Archive) JSONL format.
 
         Returns the number of memories exported.
         """

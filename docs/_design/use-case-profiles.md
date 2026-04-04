@@ -8,7 +8,7 @@ This document defines how the heterogeneity principle (Principle 4 from `design-
 
 **Biology:** Astrocytes differ by region and lineage. Fibrous astrocyte in white matter behave differently from protoplasmic astrocyte in gray matter. Reactive phenotypes (A1/A2) are context-dependent, not one-size-fits-all.
 
-**Engineering:** Different agent types need different memory governance. A customer support agent storing sensitive conversations has different needs than a coding assistant storing technical context. Rather than force every user to configure policies from scratch, Astrocytes ships **profiles** - named presets that configure the policy layer for common use cases.
+**Engineering:** Different agent types need different memory governance. A customer support agent storing sensitive conversations has different needs than a coding assistant storing technical context. Rather than force every user to configure policies from scratch, Astrocyte ships **profiles** - named presets that configure the policy layer for common use cases.
 
 ---
 
@@ -287,7 +287,7 @@ Or inline, by omitting the `profile` key and configuring everything directly.
 
 ## 5. Per-bank profile overrides
 
-A single Astrocytes instance can serve multiple banks with different profiles. This supports multi-tenant applications where each tenant (or agent) has different memory governance needs:
+A single Astrocyte instance can serve multiple banks with different profiles. This supports multi-tenant applications where each tenant (or agent) has different memory governance needs:
 
 ```yaml
 # astrocyte.yaml

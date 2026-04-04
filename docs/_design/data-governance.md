@@ -1,6 +1,6 @@
 # Data governance and privacy
 
-This document defines Astrocytes' unified approach to data classification, PII handling, data residency, encryption, regulatory compliance, data lineage, and data loss prevention. It consolidates and extends the scattered governance features across the policy layer (`policy-layer.md`), lifecycle management (`memory-lifecycle.md`), access control (`access-control.md`), and event hooks (`event-hooks.md`).
+This document defines Astrocyte' unified approach to data classification, PII handling, data residency, encryption, regulatory compliance, data lineage, and data loss prevention. It consolidates and extends the scattered governance features across the policy layer (`policy-layer.md`), lifecycle management (`memory-lifecycle.md`), access control (`access-control.md`), and event hooks (`event-hooks.md`).
 
 This maps to **Principle 6 (Barrier maintenance)** - the blood-brain barrier is not just a wall, it is a **selective, actively maintained boundary** that classifies what crosses, enforces rules per-substance, and adapts to threats.
 
@@ -241,7 +241,7 @@ governance:
 
 ### 4.2 At-rest
 
-At-rest encryption is **the provider's responsibility** (database-level encryption, cloud KMS). Astrocytes validates that the provider reports encryption capability:
+At-rest encryption is **the provider's responsibility** (database-level encryption, cloud KMS). Astrocyte validates that the provider reports encryption capability:
 
 ```python
 class EngineCapabilities:

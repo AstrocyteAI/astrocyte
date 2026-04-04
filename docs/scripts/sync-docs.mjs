@@ -140,7 +140,7 @@ for (const src of ["_design", "_plugins", "_end-user", "_tutorials"]) {
 const readmePath = path.join(docsDir, "README.md");
 const readme = fs.readFileSync(readmePath, "utf8");
 let introTitle = extractTitle(readme);
-if (introTitle === "Untitled") introTitle = "Astrocytes documentation";
+if (introTitle === "Untitled") introTitle = "Astrocyte documentation";
 const introBody =
   `---\ntitle: "${escapeTitle(introTitle)}"\ndraft: false\n---\n\n` +
   transformBody(stripFirstH1(readme), readmePath);

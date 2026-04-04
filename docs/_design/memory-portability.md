@@ -1,6 +1,6 @@
 # Memory portability
 
-Astrocytes owns the DTO layer across all providers. This means it can define a **portable memory format** that enables migration between providers without data loss. No other tool in the market offers this.
+Astrocyte owns the DTO layer across all providers. This means it can define a **portable memory format** that enables migration between providers without data loss. No other tool in the market offers this.
 
 ---
 
@@ -8,13 +8,13 @@ Astrocytes owns the DTO layer across all providers. This means it can define a *
 
 Users who start with Mem0 and want to upgrade to Mystique face a wall: memories are locked in the provider's internal format. There's no standard way to export from one system and import into another.
 
-This lock-in discourages adoption ("what if I want to switch later?") and hurts the ecosystem. Astrocytes breaks this lock-in.
+This lock-in discourages adoption ("what if I want to switch later?") and hurts the ecosystem. Astrocyte breaks this lock-in.
 
 ---
 
 ## 2. Portable memory format
 
-### 2.1 Format: Astrocytes Memory Archive (AMA)
+### 2.1 Format: Astrocyte Memory Archive (AMA)
 
 A newline-delimited JSON (JSONL) file where each line is one memory unit, plus a header line for metadata.
 

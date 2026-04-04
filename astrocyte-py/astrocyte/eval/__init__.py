@@ -1,4 +1,4 @@
-"""Astrocytes evaluation harness — benchmark suites, provider comparison, regression detection.
+"""Astrocyte evaluation harness — benchmark suites, provider comparison, regression detection.
 
 Usage:
     from astrocyte.eval import MemoryEvaluator, compare_providers

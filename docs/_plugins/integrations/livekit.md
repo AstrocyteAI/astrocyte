@@ -1,6 +1,6 @@
 # LiveKit Agents integration
 
-Astrocytes memory for real-time voice and video AI agents built with LiveKit.
+Astrocyte memory for real-time voice and video AI agents built with LiveKit.
 
 **Module:** `astrocyte.integrations.livekit`
 **Pattern:** Session lifecycle memory — pre-fetch context, mid-session recall, post-session retain

@@ -1,4 +1,4 @@
-"""Convert Astrocytes dataclasses to JSON-serializable structures."""
+"""Convert Astrocyte dataclasses to JSON-serializable structures."""
 
 from __future__ import annotations
 

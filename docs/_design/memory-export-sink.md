@@ -1,6 +1,6 @@
 # Memory export sink (warehouse, lakehouse, open table formats)
 
-This document specifies the **durable export / analytical persistence plane** for Astrocytes: optional, **orthogonal** to Tier 1 retrieval (`VectorStore` / `GraphStore` / `DocumentStore`) and to Tier 2 memory engines.
+This document specifies the **durable export / analytical persistence plane** for Astrocyte: optional, **orthogonal** to Tier 1 retrieval (`VectorStore` / `GraphStore` / `DocumentStore`) and to Tier 2 memory engines.
 
 **Purpose:** stream or batch **governed memory events and snapshots** into **data warehouses**, **lakehouses**, and **open table formats** (for example **Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**; **Apache Parquet** as the on-disk columnar layout; **SQL-accessible** tables in Snowflake, BigQuery, Redshift, Fabric, Doris, …) for BI, compliance, model training, and historical analysis.
 
@@ -56,7 +56,7 @@ Packages implement the same SPI against:
 
 - **Object storage + table catalog** — Iceberg/Delta/Hudi/Paimon tables; Parquet as file format.
 - **Warehouse load** — Snowpipe-style ingest, BigQuery `LOAD`, Redshift `COPY`, JDBC batch insert into curated tables.
-- **Streaming bus** — Kafka/Pulsar topic consumed by Flink/Spark into the lake; the Astrocytes package may only publish to the bus.
+- **Streaming bus** — Kafka/Pulsar topic consumed by Flink/Spark into the lake; the Astrocyte package may only publish to the bus.
 
 The framework **does not** mandate one catalog or SQL dialect; adapters own connection config (Hive metastore, Glue, Unity, Polaris, …).
 

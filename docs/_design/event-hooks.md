@@ -1,6 +1,6 @@
 # Event hooks
 
-Astrocytes emits events at key points in the memory lifecycle. Hooks allow external systems to react to these events - for audit logging, alerting, custom workflows, and enterprise integration.
+Astrocyte emits events at key points in the memory lifecycle. Hooks allow external systems to react to these events - for audit logging, alerting, custom workflows, and enterprise integration.
 
 ---
 

@@ -1,6 +1,6 @@
 # Implementation language strategy
 
-This document defines how Astrocytes is delivered as **two parallel implementations** in one repository - **Python** (`astrocyte-py/`) and **Rust** (`astrocyte-rs/`) - that are intended to be **drop-in replacements** for each other at the framework contract level (configuration, semantics, provider SPIs, and portable data shapes). Design documents under `docs/` apply to **both** unless a section says otherwise.
+This document defines how Astrocyte is delivered as **two parallel implementations** in one repository - **Python** (`astrocyte-py/`) and **Rust** (`astrocyte-rs/`) - that are intended to be **drop-in replacements** for each other at the framework contract level (configuration, semantics, provider SPIs, and portable data shapes). Design documents under `docs/` apply to **both** unless a section says otherwise.
 
 ---
 
@@ -8,8 +8,8 @@ This document defines how Astrocytes is delivered as **two parallel implementati
 
 | Codebase | Location | Role |
 |---|---|---|
-| **Python Astrocytes** | **`astrocyte-py/`** (Python package; PyPI name **`astrocyte`**) | PyPI distribution; LangChain/LangGraph, MCP, and the Python provider ecosystem. |
-| **Rust Astrocytes** | **`astrocyte-rs/`** | Native Rust library for services and embedders without a Python runtime. |
+| **Python Astrocyte** | **`astrocyte-py/`** (Python package; PyPI name **`astrocyte`**) | PyPI distribution; LangChain/LangGraph, MCP, and the Python provider ecosystem. |
+| **Rust Astrocyte** | **`astrocyte-rs/`** | Native Rust library for services and embedders without a Python runtime. |
 
 **Drop-in replacement** means: the same **logical** framework - users choose **one** implementation for a deployment. Shared YAML (or equivalent) profiles, the same policy and pipeline semantics, and the same provider entry-point model should allow swapping **`astrocyte`** for **`astrocyte-rs`** (or vice versa) without redesigning integrations, subject only to language-specific packaging and binding details documented per implementation.
 
@@ -202,7 +202,7 @@ Standard **Cargo** crate layout; publish to **crates.io** when ready. Versioning
 
 ## 6. Interface design checklist
 
-When designing any new interface in Astrocytes, verify:
+When designing any new interface in Astrocyte, verify:
 
 - [ ] **Portable DTOs** use only serializable primitive shapes (str, int, float, bool, None, list, dict, datetime, explicit structs)
 - [ ] **No `Any`** in portable DTOs - use explicit unions

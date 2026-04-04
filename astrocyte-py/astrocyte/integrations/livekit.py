@@ -1,4 +1,4 @@
-"""LiveKit Agents integration — Astrocytes memory for real-time voice/video agents.
+"""LiveKit Agents integration — Astrocyte memory for real-time voice/video agents.
 
 Usage:
     from astrocyte import Astrocyte
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 class AstrocyteLiveKitMemory:
-    """Astrocytes memory adapter for LiveKit real-time agents.
+    """Astrocyte memory adapter for LiveKit real-time agents.
 
     Designed for the real-time voice/video agent lifecycle:
     - Session start: load relevant memories as context

@@ -1,4 +1,4 @@
-"""DSPy integration — Astrocytes as a DSPy retrieval module.
+"""DSPy integration — Astrocyte as a DSPy retrieval module.
 
 Usage:
     from astrocyte import Astrocyte
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 
 class AstrocyteRM:
-    """Astrocytes-backed retrieval model for DSPy.
+    """Astrocyte-backed retrieval model for DSPy.
 
     Implements DSPy's RM protocol: __call__(query, k) → list of passage strings.
     Also provides async methods for direct use.

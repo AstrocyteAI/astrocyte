@@ -1,6 +1,6 @@
 # LangGraph / LangChain integration
 
-Astrocytes as a memory store for LangGraph agents and LangChain applications.
+Astrocyte as a memory store for LangGraph agents and LangChain applications.
 
 **Module:** `astrocyte.integrations.langgraph`
 **Pattern:** Memory store — save_context, search, load_memory_variables
@@ -38,7 +38,7 @@ variables = await memory.load_memory_variables({"topic": "UI preferences"})
 
 ## Thread-to-bank mapping
 
-Map LangGraph thread IDs to Astrocytes memory banks:
+Map LangGraph thread IDs to Astrocyte memory banks:
 
 ```python
 memory = AstrocyteMemory(
@@ -52,7 +52,7 @@ Threads not in the mapping fall back to `bank_id`.
 
 ## Integration pattern
 
-| LangGraph operation | Astrocytes call |
+| LangGraph operation | Astrocyte call |
 |---|---|
 | `save_context(inputs, outputs)` | `brain.retain()` with combined input+output text |
 | `search(query)` | `brain.recall()` → list of hit dicts |

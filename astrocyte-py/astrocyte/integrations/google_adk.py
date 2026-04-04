@@ -29,7 +29,7 @@ def astrocyte_adk_tools(
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> list:
-    """Create Google ADK-compatible tool functions backed by Astrocytes.
+    """Create Google ADK-compatible tool functions backed by Astrocyte.
 
     Returns a list of async callables that ADK can register as tools.
     Each function has proper type annotations and docstrings for ADK schema generation.

@@ -1,6 +1,6 @@
 # Semantic Kernel (Microsoft) integration
 
-Astrocytes as a kernel plugin for Microsoft Semantic Kernel.
+Astrocyte as a kernel plugin for Microsoft Semantic Kernel.
 
 **Module:** `astrocyte.integrations.semantic_kernel`
 **Pattern:** Plugin with kernel functions — retain, recall, reflect, forget methods
@@ -36,7 +36,7 @@ answer = await plugin.reflect("What are Calvin's preferences?")
 
 Each method follows the Semantic Kernel `@kernel_function` convention: named method with docstring, type-annotated parameters, returns string.
 
-| Plugin method | Astrocytes call | Returns |
+| Plugin method | Astrocyte call | Returns |
 |---|---|---|
 | `retain(content, tags?)` | `brain.retain()` | `"Stored memory (id: ...)"` |
 | `recall(query, max_results?)` | `brain.recall()` | Formatted list of scored hits |

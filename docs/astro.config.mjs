@@ -90,11 +90,11 @@ export default defineConfig({
         ThemeSelect: "./src/components/ThemeSelect.astro",
         Hero: "./src/components/Hero.astro",
       },
-      title: "Astrocytes",
+      title: "Astrocyte",
       logo: {
         light: "./public/logo.svg",
         dark: "./public/logo-dark.svg",
-        alt: "Astrocytes — memory framework for AI agents",
+        alt: "Astrocyte — memory framework for AI agents",
       },
       favicon: "/favicon.svg",
       description:

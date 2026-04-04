@@ -1,11 +1,11 @@
-"""Astrocytes agent framework integrations.
+"""Astrocyte agent framework integrations.
 
-Thin middleware layers that wire Astrocytes into popular agent frameworks.
+Thin middleware layers that wire Astrocyte into popular agent frameworks.
 Each integration maps the framework's memory abstraction to
 brain.retain() / brain.recall() / brain.reflect().
 
-Without Astrocytes: each framework needs integrations with each provider (N × M).
-With Astrocytes: N + M.
+Without Astrocyte: each framework needs integrations with each provider (N × M).
+With Astrocyte: N + M.
 
 Integrations are optional — install the framework dependency to use:
     pip install astrocyte[langgraph]

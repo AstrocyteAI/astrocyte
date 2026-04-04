@@ -1,6 +1,6 @@
 # Google ADK integration
 
-Astrocytes memory as async callable tools for Google's Agent Development Kit.
+Astrocyte memory as async callable tools for Google's Agent Development Kit.
 
 **Module:** `astrocyte.integrations.google_adk`
 **Pattern:** Async callable functions with type annotations for ADK schema generation

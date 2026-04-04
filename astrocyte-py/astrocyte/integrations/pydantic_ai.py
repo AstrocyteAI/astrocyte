@@ -1,4 +1,4 @@
-"""Pydantic AI integration — Astrocytes as agent tools.
+"""Pydantic AI integration — Astrocyte as agent tools.
 
 Usage:
     from astrocyte import Astrocyte
@@ -28,7 +28,7 @@ def astrocyte_tools(
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> list[dict[str, Any]]:
-    """Create Pydantic AI-compatible tool definitions backed by Astrocytes.
+    """Create Pydantic AI-compatible tool definitions backed by Astrocyte.
 
     Returns a list of tool definition dicts that Pydantic AI can register.
     Each tool is a dict with 'name', 'description', 'function', and 'parameters'.

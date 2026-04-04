@@ -1,12 +1,12 @@
 # Design principles for “AI astrocyte” inspired by neuroscience
 
-This document translates recurring **organizing ideas** from astrocyte biology (see `neuroscience-astrocyte.md` and the review in `references/AstrocytesFromthePhysiologytotheDisease.pdf`) into **engineering metaphors** for AI systems. It is analogy, not a claim that software should mimic wetware literally.
+This document translates recurring **organizing ideas** from astrocyte biology (see `neuroscience-astrocyte.md` and the review in `references/AstrocyteFromthePhysiologytotheDisease.pdf`) into **engineering metaphors** for AI systems. It is analogy, not a claim that software should mimic wetware literally.
 
 ---
 
 ## 1. Separation of concerns: fast signaling vs. slow regulation
 
-**Biology:** Neurons carry rapid, spike-like signaling; astrocyte Ca²⁺ signals are typically slower and integrate multiple inputs. Astrocytes modulate the **context** in which fast synaptic events occur (uptake, volume, tonic release).
+**Biology:** Neurons carry rapid, spike-like signaling; astrocyte Ca²⁺ signals are typically slower and integrate multiple inputs. Astrocyte modulate the **context** in which fast synaptic events occur (uptake, volume, tonic release).
 
 **Design idea:** Pair **fast inference or action channels** (analogous to neurons) with **slower supervisory or homeostatic layers** that update on different timescales - rate limits, budget resets, consolidation of memory, or calibration of uncertainty. Avoid forcing one subsystem to do both millisecond decisions and long-horizon maintenance.
 

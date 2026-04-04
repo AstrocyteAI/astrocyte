@@ -1,4 +1,4 @@
-"""DeepEval LLM-as-judge integration for Astrocytes evaluation.
+"""DeepEval LLM-as-judge integration for Astrocyte evaluation.
 
 Provides thorough, LLM-judged evaluation using DeepEval's RAG metrics:
 - ContextualRelevancy: are the recalled memories relevant to the query?

@@ -1,6 +1,6 @@
 # BeeAI (IBM) integration
 
-Astrocytes memory tools for IBM's BeeAI Agent Framework.
+Astrocyte memory tools for IBM's BeeAI Agent Framework.
 
 **Module:** `astrocyte.integrations.beeai`
 **Pattern:** Tool with `run()` method — name, description, input_schema, async run()

@@ -1,10 +1,10 @@
-"""Astrocytes exception hierarchy."""
+"""Astrocyte exception hierarchy."""
 
 from __future__ import annotations
 
 
 class AstrocyteError(Exception):
-    """Base exception for all Astrocytes errors."""
+    """Base exception for all Astrocyte errors."""
 
 
 class ConfigError(AstrocyteError):

@@ -1,6 +1,6 @@
 # Outbound transport plugins (credential gateways)
 
-This document defines the **optional, cross-cutting** integration surface for tools that sit **between Astrocytes and the network** - for example HTTP(S) proxies that inject API credentials, corporate TLS inspection CAs, or “secret gateway” products (OneCLI-class solutions). For how this fits next to memory and LLM providers, see `architecture-framework.md`. For the protocol sketch in the SPI doc, see `provider-spi.md` section 6.
+This document defines the **optional, cross-cutting** integration surface for tools that sit **between Astrocyte and the network** - for example HTTP(S) proxies that inject API credentials, corporate TLS inspection CAs, or “secret gateway” products (OneCLI-class solutions). For how this fits next to memory and LLM providers, see `architecture-framework.md`. For the protocol sketch in the SPI doc, see `provider-spi.md` section 6.
 
 ---
 
@@ -11,7 +11,7 @@ This document defines the **optional, cross-cutting** integration surface for to
 | Primary job | Configure **how** TCP/TLS/HTTP leaves the process (proxy, trust, optional gateway headers) | Store and retrieve **memories** | **`complete()`** and **`embed()`** semantics |
 | Implements `retain` / `recall` | No | Yes (directly or via pipeline) | No |
 | Normalizes chat APIs | No | No | No (adapters call your chosen SDK) |
-| Stores or rotates secrets inside Astrocytes | **No** - secrets stay in the gateway or external vault | N/A | N/A |
+| Stores or rotates secrets inside Astrocyte | **No** - secrets stay in the gateway or external vault | N/A | N/A |
 
 Outbound transport is **not** a third memory tier and **not** an LLM gateway. It does not change the meaning of `complete()` / `embed()`; it only affects **shared HTTP client construction** used by LLM adapters and any core code that performs outbound HTTP.
 
@@ -23,7 +23,7 @@ Many teams use **credential gateways** or **enterprise proxies**: traffic must g
 
 **Two integration depths:**
 
-1. **Environment-only (no plugin)** - If standard proxy environment variables are enough (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, etc.), Astrocytes HTTP clients should honor them. No package install required.
+1. **Environment-only (no plugin)** - If standard proxy environment variables are enough (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, etc.), Astrocyte HTTP clients should honor them. No package install required.
 2. **Explicit plugin** - When a product needs **more** than env vars (combined CA bundles, dynamic discovery from a control API, `Proxy-Authorization`, container-specific paths), users install an **`astrocyte-transport-*`** package that implements the **Outbound Transport SPI**.
 
 ---
@@ -90,7 +90,7 @@ When `outbound_transport` is absent, the core relies on **standard library / htt
 onecli = "astrocyte_transport_onecli:OneCLIOutboundTransport"
 ```
 
-Community transports follow the same pattern as other Astrocytes plugins (see `ecosystem-and-packaging.md`).
+Community transports follow the same pattern as other Astrocyte plugins (see `ecosystem-and-packaging.md`).
 
 ---
 
@@ -110,4 +110,4 @@ Community transports follow the same pattern as other Astrocytes plugins (see `e
 | **LLM Provider SPI** | Semantic LLM access (`complete` / `embed`) |
 | **Retrieval / Memory Engine SPIs** | Retrieval adapters and full memory engines |
 
-This keeps credential gateways **pluggable** without conflating them with memory tiers or the LLM gateway role that Astrocytes explicitly does not take (`architecture-framework.md`).
+This keeps credential gateways **pluggable** without conflating them with memory tiers or the LLM gateway role that Astrocyte explicitly does not take (`architecture-framework.md`).

@@ -1,6 +1,6 @@
 # Multi-bank orchestration
 
-Agents don't have one memory - they have several. A support agent has personal context about the current user, shared team knowledge, and org-wide policies. Astrocytes orchestrates across these banks because it sits above the provider layer.
+Agents don't have one memory - they have several. A support agent has personal context about the current user, shared team knowledge, and org-wide policies. Astrocyte orchestrates across these banks because it sits above the provider layer.
 
 For the core API and provider architecture, see `architecture-framework.md`.
 
@@ -22,7 +22,7 @@ The same patterns support **human–agent collaboration**: an agent’s `bank_gr
 
 ## 2. Bank topology
 
-Astrocytes supports three bank relationship patterns:
+Astrocyte supports three bank relationship patterns:
 
 ### 2.1 Isolated banks
 

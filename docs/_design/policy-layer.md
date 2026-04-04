@@ -1,6 +1,6 @@
 # Policy layer: the load-bearing astrocyte
 
-This document specifies the governance policies that make the Astrocytes framework valuable regardless of which memory backend is plugged in. Each policy maps to a neuroscience design principle from `design-principles.md`.
+This document specifies the governance policies that make the Astrocyte framework valuable regardless of which memory backend is plugged in. Each policy maps to a neuroscience design principle from `design-principles.md`.
 
 The policy layer is not optional decoration. It is what makes the framework worth using instead of calling a memory backend directly. If these policies are thin wrappers, users will skip the framework. If they are solid, nobody will.
 
@@ -263,7 +263,7 @@ astrocyte.reflect
   └── provider.reflect OR astrocyte.fallback_reflect (child span)
 ```
 
-Spans propagate the caller's trace context, so Astrocytes operations appear in the agent's distributed trace.
+Spans propagate the caller's trace context, so Astrocyte operations appear in the agent's distributed trace.
 
 ### 5.2 Prometheus metrics
 

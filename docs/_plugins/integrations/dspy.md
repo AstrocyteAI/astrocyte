@@ -1,6 +1,6 @@
 # DSPy (Stanford NLP) integration
 
-Astrocytes as a DSPy retrieval model (RM) for declarative AI programming.
+Astrocyte as a DSPy retrieval model (RM) for declarative AI programming.
 
 **Module:** `astrocyte.integrations.dspy`
 **Pattern:** Retrieval model — `__call__(query, k)` → `list[str]` (DSPy RM protocol)

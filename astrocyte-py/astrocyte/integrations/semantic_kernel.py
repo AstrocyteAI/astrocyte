@@ -1,4 +1,4 @@
-"""Microsoft Semantic Kernel integration — Astrocytes as kernel plugins.
+"""Microsoft Semantic Kernel integration — Astrocyte as kernel plugins.
 
 Usage:
     from astrocyte import Astrocyte
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 class AstrocytePlugin:
-    """Astrocytes memory plugin for Microsoft Semantic Kernel.
+    """Astrocyte memory plugin for Microsoft Semantic Kernel.
 
     Methods follow the Semantic Kernel @kernel_function pattern:
     - Named methods with docstrings (used as function descriptions)

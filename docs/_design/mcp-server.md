@@ -1,6 +1,6 @@
 # MCP server integration
 
-Astrocytes ships as a **Model Context Protocol (MCP) server**, making memory available to any MCP-capable agent (Claude Code, Cursor, Windsurf, custom agents) without code integration.
+Astrocyte ships as a **Model Context Protocol (MCP) server**, making memory available to any MCP-capable agent (Claude Code, Cursor, Windsurf, custom agents) without code integration.
 
 ---
 
@@ -19,9 +19,9 @@ Any MCP-capable client gets persistent memory by adding one entry to its MCP con
 }
 ```
 
-The agent can then call `retain`, `recall`, `reflect`, and `forget` as MCP tools. The full Astrocytes policy layer (PII scanning, rate limits, token budgets, observability) applies to every call.
+The agent can then call `retain`, `recall`, `reflect`, and `forget` as MCP tools. The full Astrocyte policy layer (PII scanning, rate limits, token budgets, observability) applies to every call.
 
-This is a major distribution channel: every Claude Code user, every Cursor user, every MCP-compatible IDE becomes a potential Astrocytes user.
+This is a major distribution channel: every Claude Code user, every Cursor user, every MCP-compatible IDE becomes a potential Astrocyte user.
 
 ---
 
@@ -99,7 +99,7 @@ Communicates over stdin/stdout. Standard for local MCP servers.
 astrocyte-mcp --config astrocyte.yaml --transport sse --port 8080
 ```
 
-Server-Sent Events transport for remote agents or multi-agent setups sharing one Astrocytes instance.
+Server-Sent Events transport for remote agents or multi-agent setups sharing one Astrocyte instance.
 
 ---
 
@@ -157,7 +157,7 @@ Where `bin/astrocyte-mcp.js` spawns the Python `astrocyte-mcp` process. This is 
 
 ## 6. Policy enforcement
 
-The full Astrocytes policy layer applies to MCP tool calls:
+The full Astrocyte policy layer applies to MCP tool calls:
 
 - **PII barrier**: scans `content` in `memory_retain` calls before storage
 - **Rate limits**: per-bank limits apply to the MCP caller

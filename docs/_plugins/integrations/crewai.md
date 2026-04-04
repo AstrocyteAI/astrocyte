@@ -1,6 +1,6 @@
 # CrewAI integration
 
-Astrocytes as shared crew memory and per-agent memory for CrewAI applications.
+Astrocyte as shared crew memory and per-agent memory for CrewAI applications.
 
 **Module:** `astrocyte.integrations.crewai`
 **Pattern:** Crew/agent memory — save, search, reset, per-agent banks
@@ -43,7 +43,7 @@ await memory.reset(agent_id="devops")
 
 ## Integration pattern
 
-| CrewAI operation | Astrocytes call |
+| CrewAI operation | Astrocyte call |
 |---|---|
 | `memory.save(content, agent_id=...)` | `brain.retain()` with agent metadata |
 | `memory.search(query, agent_id=...)` | `brain.recall()` scoped to agent or shared bank |
