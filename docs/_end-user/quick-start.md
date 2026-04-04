@@ -18,6 +18,29 @@ pip install -e astrocytes-py/
 
 Use **`Astrocyte.from_config(...)`** and attach Tier 1 / Tier 2 providers in code—see the [architecture overview](/design/architecture-framework/) and [provider SPI](/plugins/provider-spi/). The library alone does **not** start an HTTP server.
 
+### Use the same client from an AI agent
+
+Astrocytes does **not** run the agent loop (tools, checkpoints, multi-step graphs). Your framework does. Integrations map each framework’s memory hooks to `retain` / `recall` / `reflect` through the same policy layer — see **[agent framework middleware](/plugins/agent-framework-middleware/)** for the full matrix (LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, Claude Agent SDK, MCP, …).
+
+Minimal **LangGraph / LangChain** shape (install `langgraph` when you build a graph):
+
+```python
+from astrocytes import Astrocyte
+from astrocytes.integrations.langgraph import AstrocyteMemory
+
+brain = Astrocyte.from_config("astrocytes.yaml")
+memory = AstrocyteMemory(brain, bank_id="user-123")
+
+await memory.save_context(
+    inputs={"question": "Theme preference?"},
+    outputs={"answer": "Calvin prefers dark mode."},
+    thread_id="thread-abc",
+)
+vars_for_prompt = await memory.load_memory_variables({})
+```
+
+Per-framework guides live under **[Integrations](/plugins/integrations/langgraph/)** (start with LangGraph or MCP, depending on your harness).
+
 ## 2. Reference REST server (Docker, recommended)
 
 The **`astrocytes-services-py/`** tree hosts Compose, **`astrocytes-rest`**, and **`astrocytes-pgvector`**.
@@ -54,6 +77,7 @@ Details, troubleshooting, and environment split (**`ASTROCYTES_REST_DATABASE_URL
 
 ## 3. Next steps
 
+- **Agent + memory patterns/tutorials:** [100 Agents in 100 Days](/tutorials/100-agents-in-100-days/).
 - **Operate and harden HTTP:** [Production-grade reference server](/end-user/production-grade-http-service/) (security, auth, grants, observability).
 - **Implement a provider or transport:** [Plugin developer docs](/plugins/provider-spi/) (SPI, entry points, packaging).
 - **Understand the design:** start with [Neuroscience & vocabulary](/design/neuroscience-astrocytes/) and [Architecture](/design/architecture-framework/).

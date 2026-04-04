@@ -36,7 +36,9 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
 <span class="section-label" aria-hidden="true">⟩ Quick start</span>
 <h2 class="section-heading">Get started in seconds</h2>
 <div class="section-subheading">
-  Install extras for your stack, drop in a config, and run retain / recall with one Python client.
+  Install extras for your stack, open a configured <code>Astrocyte</code>, then either call memory from your own code or wire
+  the same instance into an agent framework adapter — LangGraph, CrewAI, MCP, OpenAI/Claude agent SDKs, and{" "}
+  <a href="/plugins/agent-framework-middleware/">others</a>.
 </div>
 
 <div class="quickstart-panel">
@@ -56,6 +58,8 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
     </TabItem>
   </Tabs>
 
+  <Tabs syncKey="astrocytes-quickstart-code">
+    <TabItem label="Direct API">
 ```python
 from astrocytes import Astrocyte
 
@@ -65,6 +69,31 @@ await brain.retain("Calvin prefers dark mode", bank_id="user-123")
 
 hits = await brain.recall("What are Calvin's preferences?", bank_id="user-123")
 ```
+    </TabItem>
+    <TabItem label="LangGraph / LangChain">
+      <p class="quickstart-note">
+        Add <code>langgraph</code> (or your chain stack) when you compile a graph. Same <code>brain</code> backs every framework
+        adapter — see <a href="/plugins/agent-framework-middleware/">agent framework middleware</a>.
+      </p>
+
+```python
+from astrocytes import Astrocyte
+from astrocytes.integrations.langgraph import AstrocyteMemory
+
+brain = Astrocyte.from_config("astrocytes.yaml")
+memory = AstrocyteMemory(brain, bank_id="user-123")
+
+await memory.save_context(
+    inputs={"question": "Theme preference?"},
+    outputs={"answer": "Calvin prefers dark mode."},
+    thread_id="thread-abc",
+)
+
+prompt_vars = await memory.load_memory_variables({})
+# → inject prompt_vars["memory"] into the next model message
+```
+    </TabItem>
+  </Tabs>
 
 </div>
 
