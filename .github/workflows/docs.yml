@@ -1,15 +1,12 @@
 name: Deploy docs (Starlight)
 
-# DISABLED: GitHub Pages publish until the repository is public.
-# This workflow never runs until you replace the branch below with [main, master],
-# restore the `paths` filter, and (optionally) add `workflow_dispatch:` for manual runs.
 on:
   push:
-    branches:
-      - __github_pages_deploy_disabled__
-    # paths:
-    #   - "docs/**"
-    #   - ".github/workflows/docs.yml"
+    branches: [main, master]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:  # Manual trigger
 
 permissions:
   contents: read
