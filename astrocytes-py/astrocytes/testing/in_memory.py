@@ -284,15 +284,19 @@ class InMemoryEngineProvider:
 
     async def recall(self, request: RecallRequest) -> RecallResult:
         memories = self._memories.get(request.bank_id, [])
-        # Simple keyword matching
-        query_terms = set(request.query.lower().split())
-        scored: list[tuple[float, MemoryHit]] = []
-        for mem in memories:
-            mem_terms = set(mem.text.lower().split())
-            overlap = len(query_terms & mem_terms)
-            if overlap > 0:
-                score = overlap / max(len(query_terms), 1)
-                scored.append((score, mem))
+        # Wildcard query returns all memories (used by export)
+        if request.query.strip() == "*":
+            scored = [(1.0, mem) for mem in memories]
+        else:
+            # Simple keyword matching
+            query_terms = set(request.query.lower().split())
+            scored = []
+            for mem in memories:
+                mem_terms = set(mem.text.lower().split())
+                overlap = len(query_terms & mem_terms)
+                if overlap > 0:
+                    score = overlap / max(len(query_terms), 1)
+                    scored.append((score, mem))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         hits = [

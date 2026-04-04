@@ -619,6 +619,76 @@ class Astrocyte:
         return status
 
     # ---------------------------------------------------------------------------
+    # Memory portability
+    # ---------------------------------------------------------------------------
+
+    async def export_bank(
+        self,
+        bank_id: str,
+        path: str,
+        *,
+        include_embeddings: bool = False,
+        include_entities: bool = True,
+        context: AstrocyteContext | None = None,
+    ) -> int:
+        """Export a memory bank to AMA (Astrocytes Memory Archive) JSONL format.
+
+        Returns the number of memories exported.
+        """
+        from astrocytes.portability import export_bank as _export
+
+        self._check_access(bank_id, "admin", context)
+
+        count = await _export(
+            recall_fn=self._do_recall,
+            bank_id=bank_id,
+            path=path,
+            provider_name=self._provider_name,
+            include_embeddings=include_embeddings,
+            include_entities=include_entities,
+        )
+        await self._fire_hooks("on_export", bank_id=bank_id, data={"memory_count": count, "path": path})
+        return count
+
+    async def import_bank(
+        self,
+        bank_id: str,
+        path: str,
+        *,
+        on_conflict: str = "skip",
+        re_embed: bool = True,
+        context: AstrocyteContext | None = None,
+        progress_fn: Any = None,
+    ) -> Any:
+        """Import memories from an AMA JSONL file into a bank.
+
+        Returns an ImportResult with imported/skipped/errors counts.
+        """
+        from astrocytes.portability import ImportResult
+        from astrocytes.portability import import_bank as _import
+
+        self._check_access(bank_id, "admin", context)
+
+        result: ImportResult = await _import(
+            retain_fn=self._do_retain,
+            bank_id=bank_id,
+            path=path,
+            on_conflict=on_conflict,
+            re_embed=re_embed,
+            progress_fn=progress_fn,
+        )
+        await self._fire_hooks(
+            "on_import",
+            bank_id=bank_id,
+            data={
+                "imported": result.imported,
+                "skipped": result.skipped,
+                "errors": result.errors,
+            },
+        )
+        return result
+
+    # ---------------------------------------------------------------------------
     # Internal routing
     # ---------------------------------------------------------------------------
 
