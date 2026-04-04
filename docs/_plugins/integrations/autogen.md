@@ -2,23 +2,23 @@
 
 Astrocytes memory for Microsoft AutoGen multi-agent conversations, with both direct API and tool registration.
 
-**Module:** `astrocytes.integrations.autogen`
+**Module:** `astrocyte.integrations.autogen`
 **Pattern:** Memory API (save/query/get_context) + OpenAI-format tool export
 **Framework dependency:** `ag2` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes ag2
+pip install astrocyte ag2
 ```
 
 ## Usage — Direct memory API
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.autogen import AstrocyteAutoGenMemory
+from astrocyte import Astrocyte
+from astrocyte.integrations.autogen import AstrocyteAutoGenMemory
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 memory = AstrocyteAutoGenMemory(
     brain,
     bank_id="team",

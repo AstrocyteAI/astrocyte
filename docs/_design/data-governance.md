@@ -558,16 +558,16 @@ governance:
 
 | Metric | Type | Labels |
 |---|---|---|
-| `astrocytes_classification_total` | Counter | `bank_id`, `level`, `classified_by` |
-| `astrocytes_pii_detected_total` | Counter | `bank_id`, `pii_type`, `action` |
-| `astrocytes_pii_redacted_total` | Counter | `bank_id`, `pii_type` |
-| `astrocytes_pii_rejected_total` | Counter | `bank_id`, `pii_type` |
-| `astrocytes_dlp_reflect_blocked_total` | Counter | `bank_id` |
-| `astrocytes_dlp_export_blocked_total` | Counter | `bank_id` |
-| `astrocytes_residency_violation_total` | Counter | `from_zone`, `to_zone` |
-| `astrocytes_compliance_forget_total` | Counter | `bank_id`, `regulation` |
-| `astrocytes_legal_hold_active` | Gauge | `bank_id` |
-| `astrocytes_classification_distribution` | Gauge | `bank_id`, `level` |
+| `astrocyte_classification_total` | Counter | `bank_id`, `level`, `classified_by` |
+| `astrocyte_pii_detected_total` | Counter | `bank_id`, `pii_type`, `action` |
+| `astrocyte_pii_redacted_total` | Counter | `bank_id`, `pii_type` |
+| `astrocyte_pii_rejected_total` | Counter | `bank_id`, `pii_type` |
+| `astrocyte_dlp_reflect_blocked_total` | Counter | `bank_id` |
+| `astrocyte_dlp_export_blocked_total` | Counter | `bank_id` |
+| `astrocyte_residency_violation_total` | Counter | `from_zone`, `to_zone` |
+| `astrocyte_compliance_forget_total` | Counter | `bank_id`, `regulation` |
+| `astrocyte_legal_hold_active` | Gauge | `bank_id` |
+| `astrocyte_classification_distribution` | Gauge | `bank_id`, `level` |
 
 ### 8.2 Governance dashboard
 

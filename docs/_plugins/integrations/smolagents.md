@@ -2,23 +2,23 @@
 
 Astrocytes memory as code-centric tools for HuggingFace Smolagents.
 
-**Module:** `astrocytes.integrations.smolagents`
+**Module:** `astrocyte.integrations.smolagents`
 **Pattern:** Tool protocol — name, description, inputs schema, output_type, forward()
 **Framework dependency:** `smolagents` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes smolagents
+pip install astrocyte smolagents
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.smolagents import astrocyte_smolagent_tools
+from astrocyte import Astrocyte
+from astrocyte.integrations.smolagents import astrocyte_smolagent_tools
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 tools = astrocyte_smolagent_tools(brain, bank_id="user-123")
 
 from smolagents import CodeAgent, HfApiModel

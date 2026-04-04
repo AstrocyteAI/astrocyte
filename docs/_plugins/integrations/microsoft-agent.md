@@ -2,23 +2,23 @@
 
 Astrocytes memory tools for the Microsoft Agent Framework.
 
-**Module:** `astrocytes.integrations.microsoft_agent`
+**Module:** `astrocyte.integrations.microsoft_agent`
 **Pattern:** OpenAI-compatible tool definitions + handler dispatch
 **Framework dependency:** `microsoft-agent-framework` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes microsoft-agent-framework
+pip install astrocyte microsoft-agent-framework
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.microsoft_agent import astrocyte_ms_agent_tools
+from astrocyte import Astrocyte
+from astrocyte.integrations.microsoft_agent import astrocyte_ms_agent_tools
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 tools, handlers = astrocyte_ms_agent_tools(brain, bank_id="user-123")
 
 from microsoft.agent_framework import Agent

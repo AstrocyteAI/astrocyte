@@ -2,23 +2,23 @@
 
 Astrocytes memory exposed as tool functions for Pydantic AI agents.
 
-**Module:** `astrocytes.integrations.pydantic_ai`
+**Module:** `astrocyte.integrations.pydantic_ai`
 **Pattern:** Agent tools — retain, recall, reflect as callable tool functions
 **Framework dependency:** `pydantic-ai` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes pydantic-ai
+pip install astrocyte pydantic-ai
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.pydantic_ai import astrocyte_tools
+from astrocyte import Astrocyte
+from astrocyte.integrations.pydantic_ai import astrocyte_tools
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 tools = astrocyte_tools(brain, bank_id="user-123")
 
 # Register with Pydantic AI agent

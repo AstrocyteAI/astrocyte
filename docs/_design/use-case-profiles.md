@@ -6,7 +6,7 @@ This document defines how the heterogeneity principle (Principle 4 from `design-
 
 ## 1. The heterogeneity principle
 
-**Biology:** Astrocytes differ by region and lineage. Fibrous astrocytes in white matter behave differently from protoplasmic astrocytes in gray matter. Reactive phenotypes (A1/A2) are context-dependent, not one-size-fits-all.
+**Biology:** Astrocytes differ by region and lineage. Fibrous astrocyte in white matter behave differently from protoplasmic astrocyte in gray matter. Reactive phenotypes (A1/A2) are context-dependent, not one-size-fits-all.
 
 **Engineering:** Different agent types need different memory governance. A customer support agent storing sensitive conversations has different needs than a coding assistant storing technical context. Rather than force every user to configure policies from scratch, Astrocytes ships **profiles** - named presets that configure the policy layer for common use cases.
 
@@ -17,7 +17,7 @@ This document defines how the heterogeneity principle (Principle 4 from `design-
 A profile is a named configuration overlay that sets defaults for the policy layer. Users can extend or override any setting.
 
 ```yaml
-# astrocytes.yaml
+# astrocyte.yaml
 profile: support                   # Load the "support" profile as baseline
 provider: mystique
 
@@ -26,7 +26,7 @@ homeostasis:
   recall_max_tokens: 8192          # Override the profile's default of 4096
 ```
 
-Profiles are shipped as YAML files inside the `astrocytes` package. They are not code - they are configuration presets.
+Profiles are shipped as YAML files inside the `astrocyte` package. They are not code - they are configuration presets.
 
 Resolution order: `profile defaults` → `user config` → `per-bank overrides`. Later values win.
 
@@ -276,7 +276,7 @@ observability:
 Users can define their own profiles as YAML files and reference them by path:
 
 ```yaml
-# astrocytes.yaml
+# astrocyte.yaml
 profile: ./profiles/healthcare-agent.yaml
 provider: mystique
 ```
@@ -290,7 +290,7 @@ Or inline, by omitting the `profile` key and configuring everything directly.
 A single Astrocytes instance can serve multiple banks with different profiles. This supports multi-tenant applications where each tenant (or agent) has different memory governance needs:
 
 ```yaml
-# astrocytes.yaml
+# astrocyte.yaml
 profile: support                   # Default for all banks
 provider: mystique
 

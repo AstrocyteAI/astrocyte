@@ -1,6 +1,6 @@
 # Implementation language strategy
 
-This document defines how Astrocytes is delivered as **two parallel implementations** in one repository - **Python** (`astrocytes-py/`) and **Rust** (`astrocytes-rs/`) - that are intended to be **drop-in replacements** for each other at the framework contract level (configuration, semantics, provider SPIs, and portable data shapes). Design documents under `docs/` apply to **both** unless a section says otherwise.
+This document defines how Astrocytes is delivered as **two parallel implementations** in one repository - **Python** (`astrocyte-py/`) and **Rust** (`astrocyte-rs/`) - that are intended to be **drop-in replacements** for each other at the framework contract level (configuration, semantics, provider SPIs, and portable data shapes). Design documents under `docs/` apply to **both** unless a section says otherwise.
 
 ---
 
@@ -8,10 +8,10 @@ This document defines how Astrocytes is delivered as **two parallel implementati
 
 | Codebase | Location | Role |
 |---|---|---|
-| **Python Astrocytes** | **`astrocytes-py/`** (Python package; PyPI name **`astrocytes`**) | PyPI distribution; LangChain/LangGraph, MCP, and the Python provider ecosystem. |
-| **Rust Astrocytes** | **`astrocytes-rs/`** | Native Rust library for services and embedders without a Python runtime. |
+| **Python Astrocytes** | **`astrocyte-py/`** (Python package; PyPI name **`astrocyte`**) | PyPI distribution; LangChain/LangGraph, MCP, and the Python provider ecosystem. |
+| **Rust Astrocytes** | **`astrocyte-rs/`** | Native Rust library for services and embedders without a Python runtime. |
 
-**Drop-in replacement** means: the same **logical** framework - users choose **one** implementation for a deployment. Shared YAML (or equivalent) profiles, the same policy and pipeline semantics, and the same provider entry-point model should allow swapping **`astrocytes`** for **`astrocytes-rs`** (or vice versa) without redesigning integrations, subject only to language-specific packaging and binding details documented per implementation.
+**Drop-in replacement** means: the same **logical** framework - users choose **one** implementation for a deployment. Shared YAML (or equivalent) profiles, the same policy and pipeline semantics, and the same provider entry-point model should allow swapping **`astrocyte`** for **`astrocyte-rs`** (or vice versa) without redesigning integrations, subject only to language-specific packaging and binding details documented per implementation.
 
 Conformance tests and versioned SPI contracts are the enforcement mechanism for parity, not a shared native extension inside the Python wheel.
 
@@ -23,7 +23,7 @@ Conformance tests and versioned SPI contracts are the enforcement mechanism for 
 
 The **Python** package targets **100% Python** (3.11+) first. This optimizes for ecosystem reach, contribution friction, and native `async/await` for I/O.
 
-The **Rust** crate matures in parallel under `astrocytes-rs/`, implementing the same contract with idiomatic Rust (`async`/tokio where appropriate).
+The **Rust** crate matures in parallel under `astrocyte-rs/`, implementing the same contract with idiomatic Rust (`async`/tokio where appropriate).
 
 ### Phase 2: Performance hardening
 
@@ -31,9 +31,9 @@ Each implementation optimizes **within its own language**: faster data paths, ti
 
 ---
 
-## 2. Hot paths in the Rust implementation (`astrocytes-rs`)
+## 2. Hot paths in the Rust implementation (`astrocyte-rs`)
 
-These components are strong candidates for native Rust in **`astrocytes-rs`** (CPU-bound, high frequency, or concurrency-sensitive):
+These components are strong candidates for native Rust in **`astrocyte-rs`** (CPU-bound, high frequency, or concurrency-sensitive):
 
 | Component | Why Rust | Latency impact |
 |---|---|---|
@@ -144,13 +144,13 @@ Mutable state (rate limiters, circuit breakers, dedup caches) lives in **explici
 
 Conceptual layout for each implementation directory. Names may evolve; the split between **orchestration**, **portable policy math**, and **providers** should stay stable.
 
-### Python (`astrocytes-py/`)
+### Python (`astrocyte-py/`)
 
-The import package remains **`astrocytes`**; it lives under `astrocytes-py/` in the repository.
+The import package remains **`astrocyte`**; it lives under `astrocyte-py/` in the repository.
 
 ```
-astrocytes-py/
-└── astrocytes/               # Python package (PyPI distribution name `astrocytes`)
+astrocyte-py/
+└── astrocyte/               # Python package (PyPI distribution name `astrocyte`)
     ├── __init__.py           # Public API
     ├── provider.py           # SPI protocols
     ├── types.py              # Portable DTOs
@@ -161,10 +161,10 @@ astrocytes-py/
     └── testing/              # Conformance suites
 ```
 
-### Rust (`astrocytes-rs/`)
+### Rust (`astrocyte-rs/`)
 
 ```
-astrocytes-rs/
+astrocyte-rs/
 ├── src/
 │   ├── lib.rs
 │   ├── provider/            # SPI traits
@@ -179,22 +179,22 @@ astrocytes-rs/
 
 ## 5. Packaging
 
-### Python (`astrocytes-py/`)
+### Python (`astrocyte-py/`)
 
-`pyproject.toml` lives at **`astrocytes-py/pyproject.toml`**; the distribution name on PyPI remains **`astrocytes`**.
+`pyproject.toml` lives at **`astrocyte-py/pyproject.toml`**; the distribution name on PyPI remains **`astrocyte`**.
 
 ```toml
-# pyproject.toml (at astrocytes-py/)
+# pyproject.toml (at astrocyte-py/)
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "astrocytes"
+name = "astrocyte"
 requires-python = ">=3.11"
 ```
 
-### Rust (`astrocytes-rs/`)
+### Rust (`astrocyte-rs/`)
 
 Standard **Cargo** crate layout; publish to **crates.io** when ready. Versioning tracks the same semantic SPI and policy contract as the Python package.
 

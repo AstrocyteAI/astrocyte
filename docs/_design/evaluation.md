@@ -15,9 +15,9 @@ Astrocytes ships built-in tools to measure memory quality, compare providers, an
 ## 2. Evaluation API
 
 ```python
-from astrocytes.eval import MemoryEvaluator
+from astrocyte.eval import MemoryEvaluator
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 evaluator = MemoryEvaluator(brain)
 
 # Run a standard benchmark suite
@@ -171,7 +171,7 @@ results = await evaluator.run_suite(
 Compare two providers side-by-side:
 
 ```python
-from astrocytes.eval import compare_providers
+from astrocyte.eval import compare_providers
 
 comparison = await compare_providers(
     configs=["config-pgvector.yaml", "config-mystique.yaml"],
@@ -237,17 +237,17 @@ class RegressionAlert:
 
 ```bash
 # Run a benchmark
-astrocytes eval --suite basic --config astrocytes.yaml
+astrocyte eval --suite basic --config astrocyte.yaml
 
 # Compare providers
-astrocytes eval compare --configs config-a.yaml config-b.yaml --suite accuracy
+astrocyte eval compare --configs config-a.yaml config-b.yaml --suite accuracy
 
 # Run custom suite
-astrocytes eval --suite ./my-suite.yaml --config astrocytes.yaml
+astrocyte eval --suite ./my-suite.yaml --config astrocyte.yaml
 
 # Output formats
-astrocytes eval --suite basic --format json > results.json
-astrocytes eval --suite basic --format table
+astrocyte eval --suite basic --format json > results.json
+astrocyte eval --suite basic --format table
 ```
 
 ---

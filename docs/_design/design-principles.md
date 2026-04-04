@@ -1,6 +1,6 @@
-# Design principles for “AI astrocytes” inspired by neuroscience
+# Design principles for “AI astrocyte” inspired by neuroscience
 
-This document translates recurring **organizing ideas** from astrocyte biology (see `neuroscience-astrocytes.md` and the review in `references/AstrocytesFromthePhysiologytotheDisease.pdf`) into **engineering metaphors** for AI systems. It is analogy, not a claim that software should mimic wetware literally.
+This document translates recurring **organizing ideas** from astrocyte biology (see `neuroscience-astrocyte.md` and the review in `references/AstrocytesFromthePhysiologytotheDisease.pdf`) into **engineering metaphors** for AI systems. It is analogy, not a claim that software should mimic wetware literally.
 
 ---
 
@@ -80,7 +80,7 @@ Avoid a single “god module” that tries to embody every slow regulatory funct
 
 ## 8. Inflammation analogue: escalation paths and de-escalation
 
-**Biology:** Microglial signals can push astrocytes into harmful reactive states; positive feedback can amplify damage.
+**Biology:** Microglial signals can push astrocyte into harmful reactive states; positive feedback can amplify damage.
 
 **Design idea:** When detectors fire (anomalies, repeated tool failures, policy near-violations), **escalate through controlled channels** instead of broadcasting alarm state everywhere. Provide **de-escalation**: timeouts, quarantine of bad trajectories, and return to homeostatic policies once the threat model clears - mirroring the need to avoid chronic A1-like lock-in.
 

@@ -24,7 +24,7 @@ Many teams use **credential gateways** or **enterprise proxies**: traffic must g
 **Two integration depths:**
 
 1. **Environment-only (no plugin)** - If standard proxy environment variables are enough (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, etc.), Astrocytes HTTP clients should honor them. No package install required.
-2. **Explicit plugin** - When a product needs **more** than env vars (combined CA bundles, dynamic discovery from a control API, `Proxy-Authorization`, container-specific paths), users install an **`astrocytes-transport-*`** package that implements the **Outbound Transport SPI**.
+2. **Explicit plugin** - When a product needs **more** than env vars (combined CA bundles, dynamic discovery from a control API, `Proxy-Authorization`, container-specific paths), users install an **`astrocyte-transport-*`** package that implements the **Outbound Transport SPI**.
 
 ---
 
@@ -51,7 +51,7 @@ class OutboundTransportProvider(Protocol):
         ...
 ```
 
-`HttpClientContext` is an internal builder type (e.g. wrapping `httpx.AsyncClient` construction) owned by the core. **Single choke point:** `astrocytes.http` (or equivalent) creates clients used by LLM provider adapters and pipeline HTTP; the configured transport runs **before** any `LLMProvider.complete()` / `embed()` call.
+`HttpClientContext` is an internal builder type (e.g. wrapping `httpx.AsyncClient` construction) owned by the core. **Single choke point:** `astrocyte.http` (or equivalent) creates clients used by LLM provider adapters and pipeline HTTP; the configured transport runs **before** any `LLMProvider.complete()` / `embed()` call.
 
 ### 3.2 Relationship to the LLM Provider SPI
 
@@ -64,12 +64,12 @@ Adapters may still set per-request auth headers **as today**; transport plugins 
 
 ## 4. Configuration
 
-Optional block in `astrocytes.yaml` (exact keys may evolve with implementation):
+Optional block in `astrocyte.yaml` (exact keys may evolve with implementation):
 
 ```yaml
 # Optional - omit for env-only proxy usage
 outbound_transport:
-  provider: onecli              # → astrocytes.outbound_transports:onecli
+  provider: onecli              # → astrocyte.outbound_transports:onecli
   config:
     gateway_url: http://localhost:10255
     api_key: ${ONECLI_API_KEY}
@@ -81,13 +81,13 @@ When `outbound_transport` is absent, the core relies on **standard library / htt
 
 ## 5. Discovery and packaging
 
-- **Entry point group:** `astrocytes.outbound_transports`
-- **Package naming:** `astrocytes-transport-{name}` (e.g. `astrocytes-transport-onecli` for a OneCLI-oriented adapter).
+- **Entry point group:** `astrocyte.outbound_transports`
+- **Package naming:** `astrocyte-transport-{name}` (e.g. `astrocyte-transport-onecli` for a OneCLI-oriented adapter).
 - **Registration example:**
 
 ```toml
-[project.entry-points."astrocytes.outbound_transports"]
-onecli = "astrocytes_transport_onecli:OneCLIOutboundTransport"
+[project.entry-points."astrocyte.outbound_transports"]
+onecli = "astrocyte_transport_onecli:OneCLIOutboundTransport"
 ```
 
 Community transports follow the same pattern as other Astrocytes plugins (see `ecosystem-and-packaging.md`).
@@ -97,7 +97,7 @@ Community transports follow the same pattern as other Astrocytes plugins (see `e
 ## 6. Policy layer and observability
 
 - **Barriers / PII / content policies** are unchanged. Transport affects **network path**, not what crosses memory barriers.
-- **OTel:** implementations may set low-cardinality attributes (e.g. `astrocytes.outbound_transport.provider = onecli`) on relevant spans. **Never** emit raw tokens, API keys, or decrypted secrets in logs or spans.
+- **OTel:** implementations may set low-cardinality attributes (e.g. `astrocyte.outbound_transport.provider = onecli`) on relevant spans. **Never** emit raw tokens, API keys, or decrypted secrets in logs or spans.
 
 ---
 

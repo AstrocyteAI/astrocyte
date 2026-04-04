@@ -154,12 +154,12 @@ In addition to the per-operation metrics in `policy-layer.md`, analytics exports
 
 | Metric | Type | Labels |
 |---|---|---|
-| `astrocytes_bank_health_score` | Gauge | `bank_id` |
-| `astrocytes_bank_memory_count` | Gauge | `bank_id`, `fact_type` |
-| `astrocytes_bank_stale_memory_percent` | Gauge | `bank_id` |
-| `astrocytes_bank_dedup_rate` | Gauge | `bank_id` |
-| `astrocytes_bank_recall_hit_rate` | Gauge | `bank_id` |
-| `astrocytes_noisy_agent_detected_total` | Counter | `bank_id`, `action` |
+| `astrocyte_bank_health_score` | Gauge | `bank_id` |
+| `astrocyte_bank_memory_count` | Gauge | `bank_id`, `fact_type` |
+| `astrocyte_bank_stale_memory_percent` | Gauge | `bank_id` |
+| `astrocyte_bank_dedup_rate` | Gauge | `bank_id` |
+| `astrocyte_bank_recall_hit_rate` | Gauge | `bank_id` |
+| `astrocyte_noisy_agent_detected_total` | Counter | `bank_id`, `action` |
 
 ---
 

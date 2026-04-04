@@ -16,7 +16,7 @@ A principal is an identity that accesses memory. Principals are **opaque strings
 
 ```python
 # Principal comes from caller context
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 ctx = AstrocyteContext(principal="agent:support-bot-1")
 
 hits = await brain.recall("user preferences", bank_id="user-123", context=ctx)
@@ -254,7 +254,7 @@ The default model in this document is **declarative grants** stored in Astrocyte
 
 - Invoked at the **same enforcement point** as §3.1 (before pipeline or engine).
 - Can **replace** or **chain with** config-based grants (product-defined modes - see `identity-and-external-policy.md` §4.2).
-- Implemented in optional packages such as **`astrocytes-access-policy-opa`**, **`astrocytes-access-policy-casbin`** (in-process [Casbin](https://casbin.org/)), or similar, not in the core library.
+- Implemented in optional packages such as **`astrocyte-access-policy-opa`**, **`astrocyte-access-policy-casbin`** (in-process [Casbin](https://casbin.org/)), or similar, not in the core library.
 
 **Authentication (IdP) examples:** [Casdoor](https://casdoor.org/), Keycloak, Auth0 - you validate credentials **outside** Astrocytes and pass a **principal**; see `identity-and-external-policy.md` §3.
 

@@ -2,14 +2,14 @@
 
 Astrocytes as a Model Context Protocol server for Claude Code, Cursor, Windsurf, and any MCP-capable agent.
 
-**Module:** `astrocytes.mcp`
+**Module:** `astrocyte.mcp`
 **Pattern:** MCP server with 6 tools — stdio or SSE transport
-**Framework dependency:** `fastmcp` (required for `astrocytes[mcp]`)
+**Framework dependency:** `fastmcp` (required for `astrocyte[mcp]`)
 
 ## Install
 
 ```bash
-pip install astrocytes[mcp]
+pip install astrocyte[mcp]
 ```
 
 ## Usage — Claude Code
@@ -19,8 +19,8 @@ pip install astrocytes[mcp]
 {
   "mcpServers": {
     "memory": {
-      "command": "astrocytes-mcp",
-      "args": ["--config", "astrocytes.yaml"]
+      "command": "astrocyte-mcp",
+      "args": ["--config", "astrocyte.yaml"]
     }
   }
 }
@@ -30,10 +30,10 @@ pip install astrocytes[mcp]
 
 ```bash
 # stdio (default — for local MCP clients)
-astrocytes-mcp --config astrocytes.yaml
+astrocyte-mcp --config astrocyte.yaml
 
 # SSE (for remote / shared / multi-agent)
-astrocytes-mcp --config astrocytes.yaml --transport sse --port 8080
+astrocyte-mcp --config astrocyte.yaml --transport sse --port 8080
 ```
 
 ## Tools exposed
@@ -50,7 +50,7 @@ astrocytes-mcp --config astrocytes.yaml --transport sse --port 8080
 ## Configuration
 
 ```yaml
-# astrocytes.yaml — MCP-specific settings
+# astrocyte.yaml — MCP-specific settings
 mcp:
   default_bank_id: personal        # Used when bank_id is omitted
   expose_reflect: true             # Toggle reflect tool (default: true)
@@ -74,7 +74,7 @@ The full Astrocytes policy layer applies: PII scanning, rate limits, quotas, tok
 
 ```
 Agent A (coding)  ──┐
-Agent B (review)  ──┼── astrocytes-mcp (SSE, port 8080) ── Provider
+Agent B (review)  ──┼── astrocyte-mcp (SSE, port 8080) ── Provider
 Agent C (testing) ──┘
 ```
 

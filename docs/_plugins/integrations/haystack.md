@@ -2,23 +2,23 @@
 
 Astrocytes as Retriever and Writer pipeline components for Haystack.
 
-**Module:** `astrocytes.integrations.haystack`
+**Module:** `astrocyte.integrations.haystack`
 **Pattern:** Pipeline components — `arun()` returning `{"documents": [...]}` or `{"written": N}`
 **Framework dependency:** `haystack-ai` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes haystack-ai
+pip install astrocyte haystack-ai
 ```
 
 ## Usage — Retriever
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.haystack import AstrocyteRetriever
+from astrocyte import Astrocyte
+from astrocyte.integrations.haystack import AstrocyteRetriever
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 retriever = AstrocyteRetriever(brain, bank_id="knowledge-base", top_k=10)
 
 # Use in a Haystack pipeline
@@ -38,7 +38,7 @@ docs = await retriever.arun("dark mode", top_k=5)
 ## Usage — Writer
 
 ```python
-from astrocytes.integrations.haystack import AstrocyteWriter, AstrocyteDocument
+from astrocyte.integrations.haystack import AstrocyteWriter, AstrocyteDocument
 
 writer = AstrocyteWriter(brain, bank_id="knowledge-base")
 

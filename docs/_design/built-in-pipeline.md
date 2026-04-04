@@ -8,7 +8,7 @@ For the two-tier architecture this pipeline serves, see `architecture-framework.
 
 ## 1. Purpose
 
-The built-in pipeline exists so that **users get a fully functional memory system** with just `astrocytes + a vector store adapter + an LLM adapter`. No commercial engine required.
+The built-in pipeline exists so that **users get a fully functional memory system** with just `astrocyte + a vector store adapter + an LLM adapter`. No commercial engine required.
 
 It handles: chunking, entity extraction, embedding generation, multi-strategy retrieval, fusion, reranking, synthesis, and basic consolidation. Retrieval providers (Tier 1) handle the indexed CRUD underneath.
 

@@ -104,13 +104,13 @@ Emit a structured log entry.
 For in-process hooks (not available in MCP server or the Rust implementation):
 
 ```python
-from astrocytes import Astrocyte, HookEvent
+from astrocyte import Astrocyte, HookEvent
 
 async def my_custom_hook(event: HookEvent) -> None:
     if event.type == "on_pii_detected":
         await alert_security_team(event.data)
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 brain.register_hook("on_pii_detected", my_custom_hook)
 ```
 

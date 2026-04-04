@@ -192,7 +192,7 @@ lifecycle:
   audit:
     enabled: true
     sink: file                           # "file" | "webhook" | "otel_only"
-    file_path: ./audit/astrocytes.audit.jsonl
+    file_path: ./audit/astrocyte.audit.jsonl
     retention_days: 2555                 # 7 years for compliance
 ```
 

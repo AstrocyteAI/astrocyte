@@ -244,7 +244,7 @@ Entity extraction, BM25 document store, and similar steps consume **`message_tex
 
 - **PII / barriers:** Media parts may be **excluded** from regex PII scans; optional **future** integration with vision PII models (out of scope for this SPI).
 - **Token budgets:** Token estimation for multimodal requests is **provider-dependent**; adapters may return **approximate** `usage` or mark `input_tokens` as partial.
-- **OTel:** Span attributes `astrocytes.llm.modalities` = `image,audio` (low cardinality).
+- **OTel:** Span attributes `astrocyte.llm.modalities` = `image,audio` (low cardinality).
 
 ---
 

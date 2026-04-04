@@ -2,23 +2,23 @@
 
 Astrocytes memory for real-time voice and video AI agents built with LiveKit.
 
-**Module:** `astrocytes.integrations.livekit`
+**Module:** `astrocyte.integrations.livekit`
 **Pattern:** Session lifecycle memory — pre-fetch context, mid-session recall, post-session retain
 **Framework dependency:** `livekit-agents` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes livekit-agents
+pip install astrocyte livekit-agents
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.livekit import AstrocyteLiveKitMemory
+from astrocyte import Astrocyte
+from astrocyte.integrations.livekit import AstrocyteLiveKitMemory
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 memory = AstrocyteLiveKitMemory(
     brain,
     bank_id="caller-db",

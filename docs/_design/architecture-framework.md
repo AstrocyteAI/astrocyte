@@ -4,7 +4,7 @@ This document defines the layer boundaries, composition model, and relationship 
 
 **AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); Astrocytes consumes a **principal** string. Deciding **what** that principal may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable grants and optional external policy engines - see section 4.6, `access-control.md`, and `identity-and-external-policy.md`.
 
-For the neuroscience foundations, see `neuroscience-astrocytes.md`. For the design principles these layers implement, see `design-principles.md`.
+For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the design principles these layers implement, see `design-principles.md`.
 
 ---
 
@@ -42,7 +42,7 @@ That boundary is the same “slot” many curricula label the **Context & Memory
 
 **Sandbox awareness:** Execution sandboxes (containers, gVisor, microVMs, WASM, OS permission fences) limit **code** isolation; they do not by themselves stop **memory APIs** from becoming an **exfiltration** path if recall is mis-scoped or egress is wide open. Astrocytes is **sandbox-aware** in the sense of binding **principal + bank + environment/sandbox context** consistently and documenting **Backend for Frontend (BFF)** and **network** expectations—see `sandbox-awareness-and-exfiltration.md`.
 
-**Implementation language:** Astrocytes ships as **two parallel implementations** in this repository, intended as **drop-in replacements** at the framework contract: **`astrocytes-py/`** (Python, PyPI package `astrocytes`) and **`astrocytes-rs/`** (Rust). Portable DTOs, config, and SPI versioning keep them aligned. See `implementation-language-strategy.md` for constraints and packaging.
+**Implementation language:** Astrocytes ships as **two parallel implementations** in this repository, intended as **drop-in replacements** at the framework contract: **`astrocyte-py/`** (Python, PyPI package `astrocyte`) and **`astrocyte-rs/`** (Rust). Portable DTOs, config, and SPI versioning keep them aligned. See `implementation-language-strategy.md` for constraints and packaging.
 
 Astrocytes is the **tripartite synapse** (Principle 2): an active mediator at the exchange between agents and memory, responsible for both the intelligence pipeline and continuous environmental stewardship.
 
@@ -258,7 +258,7 @@ Astrocytes exposes an **optional** `OutboundTransportProvider` interface applied
 
 **Authentication (AuthN)** - Astrocytes is **not** an identity provider. Proving identity (OIDC, SAML, API keys, workload identity, sessions) completes **outside** the framework. The application passes an **opaque `principal`** on `AstrocyteContext` after your middleware or gateway validates credentials (`access-control.md` §7). Open-source IAMs such as **[Casdoor](https://casdoor.org/)** fit here: you run Casdoor, validate tokens, map claims to `user:…` / `agent:…` strings.
 
-**Authorization (AuthZ)** - Who may **read / write / forget / administer** which **memory bank** is decided by Astrocytes: default **declarative grants** in config, enforced before pipeline or engine calls. Teams may add an optional **`AccessPolicyProvider`** so allow/deny is delegated to remote PDPs (OPA, Cerbos, …) or **in-process [Casbin](https://casbin.org/)** via **`astrocytes-access-policy-*`** packages; the framework still owns **enforcement order** and **audit events**. Full integration patterns: `identity-and-external-policy.md`.
+**Authorization (AuthZ)** - Who may **read / write / forget / administer** which **memory bank** is decided by Astrocytes: default **declarative grants** in config, enforced before pipeline or engine calls. Teams may add an optional **`AccessPolicyProvider`** so allow/deny is delegated to remote PDPs (OPA, Cerbos, …) or **in-process [Casbin](https://casbin.org/)** via **`astrocyte-access-policy-*`** packages; the framework still owns **enforcement order** and **audit events**. Full integration patterns: `identity-and-external-policy.md`.
 
 ---
 
@@ -363,7 +363,7 @@ When a caller does `brain.recall("What do we know about Calvin?")`, they don't k
 **Tier 1 (Retrieval providers):** The user configures which vector store and optional graph / document stores to use (dedicated DBs **or** warehouse/lake serving surfaces via adapters). Astrocytes' built-in pipeline manages them.
 
 ```yaml
-# astrocytes.yaml - Tier 1 example
+# astrocyte.yaml - Tier 1 example
 # provider_tier: storage - legacy keyword for Tier 1 (Retrieval SPI + built-in pipeline), not blob storage
 provider_tier: storage
 vector_store: pgvector
@@ -377,7 +377,7 @@ graph_store_config:
 **Tier 2 (Memory Engine Providers):** The memory engine manages its own storage internally. Users configure database choices through the memory engine's own config, not through Astrocytes.
 
 ```yaml
-# astrocytes.yaml - Tier 2 example
+# astrocyte.yaml - Tier 2 example
 provider_tier: engine
 provider: mystique
 provider_config:
@@ -398,7 +398,7 @@ A framework that is just a protocol definition + entry points will be skipped. T
 
 ### 7.1 Intelligence value (built-in pipeline)
 
-Users get a **fully functional memory system** with just `astrocytes + astrocytes-pgvector`:
+Users get a **fully functional memory system** with just `astrocyte + astrocyte-pgvector`:
 
 | Capability | Built-in pipeline (free) |
 |---|---|
@@ -458,39 +458,39 @@ These capabilities exist at the **framework layer** - they apply regardless of w
 
 | Component | Package | License |
 |---|---|---|
-| Public API, DTOs, policy layer | `astrocytes` | Apache 2.0 |
-| Built-in intelligence pipeline | `astrocytes` | Apache 2.0 |
-| Design docs and principles | `astrocytes` (this repo) | Apache 2.0 |
-| Retrieval SPI + Memory Engine SPI + LLM SPI + Outbound Transport SPI + optional AccessPolicy SPI | `astrocytes` | Apache 2.0 |
-| Use-case profiles | `astrocytes` | Apache 2.0 |
-| OTel instrumentation | `astrocytes` | Apache 2.0 |
+| Public API, DTOs, policy layer | `astrocyte` | Apache 2.0 |
+| Built-in intelligence pipeline | `astrocyte` | Apache 2.0 |
+| Design docs and principles | `astrocyte` (this repo) | Apache 2.0 |
+| Retrieval SPI + Memory Engine SPI + LLM SPI + Outbound Transport SPI + optional AccessPolicy SPI | `astrocyte` | Apache 2.0 |
+| Use-case profiles | `astrocyte` | Apache 2.0 |
+| OTel instrumentation | `astrocyte` | Apache 2.0 |
 | **Retrieval providers (Tier 1)** | | |
-| pgvector adapter | `astrocytes-pgvector` | Apache 2.0 |
-| Pinecone adapter | `astrocytes-pinecone` | Apache 2.0 |
-| Qdrant adapter | `astrocytes-qdrant` | Apache 2.0 |
-| Weaviate adapter | `astrocytes-weaviate` | Apache 2.0 |
-| Neo4j graph adapter | `astrocytes-neo4j` | Apache 2.0 |
-| Memgraph graph adapter | `astrocytes-memgraph` | Apache 2.0 |
+| pgvector adapter | `astrocyte-pgvector` | Apache 2.0 |
+| Pinecone adapter | `astrocyte-pinecone` | Apache 2.0 |
+| Qdrant adapter | `astrocyte-qdrant` | Apache 2.0 |
+| Weaviate adapter | `astrocyte-weaviate` | Apache 2.0 |
+| Neo4j graph adapter | `astrocyte-neo4j` | Apache 2.0 |
+| Memgraph graph adapter | `astrocyte-memgraph` | Apache 2.0 |
 | **Memory engine providers (Tier 2)** | | |
-| Mystique memory engine provider | `astrocytes-mystique` | Proprietary |
-| Mem0 memory engine provider | `astrocytes-mem0` | Apache 2.0 |
-| Zep memory engine provider | `astrocytes-zep` | Apache 2.0 |
-| Letta memory engine provider | `astrocytes-letta` | Apache 2.0 |
-| Cognee memory engine provider | `astrocytes-cognee` | Apache 2.0 |
+| Mystique memory engine provider | `astrocyte-mystique` | Proprietary |
+| Mem0 memory engine provider | `astrocyte-mem0` | Apache 2.0 |
+| Zep memory engine provider | `astrocyte-zep` | Apache 2.0 |
+| Letta memory engine provider | `astrocyte-letta` | Apache 2.0 |
+| Cognee memory engine provider | `astrocyte-cognee` | Apache 2.0 |
 | **LLM providers** | | |
-| LiteLLM adapter | `astrocytes-litellm` | Apache 2.0 |
-| OpenAI direct adapter | `astrocytes-openai` | Apache 2.0 |
-| Anthropic direct adapter | `astrocytes-anthropic` | Apache 2.0 |
+| LiteLLM adapter | `astrocyte-litellm` | Apache 2.0 |
+| OpenAI direct adapter | `astrocyte-openai` | Apache 2.0 |
+| Anthropic direct adapter | `astrocyte-anthropic` | Apache 2.0 |
 | **Outbound transport** | | |
-| Example: gateway-specific transport adapter | `astrocytes-transport-{name}` | Apache 2.0 |
+| Example: gateway-specific transport adapter | `astrocyte-transport-{name}` | Apache 2.0 |
 | **Memory export sink (warehouse / lake / open tables)** | | |
-| Example: Iceberg / warehouse sink adapter | `astrocytes-sink-{target}` | Apache 2.0 |
+| Example: Iceberg / warehouse sink adapter | `astrocyte-sink-{target}` | Apache 2.0 |
 | **Access policy (external PDP)** | | |
-| Example: OPA / Cerbos adapters | `astrocytes-access-policy-{name}` | Apache 2.0 |
+| Example: OPA / Cerbos adapters | `astrocyte-access-policy-{name}` | Apache 2.0 |
 | **Identity helpers (optional)** | | |
-| Example: web framework → principal wiring | `astrocytes-identity-{framework}` | Apache 2.0 |
+| Example: web framework → principal wiring | `astrocyte-identity-{framework}` | Apache 2.0 |
 
-Community memory and LLM providers follow the naming convention `astrocytes-{provider}`. Outbound transport plugins use **`astrocytes-transport-{name}`** and the `astrocytes.outbound_transports` entry point group (see `ecosystem-and-packaging.md` and `outbound-transport.md`). Memory export sink packages use **`astrocytes-sink-{target}`** and `astrocytes.memory_export_sinks` (see `memory-export-sink.md` and `ecosystem-and-packaging.md` §2.6 / §3.5). External access policy plugins use **`astrocytes-access-policy-{name}`** and `astrocytes.access_policies` (see `identity-and-external-policy.md`).
+Community memory and LLM providers follow the naming convention `astrocyte-{provider}`. Outbound transport plugins use **`astrocyte-transport-{name}`** and the `astrocyte.outbound_transports` entry point group (see `ecosystem-and-packaging.md` and `outbound-transport.md`). Memory export sink packages use **`astrocyte-sink-{target}`** and `astrocyte.memory_export_sinks` (see `memory-export-sink.md` and `ecosystem-and-packaging.md` §2.6 / §3.5). External access policy plugins use **`astrocyte-access-policy-{name}`** and `astrocyte.access_policies` (see `identity-and-external-policy.md`).
 
 ---
 
@@ -500,9 +500,9 @@ The two-tier architecture creates a natural upgrade path:
 
 | Stage | Stack | Cost |
 |---|---|---|
-| Getting started | `astrocytes` + `astrocytes-pgvector` | Free |
-| Add graph | `astrocytes` + `astrocytes-pgvector` + `astrocytes-neo4j` | Free |
-| Want better retrieval | `astrocytes` + `astrocytes-mystique` | Paid |
+| Getting started | `astrocyte` + `astrocyte-pgvector` | Free |
+| Add graph | `astrocyte` + `astrocyte-pgvector` + `astrocyte-neo4j` | Free |
+| Want better retrieval | `astrocyte` + `astrocyte-mystique` | Paid |
 
 **What makes Mystique worth paying for** (beyond the free built-in pipeline):
 

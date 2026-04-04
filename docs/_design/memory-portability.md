@@ -126,13 +126,13 @@ created_at: "2026-01-15T00:00:00Z"
 
 ```bash
 # 1. Export from current provider
-astrocytes export --bank user-123 --output ./backup.ama.jsonl
+astrocyte export --bank user-123 --output ./backup.ama.jsonl
 
 # 2. Update config to new provider
-# Edit astrocytes.yaml: provider: mem0 → provider: mystique
+# Edit astrocyte.yaml: provider: mem0 → provider: mystique
 
 # 3. Import into new provider
-astrocytes import --bank user-123 --input ./backup.ama.jsonl --re-embed
+astrocyte import --bank user-123 --input ./backup.ama.jsonl --re-embed
 ```
 
 ### 4.2 Tier switch (e.g., Tier 1 pgvector → Tier 2 Mystique)
@@ -181,9 +181,9 @@ Options on import:
 ## 7. CLI support
 
 ```
-astrocytes export --bank <bank_id> [--output <path>] [--include-embeddings] [--include-entities]
-astrocytes import --bank <bank_id> --input <path> [--on-conflict skip|overwrite|error] [--re-embed] [--re-extract-entities]
-astrocytes migrate --from-config <old.yaml> --to-config <new.yaml> [--banks <bank1,bank2,...>]
+astrocyte export --bank <bank_id> [--output <path>] [--include-embeddings] [--include-entities]
+astrocyte import --bank <bank_id> --input <path> [--on-conflict skip|overwrite|error] [--re-embed] [--re-extract-entities]
+astrocyte migrate --from-config <old.yaml> --to-config <new.yaml> [--banks <bank1,bank2,...>]
 ```
 
 The `migrate` command combines export + config switch + import in one step.

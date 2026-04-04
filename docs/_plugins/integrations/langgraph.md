@@ -2,23 +2,23 @@
 
 Astrocytes as a memory store for LangGraph agents and LangChain applications.
 
-**Module:** `astrocytes.integrations.langgraph`
+**Module:** `astrocyte.integrations.langgraph`
 **Pattern:** Memory store — save_context, search, load_memory_variables
 **Framework dependency:** `langgraph` (optional — integration works without it)
 
 ## Install
 
 ```bash
-pip install astrocytes langgraph
+pip install astrocyte langgraph
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.langgraph import AstrocyteMemory
+from astrocyte import Astrocyte
+from astrocyte.integrations.langgraph import AstrocyteMemory
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 memory = AstrocyteMemory(brain, bank_id="user-123")
 
 # Save interaction context

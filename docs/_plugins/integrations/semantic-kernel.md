@@ -2,23 +2,23 @@
 
 Astrocytes as a kernel plugin for Microsoft Semantic Kernel.
 
-**Module:** `astrocytes.integrations.semantic_kernel`
+**Module:** `astrocyte.integrations.semantic_kernel`
 **Pattern:** Plugin with kernel functions — retain, recall, reflect, forget methods
 **Framework dependency:** `semantic-kernel` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes semantic-kernel
+pip install astrocyte semantic-kernel
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.semantic_kernel import AstrocytePlugin
+from astrocyte import Astrocyte
+from astrocyte.integrations.semantic_kernel import AstrocytePlugin
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 plugin = AstrocytePlugin(brain, bank_id="user-123")
 
 # Register with Semantic Kernel

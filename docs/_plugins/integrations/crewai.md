@@ -2,23 +2,23 @@
 
 Astrocytes as shared crew memory and per-agent memory for CrewAI applications.
 
-**Module:** `astrocytes.integrations.crewai`
+**Module:** `astrocyte.integrations.crewai`
 **Pattern:** Crew/agent memory — save, search, reset, per-agent banks
 **Framework dependency:** `crewai` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes crewai
+pip install astrocyte crewai
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.crewai import AstrocyteCrewMemory
+from astrocyte import Astrocyte
+from astrocyte.integrations.crewai import AstrocyteCrewMemory
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 
 # Shared crew memory + per-agent banks
 memory = AstrocyteCrewMemory(

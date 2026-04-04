@@ -2,24 +2,24 @@
 
 Astrocytes memory as OpenAI function-calling tool definitions with async handler dispatch.
 
-**Module:** `astrocytes.integrations.openai_agents`
+**Module:** `astrocyte.integrations.openai_agents`
 **Pattern:** Function calling — OpenAI-format tool schemas + handler functions
 **Framework dependency:** None (produces plain dicts)
 
 ## Install
 
 ```bash
-pip install astrocytes openai
+pip install astrocyte openai
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.openai_agents import astrocyte_tool_definitions
+from astrocyte import Astrocyte
+from astrocyte.integrations.openai_agents import astrocyte_tool_definitions
 import json
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 tools, handlers = astrocyte_tool_definitions(brain, bank_id="user-123")
 
 # Pass tools to OpenAI API

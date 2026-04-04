@@ -34,5 +34,5 @@ This note is for **educators**, **certification authors**, and **architects** wh
 ## External links
 
 - [Applied AI Fellowship](https://calvinchengx.github.io/applied-ai/) — syllabus, stack diagram, glossary.
-- [Astrocytes repository](https://github.com/AstrocyteAI/astrocytes) — source and releases.
+- [Astrocytes repository](https://github.com/AstrocyteAI/astrocyte) — source and releases.
 

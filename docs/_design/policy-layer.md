@@ -180,7 +180,7 @@ signal_quality:
 
 ## 4. Escalation and degraded mode (Principle 8)
 
-**Biology:** Microglial signals can push astrocytes into reactive states; positive feedback can amplify damage. De-escalation is essential.
+**Biology:** Microglial signals can push astrocyte into reactive states; positive feedback can amplify damage. De-escalation is essential.
 
 **Engineering:** When the memory backend is unhealthy or unavailable, escalate through controlled channels. Provide de-escalation once the backend recovers.
 
@@ -236,31 +236,31 @@ This mirrors the biological need to avoid chronic A1-like reactive lock-in. The 
 Every operation gets an OTel span with standardized attributes:
 
 ```
-astrocytes.retain
-  ├── astrocytes.bank_id
-  ├── astrocytes.provider
-  ├── astrocytes.content_bytes
-  ├── astrocytes.pii_detected (bool)
-  ├── astrocytes.dedup_hit (bool)
-  ├── astrocytes.policy.actions_taken (list)
+astrocyte.retain
+  ├── astrocyte.bank_id
+  ├── astrocyte.provider
+  ├── astrocyte.content_bytes
+  ├── astrocyte.pii_detected (bool)
+  ├── astrocyte.dedup_hit (bool)
+  ├── astrocyte.policy.actions_taken (list)
   └── provider.retain (child span, provider's own timing)
 
-astrocytes.recall
-  ├── astrocytes.bank_id
-  ├── astrocytes.provider
-  ├── astrocytes.query_tokens
-  ├── astrocytes.result_count
-  ├── astrocytes.result_tokens
-  ├── astrocytes.truncated (bool)
-  ├── astrocytes.fallback_used (bool)
+astrocyte.recall
+  ├── astrocyte.bank_id
+  ├── astrocyte.provider
+  ├── astrocyte.query_tokens
+  ├── astrocyte.result_count
+  ├── astrocyte.result_tokens
+  ├── astrocyte.truncated (bool)
+  ├── astrocyte.fallback_used (bool)
   └── provider.recall (child span)
 
-astrocytes.reflect
-  ├── astrocytes.bank_id
-  ├── astrocytes.provider
-  ├── astrocytes.native_reflect (bool, or fallback)
-  ├── astrocytes.llm_tokens_used (if fallback)
-  └── provider.reflect OR astrocytes.fallback_reflect (child span)
+astrocyte.reflect
+  ├── astrocyte.bank_id
+  ├── astrocyte.provider
+  ├── astrocyte.native_reflect (bool, or fallback)
+  ├── astrocyte.llm_tokens_used (if fallback)
+  └── provider.reflect OR astrocyte.fallback_reflect (child span)
 ```
 
 Spans propagate the caller's trace context, so Astrocytes operations appear in the agent's distributed trace.
@@ -269,16 +269,16 @@ Spans propagate the caller's trace context, so Astrocytes operations appear in t
 
 | Metric | Type | Labels |
 |---|---|---|
-| `astrocytes_retain_total` | Counter | `bank_id`, `provider`, `status` |
-| `astrocytes_recall_total` | Counter | `bank_id`, `provider`, `status` |
-| `astrocytes_reflect_total` | Counter | `bank_id`, `provider`, `fallback` |
-| `astrocytes_retain_duration_seconds` | Histogram | `bank_id`, `provider` |
-| `astrocytes_recall_duration_seconds` | Histogram | `bank_id`, `provider` |
-| `astrocytes_pii_detected_total` | Counter | `bank_id`, `action` |
-| `astrocytes_dedup_total` | Counter | `bank_id`, `action` |
-| `astrocytes_circuit_breaker_state` | Gauge | `provider` (0=closed, 1=open, 2=half-open) |
-| `astrocytes_rate_limit_rejections_total` | Counter | `bank_id`, `operation` |
-| `astrocytes_token_budget_truncations_total` | Counter | `bank_id`, `operation` |
+| `astrocyte_retain_total` | Counter | `bank_id`, `provider`, `status` |
+| `astrocyte_recall_total` | Counter | `bank_id`, `provider`, `status` |
+| `astrocyte_reflect_total` | Counter | `bank_id`, `provider`, `fallback` |
+| `astrocyte_retain_duration_seconds` | Histogram | `bank_id`, `provider` |
+| `astrocyte_recall_duration_seconds` | Histogram | `bank_id`, `provider` |
+| `astrocyte_pii_detected_total` | Counter | `bank_id`, `action` |
+| `astrocyte_dedup_total` | Counter | `bank_id`, `action` |
+| `astrocyte_circuit_breaker_state` | Gauge | `provider` (0=closed, 1=open, 2=half-open) |
+| `astrocyte_rate_limit_rejections_total` | Counter | `bank_id`, `operation` |
+| `astrocyte_token_budget_truncations_total` | Counter | `bank_id`, `operation` |
 
 ### 5.3 Structured logging
 
@@ -286,7 +286,7 @@ All policy actions emit structured log entries (JSON) with consistent fields:
 
 ```json
 {
-  "event": "astrocytes.policy.pii_redacted",
+  "event": "astrocyte.policy.pii_redacted",
   "bank_id": "user-123",
   "provider": "mem0",
   "pattern": "email",
@@ -304,7 +304,7 @@ Users who switch memory providers keep their dashboards, alerts, and log queries
 All policies are configured under one config file and can be overridden per-bank:
 
 ```yaml
-# astrocytes.yaml
+# astrocyte.yaml
 provider: mystique
 llm_provider: anthropic
 

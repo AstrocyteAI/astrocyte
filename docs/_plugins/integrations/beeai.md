@@ -2,23 +2,23 @@
 
 Astrocytes memory tools for IBM's BeeAI Agent Framework.
 
-**Module:** `astrocytes.integrations.beeai`
+**Module:** `astrocyte.integrations.beeai`
 **Pattern:** Tool with `run()` method — name, description, input_schema, async run()
 **Framework dependency:** `beeai-framework` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes beeai-framework
+pip install astrocyte beeai-framework
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.beeai import astrocyte_bee_tools
+from astrocyte import Astrocyte
+from astrocyte.integrations.beeai import astrocyte_bee_tools
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 tools = astrocyte_bee_tools(brain, bank_id="user-123")
 
 from beeai import BeeAgent

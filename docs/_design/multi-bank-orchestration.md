@@ -93,7 +93,7 @@ hits = await brain.recall(
 
 ### 3.3 Strategy options
 
-Implemented in `astrocytes-py`: `Astrocyte.recall(..., banks=[...], strategy=...)` accepts a string (`"parallel"` \| `"cascade"` \| `"first_match"`) or a `MultiBankStrategy` instance. Omitting `strategy` with multiple banks keeps **parallel** merge (backward compatible). Cross-bank deduplication keeps the **highest-scoring** hit per distinct text.
+Implemented in `astrocyte-py`: `Astrocyte.recall(..., banks=[...], strategy=...)` accepts a string (`"parallel"` \| `"cascade"` \| `"first_match"`) or a `MultiBankStrategy` instance. Omitting `strategy` with multiple banks keeps **parallel** merge (backward compatible). Cross-bank deduplication keeps the **highest-scoring** hit per distinct text.
 
 ```python
 @dataclass
@@ -211,11 +211,11 @@ When `brain.recall(bank_id="user-123")` is called and the bank doesn't exist, th
 
 ## 8. Hybrid Tier-2 engine + Tier-1 pipeline (same `bank_id`)
 
-When both a hosted **engine** and a local **pipeline** (vector / graph / document path) should answer for the **same** logical bank, use `HybridEngineProvider` (`astrocytes-py`). It implements `EngineProvider`: `recall` fans out to both backends, applies optional per-source weights, dedupes by text (highest score wins), then ranks and applies the request token budget. `retain` targets exactly one backend via `retain_target="engine"` or `"pipeline"`.
+When both a hosted **engine** and a local **pipeline** (vector / graph / document path) should answer for the **same** logical bank, use `HybridEngineProvider` (`astrocyte-py`). It implements `EngineProvider`: `recall` fans out to both backends, applies optional per-source weights, dedupes by text (highest score wins), then ranks and applies the request token budget. `retain` targets exactly one backend via `retain_target="engine"` or `"pipeline"`.
 
 ```python
-from astrocytes import Astrocyte, HybridEngineProvider
-from astrocytes.pipeline.orchestrator import PipelineOrchestrator
+from astrocyte import Astrocyte, HybridEngineProvider
+from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 
 engine = ...  # Tier-2 EngineProvider
 pipeline = PipelineOrchestrator(vector_store=..., llm_provider=...)
@@ -226,7 +226,7 @@ hybrid = HybridEngineProvider(
     engine_recall_weight=1.0,
     pipeline_recall_weight=1.0,
 )
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 brain.set_engine_provider(hybrid)
 ```
 

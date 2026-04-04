@@ -34,7 +34,7 @@ This document specifies the **durable export / analytical persistence plane** fo
 
 ## 3. Event taxonomy (normative sketch)
 
-Sinks consume a **versioned discriminated union** of events. The exact names belong in shared DTOs (`astrocytes.types`); this list is the **design contract**.
+Sinks consume a **versioned discriminated union** of events. The exact names belong in shared DTOs (`astrocyte.types`); this list is the **design contract**.
 
 | Event kind (illustrative) | When emitted | Typical payload fields |
 |---------------------------|-------------|------------------------|
@@ -69,7 +69,7 @@ memory_export_sinks:
   - provider: iceberg
     config:
       catalog_uri: thrift://metastore:9083
-      database: astrocytes
+      database: astrocyte
       table: memory_events
       # embeddings: false   # default: do not replicate vectors to lake
 ```
@@ -80,12 +80,12 @@ Multiple sinks are allowed (for example staging + compliance archive).
 
 ## 6. Implementation status
 
-The **Memory Export Sink** SPI is a **documented framework extension**. Core `astrocytes-py` / `astrocytes-rs` wiring (discovery, hook integration, conformance tests) may land incrementally; until then, deployers can use **`event-hooks.md`** webhooks toward custom ingestors that honor this event shape.
+The **Memory Export Sink** SPI is a **documented framework extension**. Core `astrocyte-py` / `astrocyte-rs` wiring (discovery, hook integration, conformance tests) may land incrementally; until then, deployers can use **`event-hooks.md`** webhooks toward custom ingestors that honor this event shape.
 
 ---
 
 ## 7. Naming and packaging
 
-Community packages SHOULD use the prefix **`astrocytes-sink-`** (for example `astrocytes-sink-iceberg`, `astrocytes-sink-kafka`) — see [`ecosystem-and-packaging.md`](../_plugins/ecosystem-and-packaging.md).
+Community packages SHOULD use the prefix **`astrocyte-sink-`** (for example `astrocyte-sink-iceberg`, `astrocyte-sink-kafka`) — see [`ecosystem-and-packaging.md`](../_plugins/ecosystem-and-packaging.md).
 
-Register implementations under the entry point group **`astrocytes.memory_export_sinks`** (specified alongside other groups in that document).
+Register implementations under the entry point group **`astrocyte.memory_export_sinks`** (specified alongside other groups in that document).

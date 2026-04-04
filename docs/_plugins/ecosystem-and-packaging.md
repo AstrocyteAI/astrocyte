@@ -10,15 +10,15 @@ Astrocytes follows an **open-core** distribution model with a two-tier provider 
 
 | Layer | License | Value |
 |---|---|---|
-| `astrocytes` (core framework) | Apache 2.0 | Built-in intelligence pipeline, policy layer, profiles, observability |
-| `astrocytes-{storage}` (Tier 1 adapters; package slug) | Apache 2.0 | Retrieval Provider SPI - vector DBs, graph DBs, document stores |
-| `astrocytes-{engine}` (Tier 2 community) | Apache 2.0 | Community-maintained adapters for full-stack memory engines |
-| `astrocytes-{llm}` (LLM adapters) | Apache 2.0 | LLM provider adapters for pipeline + policy operations |
-| `astrocytes-transport-{name}` (optional) | Apache 2.0 | Outbound HTTP/TLS/proxy plugins for credential gateways and enterprise proxies |
-| `astrocytes-sink-{target}` (optional) | Apache 2.0 | Memory export sink — warehouses, lakehouses, Iceberg/Delta/Parquet/Kafka, … |
-| `astrocytes-access-policy-{name}` (optional) | Apache 2.0 | External PDP adapters (OPA, Cerbos, …) for `AccessPolicyProvider` |
-| `astrocytes-identity-{framework}` (optional) | Apache 2.0 | Thin helpers mapping auth middleware / JWT claims to Astrocyte principals |
-| `astrocytes-mystique` (Tier 2 premium) | Proprietary | Best-in-class engine with native reflect, dispositions, consolidation |
+| `astrocyte` (core framework) | Apache 2.0 | Built-in intelligence pipeline, policy layer, profiles, observability |
+| `astrocyte-{storage}` (Tier 1 adapters; package slug) | Apache 2.0 | Retrieval Provider SPI - vector DBs, graph DBs, document stores |
+| `astrocyte-{engine}` (Tier 2 community) | Apache 2.0 | Community-maintained adapters for full-stack memory engines |
+| `astrocyte-{llm}` (LLM adapters) | Apache 2.0 | LLM provider adapters for pipeline + policy operations |
+| `astrocyte-transport-{name}` (optional) | Apache 2.0 | Outbound HTTP/TLS/proxy plugins for credential gateways and enterprise proxies |
+| `astrocyte-sink-{target}` (optional) | Apache 2.0 | Memory export sink — warehouses, lakehouses, Iceberg/Delta/Parquet/Kafka, … |
+| `astrocyte-access-policy-{name}` (optional) | Apache 2.0 | External PDP adapters (OPA, Cerbos, …) for `AccessPolicyProvider` |
+| `astrocyte-identity-{framework}` (optional) | Apache 2.0 | Thin helpers mapping auth middleware / JWT claims to Astrocyte principals |
+| `astrocyte-mystique` (Tier 2 premium) | Proprietary | Best-in-class engine with native reflect, dispositions, consolidation |
 
 **The key insight:** The open-source core is **fully functional** with just Tier 1 retrieval providers. Users get a complete memory system - embedding, entity extraction, multi-strategy retrieval, fusion, reflect - without purchasing any commercial engine. Mystique is the premium upgrade for users who need production-grade performance.
 
@@ -26,10 +26,10 @@ Astrocytes follows an **open-core** distribution model with a two-tier provider 
 
 | Stage | Stack | Cost |
 |---|---|---|
-| Getting started | `astrocytes` + `astrocytes-pgvector` + `astrocytes-openai` | Free (+ LLM API costs) |
-| Add graph retrieval | + `astrocytes-neo4j` | Free |
-| Want a managed engine | `astrocytes` + `astrocytes-mem0` | Free (+ Mem0 cloud costs) |
-| Want best-in-class | `astrocytes` + `astrocytes-mystique` | Paid |
+| Getting started | `astrocyte` + `astrocyte-pgvector` + `astrocyte-openai` | Free (+ LLM API costs) |
+| Add graph retrieval | + `astrocyte-neo4j` | Free |
+| Want a managed engine | `astrocyte` + `astrocyte-mem0` | Free (+ Mem0 cloud costs) |
+| Want best-in-class | `astrocyte` + `astrocyte-mystique` | Paid |
 
 ---
 
@@ -37,14 +37,14 @@ Astrocytes follows an **open-core** distribution model with a two-tier provider 
 
 ```mermaid
 flowchart TB
-  CORE["astrocytes - core framework"]
-  T1["Tier 1: astrocytes-pgvector, -neo4j, -qdrant, …"]
-  T2["Tier 2: astrocytes-mem0, -zep, -mystique, …"]
-  LLM["LLM: astrocytes-litellm, -openai, -anthropic, …"]
-  TR["Optional: astrocytes-transport-*"]
-  SK["Optional: astrocytes-sink-*"]
-  AP["Optional: astrocytes-access-policy-*"]
-  ID["Optional: astrocytes-identity-*"]
+  CORE["astrocyte - core framework"]
+  T1["Tier 1: astrocyte-pgvector, -neo4j, -qdrant, …"]
+  T2["Tier 2: astrocyte-mem0, -zep, -mystique, …"]
+  LLM["LLM: astrocyte-litellm, -openai, -anthropic, …"]
+  TR["Optional: astrocyte-transport-*"]
+  SK["Optional: astrocyte-sink-*"]
+  AP["Optional: astrocyte-access-policy-*"]
+  ID["Optional: astrocyte-identity-*"]
   CORE --> T1
   CORE --> T2
   CORE --> LLM
@@ -56,11 +56,11 @@ flowchart TB
 
 ### 2.1 Core framework
 
-The PyPI package is **`astrocytes`**; in this repository it lives under **`astrocytes-py/`**. Design documents are in **`docs/`** at the repository root (not under `astrocytes-py/`).
+The PyPI package is **`astrocyte`**; in this repository it lives under **`astrocyte-py/`**. Design documents are in **`docs/`** at the repository root (not under `astrocyte-py/`).
 
 ```
-astrocytes-py/                         # Python implementation (open source)
-├── astrocytes/
+astrocyte-py/                         # Python implementation (open source)
+├── astrocyte/
 │   ├── __init__.py                    # Public API: Astrocyte class
 │   ├── provider.py                    # VectorStore, GraphStore, DocumentStore,
 │   │                                  # EngineProvider, LLMProvider, OutboundTransportProvider,
@@ -102,20 +102,20 @@ astrocytes-py/                         # Python implementation (open source)
 ### 2.2 Tier 1 retrieval providers
 
 ```
-astrocytes-pgvector/                   # Vector + optional full-text via PostgreSQL
-├── astrocytes_pgvector/
+astrocyte-pgvector/                   # Vector + optional full-text via PostgreSQL
+├── astrocyte_pgvector/
 │   ├── __init__.py                    # PgVectorStore (implements VectorStore)
 │   ├── fulltext.py                    # Optional: PgDocumentStore (tsvector BM25)
 │   └── migrations/                    # Alembic migrations for required tables
 ├── pyproject.toml
 
-astrocytes-neo4j/                      # Graph store via Neo4j
-├── astrocytes_neo4j/
+astrocyte-neo4j/                      # Graph store via Neo4j
+├── astrocyte_neo4j/
 │   ├── __init__.py                    # Neo4jGraphStore (implements GraphStore)
 ├── pyproject.toml
 
-astrocytes-qdrant/                     # Vector store via Qdrant
-├── astrocytes_qdrant/
+astrocyte-qdrant/                     # Vector store via Qdrant
+├── astrocyte_qdrant/
 │   ├── __init__.py                    # QdrantVectorStore (implements VectorStore)
 ├── pyproject.toml
 ```
@@ -123,14 +123,14 @@ astrocytes-qdrant/                     # Vector store via Qdrant
 ### 2.3 Tier 2 memory engine providers
 
 ```
-astrocytes-mystique/                   # Proprietary engine
-├── astrocytes_mystique/
+astrocyte-mystique/                   # Proprietary engine
+├── astrocyte_mystique/
 │   ├── __init__.py                    # MystiqueProvider (implements EngineProvider)
 │   └── adapter.py                     # Maps Astrocytes DTOs ↔ Mystique/Hindsight types
 ├── pyproject.toml
 
-astrocytes-mem0/                       # Community engine
-├── astrocytes_mem0/
+astrocyte-mem0/                       # Community engine
+├── astrocyte_mem0/
 │   ├── __init__.py                    # Mem0Provider (implements EngineProvider)
 │   └── adapter.py                     # Maps Astrocytes DTOs ↔ Mem0 types
 ├── pyproject.toml
@@ -139,122 +139,122 @@ astrocytes-mem0/                       # Community engine
 ### 2.4 LLM providers
 
 ```
-astrocytes-litellm/                    # Unified gateway (100+ models)
-├── astrocytes_litellm/
+astrocyte-litellm/                    # Unified gateway (100+ models)
+├── astrocyte_litellm/
 │   ├── __init__.py                    # LiteLLMProvider (implements LLMProvider)
 ├── pyproject.toml
 
-astrocytes-openai/                     # Direct OpenAI adapter
-├── astrocytes_openai/
+astrocyte-openai/                     # Direct OpenAI adapter
+├── astrocyte_openai/
 │   ├── __init__.py                    # OpenAIProvider (implements LLMProvider)
 ├── pyproject.toml
 
-astrocytes-anthropic/                  # Direct Anthropic adapter
-├── astrocytes_anthropic/
+astrocyte-anthropic/                  # Direct Anthropic adapter
+├── astrocyte_anthropic/
 │   ├── __init__.py                    # AnthropicProvider (implements LLMProvider)
 ├── pyproject.toml
 ```
 
-Note: AWS Bedrock, Azure OpenAI, and Google Vertex AI are accessed via `astrocytes-litellm` (which supports them natively) or via `astrocytes-openai` with a custom `api_base` for OpenAI-compatible endpoints. Self-hosted models (Ollama, vLLM, LM Studio) also work through either adapter. See `provider-spi.md` section 4.6-4.7 for configuration details.
+Note: AWS Bedrock, Azure OpenAI, and Google Vertex AI are accessed via `astrocyte-litellm` (which supports them natively) or via `astrocyte-openai` with a custom `api_base` for OpenAI-compatible endpoints. Self-hosted models (Ollama, vLLM, LM Studio) also work through either adapter. See `provider-spi.md` section 4.6-4.7 for configuration details.
 
 ### 2.5 Outbound transport plugins
 
 ```
-astrocytes-transport-onecli/           # Example: OneCLI-oriented HTTP/proxy wiring
-├── astrocytes_transport_onecli/
+astrocyte-transport-onecli/           # Example: OneCLI-oriented HTTP/proxy wiring
+├── astrocyte_transport_onecli/
 │   ├── __init__.py                    # OneCLIOutboundTransport (implements OutboundTransportProvider)
 ├── pyproject.toml
 ```
 
-Naming: **`astrocytes-transport-{name}`** - distinct from memory providers (`astrocytes-pgvector`, `astrocytes-mem0`) so packages are recognizable as **network path** plugins, not storage or engines. See `outbound-transport.md`.
+Naming: **`astrocyte-transport-{name}`** - distinct from memory providers (`astrocyte-pgvector`, `astrocyte-mem0`) so packages are recognizable as **network path** plugins, not storage or engines. See `outbound-transport.md`.
 
 ### 2.6 Memory export sink plugins (optional)
 
 ```
-astrocytes-sink-iceberg/                # Example: append governed events to an Iceberg table
-├── astrocytes_sink_iceberg/
+astrocyte-sink-iceberg/                # Example: append governed events to an Iceberg table
+├── astrocyte_sink_iceberg/
 │   ├── __init__.py                    # IcebergMemorySink (implements MemoryExportSink)
 ├── pyproject.toml
 ```
 
-Naming: **`astrocytes-sink-{target}`** — **not** `astrocytes-{name}` (reserved for Tier 1 databases) and **not** `astrocytes-transport-*` (egress HTTP only). Sinks implement **`emit()` / `flush()`** for durable export, not `search_similar()`. See `memory-export-sink.md` and `provider-spi.md` §5.
+Naming: **`astrocyte-sink-{target}`** — **not** `astrocyte-{name}` (reserved for Tier 1 databases) and **not** `astrocyte-transport-*` (egress HTTP only). Sinks implement **`emit()` / `flush()`** for durable export, not `search_similar()`. See `memory-export-sink.md` and `provider-spi.md` §5.
 
 ### 2.7 Access policy plugins (external PDP, optional)
 
 ```
-astrocytes-access-policy-opa/          # Example: OPA REST adapter
-├── astrocytes_access_policy_opa/
+astrocyte-access-policy-opa/          # Example: OPA REST adapter
+├── astrocyte_access_policy_opa/
 │   ├── __init__.py                    # OPAAccessPolicyProvider (implements AccessPolicyProvider)
 ├── pyproject.toml
 ```
 
-Naming: **`astrocytes-access-policy-{name}`**. These are **not** memory providers - they answer allow/deny for memory permissions at the framework boundary. See `identity-and-external-policy.md`.
+Naming: **`astrocyte-access-policy-{name}`**. These are **not** memory providers - they answer allow/deny for memory permissions at the framework boundary. See `identity-and-external-policy.md`.
 
 ---
 
 ## 3. Plugin discovery via entry points
 
-Providers register using Python's standard entry point mechanism (`importlib.metadata`). **Six** groups are resolved today by `astrocytes-py` discovery: `vector_stores`, `graph_stores`, `document_stores`, `engine_providers`, `llm_providers`, `outbound_transports`. **Two** additional groups are specified for ecosystem packages and **core discovery / YAML wiring is not guaranteed yet**: `astrocytes.access_policies` (§3.6) and `astrocytes.memory_export_sinks` (§3.5). Treat both like transport—entry points and config shapes are stable in docs before core loaders catch up (see §3.9).
+Providers register using Python's standard entry point mechanism (`importlib.metadata`). **Six** groups are resolved today by `astrocyte-py` discovery: `vector_stores`, `graph_stores`, `document_stores`, `engine_providers`, `llm_providers`, `outbound_transports`. **Two** additional groups are specified for ecosystem packages and **core discovery / YAML wiring is not guaranteed yet**: `astrocyte.access_policies` (§3.6) and `astrocyte.memory_export_sinks` (§3.5). Treat both like transport—entry points and config shapes are stable in docs before core loaders catch up (see §3.9).
 
 ### 3.1 Tier 1: Retrieval providers
 
 ```toml
-# astrocytes-pgvector/pyproject.toml
-[project.entry-points."astrocytes.vector_stores"]
-pgvector = "astrocytes_pgvector:PgVectorStore"
+# astrocyte-pgvector/pyproject.toml
+[project.entry-points."astrocyte.vector_stores"]
+pgvector = "astrocyte_pgvector:PgVectorStore"
 
-[project.entry-points."astrocytes.document_stores"]
-pgvector = "astrocytes_pgvector.fulltext:PgDocumentStore"
+[project.entry-points."astrocyte.document_stores"]
+pgvector = "astrocyte_pgvector.fulltext:PgDocumentStore"
 ```
 
 ```toml
-# astrocytes-neo4j/pyproject.toml
-[project.entry-points."astrocytes.graph_stores"]
-neo4j = "astrocytes_neo4j:Neo4jGraphStore"
+# astrocyte-neo4j/pyproject.toml
+[project.entry-points."astrocyte.graph_stores"]
+neo4j = "astrocyte_neo4j:Neo4jGraphStore"
 ```
 
 ```toml
-# astrocytes-qdrant/pyproject.toml
-[project.entry-points."astrocytes.vector_stores"]
-qdrant = "astrocytes_qdrant:QdrantVectorStore"
+# astrocyte-qdrant/pyproject.toml
+[project.entry-points."astrocyte.vector_stores"]
+qdrant = "astrocyte_qdrant:QdrantVectorStore"
 ```
 
 ### 3.2 Tier 2: Memory engine providers
 
 ```toml
-# astrocytes-mystique/pyproject.toml
-[project.entry-points."astrocytes.engine_providers"]
-mystique = "astrocytes_mystique:MystiqueProvider"
+# astrocyte-mystique/pyproject.toml
+[project.entry-points."astrocyte.engine_providers"]
+mystique = "astrocyte_mystique:MystiqueProvider"
 ```
 
 ```toml
-# astrocytes-mem0/pyproject.toml
-[project.entry-points."astrocytes.engine_providers"]
-mem0 = "astrocytes_mem0:Mem0Provider"
+# astrocyte-mem0/pyproject.toml
+[project.entry-points."astrocyte.engine_providers"]
+mem0 = "astrocyte_mem0:Mem0Provider"
 ```
 
 ### 3.3 LLM providers
 
 ```toml
-# astrocytes-litellm/pyproject.toml
-[project.entry-points."astrocytes.llm_providers"]
-litellm = "astrocytes_litellm:LiteLLMProvider"
+# astrocyte-litellm/pyproject.toml
+[project.entry-points."astrocyte.llm_providers"]
+litellm = "astrocyte_litellm:LiteLLMProvider"
 ```
 
 ### 3.4 Outbound transport providers (optional)
 
 ```toml
-# astrocytes-transport-onecli/pyproject.toml
-[project.entry-points."astrocytes.outbound_transports"]
-onecli = "astrocytes_transport_onecli:OneCLIOutboundTransport"
+# astrocyte-transport-onecli/pyproject.toml
+[project.entry-points."astrocyte.outbound_transports"]
+onecli = "astrocyte_transport_onecli:OneCLIOutboundTransport"
 ```
 
 ### 3.5 Memory export sink providers (optional, spec)
 
 ```toml
-# astrocytes-sink-iceberg/pyproject.toml
-[project.entry-points."astrocytes.memory_export_sinks"]
-iceberg = "astrocytes_sink_iceberg:IcebergMemorySink"
+# astrocyte-sink-iceberg/pyproject.toml
+[project.entry-points."astrocyte.memory_export_sinks"]
+iceberg = "astrocyte_sink_iceberg:IcebergMemorySink"
 ```
 
 **Today:** the **`MemoryExportSink`** protocol and event taxonomy are specified in `memory-export-sink.md` and `provider-spi.md` §5. Core may **not** yet load `memory_export_sinks:` from YAML; until it does, use **`event-hooks.md`** webhooks to an ingestor that honors the same event shape, or embed sinks in application code after `Astrocyte` bootstrap.
@@ -262,29 +262,29 @@ iceberg = "astrocytes_sink_iceberg:IcebergMemorySink"
 ### 3.6 Access policy providers (optional, spec)
 
 ```toml
-# astrocytes-access-policy-opa/pyproject.toml
-[project.entry-points."astrocytes.access_policies"]
-opa = "astrocytes_access_policy_opa:OPAAccessPolicyProvider"
+# astrocyte-access-policy-opa/pyproject.toml
+[project.entry-points."astrocyte.access_policies"]
+opa = "astrocyte_access_policy_opa:OPAAccessPolicyProvider"
 ```
 
-**Today:** core config uses `access_control.enabled` / `default_policy` and **static access grants** under `banks.<id>.access` (see `production-grade-http-service.md`). The `astrocytes.access_policies` entry point group is the intended future hook for an external PDP; it is not yet listed in `ENTRY_POINT_GROUPS` or loaded from YAML.
+**Today:** core config uses `access_control.enabled` / `default_policy` and **static access grants** under `banks.<id>.access` (see `production-grade-http-service.md`). The `astrocyte.access_policies` entry point group is the intended future hook for an external PDP; it is not yet listed in `ENTRY_POINT_GROUPS` or loaded from YAML.
 
 ### 3.7 Resolution in config
 
 ```yaml
 # Tier 1 - references storage entry points
 provider_tier: storage
-vector_store: pgvector          # → astrocytes.vector_stores:pgvector
-graph_store: neo4j              # → astrocytes.graph_stores:neo4j
-llm_provider: openai            # → astrocytes.llm_providers:openai
+vector_store: pgvector          # → astrocyte.vector_stores:pgvector
+graph_store: neo4j              # → astrocyte.graph_stores:neo4j
+llm_provider: openai            # → astrocyte.llm_providers:openai
 
 # Tier 2 - references memory engine entry points
 provider_tier: engine
-provider: mystique              # → astrocytes.engine_providers:mystique
+provider: mystique              # → astrocyte.engine_providers:mystique
 
 # Optional - outbound HTTP/TLS (credential gateway, corporate proxy)
 outbound_transport:
-  provider: onecli               # → astrocytes.outbound_transports:onecli
+  provider: onecli               # → astrocyte.outbound_transports:onecli
   config:
     gateway_url: http://localhost:10255
 
@@ -300,7 +300,7 @@ access_control:
 #       - principal: "team:analytics"
 #         grants: [recall]
 
-# Future — external PDP via astrocytes.access_policies (not in core discovery yet)
+# Future — external PDP via astrocyte.access_policies (not in core discovery yet)
 # access_control:
 #   policy_provider: opa
 #   policy_provider_config: { base_url: http://localhost:8181 }
@@ -308,7 +308,7 @@ access_control:
 # Optional — durable export (warehouse / lakehouse); core wiring TBD — see memory-export-sink.md
 # memory_export_sinks:
 #   - provider: iceberg
-#     config: { catalog_uri: thrift://metastore:9083, database: astrocytes, table: memory_events }
+#     config: { catalog_uri: thrift://metastore:9083, database: astrocyte, table: memory_events }
 ```
 
 Direct import paths also work for unregistered providers:
@@ -319,10 +319,10 @@ vector_store: mycompany.stores.custom:CustomVectorStore
 
 ### 3.8 Discovery in code
 
-Discovery lives in `astrocytes._discovery` (used by the reference service and tests). It returns **classes** registered under the groups in §3.1–3.4 (`astrocytes.access_policies` and `astrocytes.memory_export_sinks` when added to `ENTRY_POINT_GROUPS`).
+Discovery lives in `astrocyte._discovery` (used by the reference service and tests). It returns **classes** registered under the groups in §3.1–3.4 (`astrocyte.access_policies` and `astrocyte.memory_export_sinks` when added to `ENTRY_POINT_GROUPS`).
 
 ```python
-from astrocytes._discovery import available_providers, discover_entry_points
+from astrocyte._discovery import available_providers, discover_entry_points
 
 # All non-empty groups: {"vector_stores": {...}, "engine_providers": {...}, ...}
 available_providers()
@@ -332,13 +332,13 @@ discover_entry_points("engine_providers")
 # → {"mystique": <class MystiqueProvider>, ...}
 ```
 
-### 3.9 Reference `astrocytes-rest` vs embedding Astrocyte
+### 3.9 Reference `astrocyte-rest` vs embedding Astrocyte
 
-**Plugins and config:** Contributors ship packages with `pyproject.toml` entry points (§3.1–3.4 plus §3.5–3.6 when implemented). §3.7 shows how deployers reference those plugins in YAML (short name or `module:Class`). Discovery helpers live in `astrocytes._discovery`.
+**Plugins and config:** Contributors ship packages with `pyproject.toml` entry points (§3.1–3.4 plus §3.5–3.6 when implemented). §3.7 shows how deployers reference those plugins in YAML (short name or `module:Class`). Discovery helpers live in `astrocyte._discovery`.
 
-**Important:** `Astrocyte.from_config(path)` loads **`AstrocyteConfig` only** — it does not instantiate vector stores, LLMs, or Tier‑2 engines. Bootstrap code must call `resolve_provider`, construct providers with `provider_config`, and attach them via `set_pipeline` and/or `set_engine_provider`. The reference HTTP app (`astrocytes-services-py`) implements **Tier 1** wiring from YAML; **Tier‑2 / engine wiring from the same config** there is optional work — see `wiring.py` / `brain.py` for what is enabled today.
+**Important:** `Astrocyte.from_config(path)` loads **`AstrocyteConfig` only** — it does not instantiate vector stores, LLMs, or Tier‑2 engines. Bootstrap code must call `resolve_provider`, construct providers with `provider_config`, and attach them via `set_pipeline` and/or `set_engine_provider`. The reference HTTP app (`astrocyte-services-py`) implements **Tier 1** wiring from YAML; **Tier‑2 / engine wiring from the same config** there is optional work — see `wiring.py` / `brain.py` for what is enabled today.
 
-**HTTP extensions (auth, extra routers):** there are **no** published `astrocytes.rest.*` entry point groups yet. Identity is handled **in-process** (env-driven auth modes in the REST package). For custom auth or routes, embed `astrocyte` in your own FastAPI/ASGI app today; a narrow plugin surface for `astrocytes-rest` (e.g. optional router and auth factory entry points) is planned so third parties do not have to fork the reference app.
+**HTTP extensions (auth, extra routers):** there are **no** published `astrocyte.rest.*` entry point groups yet. Identity is handled **in-process** (env-driven auth modes in the REST package). For custom auth or routes, embed `astrocyte` in your own FastAPI/ASGI app today; a narrow plugin surface for `astrocyte-rest` (e.g. optional router and auth factory entry points) is planned so third parties do not have to fork the reference app.
 
 ---
 
@@ -347,10 +347,10 @@ discover_entry_points("engine_providers")
 ### 4.1 Tier 1: Minimal vector store
 
 ```python
-"""astrocytes-example-vector: a minimal vector store provider."""
+"""astrocyte-example-vector: a minimal vector store provider."""
 
-from astrocytes.provider import VectorStore
-from astrocytes.types import VectorItem, VectorHit, VectorFilters, HealthStatus
+from astrocyte.provider import VectorStore
+from astrocyte.types import VectorItem, VectorHit, VectorFilters, HealthStatus
 
 
 class InMemoryVectorStore(VectorStore):
@@ -404,15 +404,15 @@ class InMemoryVectorStore(VectorStore):
 ### 4.2 Tier 2: Minimal memory engine provider
 
 ```python
-"""astrocytes-example-engine: a minimal memory engine provider."""
+"""astrocyte-example-engine: a minimal memory engine provider."""
 
-from astrocytes.provider import EngineProvider
-from astrocytes.types import (
+from astrocyte.provider import EngineProvider
+from astrocyte.types import (
     RetainRequest, RetainResult,
     RecallRequest, RecallResult,
     HealthStatus,
 )
-from astrocytes.capabilities import EngineCapabilities
+from astrocyte.capabilities import EngineCapabilities
 
 
 class ExampleEngine(EngineProvider):
@@ -488,25 +488,25 @@ The core passes the relevant `*_config` dict to the provider's `__init__`. The c
 
 ### 4.4 Conformance test suites
 
-The `astrocytes` core ships **separate conformance suites** for each SPI:
+The `astrocyte` core ships **separate conformance suites** for each SPI:
 
 ```python
 # Testing a vector store
-from astrocytes.testing import VectorStoreConformanceTests
+from astrocyte.testing import VectorStoreConformanceTests
 
 class TestMyVectorStore(VectorStoreConformanceTests):
     def create_vector_store(self):
         return MyVectorStore(config={...})
 
 # Testing a graph store
-from astrocytes.testing import GraphStoreConformanceTests
+from astrocyte.testing import GraphStoreConformanceTests
 
 class TestMyGraphStore(GraphStoreConformanceTests):
     def create_graph_store(self):
         return MyGraphStore(config={...})
 
 # Testing a memory engine provider
-from astrocytes.testing import EngineProviderConformanceTests
+from astrocyte.testing import EngineProviderConformanceTests
 
 class TestMyEngine(EngineProviderConformanceTests):
     def create_engine_provider(self):
@@ -553,17 +553,17 @@ DTOs use `dataclass` with default values for all optional fields. New fields are
 
 ### 5.3 Compatibility matrix
 
-| Provider | Type | astrocytes version | SPI version | Status |
+| Provider | Type | astrocyte version | SPI version | Status |
 |---|---|---|---|---|
-| astrocytes-pgvector | VectorStore | >=0.1 | VS 1 | Official |
-| astrocytes-neo4j | GraphStore | >=0.1 | GS 1 | Official |
-| astrocytes-qdrant | VectorStore | >=0.1 | VS 1 | Official |
-| astrocytes-mystique | EngineProvider | >=0.1 | EP 1 | Official |
-| astrocytes-mem0 | EngineProvider | >=0.1 | EP 1 | Community |
-| astrocytes-zep | EngineProvider | >=0.1 | EP 1 | Community |
-| astrocytes-litellm | LLMProvider | >=0.1 | LP 1 | Official |
-| astrocytes-openai | LLMProvider | >=0.1 | LP 1 | Official |
-| astrocytes-anthropic | LLMProvider | >=0.1 | LP 1 | Official |
+| astrocyte-pgvector | VectorStore | >=0.1 | VS 1 | Official |
+| astrocyte-neo4j | GraphStore | >=0.1 | GS 1 | Official |
+| astrocyte-qdrant | VectorStore | >=0.1 | VS 1 | Official |
+| astrocyte-mystique | EngineProvider | >=0.1 | EP 1 | Official |
+| astrocyte-mem0 | EngineProvider | >=0.1 | EP 1 | Community |
+| astrocyte-zep | EngineProvider | >=0.1 | EP 1 | Community |
+| astrocyte-litellm | LLMProvider | >=0.1 | LP 1 | Official |
+| astrocyte-openai | LLMProvider | >=0.1 | LP 1 | Official |
+| astrocyte-anthropic | LLMProvider | >=0.1 | LP 1 | Official |
 
 ---
 
@@ -572,7 +572,7 @@ DTOs use `dataclass` with default values for all optional fields. New fields are
 ### Tier 1: DIY with your own databases (fully open source)
 
 ```bash
-pip install astrocytes astrocytes-pgvector astrocytes-openai
+pip install astrocyte astrocyte-pgvector astrocyte-openai
 ```
 
 ```yaml
@@ -589,7 +589,7 @@ llm_provider_config:
 ### Tier 1: With graph retrieval
 
 ```bash
-pip install astrocytes astrocytes-pgvector astrocytes-neo4j astrocytes-anthropic
+pip install astrocyte astrocyte-pgvector astrocyte-neo4j astrocyte-anthropic
 ```
 
 ```yaml
@@ -609,7 +609,7 @@ llm_provider_config:
 ### Tier 1: With split completion + embedding providers
 
 ```bash
-pip install astrocytes astrocytes-pgvector astrocytes-anthropic
+pip install astrocyte astrocyte-pgvector astrocyte-anthropic
 ```
 
 ```yaml
@@ -630,7 +630,7 @@ embedding_provider_config:
 ### Tier 1: Enterprise with AWS Bedrock
 
 ```bash
-pip install astrocytes astrocytes-pgvector astrocytes-litellm
+pip install astrocyte astrocyte-pgvector astrocyte-litellm
 ```
 
 ```yaml
@@ -648,7 +648,7 @@ llm_provider_config:
 ### Tier 1: Fully local (air-gapped / privacy-sensitive)
 
 ```bash
-pip install astrocytes astrocytes-pgvector astrocytes-openai
+pip install astrocyte astrocyte-pgvector astrocyte-openai
 ```
 
 ```yaml
@@ -670,7 +670,7 @@ embedding_provider_config:
 ### Tier 2: Managed memory engine (Mem0)
 
 ```bash
-pip install astrocytes astrocytes-mem0
+pip install astrocyte astrocyte-mem0
 ```
 
 ```yaml
@@ -684,7 +684,7 @@ provider_config:
 ### Tier 2: Premium memory engine (Mystique)
 
 ```bash
-pip install astrocytes astrocytes-mystique
+pip install astrocyte astrocyte-mystique
 ```
 
 ```yaml
@@ -700,7 +700,7 @@ provider_config:
 ### Development (minimal, no external services)
 
 ```bash
-pip install astrocytes astrocytes-sqlite astrocytes-openai
+pip install astrocyte astrocyte-sqlite astrocyte-openai
 ```
 
 ```yaml
@@ -720,18 +720,18 @@ llm_provider_config:
 
 ### For Tier 1 retrieval providers
 
-1. **Name your package `astrocytes-{database}`** (e.g., `astrocytes-pgvector`, `astrocytes-neo4j`).
-2. **Register the entry point** under the appropriate group: `astrocytes.vector_stores`, `astrocytes.graph_stores`, or `astrocytes.document_stores`.
+1. **Name your package `astrocyte-{database}`** (e.g., `astrocyte-pgvector`, `astrocyte-neo4j`).
+2. **Register the entry point** under the appropriate group: `astrocyte.vector_stores`, `astrocyte.graph_stores`, or `astrocyte.document_stores`.
 3. **Implement only the storage protocol.** You handle CRUD operations. The pipeline handles intelligence.
 4. **Run the conformance test suite** for your protocol type.
 5. **Handle your own connections.** Accept connection config in `__init__`, manage pools, handle reconnection.
 6. **Respect the async contract.** Use proper async I/O (asyncpg, httpx, etc.).
-7. **A single package may implement multiple protocols.** For example, `astrocytes-pgvector` can implement both `VectorStore` (pgvector) and `DocumentStore` (tsvector BM25) and register both entry points.
+7. **A single package may implement multiple protocols.** For example, `astrocyte-pgvector` can implement both `VectorStore` (pgvector) and `DocumentStore` (tsvector BM25) and register both entry points.
 
 ### For Tier 2 memory engine providers
 
-1. **Name your package `astrocytes-{engine}`** (e.g., `astrocytes-mem0`, `astrocytes-zep`).
-2. **Register the entry point** under `astrocytes.engine_providers`.
+1. **Name your package `astrocyte-{engine}`** (e.g., `astrocyte-mem0`, `astrocyte-zep`).
+2. **Register the entry point** under `astrocyte.engine_providers`.
 3. **Own your DTOs mapping.** Accept Astrocytes types, return Astrocytes types. Never expose your engine's internal types through the SPI.
 4. **Declare capabilities honestly.** Under-declare rather than over-declare. The core's fallback layer handles the gaps.
 5. **Own your storage.** Your engine manages its own vector DB, graph DB, etc. Users configure database choices through `provider_config`.
@@ -739,7 +739,7 @@ llm_provider_config:
 
 ### For all providers
 
-- **Don't depend on `astrocytes` internals.** Import only from `astrocytes.provider`, `astrocytes.types`, `astrocytes.capabilities`, and `astrocytes.testing`.
+- **Don't depend on `astrocyte` internals.** Import only from `astrocyte.provider`, `astrocyte.types`, `astrocyte.capabilities`, and `astrocyte.testing`.
 - **Handle your own configuration.** The core passes config as-is. Validate in `__init__`.
 - **Respect the async contract.** All SPI methods are `async`. No blocking calls.
 
@@ -747,7 +747,7 @@ llm_provider_config:
 
 ## 8. Governance
 
-- The `astrocytes` core is maintained by the AstrocyteAI team.
+- The `astrocyte` core is maintained by the AstrocyteAI team.
 - Official retrieval providers (pgvector, Neo4j, Qdrant) are maintained by the AstrocyteAI team.
 - Community providers are maintained by their respective authors.
 - The conformance test suites are the contract - if your provider passes them, it works with Astrocytes.

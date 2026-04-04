@@ -2,23 +2,23 @@
 
 Astrocytes as a DSPy retrieval model (RM) for declarative AI programming.
 
-**Module:** `astrocytes.integrations.dspy`
+**Module:** `astrocyte.integrations.dspy`
 **Pattern:** Retrieval model — `__call__(query, k)` → `list[str]` (DSPy RM protocol)
 **Framework dependency:** `dspy` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes dspy
+pip install astrocyte dspy
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.dspy import AstrocyteRM
+from astrocyte import Astrocyte
+from astrocyte.integrations.dspy import AstrocyteRM
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 retriever = AstrocyteRM(brain, bank_id="knowledge-base", default_k=5)
 
 # Use as a DSPy retrieval model

@@ -48,7 +48,7 @@ const topicItems = {
   ],
   /** Order matches README §3 bands (Foundations → Trust → Runtime → Durability → Quality). */
   design: [
-    { label: "Neuroscience & vocabulary", link: "/design/neuroscience-astrocytes/" },
+    { label: "Neuroscience & vocabulary", link: "/design/neuroscience-astrocyte/" },
     { label: "Design principles", link: "/design/design-principles/" },
     { label: "Architecture framework", link: "/design/architecture-framework/" },
     { label: "Storage and data planes", link: "/design/storage-and-data-planes/" },
@@ -118,7 +118,7 @@ export default defineConfig({
             {
               id: "design",
               label: "Design",
-              link: "/design/neuroscience-astrocytes/",
+              link: "/design/neuroscience-astrocyte/",
               icon: "document",
               items: topicItems.design,
             },
@@ -141,7 +141,7 @@ export default defineConfig({
         {
           icon: "github",
           label: "GitHub",
-          href: "https://github.com/AstrocyteAI/astrocytes",
+          href: "https://github.com/AstrocyteAI/astrocyte",
         },
       ],
       customCss: ["./src/styles/custom.css"],

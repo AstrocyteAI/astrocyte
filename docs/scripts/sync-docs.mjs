@@ -16,7 +16,7 @@ const docsDir = path.resolve(__dirname, "..");
 const contentDocs = path.join(docsDir, "src/content/docs");
 
 const FILE_BASE =
-  process.env.DOCS_GITHUB_FILE_BASE || "https://github.com/AstrocyteAI/astrocytes/blob/main";
+  process.env.DOCS_GITHUB_FILE_BASE || "https://github.com/AstrocyteAI/astrocyte/blob/main";
 
 /** Authoring folder (under docs/) → URL path segment (no underscore). */
 const SOURCE_TO_PUBLIC = {

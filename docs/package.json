@@ -1,5 +1,5 @@
 {
-  "name": "astrocytes-docs",
+  "name": "astrocyte-docs",
   "type": "module",
   "private": true,
   "packageManager": "pnpm@9.15.4",

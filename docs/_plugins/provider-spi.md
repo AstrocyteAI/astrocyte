@@ -224,7 +224,7 @@ class DocumentHit:
 ### 1.5 Tier 1 configuration
 
 ```yaml
-# astrocytes.yaml - Tier 1 setup
+# astrocyte.yaml - Tier 1 setup
 provider_tier: storage
 
 # Required: one vector store
@@ -343,7 +343,7 @@ class EngineCapabilities:
 
 ### 2.4 Request and result DTOs
 
-All DTOs are owned by the `astrocytes` core package. Both Tier 1 (pipeline-assembled) and Tier 2 (memory-engine-provided) results use the same types. Callers never know which tier served them.
+All DTOs are owned by the `astrocyte` core package. Both Tier 1 (pipeline-assembled) and Tier 2 (memory-engine-provided) results use the same types. Callers never know which tier served them.
 
 **RetainRequest** - what to store:
 
@@ -424,7 +424,7 @@ class ReflectResult:
 ### 2.5 Tier 2 configuration
 
 ```yaml
-# astrocytes.yaml - Tier 2 setup
+# astrocyte.yaml - Tier 2 setup
 provider_tier: engine
 
 provider: mystique
@@ -460,7 +460,7 @@ The `provider_tier` field in config determines which path the core takes:
 When a Tier 2 memory engine provider lacks a capability, the core applies a **fallback strategy**:
 
 ```yaml
-# astrocytes.yaml
+# astrocyte.yaml
 provider_tier: engine
 provider: mem0
 fallback_strategy: local_llm   # "local_llm" | "error" | "degrade"
@@ -579,11 +579,11 @@ The Astrocytes LLM SPI is intentionally minimal (`complete()` + `embed()`) so th
 
 | Package | Wraps | Models / Coverage | Dependency |
 |---|---|---|---|
-| `astrocytes-litellm` | LiteLLM | 100+ models across all providers (OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, etc.) | `litellm` |
-| `astrocytes-openai` | OpenAI SDK | GPT-4o, GPT-4o-mini, o1, o3, text-embedding-3-* | `openai` |
-| `astrocytes-anthropic` | Anthropic SDK | Claude Opus, Sonnet, Haiku | `anthropic` |
+| `astrocyte-litellm` | LiteLLM | 100+ models across all providers (OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, etc.) | `litellm` |
+| `astrocyte-openai` | OpenAI SDK | GPT-4o, GPT-4o-mini, o1, o3, text-embedding-3-* | `openai` |
+| `astrocyte-anthropic` | Anthropic SDK | Claude Opus, Sonnet, Haiku | `anthropic` |
 
-**Recommendation:** Use `astrocytes-litellm` if you need flexibility across providers or plan to switch models. Use a direct adapter if you're committed to one provider and want minimal dependencies.
+**Recommendation:** Use `astrocyte-litellm` if you need flexibility across providers or plan to switch models. Use a direct adapter if you're committed to one provider and want minimal dependencies.
 
 ### 4.6 Cloud-managed LLM endpoints
 
@@ -645,7 +645,7 @@ llm_provider_config:
   model: local-model
 ```
 
-Most self-hosted inference servers expose an OpenAI-compatible API, so `astrocytes-openai` with a custom `api_base` works without a dedicated adapter.
+Most self-hosted inference servers expose an OpenAI-compatible API, so `astrocyte-openai` with a custom `api_base` works without a dedicated adapter.
 
 ### 4.8 Separate completion and embedding providers
 
@@ -670,17 +670,17 @@ embedding_provider_config:
 
 When `embedding_provider` is configured, the core uses it for `embed()` calls instead of the main `llm_provider`. When omitted, the main `llm_provider` handles both.
 
-The `local` embedding provider is built into the `astrocytes` core (optional dependency on `sentence-transformers`) and requires no external API.
+The `local` embedding provider is built into the `astrocyte` core (optional dependency on `sentence-transformers`) and requires no external API.
 
 ### 4.9 Writing a custom LLM adapter
 
 For enterprise users with custom LLM platforms or proxy services:
 
 ```python
-"""astrocytes-mycompany-llm: adapter for internal LLM platform."""
+"""astrocyte-mycompany-llm: adapter for internal LLM platform."""
 
-from astrocytes.provider import LLMProvider
-from astrocytes.types import Message, Completion, TokenUsage
+from astrocyte.provider import LLMProvider
+from astrocyte.types import Message, Completion, TokenUsage
 
 class MyCompanyLLMProvider(LLMProvider):
     def __init__(self, config: dict):
@@ -716,8 +716,8 @@ class MyCompanyLLMProvider(LLMProvider):
 Register via entry point:
 
 ```toml
-[project.entry-points."astrocytes.llm_providers"]
-mycompany = "astrocytes_mycompany_llm:MyCompanyLLMProvider"
+[project.entry-points."astrocyte.llm_providers"]
+mycompany = "astrocyte_mycompany_llm:MyCompanyLLMProvider"
 ```
 
 Users install exactly one LLM provider (or none if using Tier 2 with no LLM-dependent policies). The `embedding_provider` is an optional second provider specifically for embeddings.
@@ -779,13 +779,13 @@ class MemoryExportSink(Protocol):
         ...
 ```
 
-`MemoryExportSinkEvent` is a **versioned discriminated union** (retain committed, forget applied, bank lifecycle, export completed, optional sampled recall aggregates). Exact fields live in shared `astrocytes.types` alongside other DTOs.
+`MemoryExportSinkEvent` is a **versioned discriminated union** (retain committed, forget applied, bank lifecycle, export completed, optional sampled recall aggregates). Exact fields live in shared `astrocyte.types` alongside other DTOs.
 
 Register via entry point:
 
 ```toml
-[project.entry-points."astrocytes.memory_export_sinks"]
-iceberg = "astrocytes_sink_iceberg:IcebergMemorySink"
+[project.entry-points."astrocyte.memory_export_sinks"]
+iceberg = "astrocyte_sink_iceberg:IcebergMemorySink"
 ```
 
 YAML (illustrative):
@@ -793,10 +793,10 @@ YAML (illustrative):
 ```yaml
 memory_export_sinks:
   - provider: iceberg
-    config: { catalog_uri: thrift://metastore:9083, database: astrocytes, table: memory_events }
+    config: { catalog_uri: thrift://metastore:9083, database: astrocyte, table: memory_events }
 ```
 
-Packaging and naming: **`ecosystem-and-packaging.md`** (`astrocytes-sink-*` prefix).
+Packaging and naming: **`ecosystem-and-packaging.md`** (`astrocyte-sink-*` prefix).
 
 ---
 
@@ -829,8 +829,8 @@ class OutboundTransportProvider(Protocol):
 Register via entry point:
 
 ```toml
-[project.entry-points."astrocytes.outbound_transports"]
-onecli = "astrocytes_transport_onecli:OneCLIOutboundTransport"
+[project.entry-points."astrocyte.outbound_transports"]
+onecli = "astrocyte_transport_onecli:OneCLIOutboundTransport"
 ```
 
 YAML:
@@ -848,7 +848,7 @@ outbound_transport:
 ### 7.1 Initialization (Tier 1)
 
 ```python
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 # 1. Load config, determine provider_tier = "storage"
 # 2. Optionally discover and instantiate OutboundTransportProvider (if outbound_transport in config)
 # 3. Discover and instantiate VectorStore (required)
@@ -863,7 +863,7 @@ brain = Astrocyte.from_config("astrocytes.yaml")
 ### 7.2 Initialization (Tier 2)
 
 ```python
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 # 1. Load config, determine provider_tier = "engine"
 # 2. Optionally discover and instantiate OutboundTransportProvider (if outbound_transport in config)
 # 3. Discover and instantiate EngineProvider - Memory Engine Provider SPI (via entry point or import path)
@@ -947,28 +947,28 @@ caller → brain.recall(query, budget)
 
 ### 8.1 Building a Tier 1 retrieval provider
 
-1. **Create a package** named `astrocytes-{database}` (e.g., `astrocytes-pgvector`, `astrocytes-neo4j`).
+1. **Create a package** named `astrocyte-{database}` (e.g., `astrocyte-pgvector`, `astrocyte-neo4j`).
 2. **Implement one or more protocols**: `VectorStore` (required for vector DBs), `GraphStore` (for graph DBs), `DocumentStore` (for full-text search).
 3. **Register via entry point** in `pyproject.toml`:
    ```toml
-   [project.entry-points."astrocytes.vector_stores"]
-   pgvector = "astrocytes_pgvector:PgVectorStore"
+   [project.entry-points."astrocyte.vector_stores"]
+   pgvector = "astrocyte_pgvector:PgVectorStore"
 
-   [project.entry-points."astrocytes.graph_stores"]
-   neo4j = "astrocytes_neo4j:Neo4jGraphStore"
+   [project.entry-points."astrocyte.graph_stores"]
+   neo4j = "astrocyte_neo4j:Neo4jGraphStore"
    ```
 4. **Handle your own connection management.** Accept connection config via `__init__`, manage pools, handle reconnection.
-5. **Async PostgreSQL + pgvector (when applicable):** If you use **psycopg 3** `AsyncConnection` with the [**pgvector**](https://github.com/pgvector/pgvector) Python package, use **`register_vector_async`** in pool `configure` callbacks—not the sync **`register_vector`**, which leaves coroutines unawaited on async connections. With default transaction settings, end `configure` with **`await conn.commit()`** so the pool does not discard connections left **`INTRANS`**. Register vector adapters only after the **`vector`** extension exists (migration order or `CREATE EXTENSION` before first vector I/O). Reference: [`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md).
+5. **Async PostgreSQL + pgvector (when applicable):** If you use **psycopg 3** `AsyncConnection` with the [**pgvector**](https://github.com/pgvector/pgvector) Python package, use **`register_vector_async`** in pool `configure` callbacks—not the sync **`register_vector`**, which leaves coroutines unawaited on async connections. With default transaction settings, end `configure` with **`await conn.commit()`** so the pool does not discard connections left **`INTRANS`**. Register vector adapters only after the **`vector`** extension exists (migration order or `CREATE EXTENSION` before first vector I/O). Reference: [`astrocyte-pgvector`](../astrocyte-services-py/astrocyte-pgvector/README.md).
 6. **Keep it simple.** You are implementing CRUD operations, not a memory engine. Let the pipeline handle the intelligence.
 
 ### 8.2 Building a Tier 2 memory engine provider
 
-1. **Create a package** named `astrocytes-{engine}` (e.g., `astrocytes-mystique`, `astrocytes-mem0`).
+1. **Create a package** named `astrocyte-{engine}` (e.g., `astrocyte-mystique`, `astrocyte-mem0`).
 2. **Implement `EngineProvider`** protocol with at least `retain()`, `recall()`, `health()`, `capabilities()`.
 3. **Register via entry point** in `pyproject.toml`:
    ```toml
-   [project.entry-points."astrocytes.engine_providers"]
-   mystique = "astrocytes_mystique:MystiqueProvider"
+   [project.entry-points."astrocyte.engine_providers"]
+   mystique = "astrocyte_mystique:MystiqueProvider"
    ```
 4. **Use Astrocytes DTOs** for all inputs and outputs. Map to/from your engine's native types inside your provider.
 5. **Declare capabilities honestly.** Over-declaring causes runtime errors; under-declaring causes unnecessary fallbacks.
@@ -976,18 +976,18 @@ caller → brain.recall(query, budget)
 
 ### 8.3 Building an outbound transport plugin
 
-1. **Create a package** named `astrocytes-transport-{name}` (not `astrocytes-{name}` - that pattern is reserved for memory-related providers).
+1. **Create a package** named `astrocyte-transport-{name}` (not `astrocyte-{name}` - that pattern is reserved for memory-related providers).
 2. **Implement `OutboundTransportProvider`**: configure shared HTTP clients only; do not implement `complete()` / `embed()` or memory operations.
-3. **Register** under `astrocytes.outbound_transports` in `pyproject.toml`.
+3. **Register** under `astrocyte.outbound_transports` in `pyproject.toml`.
 4. **Document** env-only alternatives (`HTTP_PROXY`, trust bundles) so users can avoid a plugin when possible.
 
 Rationale, OTel, and security constraints: `outbound-transport.md`.
 
 ### 8.4 Building a memory export sink plugin
 
-1. **Create a package** named **`astrocytes-sink-{target}`** (for example `astrocytes-sink-iceberg`, `astrocytes-sink-kafka`) — distinct from **`astrocytes-transport-*`** and from Tier 1 **`astrocytes-{database}`** packages.
+1. **Create a package** named **`astrocyte-sink-{target}`** (for example `astrocyte-sink-iceberg`, `astrocyte-sink-kafka`) — distinct from **`astrocyte-transport-*`** and from Tier 1 **`astrocyte-{database}`** packages.
 2. **Implement `MemoryExportSink`**: `emit()` at minimum; optional `flush()` for batched commits; return honest `capabilities()` (which event kinds, whether embeddings are ever serialized).
-3. **Register** under `astrocytes.memory_export_sinks` in `pyproject.toml`.
+3. **Register** under `astrocyte.memory_export_sinks` in `pyproject.toml`.
 4. **Do not** implement `search_similar()` here — that belongs to Tier 1 adapters when a warehouse exposes vector SQL suitable for online recall.
 
 Event taxonomy and governance: `memory-export-sink.md`. Packaging tables: `ecosystem-and-packaging.md`.

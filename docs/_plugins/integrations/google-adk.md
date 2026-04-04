@@ -2,23 +2,23 @@
 
 Astrocytes memory as async callable tools for Google's Agent Development Kit.
 
-**Module:** `astrocytes.integrations.google_adk`
+**Module:** `astrocyte.integrations.google_adk`
 **Pattern:** Async callable functions with type annotations for ADK schema generation
 **Framework dependency:** `google-adk` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes google-adk
+pip install astrocyte google-adk
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.google_adk import astrocyte_adk_tools
+from astrocyte import Astrocyte
+from astrocyte.integrations.google_adk import astrocyte_adk_tools
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 tools = astrocyte_adk_tools(brain, bank_id="user-123")
 
 from google.adk import Agent

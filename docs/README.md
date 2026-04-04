@@ -2,7 +2,7 @@
 
 Astrocytes is an open-source memory framework that sits between agents and storage—it provides a stable API for retain/recall/synthesize, pluggable retrieval and memory-engine backends, and a built-in policy layer for governance and observability.
 
-This folder (`docs/`) is the **shared design specification** for the Astrocytes framework. The same repository also contains the **parallel service implementations**: **[`astrocytes-py/`](../astrocytes-py/README.md)** (Python) and **[`astrocytes-rs/`](../astrocytes-rs/README.md)** (Rust). Those directories are the Python and Rust Astrocytes services; design documents here apply to **both** unless stated otherwise.
+This folder (`docs/`) is the **shared design specification** for the Astrocytes framework. The same repository also contains the **parallel service implementations**: **[`astrocyte-py/`](../astrocyte-py/README.md)** (Python) and **[`astrocyte-rs/`](../astrocyte-rs/README.md)** (Rust). Those directories are the Python and Rust Astrocytes services; design documents here apply to **both** unless stated otherwise.
 
 **Scope:** The framework is **memory + governance + provider SPIs**. It is **not** an LLM gateway and **not** an agent runtime: it does not define orchestration (graphs, tool loops, checkpoints, scheduling, multi-agent routing). How that split maps to **context engineering** (what the model sees) vs **harness engineering** (how the agent loop runs) — and where Astrocytes sits between them — is spelled out in [Architecture framework](./_design/architecture-framework.md) §1 (*Context engineering vs harness engineering*). **Agent cards** and **agent catalogs** are a common way to describe deployable agents; Astrocytes does not host the catalog or run the agent graph, but it **is** designed so card identity feeds memory through an explicit, repeatable **mapping to principal + memory bank** (declarative config and thin resolver helpers—see `architecture-framework.md` §1 and `agent-framework-middleware.md`). Vendor-specific card fields that are irrelevant to memory stay outside the core contract.
 
@@ -12,9 +12,9 @@ This folder (`docs/`) is the **shared design specification** for the Astrocytes 
 
 | Folder | Role |
 |---|---|
-| **`astrocytes-py/`** | **Python** Astrocytes service; PyPI package name **`astrocytes`**; ecosystem integrations (LangChain, MCP, …). |
-| **[`astrocytes-services-py/`](../astrocytes-services-py/README.md)** | Optional **REST** ([`astrocytes-rest`](../astrocytes-services-py/astrocytes-rest/README.md)) and **[`astrocytes-pgvector`](../astrocytes-services-py/astrocytes-pgvector/README.md)**; not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocytes-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocytes-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocytes-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTES_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocytes-services-py/README.md`](../astrocytes-services-py/README.md) and [Production-grade reference server §4](./_end-user/production-grade-http-service.md). |
-| **`astrocytes-rs/`** | **Rust** Astrocytes service; native crate; same framework contract as Python (see `implementation-language-strategy.md`). |
+| **`astrocyte-py/`** | **Python** Astrocytes service; PyPI package name **`astrocyte`**; ecosystem integrations (LangChain, MCP, …). |
+| **[`astrocyte-services-py/`](../astrocyte-services-py/README.md)** | Optional **REST** ([`astrocyte-rest`](../astrocyte-services-py/astrocyte-rest/README.md)) and **[`astrocyte-pgvector`](../astrocyte-services-py/astrocyte-pgvector/README.md)**; not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocyte-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocyte-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTES_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md) and [Production-grade reference server §4](./_end-user/production-grade-http-service.md). |
+| **`astrocyte-rs/`** | **Rust** Astrocytes service; native crate; same framework contract as Python (see `implementation-language-strategy.md`). |
 
 **Source layout:** Spec markdown lives in **`docs/_design/`**, **`docs/_plugins/`**, and **`docs/_end-user/`** (underscore-prefixed authoring folders). Tutorials stay under **`docs/_tutorials/`**. **`scripts/sync-docs.mjs`** mirrors them into `src/content/docs/{design,plugins,end-user,tutorials}/` (gitignored) so published URLs stay **`/design/…`**, **`/plugins/…`**, etc. **`pnpm dev`** and **`pnpm build`** run **`sync-docs`** first (`predev` / `prebuild`); if you edit `_design/` / `_plugins/` / `_end-user/` / `_tutorials/` directly, run **`node scripts/sync-docs.mjs`** (or restart dev) so the site picks up changes. Cross-references in prose often use backticked filenames like `` `architecture-framework.md` `` as stable identifiers.
 
@@ -27,7 +27,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocytes 
 | # | Title | Topic |
 |---|-------|--------|
 | 1 | [Quick Start](./_end-user/quick-start.md) | Install core library; Docker Compose + reference REST |
-| 2 | [Production-grade HTTP service](./_end-user/production-grade-http-service.md) | Production HTTP checklist; `astrocytes-rest`; Compose; ops **§4.5** |
+| 2 | [Production-grade HTTP service](./_end-user/production-grade-http-service.md) | Production HTTP checklist; `astrocyte-rest`; Compose; ops **§4.5** |
 
 ---
 
@@ -51,7 +51,7 @@ Indexes below use **topic bands** (sidebar order matches `astro.config.mjs`).
 
 | # | Title | Topic |
 |---|-------|--------|
-| 1 | [Astrocytes in neuroscience](./_design/neuroscience-astrocytes.md) | Biological metaphor and vocabulary |
+| 1 | [Astrocytes in neuroscience](./_design/neuroscience-astrocyte.md) | Biological metaphor and vocabulary |
 | 2 | [Design principles](./_design/design-principles.md) | Engineering principles mapped from neuroscience |
 | 3 | [Astrocytes framework architecture](./_design/architecture-framework.md) | Layers, two-tier providers, SPI overview |
 | 4 | [Storage and data planes](./_design/storage-and-data-planes.md) | Hub: retrieval vs export vs in-process bank health |

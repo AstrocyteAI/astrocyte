@@ -2,23 +2,23 @@
 
 Astrocytes as role-based memory for CAMEL-AI multi-agent role-playing systems.
 
-**Module:** `astrocytes.integrations.camel_ai`
+**Module:** `astrocyte.integrations.camel_ai`
 **Pattern:** Role-scoped memory — write/read with role attribution and per-role banks
 **Framework dependency:** `camel-ai` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes camel-ai
+pip install astrocyte camel-ai
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.camel_ai import AstrocyteCamelMemory
+from astrocyte import Astrocyte
+from astrocyte.integrations.camel_ai import AstrocyteCamelMemory
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 
 # Role-based memory for multi-agent role-playing
 memory = AstrocyteCamelMemory(

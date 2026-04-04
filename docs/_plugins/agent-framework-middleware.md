@@ -44,8 +44,8 @@ All integrations are **zero-dependency on the framework** — they use duck typi
 All integration guides assume you have a configured Astrocyte instance:
 
 ```python
-from astrocytes import Astrocyte
-brain = Astrocyte.from_config("astrocytes.yaml")
+from astrocyte import Astrocyte
+brain = Astrocyte.from_config("astrocyte.yaml")
 ```
 
 ---
@@ -78,10 +78,10 @@ Auto-retain is **opt-in** and respects all policies (PII scanning, signal qualit
 
 ## 4. Packaging
 
-All integrations ship inside the `astrocytes` package — no separate packages to install. The integration modules use **duck typing** (not base class inheritance), so they work **without** installing the target framework. Install the framework only when you actually use the integration:
+All integrations ship inside the `astrocyte` package — no separate packages to install. The integration modules use **duck typing** (not base class inheritance), so they work **without** installing the target framework. Install the framework only when you actually use the integration:
 
 ```bash
-pip install astrocytes                 # All integrations included
+pip install astrocyte                 # All integrations included
 pip install langgraph                  # Install framework when you use it
 pip install crewai                     # etc.
 ```

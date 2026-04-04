@@ -2,23 +2,23 @@
 
 Astrocytes as a memory store for LlamaIndex agents and chat engines.
 
-**Module:** `astrocytes.integrations.llamaindex`
+**Module:** `astrocyte.integrations.llamaindex`
 **Pattern:** Memory store — put, get, get_all, search, reset
 **Framework dependency:** `llama-index-core` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes llama-index-core
+pip install astrocyte llama-index-core
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.llamaindex import AstrocyteLlamaMemory
+from astrocyte import Astrocyte
+from astrocyte.integrations.llamaindex import AstrocyteLlamaMemory
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 memory = AstrocyteLlamaMemory(brain, bank_id="user-123", max_results=10)
 
 # Store and retrieve

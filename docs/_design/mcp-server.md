@@ -12,8 +12,8 @@ Any MCP-capable client gets persistent memory by adding one entry to its MCP con
 {
   "mcpServers": {
     "memory": {
-      "command": "astrocytes-mcp",
-      "args": ["--config", "astrocytes.yaml"]
+      "command": "astrocyte-mcp",
+      "args": ["--config", "astrocyte.yaml"]
     }
   }
 }
@@ -88,7 +88,7 @@ This is a major distribution channel: every Claude Code user, every Cursor user,
 ### 3.1 stdio (default for local)
 
 ```bash
-astrocytes-mcp --config astrocytes.yaml
+astrocyte-mcp --config astrocyte.yaml
 ```
 
 Communicates over stdin/stdout. Standard for local MCP servers.
@@ -96,7 +96,7 @@ Communicates over stdin/stdout. Standard for local MCP servers.
 ### 3.2 SSE (for remote / shared)
 
 ```bash
-astrocytes-mcp --config astrocytes.yaml --transport sse --port 8080
+astrocyte-mcp --config astrocyte.yaml --transport sse --port 8080
 ```
 
 Server-Sent Events transport for remote agents or multi-agent setups sharing one Astrocytes instance.
@@ -105,10 +105,10 @@ Server-Sent Events transport for remote agents or multi-agent setups sharing one
 
 ## 4. Configuration
 
-The MCP server uses the same `astrocytes.yaml` as the Python library. No separate config:
+The MCP server uses the same `astrocyte.yaml` as the Python library. No separate config:
 
 ```yaml
-# astrocytes.yaml - same config for library and MCP server
+# astrocyte.yaml - same config for library and MCP server
 profile: personal
 provider_tier: engine
 provider: mystique
@@ -128,15 +128,15 @@ mcp:
 
 ## 5. Packaging
 
-The MCP server ships as part of the `astrocytes` package with an optional CLI entry point:
+The MCP server ships as part of the `astrocyte` package with an optional CLI entry point:
 
 ```toml
 # pyproject.toml
 [project.scripts]
-astrocytes-mcp = "astrocytes.mcp:main"
+astrocyte-mcp = "astrocyte.mcp:main"
 ```
 
-No separate package needed. `pip install astrocytes` (or `pnpm` for npm-based MCP configs - see below).
+No separate package needed. `pip install astrocyte` (or `pnpm` for npm-based MCP configs - see below).
 
 ### 5.1 npm wrapper (for MCP clients that expect npm packages)
 
@@ -146,12 +146,12 @@ Some MCP clients (Claude Code, Cursor) discover servers via npm. A thin npm wrap
 {
   "name": "@astrocyteai/mcp-server",
   "bin": {
-    "astrocytes-mcp": "./bin/astrocytes-mcp.js"
+    "astrocyte-mcp": "./bin/astrocyte-mcp.js"
   }
 }
 ```
 
-Where `bin/astrocytes-mcp.js` spawns the Python `astrocytes-mcp` process. This is the pattern used by many Python MCP servers.
+Where `bin/astrocyte-mcp.js` spawns the Python `astrocyte-mcp` process. This is the pattern used by many Python MCP servers.
 
 ---
 
@@ -177,8 +177,8 @@ The full Astrocytes policy layer applies to MCP tool calls:
 {
   "mcpServers": {
     "memory": {
-      "command": "astrocytes-mcp",
-      "args": ["--config", "/path/to/astrocytes.yaml"]
+      "command": "astrocyte-mcp",
+      "args": ["--config", "/path/to/astrocyte.yaml"]
     }
   }
 }
@@ -195,7 +195,7 @@ Multiple agents connect to the same MCP server (SSE transport), sharing memory b
 
 ```
 Agent A (coding)  ──┐
-Agent B (review)  ──┼── astrocytes-mcp (SSE, port 8080) ── Mystique
+Agent B (review)  ──┼── astrocyte-mcp (SSE, port 8080) ── Mystique
 Agent C (testing) ──┘
 ```
 

@@ -2,23 +2,23 @@
 
 Astrocytes memory tools for AWS Strands Agents framework.
 
-**Module:** `astrocytes.integrations.strands`
+**Module:** `astrocyte.integrations.strands`
 **Pattern:** Spec + handler — JSON Schema tool spec with async handler functions
 **Framework dependency:** `strands-agents` (optional)
 
 ## Install
 
 ```bash
-pip install astrocytes strands-agents
+pip install astrocyte strands-agents
 ```
 
 ## Usage
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.strands import astrocyte_strands_tools
+from astrocyte import Astrocyte
+from astrocyte.integrations.strands import astrocyte_strands_tools
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 tools = astrocyte_strands_tools(brain, bank_id="user-123")
 
 from strands import Agent

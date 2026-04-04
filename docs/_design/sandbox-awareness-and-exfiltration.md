@@ -22,7 +22,7 @@ Astrocytes does **not** replace **compute** or **network** sandboxes; it must **
 
 **Sandbox-aware** here means: Astrocytes and its **host integration** carry enough **context** (logical sandbox, environment, deployment tier, or equivalent) that **retain / recall / reflect** cannot accidentally or trivially cross those lines, and that operators can **audit** and **test** those boundaries.
 
-Concrete directions (spec; implementation evolves in `astrocytes-py`, `astrocytes-rs`, and service adapters):
+Concrete directions (spec; implementation evolves in `astrocyte-py`, `astrocyte-rs`, and service adapters):
 
 | Layer | Role |
 |-------|------|
@@ -77,8 +77,8 @@ Even with strong **compute** isolation, **unrestricted outbound HTTP** from the 
 | **`docs/_plugins/agent-framework-middleware.md`** | Card + **sandbox/environment** inputs to **principal / bank** resolvers. |
 | **`docs/_plugins/outbound-transport.md`** | Enterprise **HTTP/TLS/proxy** and credential gateways for **framework** outbound calls. |
 | **`docs/_end-user/production-grade-http-service.md`** | **Backend for Frontend (BFF)** AuthN binding, **no trusting** client-only principal, network and **API** hardening. |
-| **`astrocytes-py/` / `astrocytes-rs/`** (future) | Config schema (e.g. environment/sandbox dimensions), validation helpers, optional **context** types on `Astrocyte` calls. |
-| **`astrocytes-services-py/astrocytes-rest/`** (future) | Middleware: reject or map **sandbox** headers only when **signed** or **server-side** scoped; document **trusted** vs **untrusted** headers. |
+| **`astrocyte-py/` / `astrocyte-rs/`** (future) | Config schema (e.g. environment/sandbox dimensions), validation helpers, optional **context** types on `Astrocyte` calls. |
+| **`astrocyte-services-py/astrocyte-rest/`** (future) | Middleware: reject or map **sandbox** headers only when **signed** or **server-side** scoped; document **trusted** vs **untrusted** headers. |
 | **CI / security tests** | **AuthZ** matrix tests (sandbox A cannot read bank B); contract tests on mapping config. |
 
 Keeping **design** in `docs/_design/` and **operational checklists** in `_end-user/` avoids duplicating the threat model in every plugin page while still giving implementers a single **spec** to cite.
