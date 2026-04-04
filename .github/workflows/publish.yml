@@ -1,0 +1,63 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"  # Triggers on version tags: v0.1.0, v1.0.0, etc.
+
+permissions:
+  id-token: write  # Required for Trusted Publishing (OIDC)
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: astrocyte-py
+        run: uv sync --extra dev
+
+      - name: Run tests
+        working-directory: astrocyte-py
+        run: uv run pytest tests/ -x --tb=short
+
+      - name: Run lint
+        working-directory: astrocyte-py
+        run: uv run ruff check astrocyte/ tests/
+
+      - name: Build package
+        working-directory: astrocyte-py
+        run: uv build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: astrocyte-py/dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release  # Must match the PyPI Trusted Publisher config
+    permissions:
+      id-token: write  # OIDC token for Trusted Publishing
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No token needed — uses Trusted Publishing (OIDC)
