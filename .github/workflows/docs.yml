@@ -13,6 +13,11 @@ permissions:
   pages: write
   id-token: write
 
+# upload-pages-artifact@v4 pins actions/upload-artifact@4.6.x (Node 20). Opt in to Node 24 for JS actions
+# until upstream pins a newer upload-artifact. See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   group: pages
   cancel-in-progress: false
