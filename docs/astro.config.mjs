@@ -7,6 +7,8 @@ const owner = process.env.GITHUB_REPOSITORY_OWNER || "AstrocyteAI";
 const repo = process.env.GITHUB_REPOSITORY?.split("/")?.[1];
 const site = `https://${owner}.github.io`;
 const base = repo ? `/${repo}/` : "/";
+/** Absolute URL for link previews (WhatsApp, Slack, etc. require og:image). */
+const defaultOgImage = `${site}${base}logo.png`;
 
 /** Explicit sidebar order (filenames without .md → routes). */
 const topicItems = {
@@ -143,6 +145,36 @@ export default defineConfig({
           icon: "github",
           label: "GitHub",
           href: "https://github.com/AstrocyteAI/astrocyte",
+        },
+      ],
+      head: [
+        {
+          tag: "meta",
+          attrs: {
+            property: "og:image",
+            content: defaultOgImage,
+          },
+        },
+        {
+          tag: "meta",
+          attrs: {
+            property: "og:image:type",
+            content: "image/png",
+          },
+        },
+        {
+          tag: "meta",
+          attrs: {
+            property: "og:image:alt",
+            content: "Astrocyte — memory framework for AI agents",
+          },
+        },
+        {
+          tag: "meta",
+          attrs: {
+            name: "twitter:image",
+            content: defaultOgImage,
+          },
         },
       ],
       customCss: ["./src/styles/custom.css"],
