@@ -85,12 +85,13 @@ function extractTitle(md) {
   return m ? m[1].trim() : "Untitled";
 }
 
-function ensureFrontmatter(raw, titleFallback, sourceFileAbs) {
+/** Matches `id` values in `starlightSidebarTopics` (astro.config.mjs). */
+function ensureFrontmatter(raw, titleFallback, sourceFileAbs, topicId) {
   const m = raw.match(/^#\s+(.+)$/m);
   const title = m ? m[1].trim() : titleFallback;
   const bodyMd = m ? stripFirstH1(raw) : raw;
   const body = transformBody(bodyMd, sourceFileAbs);
-  const fm = `---\ntitle: "${escapeTitle(title)}"\ndraft: false\n---\n\n`;
+  const fm = `---\ntitle: "${escapeTitle(title)}"\ndraft: false\ntopic: ${topicId}\n---\n\n`;
   return fm + body;
 }
 
@@ -125,7 +126,7 @@ function copyAllMdFromSourceSection(sourceDirName, subDir = "") {
     const raw = fs.readFileSync(srcPath, "utf8");
     let fb = extractTitle(raw);
     if (fb === "Untitled") fb = ent.name.replace(/\.md$/, "").replace(/-/g, " ");
-    const body = ensureFrontmatter(raw, fb, srcPath);
+    const body = ensureFrontmatter(raw, fb, srcPath, destSection);
     const destDir = subDir ? path.join(contentDocs, destSection, subDir) : path.join(contentDocs, destSection);
     writeIfChanged(path.join(destDir, ent.name), body);
   }
@@ -142,7 +143,7 @@ const readme = fs.readFileSync(readmePath, "utf8");
 let introTitle = extractTitle(readme);
 if (introTitle === "Untitled") introTitle = "Astrocyte documentation";
 const introBody =
-  `---\ntitle: "${escapeTitle(introTitle)}"\ndraft: false\n---\n\n` +
+  `---\ntitle: "${escapeTitle(introTitle)}"\ndraft: false\ntopic: end-user\n---\n\n` +
   transformBody(stripFirstH1(readme), readmePath);
 writeIfChanged(path.join(contentDocs, "introduction.md"), introBody);
 
