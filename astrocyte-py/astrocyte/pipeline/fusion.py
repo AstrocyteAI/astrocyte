@@ -19,6 +19,7 @@ class ScoredItem:
     fact_type: str | None = None
     metadata: dict[str, str | int | float | bool | None] | None = None
     tags: list[str] | None = None
+    memory_layer: str | None = None  # "fact", "observation", "model"
 
 
 def rrf_fusion(
@@ -62,7 +63,38 @@ def rrf_fusion(
                 fact_type=item.fact_type,
                 metadata=item.metadata,
                 tags=item.tags,
+                memory_layer=item.memory_layer,
             )
         )
 
     return result
+
+
+def layer_weighted_rrf_fusion(
+    ranked_lists: list[list[ScoredItem]],
+    k: int = 60,
+    layer_weights: dict[str, float] | None = None,
+) -> list[ScoredItem]:
+    """RRF fusion with optional layer-based score boosting.
+
+    After standard RRF, multiplies each item's score by the weight
+    for its memory_layer. Items with no layer get weight 1.0.
+
+    layer_weights example: {"fact": 1.0, "observation": 1.5, "model": 2.0}
+    Higher layers (models) are boosted above raw facts.
+
+    Sync, pure computation — Rust migration candidate.
+    """
+    fused = rrf_fusion(ranked_lists, k=k)
+
+    if not layer_weights:
+        return fused
+
+    # Apply layer weights
+    for item in fused:
+        weight = layer_weights.get(item.memory_layer or "", 1.0)
+        item.score *= weight
+
+    # Re-sort by weighted score
+    fused.sort(key=lambda x: x.score, reverse=True)
+    return fused

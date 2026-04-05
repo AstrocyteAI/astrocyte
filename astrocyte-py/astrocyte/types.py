@@ -45,6 +45,7 @@ class VectorItem:
     tags: list[str] | None = None
     fact_type: str | None = None  # "world", "experience", "observation"
     occurred_at: datetime | None = None
+    memory_layer: str | None = None  # "fact", "observation", "model" — memory hierarchy
 
 
 @dataclass
@@ -65,6 +66,7 @@ class VectorHit:
     tags: list[str] | None = None
     fact_type: str | None = None
     occurred_at: datetime | None = None
+    memory_layer: str | None = None  # "fact", "observation", "model"
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +155,9 @@ class RetainResult:
     memory_id: str | None = None
     deduplicated: bool = False
     error: str | None = None
+    retention_action: str | None = None  # "add" | "update" | "merge" | "skip" | "delete" (curated retain)
+    curated: bool = False  # Whether LLM curation was used
+    memory_layer: str | None = None  # Layer assigned during curation
 
 
 @dataclass
@@ -165,6 +170,9 @@ class RecallRequest:
     tags: list[str] | None = None
     time_range: tuple[datetime, datetime] | None = None
     include_sources: bool = False
+    layer_weights: dict[str, float] | None = None  # {"fact": 1.0, "observation": 1.5, "model": 2.0}
+    detail_level: str | None = None  # "titles" | "bodies" | "full" | None (default=full)
+    external_context: list[MemoryHit] | None = None  # External RAG/graph results for cross-source fusion
 
 
 @dataclass
@@ -178,6 +186,8 @@ class MemoryHit:
     source: str | None = None
     memory_id: str | None = None
     bank_id: str | None = None  # set by multi-bank / hybrid recall
+    memory_layer: str | None = None  # "fact", "observation", "model"
+    utility_score: float | None = None  # 0.0 – 1.0 composite utility
 
 
 @dataclass
@@ -186,6 +196,9 @@ class RecallTrace:
     total_candidates: int | None = None
     fusion_method: str | None = None
     latency_ms: float | None = None
+    tier_used: int | None = None  # Which retrieval tier resolved the query
+    layer_distribution: dict[str, int] | None = None  # {"fact": 5, "observation": 3, "model": 1}
+    cache_hit: bool | None = None  # Whether recall cache was used
 
 
 @dataclass
