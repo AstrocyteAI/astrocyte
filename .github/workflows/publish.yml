@@ -37,8 +37,14 @@ jobs:
         working-directory: astrocyte-py
         run: uv run ruff check astrocyte/ tests/
 
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
       - name: Build package
         working-directory: astrocyte-py
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.version.outputs.version }}
         run: uv build
 
       - name: Upload build artifacts
