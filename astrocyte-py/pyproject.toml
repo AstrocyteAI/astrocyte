@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "astrocyte"
-version = "0.2.1"
+dynamic = ["version"]
 description = "Open-source memory framework for AI agents"
 readme = "README.md"
 license = "Apache-2.0"
@@ -76,6 +76,10 @@ in_memory = "astrocyte.testing.in_memory:InMemoryDocumentStore"
 
 [project.entry-points."astrocyte.llm_providers"]
 mock = "astrocyte.testing.in_memory:MockLLMProvider"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = ".." }  # Git root is one level up from astrocyte-py/
 
 [tool.hatch.build.targets.wheel]
 packages = ["astrocyte"]
