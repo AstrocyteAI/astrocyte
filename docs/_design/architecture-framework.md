@@ -459,12 +459,12 @@ Capabilities inspired by ByteRover (agent-native curation, progressive retrieval
 | Recall cache | Implemented | LRU cache by query embedding similarity; 5-10x latency reduction | `innovations.md` §1.1 |
 | Memory hierarchy | Implemented | Facts → observations → models with layer-weighted fusion | `innovations.md` §1.2 |
 | Utility scoring | Implemented | Per-memory recency × frequency × relevance × freshness composite | `innovations.md` §1.3 |
-| Adaptive tiered retrieval | Planned | 5-tier escalation: cache → fuzzy → BM25 → multi-strategy → agentic | `innovations.md` §2.1 |
-| LLM-curated retain | Planned | LLM decides ADD/UPDATE/MERGE/SKIP/DELETE + classifies layer | `innovations.md` §2.2 |
-| Curated recall | Planned | Post-retrieval re-scoring by freshness, reliability, salience | `innovations.md` §2.3 |
-| Progressive retrieval | Planned | `detail_level: "titles"` for 10x token savings | `innovations.md` §2.4 |
-| Cross-source fusion | Planned | `external_context` for RAG/graph blending | `innovations.md` §2.5 |
-| Cross-engine routing | Planned | Adaptive per-query weights in HybridEngineProvider | `innovations.md` §2.6 |
+| Adaptive tiered retrieval | Implemented | 5-tier escalation: cache → fuzzy → BM25 → multi-strategy → agentic | `innovations.md` §2.1 |
+| LLM-curated retain | Implemented | LLM decides ADD/UPDATE/MERGE/SKIP/DELETE + classifies layer | `innovations.md` §2.2 |
+| Curated recall | Implemented | Post-retrieval re-scoring by freshness, reliability, salience | `innovations.md` §2.3 |
+| Progressive retrieval | Implemented | `detail_level: "titles"` for 10x token savings | `innovations.md` §2.4 |
+| Cross-source fusion | Implemented | `external_context` for RAG/graph blending | `innovations.md` §2.5 |
+| Cross-engine routing | Implemented | Adaptive per-query weights in HybridEngineProvider | `innovations.md` §2.6 |
 
 **Open-core principle:** Every innovation listed above is in the open-source framework. Mystique's advantage is **execution quality** (better algorithms for the same operations), not withheld capabilities. See `innovations.md` for the full split rationale.
 

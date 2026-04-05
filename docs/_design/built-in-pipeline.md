@@ -221,14 +221,22 @@ Three-layer model — `fact` → `observation` → `model` — with `layer_weigh
 
 Per-memory composite score combining recency (exponential decay), frequency (recall count), relevance (average match score), and freshness (creation age). Drives TTL decisions, ranking boosts, and bank health metrics.
 
-### 9.4 Adaptive tiered retrieval (planned)
+### 9.4 Adaptive tiered retrieval (implemented)
 
-5-tier progressive escalation: cache → fuzzy → BM25 → full multi-strategy → agentic recall. Each tier is cheaper than the next. Stops when sufficient results are found.
+5-tier progressive escalation: cache → fuzzy → BM25 → full multi-strategy → agentic recall. Each tier is cheaper than the next. Stops when `min_results` with `min_score` are found. Module: `astrocyte/pipeline/tiered_retrieval.py`.
 
-### 9.5 LLM-curated retain (planned)
+### 9.5 LLM-curated retain (implemented)
 
-Opt-in mode where the LLM decides ADD/UPDATE/MERGE/SKIP/DELETE instead of mechanical chunk+embed. Also classifies the memory layer (fact/observation/model).
+Opt-in mode where the LLM decides ADD/UPDATE/MERGE/SKIP/DELETE instead of mechanical chunk+embed. Also classifies the memory layer (fact/observation/model). Module: `astrocyte/pipeline/curated_retain.py`.
 
-### 9.6 Curated recall, progressive retrieval, cross-source fusion (planned)
+### 9.6 Curated recall (implemented)
 
-Post-retrieval re-scoring by freshness/reliability/salience. Token-saving `detail_level` for title-only recall. External RAG/graph fusion via `external_context` on RecallRequest. All framework-level — available to every provider.
+Post-retrieval re-scoring by freshness (exponential decay on occurred_at), reliability (fact_type + provenance), and salience (memory_layer boosting). Module: `astrocyte/pipeline/curated_recall.py`.
+
+### 9.7 Progressive retrieval + cross-source fusion (implemented)
+
+`detail_level: "titles"` on RecallRequest for 10x token savings. `external_context` on RecallRequest for fusing external RAG/graph results with memory recall under one token budget. Both are type-level features available to every provider.
+
+### 9.8 Cross-engine routing (implemented)
+
+Adaptive per-query weights in HybridEngineProvider via `AdaptiveRouter`. Classifies queries by temporal signals, entity density, question complexity, and length to route optimally between engine and pipeline backends.

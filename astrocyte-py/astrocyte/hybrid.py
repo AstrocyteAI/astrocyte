@@ -7,6 +7,7 @@ Retain writes to exactly one backend via ``retain_target``.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import replace
 from typing import Any, ClassVar, Literal
 
@@ -53,6 +54,7 @@ class HybridEngineProvider:
         engine_recall_weight: float = 1.0,
         pipeline_recall_weight: float = 1.0,
         dedup_across_sources: bool = True,
+        adaptive_routing: bool = False,
     ) -> None:
         if engine is None and pipeline is None:
             raise ValueError("HybridEngineProvider requires at least one of engine= or pipeline=")
@@ -66,6 +68,8 @@ class HybridEngineProvider:
         self._engine_w = float(engine_recall_weight)
         self._pipeline_w = float(pipeline_recall_weight)
         self._dedup_across_sources = dedup_across_sources
+        self._adaptive_routing = adaptive_routing
+        self._router = AdaptiveRouter() if adaptive_routing else None
 
     def capabilities(self) -> EngineCapabilities:
         if self._engine:
@@ -113,6 +117,13 @@ class HybridEngineProvider:
         return await self._pipeline.retain(request)
 
     async def recall(self, request: RecallRequest) -> RecallResult:
+        # Adaptive routing: compute per-query weights
+        engine_w = self._engine_w
+        pipeline_w = self._pipeline_w
+        if self._router and self._engine:
+            caps = self._engine.capabilities() if hasattr(self._engine, "capabilities") else None
+            engine_w, pipeline_w = self._router.route(request.query, caps, self._engine_w, self._pipeline_w)
+
         tasks: list[Any] = []
         if self._engine:
             tasks.append(self._engine.recall(request))
@@ -132,7 +143,7 @@ class HybridEngineProvider:
             for h in eng_res.hits:
                 tagged = replace(h, bank_id=h.bank_id or request.bank_id)
                 tagged = replace(tagged, source=tagged.source or "tier2_engine")
-                all_hits.append(replace(tagged, score=tagged.score * self._engine_w))
+                all_hits.append(replace(tagged, score=tagged.score * engine_w))
         if self._pipeline:
             pipe_res = raw[idx]
             idx += 1
@@ -142,7 +153,7 @@ class HybridEngineProvider:
             for h in pipe_res.hits:
                 tagged = replace(h, bank_id=h.bank_id or request.bank_id)
                 tagged = replace(tagged, source=tagged.source or "tier1_pipeline")
-                all_hits.append(replace(tagged, score=tagged.score * self._pipeline_w))
+                all_hits.append(replace(tagged, score=tagged.score * pipeline_w))
 
         merged = (
             _dedupe_hits_prefer_score(all_hits)
@@ -169,3 +180,76 @@ class HybridEngineProvider:
             deleted = await self._pipeline.vector_store.delete(request.memory_ids, request.bank_id)
             return ForgetResult(deleted_count=deleted)
         raise NotImplementedError("forget is not available on this HybridEngineProvider")
+
+
+# ---------------------------------------------------------------------------
+# Adaptive query routing (Phase 2 innovation)
+# ---------------------------------------------------------------------------
+
+
+_TEMPORAL_PATTERNS = re.compile(
+    r"\b(yesterday|today|last\s+week|last\s+month|before|after|when|recently|"
+    r"\d{4}[-/]\d{2}|january|february|march|april|may|june|july|august|"
+    r"september|october|november|december|monday|tuesday|wednesday|thursday|"
+    r"friday|saturday|sunday)\b",
+    re.IGNORECASE,
+)
+
+
+class AdaptiveRouter:
+    """Classifies queries and adjusts engine/pipeline weights per-query.
+
+    Heuristic rules:
+    - Temporal queries → boost engine (if it supports temporal search)
+    - Entity-rich queries → boost engine (if it supports graph search)
+    - Simple factual → boost pipeline (keyword/BM25 is sufficient)
+    - Complex analytical → boost engine (better reflect)
+
+    Sync, stateless — Rust migration candidate.
+    """
+
+    def route(
+        self,
+        query: str,
+        engine_caps: EngineCapabilities | None = None,
+        base_engine_weight: float = 1.0,
+        base_pipeline_weight: float = 1.0,
+    ) -> tuple[float, float]:
+        """Compute per-query weights for engine vs pipeline.
+
+        Returns (engine_weight, pipeline_weight).
+        """
+        engine_w = base_engine_weight
+        pipeline_w = base_pipeline_weight
+
+        # Temporal signals
+        temporal_matches = len(_TEMPORAL_PATTERNS.findall(query))
+        if temporal_matches > 0:
+            if engine_caps and engine_caps.supports_temporal_search:
+                engine_w *= 1.5 + 0.2 * min(temporal_matches, 3)
+            else:
+                pipeline_w *= 1.2  # Pipeline can still filter by date
+
+        # Entity density — count capitalized words as proxy
+        words = query.split()
+        capitalized = sum(1 for w in words if w[0:1].isupper() and len(w) > 1)
+        entity_ratio = capitalized / max(len(words), 1)
+        if entity_ratio > 0.3:
+            if engine_caps and engine_caps.supports_graph_search:
+                engine_w *= 1.4
+            else:
+                engine_w *= 1.1
+
+        # Question complexity — how/why suggest deeper reasoning
+        lower = query.lower().strip()
+        if lower.startswith(("how ", "why ", "explain ", "analyze ", "compare ")):
+            if engine_caps and engine_caps.supports_reflect:
+                engine_w *= 1.3
+        elif lower.startswith(("what is ", "who is ", "where is ", "list ")):
+            pipeline_w *= 1.2  # Simple factual → BM25 is fine
+
+        # Short queries → pipeline (keyword sufficient)
+        if len(words) <= 3:
+            pipeline_w *= 1.2
+
+        return engine_w, pipeline_w

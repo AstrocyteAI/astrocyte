@@ -27,7 +27,7 @@ jobs:
 
       - name: Test astrocyte-py
         working-directory: astrocyte-py
-        run: uv sync --extra dev && uv run pytest
+        run: uv sync --extra dev && uv run python -m pytest
 
   # Shell, compose config, and astrocyte-rest tests — run once (same as former `make ci` minus astrocyte-py pytest).
   services-ci:

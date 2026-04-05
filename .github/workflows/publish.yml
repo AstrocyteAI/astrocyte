@@ -29,7 +29,7 @@ jobs:
 
       - name: Run tests
         working-directory: astrocyte-py
-        run: uv run pytest tests/ -x --tb=short
+        run: uv run python -m pytest tests/ -x --tb=short
 
       - name: Run lint
         working-directory: astrocyte-py

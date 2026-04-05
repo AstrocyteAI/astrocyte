@@ -82,10 +82,10 @@ ci-compose:
 	@$(COMPOSE_RB) config -q
 
 ci-pytest:
-	@cd "$(ASTRO_ROOT)/astrocyte-py" && uv sync --extra dev && uv run pytest
+	@cd "$(ASTRO_ROOT)/astrocyte-py" && uv sync --extra dev && uv run python -m pytest
 
 ci-rest-tests:
-	@cd astrocyte-rest && uv sync --extra dev && uv run pytest
+	@cd astrocyte-rest && uv sync --extra dev && uv run python -m pytest
 
 ci: ci-checks
 

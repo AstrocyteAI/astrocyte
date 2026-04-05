@@ -94,6 +94,40 @@ class NoisyBankConfig:
 
 
 @dataclass
+class RecallCacheConfig:
+    enabled: bool = False
+    similarity_threshold: float = 0.95
+    max_entries: int = 256
+    ttl_seconds: float = 300.0
+
+
+@dataclass
+class TieredRetrievalConfig:
+    enabled: bool = False
+    min_results: int = 3
+    min_score: float = 0.3
+    max_tier: int = 3  # 0-4
+
+
+@dataclass
+class CuratedRetainConfig:
+    enabled: bool = False
+    model: str | None = None
+    context_recall_limit: int = 5
+
+
+@dataclass
+class CuratedRecallConfig:
+    enabled: bool = False
+    freshness_weight: float = 0.3
+    reliability_weight: float = 0.2
+    salience_weight: float = 0.2
+    original_score_weight: float = 0.3
+    freshness_half_life_days: float = 30.0
+    min_score: float | None = None
+
+
+@dataclass
 class SignalQualityConfig:
     dedup: DedupConfig = field(default_factory=DedupConfig)
     noisy_bank: NoisyBankConfig = field(default_factory=NoisyBankConfig)
@@ -198,6 +232,12 @@ class AstrocyteConfig:
 
     # MCP
     mcp: McpConfig = field(default_factory=McpConfig)
+
+    # Phase 2 innovations
+    recall_cache: RecallCacheConfig = field(default_factory=RecallCacheConfig)
+    tiered_retrieval: TieredRetrievalConfig = field(default_factory=TieredRetrievalConfig)
+    curated_retain: CuratedRetainConfig = field(default_factory=CuratedRetainConfig)
+    curated_recall: CuratedRecallConfig = field(default_factory=CuratedRecallConfig)
 
     # Per-bank overrides
     banks: dict[str, BankConfig] | None = None

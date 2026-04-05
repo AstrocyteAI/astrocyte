@@ -113,11 +113,12 @@ utility = recency × 0.3 + frequency × 0.2 + relevance × 0.3 + freshness × 0.
 
 ---
 
-## Phase 2: Intelligence (planned)
+## Phase 2: Intelligence (implemented)
 
-### 2.1 Adaptive Tiered Retrieval
+### 2.1 Adaptive Tiered Retrieval (implemented)
 
 **Inspired by:** ByteRover's 5-tier progressive escalation (0ms → 15s).
+**Module:** `astrocyte/pipeline/tiered_retrieval.py`
 
 Progressive recall escalation — cheaper tiers tried first, escalate only when needed:
 
@@ -133,9 +134,10 @@ Escalation stops when `min_results` (default 3) with `min_score` (default 0.5) i
 
 **Type addition:** `tier_used: int | None` on `RecallTrace`.
 
-### 2.2 LLM-Curated Retain
+### 2.2 LLM-Curated Retain (implemented)
 
 **Inspired by:** ByteRover's core innovation — the reasoning LLM decides what/how to store.
+**Module:** `astrocyte/pipeline/curated_retain.py`
 
 Opt-in curation mode where the LLM analyzes incoming content against existing memories and decides:
 
@@ -151,9 +153,10 @@ Also assigns `memory_layer` (fact/observation/model) during curation.
 
 **Type additions:** `retention_action`, `curated`, `memory_layer` on `RetainResult`.
 
-### 2.3 Curated Recall (re-scoring)
+### 2.3 Curated Recall (implemented)
 
 **Originally planned for Mystique, moved to astrocyte — this is a framework capability.**
+**Module:** `astrocyte/pipeline/curated_recall.py`
 
 Post-retrieval re-scoring of recall hits by:
 - **Freshness:** exponential decay on `occurred_at`
@@ -162,7 +165,7 @@ Post-retrieval re-scoring of recall hits by:
 
 Re-ranks and optionally filters below quality threshold. Provider-agnostic — works with any Tier 1 or Tier 2 backend.
 
-### 2.4 Progressive Retrieval
+### 2.4 Progressive Retrieval (implemented)
 
 **Originally planned for Mystique, moved to astrocyte — this is a protocol-level capability.**
 
@@ -176,7 +179,7 @@ Re-ranks and optionally filters below quality threshold. Provider-agnostic — w
 
 Enables two-pass pattern: agent gets title manifest first, then fetches specific memories.
 
-### 2.5 Cross-Source Fusion
+### 2.5 Cross-Source Fusion (implemented)
 
 **Originally planned for Mystique, moved to astrocyte — this is an orchestration capability.**
 
@@ -195,9 +198,21 @@ hits = await brain.recall(
 # → Fused results from memory + RAG, deduplicated, budget-enforced
 ```
 
-### 2.6 Cross-Engine Routing
+### 2.6 Cross-Engine Routing (implemented)
 
-Adaptive per-query weights in `HybridEngineProvider`. Classifies queries (temporal, entity-rich, analytical, simple) and routes to the best engine accordingly.
+**Module:** `astrocyte/hybrid.py` — `AdaptiveRouter` class
+
+Adaptive per-query weights in `HybridEngineProvider`. Classifies queries by:
+- **Temporal signals** — date/time keywords boost engine (if it supports temporal search)
+- **Entity density** — capitalized proper nouns boost engine (if it supports graph search)
+- **Question complexity** — how/why/explain boost engine (if it supports reflect)
+- **Query length** — short queries boost pipeline (keyword/BM25 sufficient)
+
+```python
+hybrid = HybridEngineProvider(engine=mystique, pipeline=pipeline, adaptive_routing=True)
+# Temporal query → routes more weight to engine
+# Simple factual → routes more weight to pipeline
+```
 
 ---
 

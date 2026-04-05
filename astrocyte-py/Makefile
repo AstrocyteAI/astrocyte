@@ -4,4 +4,4 @@ SHELL := /bin/bash
 
 test:
 	uv sync --extra dev
-	uv run pytest
+	uv run python -m pytest
