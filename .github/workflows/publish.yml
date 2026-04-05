@@ -6,8 +6,9 @@ on:
       - "v*"  # Triggers on version tags: v0.1.0, v1.0.0, etc.
 
 permissions:
-  id-token: write  # Required for Trusted Publishing (OIDC)
+  id-token: write   # Required for Trusted Publishing (OIDC) + attestations
   contents: read
+  attestations: write  # Required for actions/attest-build-provenance
 
 jobs:
   build:
@@ -53,12 +54,34 @@ jobs:
           name: dist
           path: astrocyte-py/dist/
 
-  publish:
+  # Attestation step — signs artifacts BEFORE uploading to PyPI.
+  # Uses GitHub's native attestation (not pypi-publish's built-in).
+  # This way, signing is decoupled from upload — a failed upload
+  # doesn't burn the filename via pre-registered attestations.
+  attest:
     needs: build
     runs-on: ubuntu-latest
-    environment: release  # Must match the PyPI Trusted Publisher config
     permissions:
-      id-token: write  # OIDC token for Trusted Publishing
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/astrocyte-*"
+
+  publish:
+    needs: [build, attest]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v8
@@ -85,5 +108,9 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           verbose: true
-          attestations: false  # Disable attestations to prevent filename pre-registration
-        # No token needed — uses Trusted Publishing (OIDC)
+          attestations: false
+        # pypi-publish attestations disabled — we use GitHub's native
+        # actions/attest-build-provenance instead (attest job above).
+        # This decouples signing from upload so a failed upload doesn't
+        # burn the filename via Sigstore pre-registration.
+        # Trusted Publishing (OIDC) handles authentication.
