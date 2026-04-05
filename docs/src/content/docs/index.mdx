@@ -22,7 +22,7 @@ hero:
       icon: rocket
       variant: primary
     - text: View on GitHub
-      link: https://github.com/AstrocyteAI/astrocytes
+      link: https://github.com/AstrocyteAI/astrocyte
       icon: external
       variant: minimal
 ---
@@ -42,28 +42,28 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
 </div>
 
 <div class="quickstart-panel">
-  <Tabs syncKey="astrocytes-install">
+  <Tabs syncKey="astrocyte-install">
     <TabItem label="pip">
-      <div class="quickstart-block">pip install astrocytes astrocytes-pgvector astrocytes-openai</div>
+      <div class="quickstart-block">pip install astrocyte astrocyte-pgvector</div>
     </TabItem>
     <TabItem label="uv">
       <div class="quickstart-block quickstart-block--uv">
-        <div>uv pip install astrocytes astrocytes-pgvector astrocytes-openai</div>
+        <div>uv pip install astrocyte astrocyte-pgvector</div>
         <p class="quickstart-note">
           In a uv-managed project, use{" "}
-          <code>uv add astrocytes astrocytes-pgvector astrocytes-openai</code> to record dependencies in{" "}
+          <code>uv add astrocyte astrocyte-pgvector</code> to record dependencies in{" "}
           <code>pyproject.toml</code>.
         </p>
       </div>
     </TabItem>
   </Tabs>
 
-  <Tabs syncKey="astrocytes-quickstart-code">
+  <Tabs syncKey="astrocyte-quickstart-code">
     <TabItem label="Direct API">
 ```python
-from astrocytes import Astrocyte
+from astrocyte import Astrocyte
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 
 await brain.retain("Calvin prefers dark mode", bank_id="user-123")
 
@@ -77,10 +77,10 @@ hits = await brain.recall("What are Calvin's preferences?", bank_id="user-123")
       </p>
 
 ```python
-from astrocytes import Astrocyte
-from astrocytes.integrations.langgraph import AstrocyteMemory
+from astrocyte import Astrocyte
+from astrocyte.integrations.langgraph import AstrocyteMemory
 
-brain = Astrocyte.from_config("astrocytes.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 memory = AstrocyteMemory(brain, bank_id="user-123")
 
 await memory.save_context(
@@ -352,7 +352,7 @@ prompt_vars = await memory.load_memory_variables({})
 
 <CardGrid>
   <Card title="MCP Server" icon="laptop">
-    Any MCP-capable agent (Claude Code, Cursor, Windsurf) gets memory via `astrocytes-mcp`. Zero code integration.
+    Any MCP-capable agent (Claude Code, Cursor, Windsurf) gets memory via `astrocyte-mcp`. Zero code integration.
   </Card>
   <Card title="Agent Frameworks" icon="puzzle">
     LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, AG2 — thin middleware wires Astrocyte into each framework's memory abstraction.
@@ -381,7 +381,7 @@ prompt_vars = await memory.load_memory_variables({})
 
 <div class="cta-row landing-footer-cta">
   <a href="end-user/quick-start/" class="sl-flex action primary">Quick Start</a>
-  <a href="https://github.com/AstrocyteAI/astrocytes" class="sl-flex action minimal">GitHub</a>
+  <a href="https://github.com/AstrocyteAI/astrocyte" class="sl-flex action minimal">GitHub</a>
 </div>
 
 </div>

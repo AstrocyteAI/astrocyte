@@ -202,3 +202,33 @@ Custom stage implementations must conform to the internal pipeline stage protoco
 | Enterprise multi-tenant | Tier 2 with Mystique (bank mapping, tenant isolation) |
 | Cost-sensitive, own infrastructure | Tier 1 with your existing databases |
 | Need best recall accuracy | Tier 2 with Mystique (SOTA on LongMemEval) |
+
+---
+
+## 9. Pipeline innovations
+
+The following innovations extend the built-in pipeline with capabilities inspired by ByteRover and Hindsight. All are backward-compatible, feature-gated, and independently implementable. Full details in `innovations.md`.
+
+### 9.1 Recall cache (implemented)
+
+LRU cache keyed by query embedding similarity. Avoids redundant retrieval for repeated/similar queries. Invalidated on retain. Resolves ~80% of steady-state queries at near-zero latency.
+
+### 9.2 Memory hierarchy (implemented)
+
+Three-layer model — `fact` → `observation` → `model` — with `layer_weighted_rrf_fusion()` applying multiplicative weights per layer. Higher layers (observations, models) are boosted in recall ranking.
+
+### 9.3 Utility scoring (implemented)
+
+Per-memory composite score combining recency (exponential decay), frequency (recall count), relevance (average match score), and freshness (creation age). Drives TTL decisions, ranking boosts, and bank health metrics.
+
+### 9.4 Adaptive tiered retrieval (planned)
+
+5-tier progressive escalation: cache → fuzzy → BM25 → full multi-strategy → agentic recall. Each tier is cheaper than the next. Stops when sufficient results are found.
+
+### 9.5 LLM-curated retain (planned)
+
+Opt-in mode where the LLM decides ADD/UPDATE/MERGE/SKIP/DELETE instead of mechanical chunk+embed. Also classifies the memory layer (fact/observation/model).
+
+### 9.6 Curated recall, progressive retrieval, cross-source fusion (planned)
+
+Post-retrieval re-scoring by freshness/reliability/salience. Token-saving `detail_level` for title-only recall. External RAG/graph fusion via `external_context` on RecallRequest. All framework-level — available to every provider.

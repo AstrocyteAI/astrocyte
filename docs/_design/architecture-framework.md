@@ -450,7 +450,25 @@ Beyond intelligence and governance, the framework provides capabilities that no 
 | Presentation / multimodal (non-LLM API) | How Tavus-class video, voice (e.g. ElevenLabs), and related APIs compose **beside** the LLM SPI | `presentation-layer-and-multimodal-services.md` |
 | Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for multi-provider gateways (LiteLLM / OpenRouter–class and similar) | `multimodal-llm-spi.md` |
 
-These capabilities exist at the **framework layer** - they apply regardless of which memory provider is active. They are a major reason to use Astrocyte rather than calling a provider directly.
+### 7.4 Pipeline innovations
+
+Capabilities inspired by ByteRover (agent-native curation, progressive retrieval) and Hindsight (mental models, utility scoring). All framework-level, provider-agnostic.
+
+| Innovation | Status | Description | Documentation |
+|---|---|---|---|
+| Recall cache | Implemented | LRU cache by query embedding similarity; 5-10x latency reduction | `innovations.md` §1.1 |
+| Memory hierarchy | Implemented | Facts → observations → models with layer-weighted fusion | `innovations.md` §1.2 |
+| Utility scoring | Implemented | Per-memory recency × frequency × relevance × freshness composite | `innovations.md` §1.3 |
+| Adaptive tiered retrieval | Planned | 5-tier escalation: cache → fuzzy → BM25 → multi-strategy → agentic | `innovations.md` §2.1 |
+| LLM-curated retain | Planned | LLM decides ADD/UPDATE/MERGE/SKIP/DELETE + classifies layer | `innovations.md` §2.2 |
+| Curated recall | Planned | Post-retrieval re-scoring by freshness, reliability, salience | `innovations.md` §2.3 |
+| Progressive retrieval | Planned | `detail_level: "titles"` for 10x token savings | `innovations.md` §2.4 |
+| Cross-source fusion | Planned | `external_context` for RAG/graph blending | `innovations.md` §2.5 |
+| Cross-engine routing | Planned | Adaptive per-query weights in HybridEngineProvider | `innovations.md` §2.6 |
+
+**Open-core principle:** Every innovation listed above is in the open-source framework. Mystique's advantage is **execution quality** (better algorithms for the same operations), not withheld capabilities. See `innovations.md` for the full split rationale.
+
+These capabilities exist at the **framework layer** — they apply regardless of which memory provider is active. They are a major reason to use Astrocyte rather than calling a provider directly.
 
 ---
 
