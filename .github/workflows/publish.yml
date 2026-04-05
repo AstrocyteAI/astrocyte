@@ -85,4 +85,5 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           verbose: true
+          attestations: false  # Disable attestations to prevent filename pre-registration
         # No token needed — uses Trusted Publishing (OIDC)
