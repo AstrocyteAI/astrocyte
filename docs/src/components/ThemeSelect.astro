@@ -47,9 +47,14 @@ const labels = {
 
   /** @param {Theme} theme */
   function onThemeChange(theme) {
-    window.StarlightThemeProvider.updatePickers(theme);
-    document.documentElement.dataset.theme = theme === "auto" ? getPreferredColorScheme() : theme;
-    storeTheme(theme);
+    const safe = parseTheme(theme);
+    try {
+      window.StarlightThemeProvider.updatePickers(safe);
+    } catch {
+      /* Icon swap can throw; still apply colors + storage so theme toggling never no-ops. */
+    }
+    document.documentElement.dataset.theme = safe === "auto" ? getPreferredColorScheme() : safe;
+    storeTheme(safe);
   }
 
   matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
@@ -60,13 +65,34 @@ const labels = {
   const cycleOrder = ["light", "dark", "auto"];
 
   class StarlightThemeSelect extends HTMLElement {
+    /** @type {boolean} */
+    _bound = false;
+
+    /** @type {number} */
+    _connectAttempts = 0;
+
     constructor() {
       super();
-      onThemeChange(loadTheme());
+      /* Do not query children here — parser may not have attached them yet (HTML: custom element constructor). */
+    }
+
+    connectedCallback() {
+      if (this._bound) return;
 
       const btn = this.querySelector("button");
       const select = this.querySelector("select");
-      if (!(btn instanceof HTMLButtonElement) || !(select instanceof HTMLSelectElement)) return;
+      if (!(btn instanceof HTMLButtonElement) || !(select instanceof HTMLSelectElement)) {
+        /* Second picker can connect before its subtree is complete; never set _bound until we wire listeners. */
+        this._connectAttempts += 1;
+        if (this._connectAttempts < 25) {
+          queueMicrotask(() => this.connectedCallback());
+        }
+        return;
+      }
+
+      this._bound = true;
+
+      onThemeChange(loadTheme());
 
       const syncAria = () => {
         const t = parseTheme(select.value);
@@ -79,6 +105,7 @@ const labels = {
         const i = cycleOrder.indexOf(current);
         const next = cycleOrder[(i + 1) % cycleOrder.length];
         onThemeChange(next);
+        select.value = next;
         syncAria();
       });
 
@@ -92,7 +119,9 @@ const labels = {
     }
   }
 
-  customElements.define("starlight-theme-select", StarlightThemeSelect);
+  if (!customElements.get("starlight-theme-select")) {
+    customElements.define("starlight-theme-select", StarlightThemeSelect);
+  }
 </script>
 
 <style>

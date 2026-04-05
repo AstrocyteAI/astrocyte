@@ -19,29 +19,35 @@ const { hasSidebar } = Astro.locals.starlightRoute;
   </div>
   {
     hasSidebar ? (
-      <div class="sl-flex print:hidden">
-        {shouldRenderSearch && <Search />}
-      </div>
-    ) : (
       <>
-        {/* Splash: search + theme as one cluster on the right (avoids space-between pushing search to the center). */}
-        <div class="sl-flex md:sl-hidden print:hidden splash-toolbar">
+        <div class="sl-flex print:hidden header-search-slot">
           {shouldRenderSearch && <Search />}
-          <ThemeSelect />
         </div>
-        <div class="sl-hidden md:sl-flex print:hidden splash-search-desktop">
-          {shouldRenderSearch && <Search />}
+        <div
+          class:list={["print:hidden", "right-group", "sl-hidden", "md:sl-flex"]}
+        >
+          <div class="sl-flex social-icons">
+            <SocialIcons />
+          </div>
+          <ThemeSelect />
+          <LanguageSelect />
         </div>
       </>
+    ) : (
+      <div class="splash-nav-end">
+        <div class="sl-flex print:hidden header-search-slot splash-search-wrap">
+          {shouldRenderSearch && <Search />}
+        </div>
+        <div class:list={["print:hidden", "right-group", "sl-flex"]}>
+          <div class="sl-flex social-icons">
+            <SocialIcons />
+          </div>
+          <ThemeSelect />
+          <LanguageSelect />
+        </div>
+      </div>
     )
   }
-  <div class="sl-hidden md:sl-flex print:hidden right-group">
-    <div class="sl-flex social-icons">
-      <SocialIcons />
-    </div>
-    <ThemeSelect />
-    <LanguageSelect />
-  </div>
 </div>
 
 <style>
@@ -63,26 +69,62 @@ const { hasSidebar } = Astro.locals.starlightRoute;
       min-width: 0;
     }
 
+    /* Let the 1fr search column shrink so it cannot paint over the theme/social column (broken clicks on desktop). */
+    .header-search-slot {
+      min-width: 0;
+    }
+
+    .right-group {
+      position: relative;
+      z-index: 2;
+    }
+
     .right-group,
     .social-icons {
       gap: 1rem;
       align-items: center;
     }
+
+    .splash-nav-end .right-group {
+      flex-direction: row;
+      flex-wrap: nowrap;
+    }
+
     .social-icons::after {
       content: "";
       height: 2rem;
       border-inline-end: 1px solid var(--sl-color-gray-5);
     }
 
-    .splash-toolbar {
-      align-items: center;
-      gap: 0.25rem;
-      flex-shrink: 0;
-    }
+    /*
+      Splash mobile only: cluster search + icons on the right. Do not override `site-search` on
+      desktop — Starlight uses `display: contents` so the search button can use width:100% in the
+      1fr grid column; `inline-flex` on the host shrinks the bar next to the logo.
+    */
+    @media (max-width: 49.99rem) {
+      .splash-nav-end {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: var(--sl-nav-gap);
+        margin-inline-start: auto;
+        flex-shrink: 0;
+        min-width: 0;
+      }
 
-    .splash-search-desktop {
-      align-items: center;
-      min-width: 0;
+      .splash-search-wrap {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        min-width: 0;
+      }
+
+      .splash-search-wrap :global(site-search) {
+        display: inline-flex;
+        align-items: center;
+      }
     }
 
     @media (min-width: 50rem) {
@@ -113,6 +155,16 @@ const { hasSidebar } = Astro.locals.starlightRoute;
           /* 3 (right items): use the space that these need. */
           auto;
         align-content: center;
+      }
+
+      .splash-nav-end {
+        display: contents;
+      }
+
+      /* Same as default doc header search cell: fill the 1fr track */
+      .splash-search-wrap {
+        width: 100%;
+        min-width: 0;
       }
     }
   }
