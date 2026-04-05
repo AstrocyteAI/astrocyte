@@ -60,6 +60,7 @@ const topicItems = {
     { label: "Access control", link: "/design/access-control/" },
     { label: "Sandbox awareness & exfiltration", link: "/design/sandbox-awareness-and-exfiltration/" },
     { label: "Data governance", link: "/design/data-governance/" },
+    { label: "Innovations roadmap", link: "/design/innovations/" },
     {
       label: "Presentation layer & multimodal services",
       link: "/design/presentation-layer-and-multimodal-services/",
