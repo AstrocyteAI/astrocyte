@@ -89,6 +89,7 @@ export default defineConfig({
     mermaid({ autoTheme: true }),
     starlight({
       components: {
+        Header: "./src/components/Header.astro",
         ThemeSelect: "./src/components/ThemeSelect.astro",
         Hero: "./src/components/Hero.astro",
       },
