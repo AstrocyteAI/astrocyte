@@ -23,6 +23,8 @@ from astrocyte.errors import (
     ProviderUnavailable,
     RateLimited,
 )
+from astrocyte.lifecycle import LifecycleManager
+from astrocyte.mip.router import MipRouter
 from astrocyte.policy.barriers import ContentValidator, MetadataSanitizer, PiiScanner
 from astrocyte.policy.escalation import CircuitBreaker, DegradedModeHandler
 from astrocyte.policy.homeostasis import QuotaTracker, RateLimiter, enforce_token_budget
@@ -35,6 +37,8 @@ from astrocyte.types import (
     ForgetResult,
     HealthStatus,
     HookEvent,
+    LegalHold,
+    LifecycleRunResult,
     MemoryHit,
     MultiBankStrategy,
     RecallRequest,
@@ -170,6 +174,17 @@ class Astrocyte:
 
         # Hooks — typed as HookHandler (not Any)
         self._hooks: dict[str, list[HookHandler]] = {}
+
+        # Lifecycle
+        self._lifecycle = LifecycleManager(config.lifecycle)
+
+        # MIP router (loaded from mip.yaml if configured)
+        self._mip_router: MipRouter | None = None
+        if config.mip_config_path:
+            from astrocyte.mip.loader import load_mip_config
+
+            mip_config = load_mip_config(config.mip_config_path)
+            self._mip_router = MipRouter(mip_config)
 
         # Provider state — typed as protocols (not Any)
         self._engine_provider: EngineProvider | None = None
@@ -315,6 +330,29 @@ class Astrocyte:
         with span("astrocyte.retain", {"astrocyte.bank_id": bank_id}):
             # Access control
             self._check_access(bank_id, "write", context)
+
+            # MIP routing (before policy layer)
+            if self._mip_router:
+                from astrocyte.mip.rule_engine import RuleEngineInput
+
+                mip_input = RuleEngineInput(
+                    content=content,
+                    content_type=kwargs.get("content_type", "text"),
+                    metadata=metadata,
+                    tags=tags,
+                    pii_detected=bool(kwargs.get("pii_detected")),
+                    source=kwargs.get("source"),
+                )
+                routing = await self._mip_router.route(mip_input)
+                if routing.bank_id:
+                    # Re-check access for new bank
+                    if routing.bank_id != bank_id:
+                        self._check_access(routing.bank_id, "write", context)
+                    bank_id = routing.bank_id
+                if routing.tags is not None:
+                    tags = routing.tags
+                if routing.retain_policy == "reject":
+                    return RetainResult(stored=False, error="Rejected by MIP routing rule")
 
             # Rate limiting + quota
             self._check_rate_limit(bank_id, "retain")
@@ -589,6 +627,10 @@ class Astrocyte:
         with span("astrocyte.forget", {"astrocyte.bank_id": bank_id}):
             self._check_access(bank_id, "forget", context)
 
+            # Legal hold check (compliance=True bypasses for right-to-forget)
+            if not kwargs.get("compliance"):
+                self._lifecycle.check_forget_allowed(bank_id)
+
             request = ForgetRequest(
                 bank_id=bank_id,
                 memory_ids=memory_ids,
@@ -617,6 +659,75 @@ class Astrocyte:
                 status = HealthStatus(healthy=True, message="No provider configured")
         status.latency_ms = t["elapsed_ms"]
         return status
+
+    # ---------------------------------------------------------------------------
+    # Lifecycle — legal hold + TTL
+    # ---------------------------------------------------------------------------
+
+    def set_legal_hold(self, bank_id: str, hold_id: str, reason: str, *, set_by: str = "user:api") -> LegalHold:
+        """Place a bank under legal hold. Blocks forget() until released."""
+        return self._lifecycle.set_legal_hold(bank_id, hold_id, reason, set_by=set_by)
+
+    def release_legal_hold(self, bank_id: str, hold_id: str) -> bool:
+        """Release a legal hold from a bank. Returns True if hold existed."""
+        return self._lifecycle.release_legal_hold(bank_id, hold_id)
+
+    def is_under_hold(self, bank_id: str) -> bool:
+        """Check if bank is under legal hold."""
+        return self._lifecycle.is_under_hold(bank_id)
+
+    async def run_lifecycle(self, bank_id: str) -> LifecycleRunResult:
+        """Run TTL lifecycle check on a bank. Scan memories, archive/delete as needed."""
+        from astrocyte.types import LifecycleAction
+
+        if not self._config.lifecycle.enabled:
+            return LifecycleRunResult(archived_count=0, deleted_count=0, skipped_count=0, actions=[])
+
+        now = datetime.now(timezone.utc)
+        actions: list[LifecycleAction] = []
+        to_delete: list[str] = []
+
+        # Scan all memories in bank
+        result = await self._do_recall(RecallRequest(query="*", bank_id=bank_id, max_results=10000))
+
+        for hit in result.hits:
+            created_at = hit.metadata.get("_created_at") if hit.metadata else None
+            last_recalled = hit.metadata.get("_last_recalled_at") if hit.metadata else None
+
+            # Parse datetime strings if needed
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            if isinstance(last_recalled, str):
+                last_recalled = datetime.fromisoformat(last_recalled)
+
+            action = self._lifecycle.evaluate_memory_ttl(
+                memory_id=hit.memory_id or "",
+                bank_id=bank_id,
+                created_at=created_at,
+                last_recalled_at=last_recalled,
+                tags=hit.tags,
+                fact_type=hit.fact_type,
+                now=now,
+            )
+            actions.append(action)
+            if action.action in ("delete", "archive"):
+                to_delete.append(hit.memory_id or "")
+
+        # Batch delete/archive
+        deleted = 0
+        if to_delete:
+            forget_result = await self._do_forget(ForgetRequest(bank_id=bank_id, memory_ids=to_delete))
+            deleted = forget_result.deleted_count
+
+        archived = sum(1 for a in actions if a.action == "archive")
+        skipped = sum(1 for a in actions if a.action == "keep")
+
+        return LifecycleRunResult(
+            archived_count=archived,
+            deleted_count=deleted,
+            skipped_count=skipped,
+            actions=actions,
+        )
 
     # ---------------------------------------------------------------------------
     # Memory portability

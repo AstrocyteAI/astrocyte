@@ -171,7 +171,6 @@ wheels = [
 
 [[package]]
 name = "astrocyte"
-version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },
@@ -210,13 +209,17 @@ prometheus = [
 
 [package.metadata]
 requires-dist = [
-    { name = "astrocyte", extras = ["otel", "prometheus", "mcp", "eval"], marker = "extra == 'all'" },
+    { name = "deepeval", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0" },
+    { name = "fastmcp", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "fastmcp", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.0" },
+    { name = "opentelemetry-api", marker = "extra == 'all'", specifier = ">=1.20" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.20" },
+    { name = "opentelemetry-sdk", marker = "extra == 'all'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20" },
+    { name = "prometheus-client", marker = "extra == 'all'", specifier = ">=0.20" },
     { name = "prometheus-client", marker = "extra == 'prometheus'", specifier = ">=0.20" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
@@ -225,7 +228,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
 ]
-provides-extras = ["otel", "prometheus", "mcp", "eval", "dev", "all"]
+provides-extras = ["all", "dev", "eval", "mcp", "otel", "prometheus"]
 
 [[package]]
 name = "attrs"

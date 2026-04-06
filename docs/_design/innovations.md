@@ -216,13 +216,38 @@ hybrid = HybridEngineProvider(engine=mystique, pipeline=pipeline, adaptive_routi
 
 ---
 
-## Phase 3: Advanced (planned)
+## Phase 3: Declarative routing (implemented)
 
-### 3.1 Mental Model Observability (Mystique)
+### 3.0 Memory Intent Protocol (MIP)
+
+**Design doc:** `memory-intent-protocol.md`
+
+**Implementation (Python):** `astrocyte.mip` — YAML loader, mechanical rule engine, `MipRouter` (rules first, then optional LLM intent when configured). Rust and spec-only options (e.g. integration patterns in `memory-intent-protocol.md` §6) follow the usual parallel-implementation cadence.
+
+MIP makes memory routing declarative — both deterministic rules and LLM-based intent in one protocol. "Intent" carries two senses: the system's declared intent (rules, compliance policies, escalation paths) and the model's expressed intent (LLM judgment when rules can't resolve).
+
+**Components:**
+- **`mip.yaml`** — bank definitions, priority-ordered mechanical rules, match DSL (all/any/none, existence checks, value checks, computed signals), action DSL (bank templates, tags, retain policies, escalation)
+- **Intent policy** — LLM prompt + constraints, fires only on escalation from mechanical rules
+- **Override hierarchy** — compliance rules always mechanical, never delegated to model judgment
+- **Retrieval/reflect triggers** — auto-recall and auto-reflect conditions
+
+**Resolution pipeline:** Mechanical rules first → ambiguity detector → LLM intent only when rules cannot resolve. Zero inference cost for the deterministic path.
+
+**Relationship to existing innovations:**
+- LLM-curated retain (§2.2) is a subset of MIP's intent layer
+- Cross-engine routing (§2.6) is orthogonal to MIP routing
+- MIP does not replace these — it provides the declarative policy layer above them
+
+---
+
+## Phase 4: Advanced (planned)
+
+### 4.1 Mental Model Observability (Mystique)
 
 `ConsolidationTrace` dataclass exposing when mental models were updated, observations formed, facts consolidated, and disposition drift detected. Mystique-specific because mental models are computed by Hindsight's engine.
 
-### 3.2 Advanced Consolidation (Mystique)
+### 4.2 Advanced Consolidation (Mystique)
 
 Quality-based loss functions and observation formation — Hindsight's engine advantage. Per-bank policies for when to consolidate (session-end, quota-trigger, idle-window, scheduled).
 

@@ -180,6 +180,20 @@ class DefaultsConfig:
 
 
 @dataclass
+class LifecycleTtlConfig:
+    archive_after_days: int = 90  # Days since last recall before archiving
+    delete_after_days: int = 365  # Days since creation before deletion
+    exempt_tags: list[str] | None = None  # Tags that exempt from TTL
+    fact_type_overrides: dict[str, int | None] | None = None  # Override archive_after_days by fact_type
+
+
+@dataclass
+class LifecycleConfig:
+    enabled: bool = False
+    ttl: LifecycleTtlConfig = field(default_factory=LifecycleTtlConfig)
+
+
+@dataclass
 class BankConfig:
     """Per-bank override settings."""
 
@@ -238,6 +252,12 @@ class AstrocyteConfig:
     tiered_retrieval: TieredRetrievalConfig = field(default_factory=TieredRetrievalConfig)
     curated_retain: CuratedRetainConfig = field(default_factory=CuratedRetainConfig)
     curated_recall: CuratedRecallConfig = field(default_factory=CuratedRecallConfig)
+
+    # Lifecycle
+    lifecycle: LifecycleConfig = field(default_factory=LifecycleConfig)
+
+    # MIP (Memory Intent Protocol)
+    mip_config_path: str | None = None  # Path to mip.yaml
 
     # Per-bank overrides
     banks: dict[str, BankConfig] | None = None
@@ -384,6 +404,19 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
                 )
             )
         config.access_grants = grants
+
+    if "lifecycle" in data:
+        lc = data["lifecycle"]
+        ttl_data = lc.get("ttl", {})
+        config.lifecycle = LifecycleConfig(
+            enabled=lc.get("enabled", False),
+            ttl=LifecycleTtlConfig(**{k: v for k, v in ttl_data.items()}),
+        )
+
+    if "mip_config_path" in data:
+        config.mip_config_path = data["mip_config_path"]
+    elif "mip" in data and isinstance(data["mip"], str):
+        config.mip_config_path = data["mip"]
 
     if "banks" in data and data["banks"]:
         banks: dict[str, BankConfig] = {}

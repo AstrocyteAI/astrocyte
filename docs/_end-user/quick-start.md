@@ -41,7 +41,70 @@ vars_for_prompt = await memory.load_memory_variables({})
 
 Per-framework guides live under **[Integrations](/plugins/integrations/langgraph/)** (start with LangGraph or MCP, depending on your harness).
 
-## 2. Reference REST server (Docker, recommended)
+## 2. Declarative routing with MIP
+
+The **Memory Intent Protocol (MIP)** lets you declare routing rules so Astrocyte decides which bank, tags, and policies to apply — without routing logic in your application code.
+
+Create a `mip.yaml` alongside your `astrocyte.yaml`:
+
+```yaml
+# mip.yaml
+version: "1.0"
+
+banks:
+  - id: "student-{student_id}"
+    description: Per-student academic memory
+    compliance: pdpa
+
+rules:
+  # Compliance — PII always goes to encrypted bank, cannot be overridden
+  - name: pii-lockdown
+    priority: 1
+    override: true
+    match:
+      pii_detected: true
+    action:
+      bank: private-encrypted
+      tags: [pii, compliance]
+      retain_policy: redact_before_store
+
+  # Student answers route to per-student banks automatically
+  - name: student-answer
+    priority: 10
+    match:
+      all:
+        - content_type: student_answer
+        - metadata.student_id: present
+    action:
+      bank: "student-{metadata.student_id}"
+      tags: ["{metadata.topic}"]
+```
+
+Reference it from `astrocyte.yaml`:
+
+```yaml
+# astrocyte.yaml
+profile: personal
+mip_config_path: ./mip.yaml
+```
+
+Now routing happens automatically:
+
+```python
+brain = Astrocyte.from_config("astrocyte.yaml")
+
+# MIP routes this to bank "student-stu-42" with tag "algebra"
+await brain.retain(
+    "2x + 3 = 7, so x = 2",
+    bank_id="default",  # MIP overrides this
+    metadata={"student_id": "stu-42", "topic": "algebra"},
+    content_type="student_answer",
+)
+```
+
+Mechanical rules resolve deterministically with zero LLM cost. When no rule matches, the intent layer can optionally ask an LLM to decide. See the full [MIP design doc](/design/memory-intent-protocol/) for the match DSL, override hierarchy, and intent policy.
+
+## 3. Reference REST server (Docker, recommended)
 
 The **`astrocyte-services-py/`** tree hosts Compose, **`astrocyte-rest`**, and **`astrocyte-pgvector`**.
 
@@ -75,7 +138,7 @@ For SQL-owned schema and ANN indexes, use the runbook script and overlays docume
 
 Details, troubleshooting, and environment split (**`ASTROCYTES_REST_DATABASE_URL`** vs migrate DSN) are in **[`astrocyte-services-py/README.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-services-py/README.md)** on GitHub.
 
-## 3. Next steps
+## 4. Next steps
 
 - **Agent + memory patterns/tutorials:** [100 Agents in 100 Days](/tutorials/100-agents-in-100-days/).
 - **Operate and harden HTTP:** [Production-grade reference server](/end-user/production-grade-http-service/) (security, auth, grants, observability).

@@ -408,6 +408,32 @@ class DataClassification:
 
 
 @dataclass
+class LegalHold:
+    hold_id: str
+    bank_id: str
+    reason: str
+    set_at: datetime
+    set_by: str  # "user:api", "system:compliance"
+
+
+@dataclass
+class LifecycleAction:
+    """Result of a lifecycle TTL evaluation on a single memory."""
+
+    memory_id: str
+    action: str  # "archive" | "delete" | "keep"
+    reason: str  # "ttl_unretrieved" | "ttl_archived_expired" | "recent" | "exempt" | "legal_hold"
+
+
+@dataclass
+class LifecycleRunResult:
+    archived_count: int
+    deleted_count: int
+    skipped_count: int
+    actions: list[LifecycleAction]
+
+
+@dataclass
 class AuditEvent:
     event_type: str
     bank_id: str
@@ -523,6 +549,24 @@ class RegressionAlert:
     delta: float
     delta_percent: float
     severity: Literal["warning", "critical"]
+
+
+# ---------------------------------------------------------------------------
+# MIP routing
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RoutingDecision:
+    """Output of MIP routing — tells Astrocyte where/how to store."""
+
+    bank_id: str | None = None
+    tags: list[str] | None = None
+    retain_policy: str | None = None  # "default" | "redact_before_store" | "encrypt" | "reject"
+    resolved_by: str = "passthrough"  # "mechanical" | "intent" | "passthrough"
+    rule_name: str | None = None
+    confidence: float = 1.0
+    reasoning: str | None = None  # LLM justification if intent layer used
 
 
 # ---------------------------------------------------------------------------

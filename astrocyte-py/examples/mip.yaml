@@ -1,0 +1,105 @@
+# Memory Intent Protocol (MIP) — declarative memory routing
+#
+# This file declares routing rules that Astrocyte evaluates before every
+# retain() call. Mechanical rules resolve deterministically (zero LLM cost).
+# The intent layer only fires when no rule matches.
+#
+# Reference: docs/_design/memory-intent-protocol.md
+
+version: "1.0"
+
+# ── Bank definitions ──────────────────────────────────────────────────────────
+
+banks:
+  - id: "student-{student_id}"
+    description: Per-student academic memory
+    access: [agent:tutor, agent:grader]
+    compliance: pdpa
+
+  - id: ops-monitoring
+    description: Pipeline operational memory
+    access: [agent:monitor, agent:incident]
+    compliance: pdpa
+
+  - id: private-encrypted
+    description: PII-containing content (compliance-locked)
+    compliance: pdpa
+
+# ── Routing rules (evaluated in priority order) ──────────────────────────────
+
+rules:
+  # Hard compliance rule — MIP intent layer CANNOT override this.
+  # Any content where PII was detected is forced into the encrypted bank.
+  - name: pii-lockdown
+    priority: 1
+    override: true
+    match:
+      pii_detected: true
+    action:
+      bank: private-encrypted
+      tags: [pii, compliance]
+      retain_policy: redact_before_store
+
+  # Content-type routing — student answers go to per-student banks.
+  # Template interpolation fills {metadata.student_id} and {metadata.topic}.
+  - name: student-answer
+    priority: 10
+    match:
+      all:
+        - content_type: student_answer
+        - metadata.student_id: present
+    action:
+      bank: "student-{metadata.student_id}"
+      tags:
+        - "{metadata.topic}"
+        - "{metadata.difficulty}"
+
+  # Source-based routing — pipeline events go to ops bank.
+  - name: pipeline-event
+    priority: 10
+    match:
+      all:
+        - source: fabric_pipeline
+        - metadata.pipeline_id: present
+    action:
+      bank: ops-monitoring
+      tags:
+        - fabric
+        - "{metadata.pipeline_id}"
+        - "{metadata.status}"
+
+  # Reject short/noisy content — under 10 words, not worth storing.
+  - name: reject-noise
+    priority: 50
+    match:
+      signals.word_count:
+        lt: 10
+    action:
+      retain_policy: reject
+
+  # Fallback — no rule matched, escalate to intent layer.
+  - name: unmatched-fallback
+    priority: 999
+    match:
+      all: []
+    action:
+      escalate: mip
+
+# ── Intent policy (LLM judgment, only on escalation) ─────────────────────────
+
+intent_policy:
+  escalate_when:
+    - matched_rules: 0
+    - confidence:
+        lt: 0.8
+
+  model_context: |
+    You are a memory routing agent. Route content to the correct
+    bank and apply appropriate tags.
+    Available banks: {banks}. Current tags: {tags}.
+    Never override compliance rules.
+
+  constraints:
+    cannot_override: [pii-lockdown]
+    must_justify: true
+    max_tokens: 200

@@ -1,0 +1,31 @@
+# Astrocyte config with MIP routing and memory lifecycle.
+#
+# MIP routing rules are in a separate file (mip.yaml) because they have
+# a different owner and change cadence than infrastructure config:
+#   - astrocyte.yaml: platform/infra team (backend, providers, policies)
+#   - mip.yaml: agent/domain team (routing rules, bank definitions)
+
+profile: personal
+
+provider_tier: engine
+provider: mystique
+provider_config:
+  endpoint: ${MYSTIQUE_ENDPOINT}
+  api_key: ${MYSTIQUE_API_KEY}
+
+# Point to the MIP routing policy
+mip_config_path: ./mip.yaml
+
+# Memory lifecycle — TTL-based archival and deletion
+lifecycle:
+  enabled: true
+  ttl:
+    archive_after_days: 90     # Archive if not recalled in 90 days
+    delete_after_days: 365     # Delete if older than 1 year
+    exempt_tags: [pinned, compliance]  # These are never auto-archived
+
+# Policy overrides (optional — profile defaults apply otherwise)
+barriers:
+  pii:
+    mode: regex
+    action: redact

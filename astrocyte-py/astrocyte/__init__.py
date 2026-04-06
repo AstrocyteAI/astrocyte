@@ -11,6 +11,7 @@ from astrocyte.errors import (
     ConfigError,
     CrossBorderViolation,
     LegalHoldActive,
+    MipRoutingError,
     PiiRejected,
     ProviderUnavailable,
     RateLimited,
@@ -49,6 +50,9 @@ from astrocyte.types import (
     HealthStatus,
     HookEvent,
     HttpClientContext,
+    LegalHold,
+    LifecycleAction,
+    LifecycleRunResult,
     LLMCapabilities,
     MemoryEntityAssociation,
     MemoryHit,
@@ -68,6 +72,7 @@ from astrocyte.types import (
     RegressionAlert,
     RetainRequest,
     RetainResult,
+    RoutingDecision,
     TokenUsage,
     TransportCapabilities,
     VectorFilters,
@@ -89,6 +94,7 @@ __all__ = [
     "PiiRejected",
     "CrossBorderViolation",
     "LegalHoldActive",
+    "MipRoutingError",
     # Protocols
     "VectorStore",
     "GraphStore",
@@ -147,6 +153,11 @@ __all__ = [
     # Types — lifecycle
     "AuditEvent",
     "ForgetSelector",
+    "LegalHold",
+    "LifecycleAction",
+    "LifecycleRunResult",
+    # Types — MIP
+    "RoutingDecision",
     # Types — analytics
     "BankHealth",
     "HealthIssue",

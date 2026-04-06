@@ -71,28 +71,30 @@ Indexes below use **topic bands** (sidebar order matches `astro.config.mjs`).
 
 | # | Title | Topic |
 |---|-------|--------|
-| 11 | [Presentation layer & multimodal services](./_design/presentation-layer-and-multimodal-services.md) | Video/voice **beside** the LLM SPI (Tavus-class) |
-| 12 | [Policy layer](./_design/policy-layer.md) | Homeostasis, barriers, pruning, observability |
-| 13 | [Use-case profiles](./_design/use-case-profiles.md) | YAML profiles for scenarios |
-| 14 | [Built-in intelligence pipeline](./_design/built-in-pipeline.md) | Tier 1 intelligence pipeline |
-| 15 | [Multi-bank orchestration](./_design/multi-bank-orchestration.md) | Multiple memory banks |
-| 16 | [MCP server integration](./_design/mcp-server.md) | MCP tool integration |
+| 11 | [Innovations roadmap](./_design/innovations.md) | Pipeline roadmap; Astrocyte vs Mystique open-core split |
+| 12 | [Presentation layer & multimodal services](./_design/presentation-layer-and-multimodal-services.md) | Video/voice **beside** the LLM SPI (Tavus-class) |
+| 13 | [Policy layer](./_design/policy-layer.md) | Homeostasis, barriers, pruning, observability |
+| 14 | [Use-case profiles](./_design/use-case-profiles.md) | YAML profiles for scenarios |
+| 15 | [Built-in intelligence pipeline](./_design/built-in-pipeline.md) | Tier 1 intelligence pipeline |
+| 16 | [Multi-bank orchestration](./_design/multi-bank-orchestration.md) | Multiple memory banks |
+| 17 | [MCP server integration](./_design/mcp-server.md) | MCP tool integration |
+| 18 | [Memory Intent Protocol (MIP)](./_design/memory-intent-protocol.md) | Declarative memory routing — mechanical rules + LLM intent |
 
 ### 3.4 Durability & movement
 
 | # | Title | Topic |
 |---|-------|--------|
-| 17 | [Memory portability](./_design/memory-portability.md) | AMA export / import between providers |
-| 18 | [Memory lifecycle management](./_design/memory-lifecycle.md) | TTL, compliance, legal hold, audit |
-| 19 | [Event hooks](./_design/event-hooks.md) | Webhooks, callable hooks, export bridge |
-| 20 | [Memory export sink](./_design/memory-export-sink.md) | Warehouse / lakehouse / Iceberg / Delta / Parquet **emit** SPI |
+| 19 | [Memory portability](./_design/memory-portability.md) | AMA export / import between providers |
+| 20 | [Memory lifecycle management](./_design/memory-lifecycle.md) | TTL, compliance, legal hold, audit |
+| 21 | [Event hooks](./_design/event-hooks.md) | Webhooks, callable hooks, export bridge |
+| 22 | [Memory export sink](./_design/memory-export-sink.md) | Warehouse / lakehouse / Iceberg / Delta / Parquet **emit** SPI |
 
 ### 3.5 Quality & proof
 
 | # | Title | Topic |
 |---|-------|--------|
-| 21 | [Bank health & utilization](./_design/memory-analytics.md) | In-process bank health, utilization, Prometheus (*not* warehouse export) |
-| 22 | [Evaluation and benchmarking](./_design/evaluation.md) | Benchmarks and regression testing |
+| 23 | [Bank health & utilization](./_design/memory-analytics.md) | In-process bank health, utilization, Prometheus (*not* warehouse export) |
+| 24 | [Evaluation and benchmarking](./_design/evaluation.md) | Benchmarks and regression testing |
 
 ---
 
@@ -108,15 +110,16 @@ Add new days as Markdown files under [`_tutorials/`](./_tutorials/) and link the
 
 ## Shorter paths
 
-Numbers below refer to **§3 Design** bands (single index **1–22**) and **§2 Plugins** (**1–5**).
+Numbers below refer to **§3 Design** bands (single index **1–24**) and **§2 Plugins** (**1–5**).
 
 - **New to the framework:** Design **1 → 2 → 3**, optional **4** (storage hub), then Plugins **1** or End user **2**.
 - **Implementing a provider:** Plugins **1**, **2**; Design **6** (*implementation language strategy*).
 - **Warehouse / lakehouse — agent-time `recall`:** Tier 1 adapters — Design **3**, **4**, Plugins **1** §1.
-- **Warehouse / lakehouse — durable export:** Design **4**, **20**, Plugins **1** §5, **2** §3.5; **19** (*event hooks* bridge until core loads `memory_export_sinks:`).
-- **Security and compliance:** Design **12**, **8**, **18**, **10**, **9**, **7** (*policy, access, lifecycle, data governance, sandbox, identity*).
-- **Integrations (network, identity, UI):** Plugins **3**, Design **7**, **11**, Plugins **4**.
-- **Production HTTP / Backend for Frontend (BFF) hosting Astrocyte:** End user **2**; Design **3**, **7**, **8**, **12**, **18**, **10**, **9**; Plugins **3**.
+- **Warehouse / lakehouse — durable export:** Design **4**, **22** (*memory export sink*), Plugins **1** §5, **2** §3.5; **21** (*event hooks* bridge until core loads `memory_export_sinks:`).
+- **Security and compliance:** Design **13**, **8**, **20**, **10**, **9**, **7** (*policy, access, lifecycle, data governance, sandbox, identity*).
+- **Declarative memory routing:** Design **18** (*MIP*), **17** (*MCP server*), **13** (*policy layer*).
+- **Integrations (network, identity, UI):** Plugins **3**, Design **7**, **12**, Plugins **4**.
+- **Production HTTP / Backend for Frontend (BFF) hosting Astrocyte:** End user **2**; Design **3**, **7**, **8**, **13**, **20**, **10**, **9**; Plugins **3**.
 
 ---
 

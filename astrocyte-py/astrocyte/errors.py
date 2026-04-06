@@ -72,6 +72,10 @@ class CrossBorderViolation(AstrocyteError):
         super().__init__(f"Cross-border violation: {from_zone} → {to_zone}")
 
 
+class MipRoutingError(AstrocyteError):
+    """MIP routing configuration or evaluation error."""
+
+
 class LegalHoldActive(AstrocyteError):
     """Operation blocked because bank is under legal hold."""
 

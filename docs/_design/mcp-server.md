@@ -164,7 +164,7 @@ The full Astrocyte policy layer applies to MCP tool calls:
 - **Token budgets**: `memory_recall` and `memory_reflect` results are budget-enforced
 - **Circuit breaker**: if the provider is down, tools return appropriate MCP errors
 - **OTel traces**: every MCP tool call generates spans for observability
-- **Access control**: MCP server can be configured with a specific access identity (see `access-control.md`). For mapping richer client identity from the host or combining with external PDPs, see `identity-and-external-policy.md`.
+- **Access control**: MCP server can be configured with a specific access identity (see [access control](access-control.md)). For mapping richer client identity from the host or combining with external PDPs, see [identity and external policy](identity-and-external-policy.md).
 
 ---
 
@@ -199,4 +199,14 @@ Agent B (review)  ──┼── astrocyte-mcp (SSE, port 8080) ── Mystique
 Agent C (testing) ──┘
 ```
 
-Each agent has its own bank plus access to shared team banks (see `multi-bank-orchestration.md`).
+Each agent has its own bank plus access to shared team banks (see [multi-bank orchestration](multi-bank-orchestration.md)).
+
+---
+
+## 8. Declarative memory routing (MIP)
+
+For multi-agent deployments where routing logic (which bank, which tags, which compliance profile) needs to be consistent and auditable across agents, see [Memory Intent Protocol (MIP)](memory-intent-protocol.md).
+
+MIP extends the MCP server with declarative routing rules and an LLM intent escalation layer. Mechanical rules resolve deterministically (zero inference cost); the model is only consulted when rules cannot resolve. Compliance-mandatory rules cannot be overridden by model judgment.
+
+MIP is declared in `mip.yaml` and loaded alongside `astrocyte.yaml`. The MCP tool surface remains the same — MIP operates transparently between the tool call and the Astrocyte pipeline.

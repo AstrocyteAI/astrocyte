@@ -70,6 +70,7 @@ const topicItems = {
     { label: "Built-in pipeline", link: "/design/built-in-pipeline/" },
     { label: "Multi-bank orchestration", link: "/design/multi-bank-orchestration/" },
     { label: "MCP server", link: "/design/mcp-server/" },
+    { label: "Memory Intent Protocol (MIP)", link: "/design/memory-intent-protocol/" },
     { label: "Memory portability", link: "/design/memory-portability/" },
     { label: "Memory lifecycle", link: "/design/memory-lifecycle/" },
     { label: "Event hooks", link: "/design/event-hooks/" },

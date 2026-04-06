@@ -38,7 +38,9 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
 <div class="section-subheading">
   Install extras for your stack, open a configured <code>Astrocyte</code>, then either call memory from your own code or wire
   the same instance into an agent framework adapter — LangGraph, CrewAI, MCP, OpenAI/Claude agent SDKs, and{" "}
-  <a href="plugins/agent-framework-middleware/">others</a>.
+  <a href="plugins/agent-framework-middleware/">others</a>. Optionally add{" "}
+  <a href="design/memory-intent-protocol/">MIP</a> (Memory Intent Protocol) to declare routing rules — Astrocyte
+  decides which bank, tags, and compliance policies to apply, with zero routing code in your app.
 </div>
 
 <div class="quickstart-panel">
@@ -59,7 +61,108 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
   </Tabs>
 
   <Tabs syncKey="astrocyte-quickstart-code">
+    <TabItem label="MIP routing">
+      <p class="quickstart-note">
+        <strong>MIP</strong> (<a href="design/memory-intent-protocol/">Memory Intent Protocol</a>) lets you declare routing rules in <code>mip.yaml</code> and reference it from{" "}
+        <code>astrocyte.yaml</code> with <code>mip_config_path: ./mip.yaml</code>. Astrocyte routes automatically —
+        no routing code in your app.
+      </p>
+
+      <Tabs syncKey="mip-files">
+        <TabItem label="mip.yaml">
+```yaml
+version: "1.0"
+banks:
+  - id: "student-{student_id}"
+    description: Per-student academic memory
+    compliance: pdpa
+rules:
+  - name: pii-lockdown
+    priority: 1
+    override: true          # compliance — intent layer cannot override
+    match:
+      pii_detected: true
+    action:
+      bank: private-encrypted
+      tags: [pii, compliance]
+      retain_policy: redact_before_store
+  - name: student-answer
+    priority: 10
+    match:
+      all:
+        - content_type: student_answer
+        - metadata.student_id: present
+    action:
+      bank: "student-{metadata.student_id}"
+      tags: ["{metadata.topic}"]
+```
+        </TabItem>
+        <TabItem label="astrocyte.yaml">
+```yaml
+profile: personal
+
+provider_tier: storage
+vector_store: pgvector
+vector_store_config:
+  connection_url: postgresql://localhost:5432/memories
+
+llm_provider: anthropic
+llm_provider_config:
+  api_key: ${ANTHROPIC_API_KEY}
+  model: claude-sonnet-4-20250514
+
+# Point to MIP routing policy
+mip_config_path: ./mip.yaml
+
+lifecycle:
+  enabled: true
+  ttl:
+    archive_after_days: 90
+    delete_after_days: 365
+```
+        </TabItem>
+        <TabItem label="Python">
+```python
+from astrocyte import Astrocyte
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+
+# MIP routes to bank "student-stu-42" with tag "algebra"
+await brain.retain(
+    "The quadratic formula solves second degree equations",
+    bank_id="default",  # MIP overrides this
+    metadata={"student_id": "stu-42", "topic": "algebra"},
+    content_type="student_answer",
+)
+
+hits = await brain.recall("quadratic formula", bank_id="student-stu-42")
+```
+        </TabItem>
+      </Tabs>
+    </TabItem>
     <TabItem label="Direct API">
+      <p class="quickstart-note">
+        No <code>mip.yaml</code> needed — without <code>mip_config_path</code>, content goes straight to the bank you specify.
+      </p>
+      <Tabs syncKey="direct-api-files">
+        <TabItem label="astrocyte.yaml">
+```yaml
+profile: personal
+
+# Tier 1: bring your own database
+provider_tier: storage
+vector_store: pgvector
+vector_store_config:
+  connection_url: postgresql://localhost:5432/memories
+
+# LLM for embedding + reflect
+llm_provider: anthropic
+llm_provider_config:
+  api_key: ${ANTHROPIC_API_KEY}
+  model: claude-sonnet-4-20250514
+```
+        </TabItem>
+        <TabItem label="Python">
 ```python
 from astrocyte import Astrocyte
 
@@ -69,6 +172,8 @@ await brain.retain("Calvin prefers dark mode", bank_id="user-123")
 
 hits = await brain.recall("What are Calvin's preferences?", bank_id="user-123")
 ```
+        </TabItem>
+      </Tabs>
     </TabItem>
     <TabItem label="LangGraph / LangChain">
       <p class="quickstart-note">
@@ -354,6 +459,9 @@ prompt_vars = await memory.load_memory_variables({})
   <Card title="MCP Server" icon="laptop">
     Any MCP-capable agent (Claude Code, Cursor, Windsurf) gets memory via `astrocyte-mcp`. Zero code integration.
   </Card>
+  <Card title="Memory Intent Protocol (MIP)" icon="document">
+    Declarative memory routing — mechanical rules resolve deterministically, LLM judgment only when needed. One `mip.yaml` governs bank routing, compliance enforcement, and escalation across all agents.
+  </Card>
   <Card title="Agent Frameworks" icon="puzzle">
     LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, AG2 — thin middleware wires Astrocyte into each framework's memory abstraction.
   </Card>
@@ -374,6 +482,7 @@ prompt_vars = await memory.load_memory_variables({})
   <LinkCard title="Quick Start" href="end-user/quick-start/" description="Install, configure, and run your first retain/recall in minutes." />
   <LinkCard title="Provider SPI" href="plugins/provider-spi/" description="Build a storage adapter or engine provider for Astrocyte." />
   <LinkCard title="Architecture" href="design/architecture-framework/" description="Two-tier model, layer boundaries, and design principles." />
+  <LinkCard title="Memory Intent Protocol" href="design/memory-intent-protocol/" description="Declarative routing — mechanical rules + LLM intent for multi-agent memory." />
   <LinkCard title="100 Agents in 100 Days" href="tutorials/100-agents-in-100-days/" description="Daily tutorials for building AI agents with persistent memory." />
 </CardGrid>
 
