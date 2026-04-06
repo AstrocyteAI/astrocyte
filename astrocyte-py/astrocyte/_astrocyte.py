@@ -129,6 +129,8 @@ class Astrocyte:
         self._pii_scanner = PiiScanner(
             mode=config.barriers.pii.mode,
             action=config.barriers.pii.action,
+            countries=config.barriers.pii.countries,
+            type_overrides=config.barriers.pii.type_overrides,
         )
         self._content_validator = ContentValidator(
             max_content_length=config.barriers.validation.max_content_length,
@@ -368,8 +370,11 @@ class Astrocyte:
             if errors:
                 return RetainResult(stored=False, error="; ".join(errors))
 
-            # PII scanning
-            content, pii_matches = self._pii_scanner.apply(content)
+            # PII scanning (async for LLM/rules_then_llm modes)
+            if self._config.barriers.pii.mode in ("llm", "rules_then_llm"):
+                content, pii_matches = await self._pii_scanner.apply_async(content)
+            else:
+                content, pii_matches = self._pii_scanner.apply(content)
             if pii_matches:
                 self._logger.log(
                     "astrocyte.policy.pii_detected",

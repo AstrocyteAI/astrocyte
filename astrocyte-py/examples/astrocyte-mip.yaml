@@ -24,8 +24,16 @@ lifecycle:
     delete_after_days: 365     # Delete if older than 1 year
     exempt_tags: [pinned, compliance]  # These are never auto-archived
 
-# Policy overrides (optional — profile defaults apply otherwise)
+# Compliance profile — pre-built defaults for PDPA (Singapore)
+# Also available: gdpr, hipaa
+compliance_profile: pdpa
+
+# PII detection — country-specific patterns + LLM fallback
 barriers:
   pii:
-    mode: regex
+    mode: rules_then_llm          # Regex first, LLM for context-dependent PII
     action: redact
+    countries: [SG, IN, UK, AU]   # NRIC, Aadhaar, NINO, TFN patterns
+    type_overrides:
+      credit_card: { action: reject }   # Block credit cards outright
+      nric: { action: reject }          # Never store NRIC

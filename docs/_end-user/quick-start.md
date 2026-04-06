@@ -80,11 +80,21 @@ rules:
       tags: ["{metadata.topic}"]
 ```
 
-Reference it from `astrocyte.yaml`:
+Reference it from `astrocyte.yaml` — also configure PII detection for your region:
 
 ```yaml
 # astrocyte.yaml
 profile: personal
+compliance_profile: pdpa          # Pre-built GDPR, HIPAA, or PDPA defaults
+
+barriers:
+  pii:
+    mode: rules_then_llm          # Regex first, LLM fallback for context-dependent PII
+    countries: [SG, IN, AU]       # Enable NRIC, Aadhaar, TFN patterns
+    type_overrides:
+      credit_card: { action: reject }   # Block credit cards outright
+      name: { action: warn }            # Log names but don't redact
+
 mip_config_path: ./mip.yaml
 ```
 

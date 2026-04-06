@@ -111,6 +111,13 @@ llm_provider_config:
   api_key: ${ANTHROPIC_API_KEY}
   model: claude-sonnet-4-20250514
 
+# PII detection — country-specific + LLM fallback
+compliance_profile: pdpa
+barriers:
+  pii:
+    mode: rules_then_llm
+    countries: [SG, IN]
+
 # Point to MIP routing policy
 mip_config_path: ./mip.yaml
 
@@ -423,7 +430,7 @@ prompt_vars = await memory.load_memory_variables({})
 <div class="feature-grid not-content feature-grid--cols-3">
   <div class="feature-card">
     <h3>PII barriers</h3>
-    <p>Regex, NER, or LLM-based scanning. Redact, reject, or warn — before content reaches the provider.</p>
+    <p>Regex, NER, or LLM-based scanning with country-specific patterns (SG, IN, UK, EU, AU, CA, JP, CN). Per-type actions, DLP output scanning, and compliance profiles (GDPR, HIPAA, PDPA).</p>
   </div>
   <div class="feature-card">
     <h3>Rate limits & budgets</h3>
