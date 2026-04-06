@@ -1,0 +1,27 @@
+# PDPA compliance profile
+#
+# Singapore Personal Data Protection Act defaults.
+# Redacts PII with LLM fallback, owner-only access control,
+# 5-year retention, and DLP on reflect output.
+#
+# Usage: compliance_profile: pdpa
+
+barriers:
+  pii:
+    mode: rules_then_llm
+    action: redact
+
+lifecycle:
+  enabled: true
+  ttl:
+    archive_after_days: 365
+    delete_after_days: 1825  # 5 years
+
+access_control:
+  enabled: true
+  default_policy: owner_only
+
+dlp:
+  scan_recall_output: false
+  scan_reflect_output: true
+  output_pii_action: redact

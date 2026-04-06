@@ -180,6 +180,15 @@ class DefaultsConfig:
 
 
 @dataclass
+class DlpConfig:
+    """Data Loss Prevention — output scanning for PII in recall/reflect results."""
+
+    scan_recall_output: bool = False
+    scan_reflect_output: bool = False
+    output_pii_action: str = "warn"  # "redact" | "reject" | "warn"
+
+
+@dataclass
 class LifecycleTtlConfig:
     archive_after_days: int = 90  # Days since last recall before archiving
     delete_after_days: int = 365  # Days since creation before deletion
@@ -253,6 +262,12 @@ class AstrocyteConfig:
     curated_retain: CuratedRetainConfig = field(default_factory=CuratedRetainConfig)
     curated_recall: CuratedRecallConfig = field(default_factory=CuratedRecallConfig)
 
+    # Compliance profile
+    compliance_profile: str | None = None  # "gdpr" | "hipaa" | "pdpa" | None
+
+    # DLP
+    dlp: DlpConfig = field(default_factory=DlpConfig)
+
     # Lifecycle
     lifecycle: LifecycleConfig = field(default_factory=LifecycleConfig)
 
@@ -306,6 +321,23 @@ def _load_profile(profile_name: str) -> dict:
 
     if not profile_path.exists():
         raise ConfigError(f"Profile not found: {profile_path}")
+
+    with open(profile_path) as f:
+        return yaml.safe_load(f) or {}
+
+
+_COMPLIANCE_PROFILES_DIR = _PROFILES_DIR / "compliance"
+
+
+def _load_compliance_profile(name: str) -> dict:
+    """Load a compliance profile YAML (gdpr, hipaa, pdpa)."""
+    if name.startswith("./") or name.startswith("/"):
+        profile_path = Path(name)
+    else:
+        profile_path = _COMPLIANCE_PROFILES_DIR / f"{name}.yaml"
+
+    if not profile_path.exists():
+        raise ConfigError(f"Compliance profile not found: {profile_path}")
 
     with open(profile_path) as f:
         return yaml.safe_load(f) or {}
@@ -405,6 +437,12 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
             )
         config.access_grants = grants
 
+    if "compliance_profile" in data:
+        config.compliance_profile = data["compliance_profile"]
+
+    if "dlp" in data:
+        config.dlp = DlpConfig(**{k: v for k, v in data["dlp"].items()})
+
     if "lifecycle" in data:
         lc = data["lifecycle"]
         ttl_data = lc.get("ttl", {})
@@ -457,7 +495,7 @@ def access_grants_for_astrocyte(config: AstrocyteConfig) -> list[AccessGrant]:
 def load_config(path: str | Path) -> AstrocyteConfig:
     """Load Astrocyte configuration from a YAML file.
 
-    Resolution order: profile defaults → user config → per-bank overrides.
+    Resolution order: compliance profile → behavior profile → user config → per-bank overrides.
     Environment variables are substituted (${VAR_NAME}).
     """
     config_path = Path(path)
@@ -470,7 +508,13 @@ def load_config(path: str | Path) -> AstrocyteConfig:
     # Substitute environment variables
     raw = _substitute_env_recursive(raw)
 
-    # Load and merge profile if specified
+    # Load and merge compliance profile first (lowest priority defaults)
+    compliance_name = raw.get("compliance_profile")
+    if compliance_name:
+        compliance_data = _load_compliance_profile(compliance_name)
+        raw = _deep_merge(compliance_data, raw)
+
+    # Load and merge behavior profile (overrides compliance defaults)
     profile_name = raw.get("profile")
     if profile_name:
         profile_data = _load_profile(profile_name)

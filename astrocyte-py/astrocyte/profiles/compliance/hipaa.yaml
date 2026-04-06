@@ -1,0 +1,27 @@
+# HIPAA compliance profile
+#
+# US Health Insurance Portability and Accountability Act defaults.
+# Rejects PHI/PII outright, enforces strict access control,
+# rejects PII in reflect output, and enables audit logging.
+#
+# Usage: compliance_profile: hipaa
+
+barriers:
+  pii:
+    mode: llm
+    action: reject
+
+lifecycle:
+  enabled: true
+  ttl:
+    archive_after_days: 365
+    delete_after_days: 2555  # 7 years
+
+access_control:
+  enabled: true
+  default_policy: deny
+
+dlp:
+  scan_recall_output: true
+  scan_reflect_output: true
+  output_pii_action: reject

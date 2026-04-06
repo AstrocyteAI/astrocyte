@@ -1,0 +1,27 @@
+# GDPR compliance profile
+#
+# EU General Data Protection Regulation defaults.
+# Redacts PII, enforces access control, enables DLP on reflect output,
+# and sets 2-year retention with right-to-forget.
+#
+# Usage: compliance_profile: gdpr
+
+barriers:
+  pii:
+    mode: rules_then_llm
+    action: redact
+
+lifecycle:
+  enabled: true
+  ttl:
+    archive_after_days: 365
+    delete_after_days: 730   # 2 years
+
+access_control:
+  enabled: true
+  default_policy: deny
+
+dlp:
+  scan_recall_output: false
+  scan_reflect_output: true
+  output_pii_action: redact
