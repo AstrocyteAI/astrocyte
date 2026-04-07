@@ -169,7 +169,7 @@ async def score_reflect_with_deepeval(
         test_case_for_hallucination = LLMTestCase(
             input=query,
             actual_output=answer,
-            context=source_texts or ["No context available."],
+            retrieval_context=source_texts or ["No context available."],
         )
         await hallucination.a_measure(test_case_for_hallucination)
         scores["hallucination"] = hallucination.score

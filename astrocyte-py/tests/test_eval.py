@@ -146,10 +146,10 @@ class TestMemoryEvaluator:
 
         assert result.suite == "basic"
         assert result.provider == "test"
-        assert result.metrics.recall_precision >= 0.0
-        assert result.metrics.recall_hit_rate >= 0.0
-        assert result.metrics.recall_mrr >= 0.0
-        assert result.metrics.retain_latency_p50_ms >= 0.0
+        assert 0.0 <= result.metrics.recall_precision <= 1.0
+        assert 0.0 <= result.metrics.recall_hit_rate <= 1.0
+        assert 0.0 <= result.metrics.recall_mrr <= 1.0
+        assert result.metrics.retain_latency_p50_ms > 0.0
         assert result.metrics.total_duration_seconds > 0.0
         assert len(result.per_query_results) >= 5
 

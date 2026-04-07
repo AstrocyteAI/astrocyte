@@ -134,6 +134,8 @@ def astrocyte_strands_tools(
 
         async def forget_handler(tool_input: dict[str, Any]) -> str:
             memory_ids = tool_input["memory_ids"]
+            if isinstance(memory_ids, str):
+                memory_ids = [mid.strip() for mid in memory_ids.split(",")]
             result = await brain.forget(bank_id, memory_ids=memory_ids)
             return json.dumps({"deleted_count": result.deleted_count})
 

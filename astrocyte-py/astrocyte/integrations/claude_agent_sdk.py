@@ -64,7 +64,7 @@ def astrocyte_claude_agent_tools(
     async def retain_handler(args: dict[str, Any]) -> dict[str, Any]:
         content = args["content"]
         tags = args.get("tags")
-        tag_list = [t.strip() for t in tags.split(",")] if isinstance(tags, str) else tags
+        tag_list = [t.strip() for t in tags.split(",")] if isinstance(tags, str) and tags else tags
         result = await brain.retain(content, bank_id=bank_id, tags=tag_list)
         return {
             "content": [
@@ -201,7 +201,7 @@ def astrocyte_claude_agent_server(
     async def memory_retain(args: dict[str, Any]) -> dict[str, Any]:
         content = args["content"]
         tags = args.get("tags")
-        tag_list = [t.strip() for t in tags.split(",")] if isinstance(tags, str) else tags
+        tag_list = [t.strip() for t in tags.split(",")] if isinstance(tags, str) and tags else tags
         result = await brain.retain(content, bank_id=bank_id, tags=tag_list)
         return {
             "content": [{"type": "text", "text": json.dumps({"stored": result.stored, "memory_id": result.memory_id})}]
