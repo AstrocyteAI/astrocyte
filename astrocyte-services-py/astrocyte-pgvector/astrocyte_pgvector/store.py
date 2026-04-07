@@ -97,7 +97,8 @@ class PgVectorStore:
                         metadata JSONB,
                         tags TEXT[],
                         fact_type TEXT,
-                        occurred_at TIMESTAMPTZ
+                        occurred_at TIMESTAMPTZ,
+                        memory_layer TEXT
                     )
                     """
                 )
@@ -122,8 +123,8 @@ class PgVectorStore:
                     await cur.execute(
                         f"""
                         INSERT INTO {self._table}
-                            (id, bank_id, embedding, text, metadata, tags, fact_type, occurred_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            (id, bank_id, embedding, text, metadata, tags, fact_type, occurred_at, memory_layer)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (id) DO UPDATE SET
                             bank_id = EXCLUDED.bank_id,
                             embedding = EXCLUDED.embedding,
@@ -131,7 +132,8 @@ class PgVectorStore:
                             metadata = EXCLUDED.metadata,
                             tags = EXCLUDED.tags,
                             fact_type = EXCLUDED.fact_type,
-                            occurred_at = EXCLUDED.occurred_at
+                            occurred_at = EXCLUDED.occurred_at,
+                            memory_layer = EXCLUDED.memory_layer
                         """,
                         (
                             item.id,
@@ -142,6 +144,7 @@ class PgVectorStore:
                             item.tags,
                             item.fact_type,
                             item.occurred_at,
+                            item.memory_layer,
                         ),
                     )
                     stored.append(item.id)
@@ -174,7 +177,7 @@ class PgVectorStore:
         where_sql = " AND ".join(where)
         # Cosine distance `<=>`; map to a 0–1-ish score via (1 - distance).
         sql = f"""
-            SELECT id, text, metadata, tags, fact_type, occurred_at,
+            SELECT id, text, metadata, tags, fact_type, occurred_at, memory_layer,
                    (1 - (embedding <=> %s::vector))::float AS score
             FROM {self._table}
             WHERE {where_sql}
@@ -206,9 +209,52 @@ class PgVectorStore:
                     tags=list(row["tags"]) if row["tags"] else None,
                     fact_type=row["fact_type"],
                     occurred_at=row["occurred_at"],
+                    memory_layer=row.get("memory_layer"),
                 )
             )
         return hits
+
+    async def list_vectors(
+        self,
+        bank_id: str,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[VectorItem]:
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT id, bank_id, embedding, text, metadata, tags, fact_type,
+                           occurred_at, memory_layer
+                    FROM {self._table}
+                    WHERE bank_id = %s
+                    ORDER BY id
+                    OFFSET %s LIMIT %s
+                    """,
+                    (bank_id, offset, limit),
+                )
+                rows = await cur.fetchall()
+        items: list[VectorItem] = []
+        for row in rows:
+            md = row["metadata"]
+            if isinstance(md, str):
+                md = json.loads(md)
+            items.append(
+                VectorItem(
+                    id=row["id"],
+                    bank_id=row["bank_id"],
+                    vector=list(row["embedding"]),
+                    text=row["text"],
+                    metadata=md,
+                    tags=list(row["tags"]) if row["tags"] else None,
+                    fact_type=row["fact_type"],
+                    occurred_at=row["occurred_at"],
+                    memory_layer=row.get("memory_layer"),
+                )
+            )
+        return items
 
     async def delete(self, ids: list[str], bank_id: str) -> int:
         if not ids:

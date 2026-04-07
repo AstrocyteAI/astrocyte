@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 
 import jwt
@@ -29,7 +30,7 @@ def resolve_principal(
 
     if mode == "api_key":
         expected = os.environ.get("ASTROCYTES_API_KEY", "")
-        if not expected or x_api_key != expected:
+        if not expected or not hmac.compare_digest(x_api_key or "", expected):
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
         if not x_astrocyte_principal:
             raise HTTPException(

@@ -115,15 +115,23 @@ def create_app() -> FastAPI:
         banks = body.get("banks")
         if not isinstance(query, str):
             raise HTTPException(status_code=400, detail="query (str) is required")
-        max_results = int(body["max_results"]) if body.get("max_results") is not None else 10
+        try:
+            max_results = int(body["max_results"]) if body.get("max_results") is not None else 10
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="max_results must be an integer")
         max_tokens = body.get("max_tokens")
         if max_tokens is not None:
-            max_tokens = int(max_tokens)
+            try:
+                max_tokens = int(max_tokens)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="max_tokens must be an integer")
         tags = body.get("tags")
         if bank_id is not None and not isinstance(bank_id, str):
             raise HTTPException(status_code=400, detail="bank_id must be a string")
         if banks is not None and not isinstance(banks, list):
             raise HTTPException(status_code=400, detail="banks must be a list of strings")
+        if bank_id is None and banks is None:
+            raise HTTPException(status_code=400, detail="bank_id or banks is required")
         result = await brain.recall(
             query,
             bank_id=bank_id if isinstance(bank_id, str) else None,
@@ -146,7 +154,10 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="query and bank_id (str) are required")
         max_tokens = body.get("max_tokens")
         if max_tokens is not None:
-            max_tokens = int(max_tokens)
+            try:
+                max_tokens = int(max_tokens)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="max_tokens must be an integer")
         include_sources = body.get("include_sources", True)
         result = await brain.reflect(
             query,
@@ -167,10 +178,14 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="bank_id (str) is required")
         memory_ids = body.get("memory_ids")
         tags = body.get("tags")
+        scope = body.get("scope")
+        if scope is not None and scope != "all":
+            raise HTTPException(status_code=400, detail='scope must be "all" or omitted')
         result = await brain.forget(
             bank_id,
             memory_ids=[str(x) for x in memory_ids] if isinstance(memory_ids, list) else None,
             tags=[str(x) for x in tags] if isinstance(tags, list) else None,
+            scope=scope,
             context=ctx,
         )
         return to_jsonable(result)
