@@ -270,9 +270,9 @@ class TestLifecycleE2E:
         brain.set_legal_hold("case-2", "hold-1", "Investigation")
         brain.release_legal_hold("case-2", "hold-1")
 
-        # Should succeed now
+        # Should succeed now — verify it actually deleted
         forget_result = await brain.forget("case-2", memory_ids=[result.memory_id])
-        assert forget_result.deleted_count >= 1  # Should delete the stored memory
+        assert forget_result.deleted_count == 1
 
     @pytest.mark.asyncio
     async def test_compliance_forget_bypasses_hold(self, tmp_path: Path) -> None:

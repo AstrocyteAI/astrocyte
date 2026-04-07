@@ -103,8 +103,9 @@ class TestDlpReflectScanning:
         await brain.retain("The contact email is user@domain.org", bank_id="b1")
 
         result = await brain.reflect("What is the contact email?", bank_id="b1")
-        # DLP should redact the email from the reflect output
+        # DLP should have redacted the email in the answer
         assert "user@domain.org" not in result.answer
+        assert "[EMAIL_REDACTED]" in result.answer
 
     @pytest.mark.asyncio
     async def test_reflect_reject_returns_empty(self) -> None:
@@ -112,9 +113,10 @@ class TestDlpReflectScanning:
         await brain.retain("SSN is 123-45-6789 for records", bank_id="b1")
 
         result = await brain.reflect("What is the SSN?", bank_id="b1")
-        # InMemoryEngineProvider reflect concatenates hits, so the SSN will be in the answer.
-        # Reject mode should either strip the answer or at least not contain raw PII.
-        assert "123-45-6789" not in result.answer or result.answer == ""
+        # DLP reject should return empty answer with DLP observation
+        assert result.answer == ""
+        assert result.observations is not None
+        assert any("DLP" in o for o in result.observations)
 
     @pytest.mark.asyncio
     async def test_reflect_dlp_disabled_by_default(self) -> None:

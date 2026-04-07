@@ -73,6 +73,7 @@ def _build_system_message(
 
     return f"""{base}
 
+The user message contains the content to route inside <content> XML tags, along with metadata.
 Respond with a JSON object:
 {{"bank_id": "...", "tags": ["..."], "retain_policy": "default", "reasoning": "..."}}"""
 

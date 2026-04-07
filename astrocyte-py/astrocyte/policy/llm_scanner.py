@@ -76,20 +76,6 @@ _TYPE_REPLACEMENTS: dict[str, str] = {
 }
 
 
-def _find_next_occurrence(
-    text: str, target: str, used_offsets: set[int]
-) -> tuple[int | None, int | None]:
-    """Find the next occurrence of target in text that hasn't been used yet."""
-    search_start = 0
-    while True:
-        idx = text.find(target, search_start)
-        if idx < 0:
-            return None, None
-        if idx not in used_offsets:
-            return idx, idx + len(target)
-        search_start = idx + 1
-
-
 def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
     """Parse LLM JSON response into PiiMatch list. Graceful fallback."""
     try:
@@ -107,7 +93,8 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
             return []
 
         matches: list[PiiMatch] = []
-        used_offsets: set[int] = set()  # Track start offsets to handle duplicate PII text
+        used_offsets: set[int] = set()  # Track used start positions to avoid duplicate mapping
+
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -125,10 +112,18 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
                     actual = original_text[start:end]
                     if actual != matched_text and matched_text:
                         # LLM gave wrong offsets — re-locate
-                        start, end = _find_next_occurrence(original_text, matched_text, used_offsets)
+                        start, end = _find_unused_occurrence(
+                            original_text, matched_text, used_offsets
+                        )
+                        if start is None:
+                            continue
             elif matched_text:
-                # No offsets provided — find text in original
-                start, end = _find_next_occurrence(original_text, matched_text, used_offsets)
+                # No offsets provided — find unused occurrence in original
+                start, end = _find_unused_occurrence(
+                    original_text, matched_text, used_offsets
+                )
+                if start is None:
+                    continue
 
             if start is None or end is None:
                 continue
@@ -149,3 +144,17 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
     except (json.JSONDecodeError, ValueError, KeyError):
         logger.warning("Failed to parse LLM PII response")
         return []
+
+
+def _find_unused_occurrence(
+    text: str, needle: str, used: set[int]
+) -> tuple[int | None, int | None]:
+    """Find the first occurrence of needle in text that hasn't been used yet."""
+    search_start = 0
+    while True:
+        idx = text.find(needle, search_start)
+        if idx < 0:
+            return None, None
+        if idx not in used:
+            return idx, idx + len(needle)
+        search_start = idx + 1
