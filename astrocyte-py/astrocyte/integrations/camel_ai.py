@@ -100,6 +100,4 @@ class AstrocyteCamelMemory:
     async def clear(self, *, role: str | None = None) -> None:
         """Clear all memory for a role or the shared bank."""
         bank = self._resolve_bank(role)
-        from astrocyte.types import ForgetRequest
-
-        await self.brain._do_forget(ForgetRequest(bank_id=bank, scope="all"))
+        await self.brain.clear_bank(bank)

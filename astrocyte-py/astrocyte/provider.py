@@ -2,6 +2,11 @@
 
 Each protocol has a SPI_VERSION ClassVar for compatibility checking.
 All methods are async except capabilities() and transport methods.
+
+SPI versioning: Astrocyte checks SPI_VERSION at registration time.
+- Version 1: base protocol (all methods required)
+- Version 2+: may add optional methods; Astrocyte adapts calls accordingly.
+Providers with unrecognized versions are rejected.
 """
 
 from __future__ import annotations
@@ -65,6 +70,19 @@ class VectorStore(Protocol):
 
     async def delete(self, ids: list[str], bank_id: str) -> int:
         """Delete vectors by ID. Returns count deleted."""
+        ...
+
+    async def list_vectors(
+        self,
+        bank_id: str,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[VectorItem]:
+        """List vectors in a bank with pagination. Used by consolidation.
+
+        Returns up to ``limit`` vectors starting at ``offset``.
+        Implementations should return vectors in a stable order (e.g., by ID).
+        """
         ...
 
     async def health(self) -> HealthStatus:
@@ -220,6 +238,43 @@ class LLMProvider(Protocol):
 # ---------------------------------------------------------------------------
 # Outbound Transport Provider (optional, cross-cutting)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# SPI Version Negotiation
+# ---------------------------------------------------------------------------
+
+# Supported SPI versions per protocol
+_SUPPORTED_VERSIONS: dict[str, set[int]] = {
+    "VectorStore": {1},
+    "GraphStore": {1},
+    "DocumentStore": {1},
+    "EngineProvider": {1},
+    "LLMProvider": {1},
+    "OutboundTransportProvider": {1},
+}
+
+
+def check_spi_version(provider: object, protocol_name: str) -> int:
+    """Validate a provider's SPI_VERSION against supported versions.
+
+    Returns the provider's version if accepted.
+    Raises ConfigError if the version is unsupported.
+    """
+    from astrocyte.errors import ConfigError
+
+    version = getattr(provider, "SPI_VERSION", None)
+    if version is None:
+        # No version declared — assume v1 for backwards compatibility
+        return 1
+
+    supported = _SUPPORTED_VERSIONS.get(protocol_name, {1})
+    if version not in supported:
+        raise ConfigError(
+            f"{protocol_name} SPI version {version} is not supported. "
+            f"Supported versions: {sorted(supported)}"
+        )
+    return version
 
 
 @runtime_checkable
