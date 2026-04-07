@@ -73,10 +73,11 @@ class PipelineOrchestrator:
         # 2. Generate embeddings for all chunks
         embeddings = await generate_embeddings(chunks, self.llm_provider)
 
-        # 2b. Dedup check — skip if content is near-duplicate of existing memory
-        is_dup, sim = self._dedup.is_duplicate(request.bank_id, embeddings[0])
-        if is_dup:
-            return RetainResult(stored=False, deduplicated=True, error=f"Near-duplicate (similarity={sim:.3f})")
+        # 2b. Dedup check — skip if any chunk is near-duplicate of existing memory
+        for emb in embeddings:
+            is_dup, sim = self._dedup.is_duplicate(request.bank_id, emb)
+            if is_dup:
+                return RetainResult(stored=False, deduplicated=True, error=f"Near-duplicate (similarity={sim:.3f})")
 
         # 3. Extract entities (from full content, not per-chunk)
         entities = await extract_entities(request.content, self.llm_provider)

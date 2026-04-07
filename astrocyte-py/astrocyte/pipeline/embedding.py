@@ -5,10 +5,13 @@ Async (I/O-bound). See docs/_design/built-in-pipeline.md section 2.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from astrocyte.provider import LLMProvider
+
+logger = logging.getLogger("astrocyte.pipeline")
 
 
 async def generate_embeddings(
@@ -23,7 +26,10 @@ async def generate_embeddings(
     try:
         return await llm_provider.embed(texts, model=model)
     except NotImplementedError:
-        # Fallback: simple hash-based pseudo-embedding for testing/development
+        logger.error(
+            "Embedding provider does not support embed() — falling back to pseudo-embeddings. "
+            "Retrieval quality will be severely degraded. Configure a real embedding provider for production use."
+        )
         return [_pseudo_embedding(text) for text in texts]
 
 
