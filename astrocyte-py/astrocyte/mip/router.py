@@ -35,7 +35,7 @@ class MipRouter:
         matches = evaluate_rules(self._rules, input_data)
 
         if not matches:
-            return None
+            return None if self._should_escalate(matches) else None
 
         top = matches[0]
 
@@ -51,11 +51,56 @@ class MipRouter:
         if len(matches) == 1 and top.confidence >= 0.8:
             return self._apply_action(top, input_data)
 
-        # Multiple matches — potential conflict
-        if len(matches) > 1:
+        # Multiple matches — potential conflict, check escalation policy
+        if len(matches) > 1 and self._should_escalate(matches):
             return None
 
+        if len(matches) > 1:
+            # Multiple matches but no escalation policy — use highest priority
+            return self._apply_action(top, input_data)
+
         return self._apply_action(top, input_data)
+
+    def _should_escalate(self, matches: list[RuleMatch]) -> bool:
+        """Check escalation conditions from intent_policy.escalate_when."""
+        policy = self._config.intent_policy
+        if not policy or not policy.escalate_when:
+            return True  # Default: escalate when no explicit policy
+
+        for condition in policy.escalate_when:
+            if condition.condition == "matched_rules":
+                count = len(matches)
+                if self._compare(count, condition.operator, condition.value):
+                    return True
+            elif condition.condition == "confidence":
+                if matches:
+                    top_confidence = matches[0].confidence
+                    if self._compare(top_confidence, condition.operator, condition.value):
+                        return True
+            elif condition.condition == "conflicting_rules":
+                if condition.value and len(matches) > 1:
+                    return True
+        return False
+
+    @staticmethod
+    def _compare(actual: int | float, operator: str, expected: str | int | float | bool) -> bool:
+        """Compare a value against a condition."""
+        try:
+            a = float(actual)
+            e = float(expected)
+        except (TypeError, ValueError):
+            return actual == expected
+        if operator == "eq":
+            return a == e
+        if operator == "lt":
+            return a < e
+        if operator == "gt":
+            return a > e
+        if operator == "gte":
+            return a >= e
+        if operator == "lte":
+            return a <= e
+        return a == e
 
     async def route(self, input_data: RuleEngineInput) -> RoutingDecision:
         """Full routing: mechanical rules first, then intent layer if needed.

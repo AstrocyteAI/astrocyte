@@ -425,6 +425,27 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
     if "mcp" in data:
         config.mcp = McpConfig(**data["mcp"])
 
+    if "signal_quality" in data:
+        sq = data["signal_quality"]
+        dedup_data = sq.get("dedup", {})
+        noisy_data = sq.get("noisy_bank", {})
+        config.signal_quality = SignalQualityConfig(
+            dedup=DedupConfig(**{k: v for k, v in dedup_data.items()}),
+            noisy_bank=NoisyBankConfig(**{k: v for k, v in noisy_data.items()}),
+        )
+
+    if "recall_cache" in data:
+        config.recall_cache = RecallCacheConfig(**{k: v for k, v in data["recall_cache"].items()})
+
+    if "tiered_retrieval" in data:
+        config.tiered_retrieval = TieredRetrievalConfig(**{k: v for k, v in data["tiered_retrieval"].items()})
+
+    if "curated_retain" in data:
+        config.curated_retain = CuratedRetainConfig(**{k: v for k, v in data["curated_retain"].items()})
+
+    if "curated_recall" in data:
+        config.curated_recall = CuratedRecallConfig(**{k: v for k, v in data["curated_recall"].items()})
+
     if "access_grants" in data and data["access_grants"]:
         grants: list[AccessGrant] = []
         for row in data["access_grants"]:

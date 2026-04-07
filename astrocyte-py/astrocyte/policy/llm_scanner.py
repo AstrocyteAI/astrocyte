@@ -47,11 +47,15 @@ class LlmPiiScanner:
 
     async def scan(self, text: str) -> list[PiiMatch]:
         """Ask LLM to identify PII with positions. Returns matches."""
-        prompt = _LLM_PII_PROMPT.replace("{text}", text[:2000])  # Cap input length
+        system_prompt = _LLM_PII_PROMPT.replace("{text}", "").strip()
+        user_content = f"<content>\n{text[:2000]}\n</content>"
 
         try:
             completion = await self._llm.complete(
-                messages=[Message(role="user", content=prompt)],
+                messages=[
+                    Message(role="system", content=system_prompt),
+                    Message(role="user", content=user_content),
+                ],
                 max_tokens=500,
                 temperature=0,
             )

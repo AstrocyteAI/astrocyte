@@ -138,6 +138,9 @@ def resolve_field(field_path: str, input_data: RuleEngineInput) -> str | int | f
         return input_data.source
     if top == "content":
         return input_data.content
+    if top == "tags":
+        # "tags" as a field returns comma-joined string for matching
+        return ",".join(input_data.tags) if input_data.tags else None
 
     # Dotted paths into dicts
     if len(parts) == 2:

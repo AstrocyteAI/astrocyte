@@ -104,9 +104,9 @@ def _parse_match_block(data: dict) -> MatchBlock:
     if "all" in data:
         all_conditions = [_parse_match_spec(s) for s in data["all"]] if data["all"] else []
     if "any" in data:
-        any_conditions = [_parse_match_spec(s) for s in data["any"]]
+        any_conditions = [_parse_match_spec(s) for s in data["any"]] if data["any"] else []
     if "none" in data:
-        none_conditions = [_parse_match_spec(s) for s in data["none"]]
+        none_conditions = [_parse_match_spec(s) for s in data["none"]] if data["none"] else []
 
     # Single-level shorthand: {"content_type": "student_answer", "pii_detected": true}
     if not all_conditions and not any_conditions and not none_conditions:

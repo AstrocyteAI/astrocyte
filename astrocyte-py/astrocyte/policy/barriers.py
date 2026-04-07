@@ -81,7 +81,8 @@ _COUNTRY_PATTERNS: dict[str, dict[str, tuple[re.Pattern[str], str]]] = {
     # ── India ──
     "IN": {
         "aadhaar": (
-            re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b"),
+            # Aadhaar: 12 digits, first digit 2-9 (never starts with 0 or 1)
+            re.compile(r"\b[2-9]\d{3}\s?\d{4}\s?\d{4}\b"),
             "[AADHAAR_REDACTED]",
         ),
         "pan": (
@@ -96,7 +97,8 @@ _COUNTRY_PATTERNS: dict[str, dict[str, tuple[re.Pattern[str], str]]] = {
     # ── United States ──
     "US": {
         "us_passport": (
-            re.compile(r"\b\d{9}\b"),
+            # US passport: letter prefix (optional since 2021) + 8-9 digits
+            re.compile(r"\b[A-Z]?\d{8,9}\b"),
             "[PASSPORT_REDACTED]",
         ),
     },
@@ -272,14 +274,16 @@ class PiiScanner:
     def scan(self, text: str) -> list[PiiMatch]:
         """Scan text for PII. Returns list of matches.
 
-        Works for regex and ner modes. For llm/rules_then_llm, use scan_async().
+        Works for regex, ner, and rules_then_llm (regex+NER portion) modes.
+        For llm mode, use scan_async().
         """
         if self.mode == "disabled":
             return []
 
         matches = self._scan_regex(text)
 
-        if self.mode == "ner" and self._ner_scanner:
+        # Include NER for ner mode and rules_then_llm (NER is part of "rules")
+        if self.mode in ("ner", "rules_then_llm") and self._ner_scanner:
             ner_matches = self._ner_scanner.scan(text)
             matches = self._merge_matches(matches, ner_matches)
 

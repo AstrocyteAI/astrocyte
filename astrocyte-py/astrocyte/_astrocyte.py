@@ -644,9 +644,12 @@ class Astrocyte:
         with span("astrocyte.forget", {"astrocyte.bank_id": bank_id}):
             self._check_access(bank_id, "forget", context)
 
-            # Legal hold check (compliance=True bypasses for right-to-forget)
+            # Legal hold check — compliance=True bypasses for right-to-forget,
+            # but requires "admin" or "forget" permission (prevents unprivileged bypass).
             if not kwargs.get("compliance"):
                 self._lifecycle.check_forget_allowed(bank_id)
+            else:
+                self._check_access(bank_id, "admin", context)
 
             request = ForgetRequest(
                 bank_id=bank_id,
@@ -694,7 +697,12 @@ class Astrocyte:
         return self._lifecycle.is_under_hold(bank_id)
 
     async def run_lifecycle(self, bank_id: str) -> LifecycleRunResult:
-        """Run TTL lifecycle check on a bank. Scan memories, archive/delete as needed."""
+        """Run TTL lifecycle check on a bank. Scan memories, archive/delete as needed.
+
+        Note: v1 treats "archive" as delete — no separate archive storage yet.
+        The LifecycleAction.action distinguishes the reason (ttl_unretrieved vs ttl_expired)
+        so callers can differentiate, but both result in deletion from the provider.
+        """
         from astrocyte.types import LifecycleAction
 
         if not self._config.lifecycle.enabled:

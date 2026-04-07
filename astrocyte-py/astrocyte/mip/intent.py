@@ -38,8 +38,12 @@ async def resolve_intent(
         max_tokens = int(intent_policy.constraints["max_tokens"])
 
     try:
+        system_msg, user_msg = _split_prompt(prompt, input_data)
         completion = await llm_provider.complete(
-            messages=[Message(role="user", content=prompt)],
+            messages=[
+                Message(role="system", content=system_msg),
+                Message(role="user", content=user_msg),
+            ],
             max_tokens=max_tokens,
             temperature=0,
         )
@@ -81,6 +85,22 @@ Respond with JSON:
 {{"bank_id": "...", "tags": ["..."], "retain_policy": "default", "reasoning": "..."}}"""
 
     return prompt
+
+
+def _split_prompt(prompt: str, input_data: RuleEngineInput) -> tuple[str, str]:
+    """Split prompt into system + user messages to mitigate prompt injection.
+
+    System message contains routing instructions. User message wraps
+    untrusted content in XML delimiters.
+    """
+    # Everything before "Content to route:" is the system instruction
+    marker = "Content to route:"
+    if marker in prompt:
+        idx = prompt.index(marker)
+        system = prompt[:idx].strip()
+        user = f"<content>\n{input_data.content[:500]}\n</content>\n\nContent type: {input_data.content_type or 'text'}\nSource: {input_data.source or 'unknown'}\nPII detected: {input_data.pii_detected}\n\nRespond with JSON:\n{{\"bank_id\": \"...\", \"tags\": [\"...\"], \"retain_policy\": \"default\", \"reasoning\": \"...\"}}"
+        return system, user
+    return prompt, ""
 
 
 def _parse_intent_response(response: str) -> RoutingDecision:
