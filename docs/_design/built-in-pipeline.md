@@ -42,6 +42,10 @@ Query analysis and reflect can pass **multimodal `Message`** lists to **`complet
 
 ### Configuration
 
+> **Note:** The `pipeline:` top-level config key is a design target — not yet in
+> `AstrocyteConfig`. Pipeline stages currently use hardcoded defaults. The YAML
+> below shows the planned configuration surface.
+
 ```yaml
 pipeline:
   chunking:

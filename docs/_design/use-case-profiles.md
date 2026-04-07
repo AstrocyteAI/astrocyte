@@ -69,10 +69,9 @@ escalation:
   degraded_mode: empty_recall      # Agent can still function without memory
 
 defaults:
-  dispositions:
-    skepticism: 2                  # Trust the customer's account
-    literalism: 2                  # Flexible interpretation
-    empathy: 5                     # High empathy
+  skepticism: 2                    # Trust the customer's account
+  literalism: 2                    # Flexible interpretation
+  empathy: 5                       # High empathy
   preferred_fact_types:
     - experience                   # Prioritize what happened
     - world                        # Then general knowledge
@@ -122,10 +121,9 @@ escalation:
   degraded_mode: error             # Code assistant should know memory is unavailable
 
 defaults:
-  dispositions:
-    skepticism: 3                  # Neutral
-    literalism: 5                  # High literalism - precision matters in code
-    empathy: 1                     # Detached - technical context, not emotional
+  skepticism: 3                    # Neutral
+  literalism: 5                    # High literalism - precision matters in code
+  empathy: 1                       # Detached - technical context, not emotional
   preferred_fact_types:
     - world                        # Technical knowledge first
     - experience                   # Then project-specific learnings
@@ -175,10 +173,9 @@ escalation:
   degraded_mode: empty_recall
 
 defaults:
-  dispositions:
-    skepticism: 3                  # Balanced
-    literalism: 3                  # Balanced
-    empathy: 4                     # Somewhat empathetic
+  skepticism: 3                    # Balanced
+  literalism: 3                    # Balanced
+  empathy: 4                       # Somewhat empathetic
   preferred_fact_types:
     - experience                   # User's personal experiences first
     - world
@@ -225,10 +222,9 @@ escalation:
   degraded_mode: error             # Research needs accurate recall, not empty
 
 defaults:
-  dispositions:
-    skepticism: 5                  # Highly skeptical - verify claims
-    literalism: 4                  # Precise interpretation
-    empathy: 1                     # Detached - analytical
+  skepticism: 5                    # Highly skeptical - verify claims
+  literalism: 4                    # Precise interpretation
+  empathy: 1                       # Detached - analytical
   preferred_fact_types:
     - world                        # Factual knowledge
     - observation                  # Synthesized insights

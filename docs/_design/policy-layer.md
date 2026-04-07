@@ -145,7 +145,10 @@ When `action: skip`, duplicates are silently dropped. The RetainResult indicates
 
 ### 3.2 Quality scoring
 
-Optional LLM-based evaluation of content value before storage:
+> **Status:** `signal_quality.scoring` is a design target — not yet implemented
+> in `SignalQualityConfig`. Currently only `dedup` and `noisy_bank` are available.
+
+Optional LLM-based evaluation of content value before storage (planned):
 
 ```yaml
 signal_quality:

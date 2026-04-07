@@ -27,7 +27,7 @@ results = await evaluator.run_suite(
     clean_after=True,                    # Delete test bank after evaluation
 )
 
-print(f"Precision: {results.metrics.precision}, Hit rate: {results.metrics.hit_rate}")
+print(f"Precision: {results.metrics.recall_precision}, Hit rate: {results.metrics.recall_hit_rate}")
 ```
 
 ### 2.1 Evaluation result
