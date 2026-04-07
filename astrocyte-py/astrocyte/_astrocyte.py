@@ -565,7 +565,8 @@ class Astrocyte:
             for bid in bank_ids:
                 self._check_access(bid, "read", context)
 
-            self._check_rate_limit(primary_bank, "reflect")
+            for bid in bank_ids:
+                self._check_rate_limit(bid, "reflect")
             self._check_quota(primary_bank, "reflect")
 
             # ── Single bank: delegate to provider/pipeline reflect ──

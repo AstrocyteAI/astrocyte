@@ -496,10 +496,10 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
                 profile=bdata.get("profile"),
                 access=bdata.get("access"),
             )
-            if "homeostasis" in bdata:
+            if "homeostasis" in bdata and isinstance(bdata["homeostasis"], dict):
                 h = bdata["homeostasis"]
-                rl = h.get("rate_limits", {})
-                q = h.get("quotas", {})
+                rl = h.get("rate_limits", {}) if isinstance(h.get("rate_limits"), dict) else {}
+                q = h.get("quotas", {}) if isinstance(h.get("quotas"), dict) else {}
                 bc.homeostasis = HomeostasisConfig(
                     recall_max_tokens=h.get("recall_max_tokens"),
                     reflect_max_tokens=h.get("reflect_max_tokens"),
@@ -507,18 +507,23 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
                     rate_limits=RateLimitConfig(**_filter_dataclass_fields(RateLimitConfig, rl)),
                     quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, q)),
                 )
-            if "barriers" in bdata:
+            if "barriers" in bdata and isinstance(bdata["barriers"], dict):
                 b = bdata["barriers"]
+                pii_data = b.get("pii", {}) if isinstance(b.get("pii"), dict) else {}
+                val_data = b.get("validation", {}) if isinstance(b.get("validation"), dict) else {}
+                meta_data = b.get("metadata", {}) if isinstance(b.get("metadata"), dict) else {}
                 bc.barriers = BarrierConfig(
-                    pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, b.get("pii", {}))),
-                    validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, b.get("validation", {}))),
-                    metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, b.get("metadata", {}))),
+                    pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, pii_data)),
+                    validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, val_data)),
+                    metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, meta_data)),
                 )
-            if "signal_quality" in bdata:
+            if "signal_quality" in bdata and isinstance(bdata["signal_quality"], dict):
                 sq = bdata["signal_quality"]
+                dedup_data = sq.get("dedup", {}) if isinstance(sq.get("dedup"), dict) else {}
+                noisy_data = sq.get("noisy_bank", {}) if isinstance(sq.get("noisy_bank"), dict) else {}
                 bc.signal_quality = SignalQualityConfig(
-                    dedup=DedupConfig(**_filter_dataclass_fields(DedupConfig, sq.get("dedup", {}))),
-                    noisy_bank=NoisyBankConfig(**_filter_dataclass_fields(NoisyBankConfig, sq.get("noisy_bank", {}))),
+                    dedup=DedupConfig(**_filter_dataclass_fields(DedupConfig, dedup_data)),
+                    noisy_bank=NoisyBankConfig(**_filter_dataclass_fields(NoisyBankConfig, noisy_data)),
                 )
             banks[str(bid)] = bc
         config.banks = banks
