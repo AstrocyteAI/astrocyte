@@ -52,7 +52,7 @@ Memories are tagged with `role:{role_name}` and `camel-ai` for filtering. Each r
 | `read(query, role=...)` | `brain.recall()` scoped to role's bank |
 | `get_context(query, role=...)` | `brain.recall()` → formatted string |
 | `reflect(query, role=...)` | `brain.reflect()` on role's bank |
-| `clear(role=...)` | `brain.forget(scope="all")` on role's bank |
+| `clear(role=...)` | `brain.clear_bank()` on role's bank |
 
 ## API reference
 

@@ -38,8 +38,8 @@ Principal format is convention-based:
 |---|---|
 | `read` | `recall()` and `reflect()` against the bank |
 | `write` | `retain()` into the bank |
-| `forget` | `forget()` memories from the bank |
-| `admin` | Bank configuration, export, import, legal hold, delete bank |
+| `forget` | `forget()` memories from the bank (selective deletion) |
+| `admin` | Bank configuration, export, import, legal hold, delete bank, `forget(scope="all")` / `clear_bank()` |
 
 Permissions are **additive** - a principal's effective permissions are the union of all grants.
 

@@ -44,7 +44,7 @@ await memory.reset()
 | `get(query)` | `brain.recall()` → formatted string for prompts |
 | `get_all()` | `brain.recall("*")` → all memories as dicts |
 | `search(query)` | `brain.recall()` → structured hit dicts |
-| `reset()` | `brain.forget(scope="all")` |
+| `reset()` | `brain.clear_bank()` |
 
 ## API reference
 
