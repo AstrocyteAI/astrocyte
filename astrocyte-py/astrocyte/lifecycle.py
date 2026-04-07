@@ -22,13 +22,13 @@ class LifecycleManager:
 
     def __init__(self, config: LifecycleConfig) -> None:
         self._config = config
-        self._holds: dict[str, LegalHold] = {}  # key: "{bank_id}:{hold_id}"
+        self._holds: dict[tuple[str, str], LegalHold] = {}  # key: (bank_id, hold_id)
 
     # ── Legal holds (sync) ──
 
     def set_legal_hold(self, bank_id: str, hold_id: str, reason: str, *, set_by: str = "user:api") -> LegalHold:
         """Place a bank under legal hold."""
-        key = f"{bank_id}:{hold_id}"
+        key = (bank_id, hold_id)
         hold = LegalHold(
             hold_id=hold_id,
             bank_id=bank_id,
@@ -41,18 +41,16 @@ class LifecycleManager:
 
     def release_legal_hold(self, bank_id: str, hold_id: str) -> bool:
         """Release a legal hold. Returns True if hold existed."""
-        key = f"{bank_id}:{hold_id}"
+        key = (bank_id, hold_id)
         return self._holds.pop(key, None) is not None
 
     def is_under_hold(self, bank_id: str) -> bool:
         """Check if any legal hold is active on this bank."""
-        prefix = f"{bank_id}:"
-        return any(k.startswith(prefix) for k in self._holds)
+        return any(k[0] == bank_id for k in self._holds)
 
     def get_holds(self, bank_id: str) -> list[LegalHold]:
         """Get all active holds for a bank."""
-        prefix = f"{bank_id}:"
-        return [h for k, h in self._holds.items() if k.startswith(prefix)]
+        return [h for k, h in self._holds.items() if k[0] == bank_id]
 
     def check_forget_allowed(self, bank_id: str) -> None:
         """Raise LegalHoldActive if bank is under hold."""

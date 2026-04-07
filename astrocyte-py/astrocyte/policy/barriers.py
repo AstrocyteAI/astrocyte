@@ -120,7 +120,8 @@ _COUNTRY_PATTERNS: dict[str, dict[str, tuple[re.Pattern[str], str]]] = {
     # ── EU: Germany ──
     "DE": {
         "de_personalausweis": (
-            re.compile(r"\b[A-Z0-9]{10}\b"),
+            # New format (since 2010): letter + 8 alphanumeric + check digit (letter or digit)
+            re.compile(r"\b[CFGHJKLMNPRTVWXYZ][A-Z0-9]{8}[0-9]\b"),
             "[DE_ID_REDACTED]",
         ),
     },
@@ -174,7 +175,8 @@ _COUNTRY_PATTERNS: dict[str, dict[str, tuple[re.Pattern[str], str]]] = {
     # ── Japan ──
     "JP": {
         "jp_my_number": (
-            re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b"),
+            # My Number: 12 contiguous digits (no spaces in official format), first digit 1-9
+            re.compile(r"\b[1-9]\d{11}\b"),
             "[MY_NUMBER_REDACTED]",
         ),
         "jp_phone": (

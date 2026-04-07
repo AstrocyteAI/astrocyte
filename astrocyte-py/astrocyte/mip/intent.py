@@ -31,14 +31,14 @@ async def resolve_intent(
 
     Falls back to passthrough on failure.
     """
-    prompt = _build_intent_prompt(input_data, intent_policy, available_banks)
+    system_msg = _build_system_prompt(intent_policy, available_banks, input_data)
+    user_msg = _build_user_message(input_data)
 
     max_tokens = 200
     if intent_policy.constraints and "max_tokens" in intent_policy.constraints:
         max_tokens = int(intent_policy.constraints["max_tokens"])
 
     try:
-        system_msg, user_msg = _split_prompt(prompt, input_data)
         completion = await llm_provider.complete(
             messages=[
                 Message(role="system", content=system_msg),
@@ -53,12 +53,15 @@ async def resolve_intent(
         return RoutingDecision(resolved_by="passthrough", reasoning="Intent layer LLM call failed")
 
 
-def _build_intent_prompt(
-    input_data: RuleEngineInput,
+def _build_system_prompt(
     intent_policy: IntentPolicy,
     available_banks: list[BankDefinition],
+    input_data: RuleEngineInput,
 ) -> str:
-    """Build the prompt for the LLM intent layer."""
+    """Build the system prompt for the LLM intent layer.
+
+    Contains only trusted routing instructions — no user content.
+    """
     banks_str = ", ".join(b.id for b in available_banks) if available_banks else "(none defined)"
     tags_str = ", ".join(input_data.tags) if input_data.tags else "(none)"
 
@@ -72,35 +75,23 @@ def _build_intent_prompt(
             f"Never override compliance rules."
         )
 
-    prompt = f"""{base}
-
-Content to route:
-{input_data.content[:500]}
-
-Content type: {input_data.content_type or 'text'}
-Source: {input_data.source or 'unknown'}
-PII detected: {input_data.pii_detected}
-
-Respond with JSON:
-{{"bank_id": "...", "tags": ["..."], "retain_policy": "default", "reasoning": "..."}}"""
-
-    return prompt
+    return (
+        f"{base}\n\n"
+        f"The user message contains content wrapped in <content> XML tags. "
+        f"Route it to the appropriate bank based on content type, source, and PII status.\n\n"
+        f"Respond with JSON:\n"
+        f'{{\"bank_id\": \"...\", \"tags\": [\"...\"], \"retain_policy\": \"default\", \"reasoning\": \"...\"}}'
+    )
 
 
-def _split_prompt(prompt: str, input_data: RuleEngineInput) -> tuple[str, str]:
-    """Split prompt into system + user messages to mitigate prompt injection.
-
-    System message contains routing instructions. User message wraps
-    untrusted content in XML delimiters.
-    """
-    # Everything before "Content to route:" is the system instruction
-    marker = "Content to route:"
-    if marker in prompt:
-        idx = prompt.index(marker)
-        system = prompt[:idx].strip()
-        user = f"<content>\n{input_data.content[:500]}\n</content>\n\nContent type: {input_data.content_type or 'text'}\nSource: {input_data.source or 'unknown'}\nPII detected: {input_data.pii_detected}\n\nRespond with JSON:\n{{\"bank_id\": \"...\", \"tags\": [\"...\"], \"retain_policy\": \"default\", \"reasoning\": \"...\"}}"
-        return system, user
-    return prompt, ""
+def _build_user_message(input_data: RuleEngineInput) -> str:
+    """Build the user message with untrusted content wrapped in XML delimiters."""
+    return (
+        f"<content>\n{input_data.content[:500]}\n</content>\n\n"
+        f"Content type: {input_data.content_type or 'text'}\n"
+        f"Source: {input_data.source or 'unknown'}\n"
+        f"PII detected: {input_data.pii_detected}"
+    )
 
 
 def _parse_intent_response(response: str) -> RoutingDecision:

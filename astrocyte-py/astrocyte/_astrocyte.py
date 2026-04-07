@@ -475,8 +475,9 @@ class Astrocyte:
             for bid in bank_ids:
                 self._check_access(bid, "read", context)
 
-            # Rate limiting (once, not per-bank)
-            self._check_rate_limit(bank_ids[0], "recall")
+            # Rate limiting — check and record for all banks
+            for bid in bank_ids:
+                self._check_rate_limit(bid, "recall")
 
             # Single bank — direct
             if len(bank_ids) == 1:
@@ -564,7 +565,8 @@ class Astrocyte:
             for bid in bank_ids:
                 self._check_access(bid, "read", context)
 
-            self._check_rate_limit(primary_bank, "reflect")
+            for bid in bank_ids:
+                self._check_rate_limit(bid, "reflect")
             self._check_quota(primary_bank, "reflect")
 
             # ── Single bank: delegate to provider/pipeline reflect ──
@@ -645,10 +647,17 @@ class Astrocyte:
             self._check_access(bank_id, "forget", context)
 
             # Legal hold check — compliance=True bypasses for right-to-forget,
-            # but requires "admin" or "forget" permission (prevents unprivileged bypass).
+            # but requires "admin" permission (prevents unprivileged bypass).
+            # This check is enforced even when access_control is disabled.
             if not kwargs.get("compliance"):
                 self._lifecycle.check_forget_allowed(bank_id)
             else:
+                if not self._config.access_control.enabled:
+                    raise AccessDenied(
+                        principal="unknown",
+                        bank_id=bank_id,
+                        permission="admin",
+                    )
                 self._check_access(bank_id, "admin", context)
 
             request = ForgetRequest(
@@ -1066,6 +1075,8 @@ class Astrocyte:
             if isinstance(result, RecallResult):
                 all_hits.extend(_tag_hits_with_bank(result.hits, bid))
                 total_available += result.total_available
+            elif isinstance(result, BaseException):
+                logger.warning("Multi-bank parallel recall failed for bank %s: %s", bid, result)
 
         weighted = _apply_bank_weights(all_hits, strategy.bank_weights)
         weighted.sort(key=lambda h: h.score, reverse=True)

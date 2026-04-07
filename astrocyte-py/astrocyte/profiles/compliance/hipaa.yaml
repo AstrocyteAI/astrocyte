@@ -8,7 +8,7 @@
 
 barriers:
   pii:
-    mode: llm
+    mode: rules_then_llm
     action: reject
 
 lifecycle:
