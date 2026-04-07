@@ -90,11 +90,20 @@ def layer_weighted_rrf_fusion(
     if not layer_weights:
         return fused
 
-    # Apply layer weights
-    for item in fused:
-        weight = layer_weights.get(item.memory_layer or "", 1.0)
-        item.score *= weight
+    # Apply layer weights — create new items to avoid mutating rrf_fusion output
+    weighted = [
+        ScoredItem(
+            id=item.id,
+            text=item.text,
+            score=item.score * layer_weights.get(item.memory_layer or "", 1.0),
+            fact_type=item.fact_type,
+            metadata=item.metadata,
+            tags=item.tags,
+            memory_layer=item.memory_layer,
+        )
+        for item in fused
+    ]
 
     # Re-sort by weighted score
-    fused.sort(key=lambda x: x.score, reverse=True)
-    return fused
+    weighted.sort(key=lambda x: x.score, reverse=True)
+    return weighted

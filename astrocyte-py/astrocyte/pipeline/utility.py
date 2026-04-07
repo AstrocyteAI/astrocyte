@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 
 
@@ -108,8 +109,7 @@ class UtilityTracker:
     ) -> None:
         self.max_entries = max_entries
         self.recency_half_life_days = recency_half_life_days
-        self._stats: dict[str, _MemoryStats] = {}  # memory_id → stats
-        self._access_order: list[str] = []  # LRU tracking
+        self._stats: OrderedDict[str, _MemoryStats] = OrderedDict()  # memory_id → stats (LRU order)
 
     def record_recall(self, memory_id: str, relevance_score: float) -> None:
         """Record that a memory was recalled with a given relevance score."""
@@ -123,29 +123,24 @@ class UtilityTracker:
         stats.last_recalled_at = now
         stats.total_relevance += relevance_score
 
-        # Update LRU order
-        if memory_id in self._access_order:
-            self._access_order.remove(memory_id)
-        self._access_order.append(memory_id)
+        # Move to end (most recently used) — O(1) with OrderedDict
+        self._stats.move_to_end(memory_id)
 
         # Evict LRU if over capacity
         while len(self._stats) > self.max_entries:
-            evict_id = self._access_order.pop(0)
-            self._stats.pop(evict_id, None)
+            self._stats.popitem(last=False)
 
     def record_creation(self, memory_id: str) -> None:
         """Record that a new memory was created."""
         now = time.monotonic()
         self._stats[memory_id] = _MemoryStats(created_at=now)
 
-        if memory_id in self._access_order:
-            self._access_order.remove(memory_id)
-        self._access_order.append(memory_id)
+        # Move to end (most recently used) — O(1) with OrderedDict
+        self._stats.move_to_end(memory_id)
 
         # Evict LRU if over capacity
         while len(self._stats) > self.max_entries:
-            evict_id = self._access_order.pop(0)
-            self._stats.pop(evict_id, None)
+            self._stats.popitem(last=False)
 
     def get_utility(self, memory_id: str) -> UtilityScore | None:
         """Compute current utility score for a memory. Returns None if not tracked."""
@@ -174,4 +169,3 @@ class UtilityTracker:
     def clear(self) -> None:
         """Clear all tracked stats."""
         self._stats.clear()
-        self._access_order.clear()

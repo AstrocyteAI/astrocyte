@@ -284,14 +284,30 @@ class InMemoryEngineProvider:
 
     async def recall(self, request: RecallRequest) -> RecallResult:
         memories = self._memories.get(request.bank_id, [])
+
+        # Apply filters before scoring
+        filtered = memories
+        if request.tags:
+            tag_set = set(request.tags)
+            filtered = [m for m in filtered if m.tags and tag_set & set(m.tags)]
+        if request.fact_types:
+            ft_set = set(request.fact_types)
+            filtered = [m for m in filtered if m.fact_type in ft_set]
+        if request.time_range:
+            t_start, t_end = request.time_range
+            filtered = [
+                m for m in filtered
+                if m.occurred_at and t_start <= m.occurred_at <= t_end
+            ]
+
         # Wildcard query returns all memories (used by export)
         if request.query.strip() == "*":
-            scored = [(1.0, mem) for mem in memories]
+            scored = [(1.0, mem) for mem in filtered]
         else:
             # Simple keyword matching
             query_terms = set(request.query.lower().split())
             scored = []
-            for mem in memories:
+            for mem in filtered:
                 mem_terms = set(mem.text.lower().split())
                 overlap = len(query_terms & mem_terms)
                 if overlap > 0:
@@ -326,15 +342,35 @@ class InMemoryEngineProvider:
         if not self._supports_forget:
             raise NotImplementedError("forget not supported")
         bank_memories = self._memories.get(request.bank_id, [])
-        if request.memory_ids:
-            before = len(bank_memories)
-            bank_memories = [m for m in bank_memories if m.memory_id not in request.memory_ids]
-            self._memories[request.bank_id] = bank_memories
-            return ForgetResult(deleted_count=before - len(bank_memories))
+
         if request.scope == "all":
             count = len(bank_memories)
             self._memories[request.bank_id] = []
             return ForgetResult(deleted_count=count)
+
+        if request.memory_ids:
+            ids_set = set(request.memory_ids)
+            before = len(bank_memories)
+            bank_memories = [m for m in bank_memories if m.memory_id not in ids_set]
+            self._memories[request.bank_id] = bank_memories
+            return ForgetResult(deleted_count=before - len(bank_memories))
+
+        # Tag-based and/or date-based deletion
+        if request.tags or request.before_date:
+            before = len(bank_memories)
+            tag_set = set(request.tags) if request.tags else None
+
+            def _should_keep(m: MemoryHit) -> bool:
+                if tag_set and m.tags and tag_set & set(m.tags):
+                    return False
+                if request.before_date and m.occurred_at and m.occurred_at < request.before_date:
+                    return False
+                return True
+
+            bank_memories = [m for m in bank_memories if _should_keep(m)]
+            self._memories[request.bank_id] = bank_memories
+            return ForgetResult(deleted_count=before - len(bank_memories))
+
         return ForgetResult(deleted_count=0)
 
 

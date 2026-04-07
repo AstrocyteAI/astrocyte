@@ -98,47 +98,54 @@ class TestTieredRetrieval:
 class TestCuratedRetain:
     def test_parse_valid_json(self):
         response = '{"action": "add", "content": "processed", "memory_layer": "fact", "reasoning": "new info"}'
-        decision = _parse_curation_response(response, "original")
+        decision = _parse_curation_response(response, "original", set())
         assert decision.action == "add"
-        assert decision.content == "processed"
+        assert decision.content == "original"  # Original content preserved, not LLM-rewritten
         assert decision.memory_layer == "fact"
 
     def test_parse_json_in_code_block(self):
         response = '```json\n{"action": "merge", "content": "merged", "memory_layer": "observation", "reasoning": "similar to existing", "merge_target_id": "m123"}\n```'
-        decision = _parse_curation_response(response, "original")
+        decision = _parse_curation_response(response, "original", {"m123"})
         assert decision.action == "merge"
         assert decision.merge_target_id == "m123"
 
     def test_parse_invalid_json_falls_back(self):
-        decision = _parse_curation_response("not json at all", "original")
+        decision = _parse_curation_response("not json at all", "original", set())
         assert decision.action == "add"
         assert decision.content == "original"
         assert decision.memory_layer == "fact"
 
     def test_parse_invalid_action_normalized(self):
         response = '{"action": "UNKNOWN", "content": "test", "memory_layer": "fact", "reasoning": ""}'
-        decision = _parse_curation_response(response, "original")
+        decision = _parse_curation_response(response, "original", set())
         assert decision.action == "add"  # Unknown → default to add
 
     def test_parse_invalid_layer_normalized(self):
         response = '{"action": "add", "content": "test", "memory_layer": "INVALID", "reasoning": ""}'
-        decision = _parse_curation_response(response, "original")
+        decision = _parse_curation_response(response, "original", set())
         assert decision.memory_layer == "fact"  # Invalid → default to fact
 
     def test_skip_action(self):
         response = '{"action": "skip", "content": "", "memory_layer": "fact", "reasoning": "redundant"}'
-        decision = _parse_curation_response(response, "original")
+        decision = _parse_curation_response(response, "original", set())
         assert decision.action == "skip"
 
-    def test_delete_action(self):
+    def test_delete_action_with_valid_target(self):
         response = '{"action": "delete", "content": "", "memory_layer": "fact", "reasoning": "contradicts", "merge_target_id": "m456"}'
-        decision = _parse_curation_response(response, "original")
+        decision = _parse_curation_response(response, "original", {"m456"})
         assert decision.action == "delete"
         assert decision.merge_target_id == "m456"
 
+    def test_delete_action_with_invalid_target_falls_back(self):
+        """Destructive action referencing unknown memory ID should fall back to ADD."""
+        response = '{"action": "delete", "content": "", "memory_layer": "fact", "reasoning": "contradicts", "merge_target_id": "unknown-id"}'
+        decision = _parse_curation_response(response, "original", {"m456"})
+        assert decision.action == "add"
+        assert decision.merge_target_id is None
+
     def test_update_action(self):
         response = '{"action": "update", "content": "updated text", "memory_layer": "observation", "reasoning": "more accurate", "merge_target_id": "m789"}'
-        decision = _parse_curation_response(response, "original")
+        decision = _parse_curation_response(response, "original", {"m789"})
         assert decision.action == "update"
         assert decision.memory_layer == "observation"
 

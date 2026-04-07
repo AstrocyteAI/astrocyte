@@ -9,6 +9,7 @@ Async (requires LLM calls).
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,8 @@ from astrocyte.types import MemoryHit, Message
 
 if TYPE_CHECKING:
     from astrocyte.provider import LLMProvider
+
+logger = logging.getLogger("astrocyte.pipeline")
 
 
 @dataclass
@@ -29,13 +32,7 @@ class CurationDecision:
     merge_target_id: str | None = None  # Memory ID to merge with (for "merge" and "update")
 
 
-_CURATION_PROMPT = """You are a memory curation agent. Analyze the new content against existing memories and decide the best action.
-
-## Existing memories in this bank (most relevant):
-{existing_memories}
-
-## New content to evaluate:
-{new_content}
+_CURATION_SYSTEM_PROMPT = """You are a memory curation agent. Analyze new content against existing memories and decide the best action.
 
 ## Actions available:
 - ADD: Store as a new memory (genuinely new information)
@@ -50,8 +47,7 @@ _CURATION_PROMPT = """You are a memory curation agent. Analyze the new content a
 - model: A consolidated understanding or mental model
 
 Respond with a JSON object:
-{{"action": "add|update|merge|skip|delete", "content": "processed content to store", "memory_layer": "fact|observation|model", "reasoning": "why this action", "merge_target_id": "memory_id or null"}}
-"""
+{"action": "add|update|merge|skip|delete", "content": "processed content to store", "memory_layer": "fact|observation|model", "reasoning": "why this action", "merge_target_id": "memory_id or null"}"""
 
 
 async def curate_retain(
@@ -68,29 +64,36 @@ async def curate_retain(
 
     Returns CurationDecision. Falls back to ADD with memory_layer="fact" on failure.
     """
-    # Format existing memories for the prompt
+    # Format existing memories for the prompt (only IDs and text, no raw interpolation)
     if existing_memories:
         existing_text = "\n".join(
-            f"- [{m.memory_id or 'unknown'}] (score={m.score:.2f}): {m.text}" for m in existing_memories[:5]
+            f"- [{m.memory_id or 'unknown'}] (score={m.score:.2f}): {m.text[:200]}"
+            for m in existing_memories[:5]
         )
     else:
         existing_text = "(no existing memories in this bank)"
 
-    prompt = _CURATION_PROMPT.format(
-        existing_memories=existing_text,
-        new_content=new_content,
+    # Collect valid memory IDs for validation
+    valid_ids = {m.memory_id for m in existing_memories if m.memory_id}
+
+    user_msg = (
+        f"<existing_memories>\n{existing_text}\n</existing_memories>\n\n"
+        f"<new_content>\n{new_content[:2000]}\n</new_content>"
     )
 
     try:
         completion = await llm_provider.complete(
-            messages=[Message(role="user", content=prompt)],
+            messages=[
+                Message(role="system", content=_CURATION_SYSTEM_PROMPT),
+                Message(role="user", content=user_msg),
+            ],
             model=model,
             max_tokens=500,
             temperature=0.0,
         )
-        return _parse_curation_response(completion.text, new_content)
+        return _parse_curation_response(completion.text, new_content, valid_ids)
     except Exception:
-        # Fallback: treat as a simple ADD
+        logger.warning("LLM curation failed, defaulting to ADD")
         return CurationDecision(
             action="add",
             content=new_content,
@@ -99,8 +102,14 @@ async def curate_retain(
         )
 
 
-def _parse_curation_response(response: str, original_content: str) -> CurationDecision:
-    """Parse the LLM's curation response JSON."""
+def _parse_curation_response(
+    response: str, original_content: str, valid_memory_ids: set[str]
+) -> CurationDecision:
+    """Parse the LLM's curation response JSON.
+
+    Validates merge_target_id against known memory IDs.
+    Falls back to ADD if destructive action references unknown ID.
+    """
     try:
         text = response.strip()
         # Handle markdown code blocks
@@ -123,12 +132,32 @@ def _parse_curation_response(response: str, original_content: str) -> CurationDe
         if memory_layer not in ("fact", "observation", "model"):
             memory_layer = "fact"
 
+        merge_target_id = data.get("merge_target_id")
+
+        # Validate merge_target_id for destructive actions
+        if action in ("update", "merge", "delete") and merge_target_id:
+            if merge_target_id not in valid_memory_ids:
+                logger.warning(
+                    "LLM returned merge_target_id '%s' not in valid memory IDs, falling back to ADD",
+                    merge_target_id,
+                )
+                action = "add"
+                merge_target_id = None
+
+        # Destructive actions without a target are invalid
+        if action in ("update", "merge", "delete") and not merge_target_id:
+            logger.warning("LLM returned '%s' action without merge_target_id, falling back to ADD", action)
+            action = "add"
+
+        # Use original content — don't let LLM rewrite stored content
+        content = original_content
+
         return CurationDecision(
             action=action,
-            content=data.get("content", original_content),
+            content=content,
             memory_layer=memory_layer,
             reasoning=data.get("reasoning", ""),
-            merge_target_id=data.get("merge_target_id"),
+            merge_target_id=merge_target_id,
         )
     except (json.JSONDecodeError, ValueError):
         return CurationDecision(
