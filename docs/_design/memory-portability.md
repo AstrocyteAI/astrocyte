@@ -20,8 +20,8 @@ A newline-delimited JSON (JSONL) file where each line is one memory unit, plus a
 
 ```jsonl
 {"_ama_version": 1, "bank_id": "user-123", "exported_at": "2026-04-03T12:00:00Z", "provider": "mem0", "memory_count": 42}
-{"id": "mem_001", "text": "Calvin prefers dark mode", "fact_type": "experience", "score": null, "tags": ["preference"], "metadata": {"source": "chat"}, "occurred_at": "2026-03-15T10:30:00Z", "created_at": "2026-03-15T10:30:05Z"}
-{"id": "mem_002", "text": "The deployment pipeline uses GitHub Actions", "fact_type": "world", "score": null, "tags": ["technical"], "metadata": {"source": "onboarding"}, "occurred_at": "2026-03-10T09:00:00Z", "created_at": "2026-03-10T09:00:12Z"}
+{"id": "mem_001", "text": "Calvin prefers dark mode", "fact_type": "experience", "tags": ["preference"], "metadata": {"source": "chat"}, "occurred_at": "2026-03-15T10:30:00Z", "created_at": "2026-03-15T10:30:05Z"}
+{"id": "mem_002", "text": "The deployment pipeline uses GitHub Actions", "fact_type": "world", "tags": ["technical"], "metadata": {"source": "onboarding"}, "occurred_at": "2026-03-10T09:00:00Z", "created_at": "2026-03-10T09:00:12Z"}
 ```
 
 ### 2.2 Why JSONL
@@ -89,34 +89,18 @@ await brain.import_bank(
     bank_id="user-123",              # Target bank (may differ from source)
     path="./user-123-backup.ama.jsonl",
     on_conflict="skip",              # "skip" | "overwrite" | "error"
-    re_embed=True,                   # Re-generate embeddings for new provider
-    re_extract_entities=False,       # Use exported entities if available
 )
 ```
+
+> **Note:** Embeddings are always re-generated on import via the target provider's LLM.
+> Entity re-extraction depends on the target pipeline configuration.
 
 ### 3.3 Bank configuration export
 
-Separate from memory data, bank settings can be exported:
-
-```python
-await brain.export_bank_config(
-    bank_id="user-123",
-    path="./user-123-config.yaml",
-)
-```
-
-Produces:
-
-```yaml
-bank_id: user-123
-profile: personal
-dispositions:
-  skepticism: 3
-  literalism: 3
-  empathy: 4
-tags: [personal]
-created_at: "2026-01-15T00:00:00Z"
-```
+> **Status:** `export_bank_config()` is planned but not yet implemented. Bank
+> configuration is currently managed via YAML config files and profiles (see
+> `use-case-profiles.md`). When implemented, it will allow exporting per-bank
+> settings alongside memory data for full portability.
 
 ---
 
