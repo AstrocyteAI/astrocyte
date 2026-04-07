@@ -46,7 +46,7 @@ class TestComplianceProfileLoading:
     def test_hipaa_profile_rejects_pii(self, tmp_path: Path) -> None:
         p = _write_config(tmp_path, "compliance_profile: hipaa\n")
         config = load_config(p)
-        assert config.barriers.pii.mode == "llm"
+        assert config.barriers.pii.mode == "rules_then_llm"
         assert config.barriers.pii.action == "reject"
 
     def test_hipaa_profile_scans_both_outputs(self, tmp_path: Path) -> None:

@@ -276,13 +276,17 @@ class TestLifecycleE2E:
 
     @pytest.mark.asyncio
     async def test_compliance_forget_bypasses_hold(self, tmp_path: Path) -> None:
+        from astrocyte.types import AstrocyteContext
+
         brain, engine = _make_brain(tmp_path)
 
         await brain.retain("PII data for subject X", bank_id="user-data")
         brain.set_legal_hold("user-data", "hold-1", "Audit")
 
         # compliance=True bypasses legal hold (GDPR right-to-forget)
-        forget_result = await brain.forget("user-data", compliance=True)
+        # Requires caller context (even when ACL disabled)
+        ctx = AstrocyteContext(principal="system:compliance")
+        forget_result = await brain.forget("user-data", compliance=True, context=ctx)
         assert forget_result is not None  # Did not raise
 
     @pytest.mark.asyncio

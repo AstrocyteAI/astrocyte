@@ -475,8 +475,9 @@ class Astrocyte:
             for bid in bank_ids:
                 self._check_access(bid, "read", context)
 
-            # Rate limiting (once, not per-bank)
-            self._check_rate_limit(bank_ids[0], "recall")
+            # Rate limiting — check each bank (rate limits are per-bank)
+            for bid in bank_ids:
+                self._check_rate_limit(bid, "recall")
 
             # Single bank — direct
             if len(bank_ids) == 1:
@@ -644,12 +645,19 @@ class Astrocyte:
         with span("astrocyte.forget", {"astrocyte.bank_id": bank_id}):
             self._check_access(bank_id, "forget", context)
 
-            # Legal hold check — compliance=True bypasses for right-to-forget,
-            # but requires "admin" or "forget" permission (prevents unprivileged bypass).
+            # Legal hold check — compliance=True bypasses for right-to-forget.
+            # Even when access_control is disabled, compliance bypass requires
+            # explicit context (caller must identify themselves).
             if not kwargs.get("compliance"):
                 self._lifecycle.check_forget_allowed(bank_id)
             else:
-                self._check_access(bank_id, "admin", context)
+                if context is None:
+                    from astrocyte.errors import AccessDenied
+
+                    raise AccessDenied("anonymous", bank_id, "compliance_forget")
+                # When access control is enabled, also require admin permission
+                if self._config.access_control.enabled:
+                    self._check_access(bank_id, "admin", context)
 
             request = ForgetRequest(
                 bank_id=bank_id,
@@ -1066,6 +1074,8 @@ class Astrocyte:
             if isinstance(result, RecallResult):
                 all_hits.extend(_tag_hits_with_bank(result.hits, bid))
                 total_available += result.total_available
+            elif isinstance(result, BaseException):
+                logger.warning("Multi-bank recall failed for bank '%s': %s", bid, result)
 
         weighted = _apply_bank_weights(all_hits, strategy.bank_weights)
         weighted.sort(key=lambda h: h.score, reverse=True)

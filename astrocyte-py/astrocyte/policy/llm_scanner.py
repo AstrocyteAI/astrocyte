@@ -105,8 +105,19 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
             if start is not None and end is not None:
                 start = int(start)
                 end = int(end)
+                # Verify the offsets actually point to the claimed text
+                if start >= 0 and end <= len(original_text):
+                    actual = original_text[start:end]
+                    if actual != matched_text and matched_text:
+                        # LLM gave wrong offsets — re-locate
+                        idx = original_text.find(matched_text)
+                        if idx >= 0:
+                            start = idx
+                            end = idx + len(matched_text)
             elif matched_text:
-                # Try to find the text in original
+                # No offsets provided — find text in original.
+                # Use rfind to handle duplicate text more robustly,
+                # but prefer exact offset from LLM when available.
                 idx = original_text.find(matched_text)
                 if idx >= 0:
                     start = idx
