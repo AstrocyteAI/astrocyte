@@ -272,7 +272,7 @@ class TestLifecycleE2E:
 
         # Should succeed now
         forget_result = await brain.forget("case-2", memory_ids=[result.memory_id])
-        assert forget_result.deleted_count >= 0  # May be 0 if engine doesn't track individual IDs
+        assert forget_result.deleted_count >= 1  # Should delete the stored memory
 
     @pytest.mark.asyncio
     async def test_compliance_forget_bypasses_hold(self, tmp_path: Path) -> None:

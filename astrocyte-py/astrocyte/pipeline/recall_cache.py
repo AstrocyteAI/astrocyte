@@ -76,9 +76,27 @@ class RecallCache:
 
         entries = self._cache[bank_id]
 
-        # Evict LRU if at capacity
+        # Evict LRU if this bank is at capacity
         while len(entries) >= self.max_entries:
             entries.pop(0)
+
+        # Enforce global capacity across all banks
+        total = sum(len(e) for e in self._cache.values())
+        while total >= self.max_entries * 4:  # Global cap: 4x per-bank limit
+            # Evict oldest entry across all banks
+            oldest_bank = None
+            oldest_time = float("inf")
+            for bid, bank_entries in self._cache.items():
+                if bank_entries and bank_entries[0].timestamp < oldest_time:
+                    oldest_time = bank_entries[0].timestamp
+                    oldest_bank = bid
+            if oldest_bank is not None:
+                self._cache[oldest_bank].pop(0)
+                if not self._cache[oldest_bank]:
+                    del self._cache[oldest_bank]
+                total -= 1
+            else:
+                break
 
         entries.append(
             _CacheEntry(

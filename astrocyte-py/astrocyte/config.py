@@ -398,8 +398,8 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
             recall_max_tokens=h.get("recall_max_tokens"),
             reflect_max_tokens=h.get("reflect_max_tokens"),
             retain_max_content_bytes=h.get("retain_max_content_bytes"),
-            rate_limits=RateLimitConfig(**{k: v for k, v in rl.items() if v is not None}),
-            quotas=QuotaConfig(**{k: v for k, v in q.items() if v is not None}),
+            rate_limits=RateLimitConfig(**_filter_dataclass_fields(RateLimitConfig, {k: v for k, v in rl.items() if v is not None})),
+            quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, {k: v for k, v in q.items() if v is not None})),
         )
 
     if "barriers" in data:
@@ -408,30 +408,30 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         val_data = b.get("validation", {})
         meta_data = b.get("metadata", {})
         config.barriers = BarrierConfig(
-            pii=PiiConfig(**{k: v for k, v in pii_data.items()}),
-            validation=ValidationConfig(**{k: v for k, v in val_data.items()}),
-            metadata=MetadataSanitizationConfig(**{k: v for k, v in meta_data.items()}),
+            pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, pii_data)),
+            validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, val_data)),
+            metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, meta_data)),
         )
 
     if "escalation" in data:
         e = data["escalation"]
         cb = e.get("circuit_breaker", {})
         config.escalation = EscalationConfig(
-            circuit_breaker=CircuitBreakerConfig(**{k: v for k, v in cb.items()}),
+            circuit_breaker=CircuitBreakerConfig(**_filter_dataclass_fields(CircuitBreakerConfig, cb)),
             degraded_mode=e.get("degraded_mode", "empty_recall"),
         )
 
     if "observability" in data:
-        config.observability = ObservabilityConfig(**data["observability"])
+        config.observability = ObservabilityConfig(**_filter_dataclass_fields(ObservabilityConfig, data["observability"]))
 
     if "access_control" in data:
-        config.access_control = AccessControlConfig(**data["access_control"])
+        config.access_control = AccessControlConfig(**_filter_dataclass_fields(AccessControlConfig, data["access_control"]))
 
     if "defaults" in data:
-        config.defaults = DefaultsConfig(**data["defaults"])
+        config.defaults = DefaultsConfig(**_filter_dataclass_fields(DefaultsConfig, data["defaults"]))
 
     if "mcp" in data:
-        config.mcp = McpConfig(**data["mcp"])
+        config.mcp = McpConfig(**_filter_dataclass_fields(McpConfig, data["mcp"]))
 
     if "signal_quality" in data:
         sq = data["signal_quality"]

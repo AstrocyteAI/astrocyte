@@ -76,6 +76,20 @@ _TYPE_REPLACEMENTS: dict[str, str] = {
 }
 
 
+def _find_next_occurrence(
+    text: str, target: str, used_offsets: set[int]
+) -> tuple[int | None, int | None]:
+    """Find the next occurrence of target in text that hasn't been used yet."""
+    search_start = 0
+    while True:
+        idx = text.find(target, search_start)
+        if idx < 0:
+            return None, None
+        if idx not in used_offsets:
+            return idx, idx + len(target)
+        search_start = idx + 1
+
+
 def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
     """Parse LLM JSON response into PiiMatch list. Graceful fallback."""
     try:
@@ -93,6 +107,7 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
             return []
 
         matches: list[PiiMatch] = []
+        used_offsets: set[int] = set()  # Track start offsets to handle duplicate PII text
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -110,24 +125,15 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
                     actual = original_text[start:end]
                     if actual != matched_text and matched_text:
                         # LLM gave wrong offsets — re-locate
-                        idx = original_text.find(matched_text)
-                        if idx >= 0:
-                            start = idx
-                            end = idx + len(matched_text)
+                        start, end = _find_next_occurrence(original_text, matched_text, used_offsets)
             elif matched_text:
-                # No offsets provided — find text in original.
-                # Use rfind to handle duplicate text more robustly,
-                # but prefer exact offset from LLM when available.
-                idx = original_text.find(matched_text)
-                if idx >= 0:
-                    start = idx
-                    end = idx + len(matched_text)
-                else:
-                    continue  # Can't locate — skip
+                # No offsets provided — find text in original
+                start, end = _find_next_occurrence(original_text, matched_text, used_offsets)
 
             if start is None or end is None:
                 continue
 
+            used_offsets.add(start)
             replacement = _TYPE_REPLACEMENTS.get(pii_type, f"[{pii_type.upper()}_REDACTED]")
             matches.append(
                 PiiMatch(
