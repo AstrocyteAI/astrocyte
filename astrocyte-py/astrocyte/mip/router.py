@@ -35,7 +35,7 @@ class MipRouter:
         matches = evaluate_rules(self._rules, input_data)
 
         if not matches:
-            return None if self._should_escalate(matches) else None
+            return None
 
         top = matches[0]
 
@@ -47,18 +47,15 @@ class MipRouter:
         if top.rule.action.escalate == "mip":
             return None
 
-        # Confident single match
+        # Confident single match — accept
         if len(matches) == 1 and top.confidence >= 0.8:
             return self._apply_action(top, input_data)
 
-        # Multiple matches — potential conflict, check escalation policy
-        if len(matches) > 1 and self._should_escalate(matches):
+        # Low confidence or multiple matches — check escalation policy
+        if self._should_escalate(matches):
             return None
 
-        if len(matches) > 1:
-            # Multiple matches but no escalation policy — use highest priority
-            return self._apply_action(top, input_data)
-
+        # Escalation policy says don't escalate — use highest priority match
         return self._apply_action(top, input_data)
 
     def _should_escalate(self, matches: list[RuleMatch]) -> bool:

@@ -356,6 +356,14 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _filter_dataclass_fields(cls: type, data: dict) -> dict:
+    """Filter dict to only keys that are valid fields of the dataclass. Prevents TypeError on unknown keys."""
+    import dataclasses
+
+    valid = {f.name for f in dataclasses.fields(cls)}
+    return {k: v for k, v in data.items() if k in valid}
+
+
 def _dict_to_config(data: dict) -> AstrocyteConfig:
     """Convert a flat/nested dict to AstrocyteConfig with nested dataclasses."""
     config = AstrocyteConfig()
@@ -430,21 +438,21 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         dedup_data = sq.get("dedup", {})
         noisy_data = sq.get("noisy_bank", {})
         config.signal_quality = SignalQualityConfig(
-            dedup=DedupConfig(**{k: v for k, v in dedup_data.items()}),
-            noisy_bank=NoisyBankConfig(**{k: v for k, v in noisy_data.items()}),
+            dedup=DedupConfig(**_filter_dataclass_fields(DedupConfig, dedup_data)),
+            noisy_bank=NoisyBankConfig(**_filter_dataclass_fields(NoisyBankConfig, noisy_data)),
         )
 
     if "recall_cache" in data:
-        config.recall_cache = RecallCacheConfig(**{k: v for k, v in data["recall_cache"].items()})
+        config.recall_cache = RecallCacheConfig(**_filter_dataclass_fields(RecallCacheConfig, data["recall_cache"]))
 
     if "tiered_retrieval" in data:
-        config.tiered_retrieval = TieredRetrievalConfig(**{k: v for k, v in data["tiered_retrieval"].items()})
+        config.tiered_retrieval = TieredRetrievalConfig(**_filter_dataclass_fields(TieredRetrievalConfig, data["tiered_retrieval"]))
 
     if "curated_retain" in data:
-        config.curated_retain = CuratedRetainConfig(**{k: v for k, v in data["curated_retain"].items()})
+        config.curated_retain = CuratedRetainConfig(**_filter_dataclass_fields(CuratedRetainConfig, data["curated_retain"]))
 
     if "curated_recall" in data:
-        config.curated_recall = CuratedRecallConfig(**{k: v for k, v in data["curated_recall"].items()})
+        config.curated_recall = CuratedRecallConfig(**_filter_dataclass_fields(CuratedRecallConfig, data["curated_recall"]))
 
     if "access_grants" in data and data["access_grants"]:
         grants: list[AccessGrant] = []
@@ -464,14 +472,14 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         config.compliance_profile = data["compliance_profile"]
 
     if "dlp" in data:
-        config.dlp = DlpConfig(**{k: v for k, v in data["dlp"].items()})
+        config.dlp = DlpConfig(**_filter_dataclass_fields(DlpConfig, data["dlp"]))
 
     if "lifecycle" in data:
         lc = data["lifecycle"]
         ttl_data = lc.get("ttl", {})
         config.lifecycle = LifecycleConfig(
             enabled=lc.get("enabled", False),
-            ttl=LifecycleTtlConfig(**{k: v for k, v in ttl_data.items()}),
+            ttl=LifecycleTtlConfig(**_filter_dataclass_fields(LifecycleTtlConfig, ttl_data)),
         )
 
     if "mip_config_path" in data:
@@ -531,16 +539,22 @@ def load_config(path: str | Path) -> AstrocyteConfig:
     # Substitute environment variables
     raw = _substitute_env_recursive(raw)
 
-    # Load and merge compliance profile first (lowest priority defaults)
+    # Merge order: compliance (lowest) → behavior profile → user config (highest).
+    # _deep_merge(base, override) → override wins.
+    # Build base from lowest priority, then let higher priority layers override.
+    base: dict = {}
+
     compliance_name = raw.get("compliance_profile")
     if compliance_name:
         compliance_data = _load_compliance_profile(compliance_name)
-        raw = _deep_merge(compliance_data, raw)
+        base = _deep_merge(base, compliance_data)
 
-    # Load and merge behavior profile (overrides compliance defaults)
     profile_name = raw.get("profile")
     if profile_name:
         profile_data = _load_profile(profile_name)
-        raw = _deep_merge(profile_data, raw)
+        base = _deep_merge(base, profile_data)
 
-    return _dict_to_config(raw)
+    # User config wins over everything
+    merged = _deep_merge(base, raw)
+
+    return _dict_to_config(merged)

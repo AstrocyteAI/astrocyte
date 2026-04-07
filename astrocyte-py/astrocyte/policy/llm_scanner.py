@@ -19,19 +19,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("astrocyte.pii")
 
-_LLM_PII_PROMPT = """Analyze this text for personally identifiable information (PII). Return a JSON array of detected PII items.
+_LLM_PII_SYSTEM_PROMPT = """You are a PII detection system. Analyze user-provided text for personally identifiable information.
 
-For each PII item found, return:
+For each PII item found, return a JSON object with:
 - "type": the PII category (name, email, phone, address, ssn, credit_card, medical_record, date_of_birth, national_id, passport, financial_account)
-- "text": the exact matched text
-- "start": character offset where the PII starts
-- "end": character offset where the PII ends
+- "text": the exact matched text from the content
+- "start": character offset where the PII starts within the content
+- "end": character offset where the PII ends within the content
 
-If no PII is found, return an empty array: []
-
-Text to analyze:
-{text}
-
+Return a JSON array of all detected items. If no PII is found, return: []
 Respond with ONLY the JSON array, no other text."""
 
 
@@ -47,13 +43,12 @@ class LlmPiiScanner:
 
     async def scan(self, text: str) -> list[PiiMatch]:
         """Ask LLM to identify PII with positions. Returns matches."""
-        system_prompt = _LLM_PII_PROMPT.replace("{text}", "").strip()
         user_content = f"<content>\n{text[:2000]}\n</content>"
 
         try:
             completion = await self._llm.complete(
                 messages=[
-                    Message(role="system", content=system_prompt),
+                    Message(role="system", content=_LLM_PII_SYSTEM_PROMPT),
                     Message(role="user", content=user_content),
                 ],
                 max_tokens=500,
