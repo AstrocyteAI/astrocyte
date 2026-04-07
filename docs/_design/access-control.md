@@ -193,6 +193,13 @@ This means switching providers does not change access policies. Policies are def
 
 ## 5. Programmatic access management
 
+> **Status:** The public methods `grant_access()`, `revoke_access()`, `list_access()`,
+> and `check_access()` are design targets — not yet implemented. Currently, access
+> grants are managed via YAML configuration (§2) and checked internally by the
+> framework at each operation boundary via `_check_access()`.
+
+Planned API (not yet available):
+
 ```python
 # Grant access
 await brain.grant_access(
@@ -209,7 +216,6 @@ await brain.revoke_access(
 
 # List grants for a bank
 grants = await brain.list_access("user-123")
-# → [AccessGrant(bank_id="user-123", principal="agent:support-bot-1", permissions=["read", "write"]), ...]
 
 # Check access (without making a memory call)
 allowed = await brain.check_access(
@@ -217,7 +223,6 @@ allowed = await brain.check_access(
     principal="agent:support-bot-1",
     permission="write",
 )
-# → True
 ```
 
 ---

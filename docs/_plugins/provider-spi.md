@@ -75,10 +75,11 @@ class VectorItem:
     bank_id: str
     vector: list[float]
     text: str                              # Original text for this vector
-    metadata: dict[str, Any] | None = None
+    metadata: Metadata | None = None       # Metadata = dict[str, str | int | float | bool | None]
     tags: list[str] | None = None
     fact_type: str | None = None           # "world", "experience", "observation"
     occurred_at: datetime | None = None
+    memory_layer: str | None = None        # "fact", "observation", "model" — memory hierarchy
 
 @dataclass
 class VectorFilters:
@@ -93,10 +94,11 @@ class VectorHit:
     id: str
     text: str
     score: float                           # 0.0 - 1.0 similarity
-    metadata: dict[str, Any] | None = None
+    metadata: Metadata | None = None       # Metadata = dict[str, str | int | float | bool | None]
     tags: list[str] | None = None
     fact_type: str | None = None
     occurred_at: datetime | None = None
+    memory_layer: str | None = None        # "fact", "observation", "model"
 ```
 
 ### 1.3 GraphStore protocol (optional for Tier 1)

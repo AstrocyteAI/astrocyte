@@ -27,7 +27,7 @@ results = await evaluator.run_suite(
     clean_after=True,                    # Delete test bank after evaluation
 )
 
-print(results.summary())
+print(f"Precision: {results.metrics.recall_precision}, Hit rate: {results.metrics.recall_hit_rate}")
 ```
 
 ### 2.1 Evaluation result
@@ -171,14 +171,14 @@ results = await evaluator.run_suite(
 Compare two providers side-by-side:
 
 ```python
-from astrocyte.eval import compare_providers
+from astrocyte.eval import compare_providers, format_comparison
 
-comparison = await compare_providers(
+results = await compare_providers(
     configs=["config-pgvector.yaml", "config-mystique.yaml"],
     suite="accuracy",
 )
 
-print(comparison.summary())
+print(format_comparison(results))
 ```
 
 ```

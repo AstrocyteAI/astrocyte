@@ -49,7 +49,6 @@ homeostasis:
   quotas:
     retain_per_day: 10000           # Max retain calls per bank per day
     reflect_per_day: 500            # Max reflect calls per bank per day
-    storage_bytes_per_bank: null    # No limit (provider enforces its own)
 ```
 
 Quota state is tracked in-process (resets on restart) or via an optional external store for distributed deployments.
@@ -77,7 +76,7 @@ Scans content before it reaches the memory provider. Three modes:
 ```yaml
 barriers:
   pii:
-    mode: regex                    # "regex" | "ner" | "llm" | "disabled"
+    mode: regex                    # "regex" | "ner" | "llm" | "rules_then_llm" | "disabled"
     action: redact                 # "redact" | "reject" | "warn"
     patterns:                      # Additional patterns (regex mode)
       - name: custom_id
@@ -146,7 +145,10 @@ When `action: skip`, duplicates are silently dropped. The RetainResult indicates
 
 ### 3.2 Quality scoring
 
-Optional LLM-based evaluation of content value before storage:
+> **Status:** `signal_quality.scoring` is a design target — not yet implemented
+> in `SignalQualityConfig`. Currently only `dedup` and `noisy_bank` are available.
+
+Optional LLM-based evaluation of content value before storage (planned):
 
 ```yaml
 signal_quality:
@@ -352,7 +354,8 @@ banks:
         mode: llm
         action: reject
     homeostasis:
-      retain_per_minute: 10
+      rate_limits:
+        retain_per_minute: 10
 ```
 
 ---

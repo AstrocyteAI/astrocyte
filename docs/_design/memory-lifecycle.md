@@ -35,11 +35,11 @@ Time-to-live policies automatically transition memories through lifecycle states
 ```yaml
 lifecycle:
   ttl:
-    # Archive memories that haven't been recalled in 90 days
-    archive_unretrieved_after_days: 90
+    # Archive memories that haven't been recalled in N days
+    archive_after_days: 90
 
-    # Delete archived memories after 365 days
-    delete_archived_after_days: 365
+    # Delete archived memories after N days
+    delete_after_days: 365
 
     # Never auto-delete memories with these tags (compliance hold)
     exempt_tags: ["legal_hold", "compliance"]
@@ -109,15 +109,15 @@ await brain.forget(
 Memories under legal hold are exempt from TTL expiry and cannot be deleted via normal `forget()` calls:
 
 ```python
-# Place a bank under legal hold
-await brain.set_legal_hold(
+# Place a bank under legal hold (synchronous)
+brain.set_legal_hold(
     bank_id="user-123",
     hold_id="case-2026-001",
     reason="Litigation hold per legal request #LH-2026-001",
 )
 
-# Release hold
-await brain.release_legal_hold(
+# Release hold (synchronous)
+brain.release_legal_hold(
     bank_id="user-123",
     hold_id="case-2026-001",
 )
@@ -205,7 +205,11 @@ lifecycle:
 
 ### 6.1 Scheduled (background)
 
-TTL checks and consolidation run on a schedule:
+> **Status:** The `lifecycle.scheduler` and `lifecycle.audit` config sections
+> are design targets — not yet implemented in `config.py`. Currently, lifecycle
+> runs are triggered on-demand via `brain.run_lifecycle()`.
+
+TTL checks and consolidation run on a schedule (planned):
 
 ```yaml
 lifecycle:
@@ -218,12 +222,12 @@ lifecycle:
 ### 6.2 On-demand
 
 ```python
-# Manually trigger TTL check
-await brain.run_ttl_check(bank_id="user-123")
-
-# Manually trigger consolidation
-await brain.run_consolidation(bank_id="user-123")
+# Manually trigger lifecycle (TTL check + consolidation)
+await brain.run_lifecycle(bank_id="user-123")
 ```
+
+> **Note:** `run_ttl_check()` and `run_consolidation()` as separate methods
+> are a design target. Currently, `run_lifecycle()` handles both.
 
 ### 6.3 Provider interaction
 

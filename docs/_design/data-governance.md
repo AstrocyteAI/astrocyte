@@ -4,6 +4,8 @@ This document defines Astrocyte' unified approach to data classification, PII ha
 
 This maps to **Principle 6 (Barrier maintenance)** - the blood-brain barrier is not just a wall, it is a **selective, actively maintained boundary** that classifies what crosses, enforces rules per-substance, and adapts to threats.
 
+> **Implementation status:** PII detection/redaction (§2), compliance profiles (§5), and DLP output scanning (§7) are implemented in `astrocyte-py`. Data classification (§1), data residency (§3), field-level encryption (§4), and data lineage (§6) are **design targets** — the configuration schema and runtime enforcement are not yet implemented. YAML examples in those sections use a `governance:` top-level key; the current implementation uses flat top-level keys (`barriers:`, `dlp:`, `compliance_profile:`, `lifecycle:`) — see `astrocyte-py/astrocyte/config.py`.
+
 ---
 
 ## 1. Data classification
@@ -96,14 +98,13 @@ The PII barrier (introduced in `policy-layer.md` section 2.1) detects specific P
 Different PII types can have different actions:
 
 ```yaml
-governance:
+barriers:
   pii:
     mode: rules_then_llm
-    default_action: redact
+    action: redact                         # "redact" | "reject" | "warn"
     type_overrides:
       email:
         action: redact
-        replacement: "[EMAIL_REDACTED]"
       credit_card:
         action: reject                   # Never store credit cards
       name:
@@ -112,7 +113,6 @@ governance:
         action: reject
       address:
         action: redact
-        replacement: "[ADDRESS_REDACTED]"
 ```
 
 ### 2.4 Redaction strategy
@@ -304,7 +304,7 @@ classification:
   auto_classify_mode: rules_then_llm
 pii:
   mode: rules_then_llm
-  default_action: redact
+  action: redact
   type_overrides:
     name: { action: redact }
     email: { action: redact }
@@ -342,7 +342,7 @@ classification:
   auto_classify_mode: llm               # LLM is best at detecting PHI
 pii:
   mode: llm
-  default_action: reject                 # HIPAA: don't store PHI unless explicitly designed for it
+  action: reject                         # HIPAA: don't store PHI unless explicitly designed for it
   type_overrides:
     medical_record: { action: reject }
     name: { action: redact }
@@ -373,7 +373,7 @@ classification:
   auto_classify_mode: rules_then_llm
 pii:
   mode: rules_then_llm
-  default_action: redact
+  action: redact
   type_overrides:
     national_id: { action: reject }      # NRIC must not be stored
 lifecycle:
@@ -625,7 +625,7 @@ governance:
   # PII detection and handling
   pii:
     mode: rules_then_llm
-    default_action: redact
+    action: redact
     type_overrides: {}                   # Per-type action overrides
     custom_patterns: []                  # Additional regex patterns
     redaction:
@@ -669,7 +669,7 @@ governance:
       compliance_profile: [gdpr, hipaa]
       pii:
         mode: llm
-        default_action: reject
+        action: reject
       dlp:
         enabled: true
         scan_reflect_output: true

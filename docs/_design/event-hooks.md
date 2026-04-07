@@ -32,42 +32,20 @@ Hook payloads align with the **`MemoryExportSink`** event taxonomy (`memory-expo
 
 ---
 
-## 2. Hook configuration
+## 2. Hook registration
 
-```yaml
-hooks:
-  on_retain:
-    - type: webhook
-      url: https://internal.company.com/audit/memory-created
-      method: POST
-      headers:
-        Authorization: "Bearer ${AUDIT_API_KEY}"
-      timeout_ms: 5000
-      async: true                        # Non-blocking (default)
+> **Status:** YAML-based hook configuration (`hooks:` key) is a design target and not yet implemented.
+> Currently, hooks are registered **programmatically** via the Python API:
 
-  on_pii_detected:
-    - type: webhook
-      url: https://hooks.slack.com/services/T00/B00/xxx
-      method: POST
-      body_template: |
-        {"text": "PII detected in bank {{bank_id}}: {{pii_type}}, action: {{action_taken}}"}
-    - type: log
-      level: warning
-      message: "PII detected: {{pii_type}} in bank {{bank_id}}"
+```python
+async def my_audit_hook(event: HookEvent) -> None:
+    print(f"[{event.type}] bank={event.bank_id} data={event.data}")
 
-  on_circuit_breaker_open:
-    - type: webhook
-      url: https://events.pagerduty.com/v2/enqueue
-      method: POST
-      body_template: |
-        {"routing_key": "${PD_ROUTING_KEY}", "event_action": "trigger", "payload": {"summary": "Memory provider circuit breaker open: {{provider}}", "severity": "critical"}}
-
-  on_noisy_bank:
-    - type: log
-      level: warning
-    - type: webhook
-      url: https://hooks.slack.com/services/T00/B00/yyy
+brain.register_hook("on_retain", my_audit_hook)
+brain.register_hook("on_pii_detected", my_audit_hook)
 ```
+
+When YAML-based configuration ships, it will support webhook, log, and callable hook types as described in §3 below.
 
 ---
 
@@ -126,9 +104,9 @@ class HookEvent:
     event_id: str                        # Unique event ID (UUID)
     type: str                            # Event type (e.g., "on_retain")
     timestamp: datetime                  # When the event occurred
-    bank_id: str | None                  # Affected bank (if applicable)
-    data: dict[str, Any]                 # Event-specific payload
-    trace_id: str | None                 # OTel trace ID for correlation
+    bank_id: str | None = None           # Affected bank (if applicable)
+    data: Metadata | None = None         # Event-specific payload (Metadata = dict[str, str|int|float|bool|None])
+    trace_id: str | None = None          # OTel trace ID for correlation
 ```
 
 Payloads must be portable (see `implementation-language-strategy.md`): only str, int, float, bool, None, list, dict. No callables or opaque Python objects in serialized event data.
