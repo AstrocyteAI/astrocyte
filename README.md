@@ -1,6 +1,6 @@
 # Astrocyte
 
-[![PyPI](https://img.shields.io/pypi/v/astrocyte)](https://pypi.org/project/astrocyte/)
+[![PyPI - astrocyte](https://img.shields.io/pypi/v/astrocyte?label=astrocyte)](https://pypi.org/project/astrocyte/)
 [![PyPI - astrocyte-pgvector](https://img.shields.io/pypi/v/astrocyte-pgvector?label=astrocyte-pgvector)](https://pypi.org/project/astrocyte-pgvector/)
 [![CI](https://github.com/AstrocyteAI/astrocyte/actions/workflows/ci.yml/badge.svg)](https://github.com/AstrocyteAI/astrocyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://astrocyteai.github.io/astrocyte/coverage/badge.json)](https://astrocyteai.github.io/astrocyte/coverage/htmlcov/)
