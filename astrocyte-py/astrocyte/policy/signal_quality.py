@@ -35,6 +35,8 @@ class DedupDetector:
     Sync, self-contained — Rust migration candidate.
     """
 
+    _MAX_BANKS = 1000
+
     def __init__(self, similarity_threshold: float = 0.95, max_cache_per_bank: int = 1000) -> None:
         self.threshold = similarity_threshold
         self.max_cache = max_cache_per_bank
@@ -60,6 +62,9 @@ class DedupDetector:
     def add(self, bank_id: str, memory_id: str, embedding: list[float]) -> None:
         """Add an embedding to the cache for future dedup checks."""
         if bank_id not in self._cache:
+            if len(self._cache) >= self._MAX_BANKS:
+                oldest_bank = next(iter(self._cache))
+                del self._cache[oldest_bank]
             self._cache[bank_id] = []
 
         entries = self._cache[bank_id]

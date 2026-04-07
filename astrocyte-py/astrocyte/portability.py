@@ -172,6 +172,12 @@ def read_ama_header(path: str | Path) -> AmaHeader:
         raise ValueError(f"Not a valid AMA file (missing _ama_version): {path}")
     if data["_ama_version"] != AMA_VERSION:
         raise ValueError(f"Unsupported AMA version {data['_ama_version']} (expected {AMA_VERSION})")
+    # Validate required field types
+    for field in ("bank_id", "exported_at", "provider"):
+        if not isinstance(data.get(field), str):
+            raise ValueError(f"AMA header field '{field}' must be a string: {path}")
+    if not isinstance(data.get("memory_count"), int):
+        raise ValueError(f"AMA header field 'memory_count' must be an integer: {path}")
     return AmaHeader(
         bank_id=data["bank_id"],
         exported_at=data["exported_at"],
@@ -235,7 +241,6 @@ async def import_bank(
     bank_id: str,
     path: str | Path,
     on_conflict: Literal["skip", "overwrite", "error"] = "skip",
-    re_embed: bool = True,
     progress_fn=None,
 ) -> ImportResult:
     """Import memories from an AMA file into a bank.
@@ -246,7 +251,6 @@ async def import_bank(
         bank_id: Target bank (may differ from source bank in AMA).
         path: Path to AMA JSONL file.
         on_conflict: How to handle memories with IDs that already exist.
-        re_embed: Re-generate embeddings (recommended when switching providers).
         progress_fn: Optional callback(imported, total) for progress reporting.
 
     Returns:

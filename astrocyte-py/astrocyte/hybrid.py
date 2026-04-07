@@ -148,7 +148,7 @@ class HybridEngineProvider:
             for h in eng_res.hits:
                 tagged = replace(h, bank_id=h.bank_id or request.bank_id)
                 tagged = replace(tagged, source=tagged.source or "tier2_engine")
-                all_hits.append(replace(tagged, score=tagged.score * engine_w))
+                all_hits.append(tagged)
         if self._pipeline:
             pipe_res = raw[idx]
             idx += 1
@@ -158,13 +158,23 @@ class HybridEngineProvider:
             for h in pipe_res.hits:
                 tagged = replace(h, bank_id=h.bank_id or request.bank_id)
                 tagged = replace(tagged, source=tagged.source or "tier1_pipeline")
-                all_hits.append(replace(tagged, score=tagged.score * pipeline_w))
+                all_hits.append(tagged)
 
+        # Dedup before weighting to avoid score inflation from backend weights
         merged = (
             _dedupe_hits_prefer_score(all_hits)
             if self._dedup_across_sources
             else sorted(all_hits, key=lambda x: x.score, reverse=True)
         )
+
+        # Apply weights after dedup
+        if engine_w != 1.0 or pipeline_w != 1.0:
+            weighted: list[MemoryHit] = []
+            for h in merged:
+                w = engine_w if h.source == "tier2_engine" else pipeline_w
+                weighted.append(replace(h, score=h.score * w))
+            weighted.sort(key=lambda x: x.score, reverse=True)
+            merged = weighted
         trimmed = merged[: request.max_results]
         truncated = False
         if request.max_tokens:
