@@ -10,12 +10,11 @@ See docs/_design/memory-portability.md for the full specification.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
-
-import logging
 
 from astrocyte.types import MemoryHit, Metadata, RecallRequest, RecallResult, RetainRequest
 

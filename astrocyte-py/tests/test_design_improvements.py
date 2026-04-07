@@ -9,7 +9,7 @@ from astrocyte._astrocyte import Astrocyte
 from astrocyte.config import AstrocyteConfig
 from astrocyte.pipeline.consolidation import run_consolidation
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator
-from astrocyte.provider import check_spi_version, _SUPPORTED_VERSIONS
+from astrocyte.provider import _SUPPORTED_VERSIONS, check_spi_version
 from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
 from astrocyte.types import VectorItem
 
@@ -291,8 +291,8 @@ class TestIntegrationsUsePublicAPI:
     """Verify integrations call brain.clear_bank() not private _do_forget()."""
 
     def test_crewai_reset_uses_clear_bank(self):
-        import ast
         import inspect
+
         from astrocyte.integrations.crewai import AstrocyteCrewMemory
 
         source = inspect.getsource(AstrocyteCrewMemory.reset)
@@ -301,6 +301,7 @@ class TestIntegrationsUsePublicAPI:
 
     def test_llamaindex_reset_uses_clear_bank(self):
         import inspect
+
         from astrocyte.integrations.llamaindex import AstrocyteLlamaMemory
 
         source = inspect.getsource(AstrocyteLlamaMemory.reset)
@@ -309,6 +310,7 @@ class TestIntegrationsUsePublicAPI:
 
     def test_camel_ai_clear_uses_clear_bank(self):
         import inspect
+
         from astrocyte.integrations.camel_ai import AstrocyteCamelMemory
 
         source = inspect.getsource(AstrocyteCamelMemory.clear)
