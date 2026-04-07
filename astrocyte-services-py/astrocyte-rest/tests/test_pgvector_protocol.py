@@ -15,12 +15,9 @@ import pytest
 from astrocyte.testing.in_memory import InMemoryVectorStore
 from astrocyte.types import VectorItem
 
-# The pgvector package directory is `astrocytes_pgvector` but __init__.py
-# imports from `astrocyte_pgvector` (relying on pip install mapping).
-# For direct PYTHONPATH usage, import from astrocytes_pgvector.store directly.
 _pgvector_available = True
 try:
-    from astrocytes_pgvector.store import PgVectorStore
+    from astrocyte_pgvector.store import PgVectorStore
 except ImportError:
     _pgvector_available = False
 
