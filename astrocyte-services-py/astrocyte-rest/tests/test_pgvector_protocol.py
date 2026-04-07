@@ -7,8 +7,8 @@ The PgVectorStore SQL is tested structurally (schema, column presence).
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-import sys
 
 import pytest
 
@@ -38,35 +38,41 @@ def _make_item(vid: str, bank_id: str, *, memory_layer: str | None = None) -> Ve
 
 
 class TestListVectorsPagination:
-    @pytest.mark.asyncio
-    async def test_basic_pagination(self):
-        vs = InMemoryVectorStore()
-        items = [_make_item(f"v{i:03d}", "bank-1") for i in range(10)]
-        await vs.store_vectors(items)
+    def test_basic_pagination(self):
+        async def _run():
+            vs = InMemoryVectorStore()
+            items = [_make_item(f"v{i:03d}", "bank-1") for i in range(10)]
+            await vs.store_vectors(items)
 
-        page1 = await vs.list_vectors("bank-1", offset=0, limit=4)
-        page2 = await vs.list_vectors("bank-1", offset=4, limit=4)
-        page3 = await vs.list_vectors("bank-1", offset=8, limit=4)
+            page1 = await vs.list_vectors("bank-1", offset=0, limit=4)
+            page2 = await vs.list_vectors("bank-1", offset=4, limit=4)
+            page3 = await vs.list_vectors("bank-1", offset=8, limit=4)
 
-        assert len(page1) == 4
-        assert len(page2) == 4
-        assert len(page3) == 2
+            assert len(page1) == 4
+            assert len(page2) == 4
+            assert len(page3) == 2
 
-        all_ids = {v.id for p in [page1, page2, page3] for v in p}
-        assert len(all_ids) == 10
+            all_ids = {v.id for p in [page1, page2, page3] for v in p}
+            assert len(all_ids) == 10
 
-    @pytest.mark.asyncio
-    async def test_empty_bank_returns_empty(self):
-        vs = InMemoryVectorStore()
-        result = await vs.list_vectors("nonexistent")
-        assert result == []
+        asyncio.run(_run())
 
-    @pytest.mark.asyncio
-    async def test_offset_beyond_end(self):
-        vs = InMemoryVectorStore()
-        await vs.store_vectors([_make_item("v1", "bank-1")])
-        result = await vs.list_vectors("bank-1", offset=100)
-        assert result == []
+    def test_empty_bank_returns_empty(self):
+        async def _run():
+            vs = InMemoryVectorStore()
+            result = await vs.list_vectors("nonexistent")
+            assert result == []
+
+        asyncio.run(_run())
+
+    def test_offset_beyond_end(self):
+        async def _run():
+            vs = InMemoryVectorStore()
+            await vs.store_vectors([_make_item("v1", "bank-1")])
+            result = await vs.list_vectors("bank-1", offset=100)
+            assert result == []
+
+        asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------
@@ -75,31 +81,35 @@ class TestListVectorsPagination:
 
 
 class TestMemoryLayerRoundtrip:
-    @pytest.mark.asyncio
-    async def test_store_and_list_preserves_memory_layer(self):
-        vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            _make_item("v1", "bank-1", memory_layer="fact"),
-            _make_item("v2", "bank-1", memory_layer="observation"),
-            _make_item("v3", "bank-1", memory_layer=None),
-        ])
+    def test_store_and_list_preserves_memory_layer(self):
+        async def _run():
+            vs = InMemoryVectorStore()
+            await vs.store_vectors([
+                _make_item("v1", "bank-1", memory_layer="fact"),
+                _make_item("v2", "bank-1", memory_layer="observation"),
+                _make_item("v3", "bank-1", memory_layer=None),
+            ])
 
-        items = await vs.list_vectors("bank-1")
-        layer_map = {v.id: v.memory_layer for v in items}
-        assert layer_map["v1"] == "fact"
-        assert layer_map["v2"] == "observation"
-        assert layer_map["v3"] is None
+            items = await vs.list_vectors("bank-1")
+            layer_map = {v.id: v.memory_layer for v in items}
+            assert layer_map["v1"] == "fact"
+            assert layer_map["v2"] == "observation"
+            assert layer_map["v3"] is None
 
-    @pytest.mark.asyncio
-    async def test_search_returns_memory_layer(self):
-        vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            _make_item("v1", "bank-1", memory_layer="model"),
-        ])
+        asyncio.run(_run())
 
-        hits = await vs.search_similar([1.0, 0.0, 0.0], "bank-1", limit=1)
-        assert len(hits) == 1
-        assert hits[0].memory_layer == "model"
+    def test_search_returns_memory_layer(self):
+        async def _run():
+            vs = InMemoryVectorStore()
+            await vs.store_vectors([
+                _make_item("v1", "bank-1", memory_layer="model"),
+            ])
+
+            hits = await vs.search_similar([1.0, 0.0, 0.0], "bank-1", limit=1)
+            assert len(hits) == 1
+            assert hits[0].memory_layer == "model"
+
+        asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------
