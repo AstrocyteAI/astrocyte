@@ -51,6 +51,20 @@ class VectorStore(Protocol):
         """Delete vectors by ID. Returns count deleted."""
         ...
 
+    async def list_vectors(
+        self,
+        bank_id: str,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[VectorItem]:
+        """List vectors in a bank with pagination.
+
+        Returns up to ``limit`` vectors starting at ``offset``.
+        Implementations should return vectors in a stable order (e.g., by ID).
+        Used by consolidation (dedup scan) and ``forget(scope="all")``.
+        """
+        ...
+
     async def health(self) -> HealthStatus:
         """Check database connectivity."""
         ...

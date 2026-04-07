@@ -47,7 +47,7 @@ await memory.reset(agent_id="devops")
 |---|---|
 | `memory.save(content, agent_id=...)` | `brain.retain()` with agent metadata |
 | `memory.search(query, agent_id=...)` | `brain.recall()` scoped to agent or shared bank |
-| `memory.reset(agent_id=...)` | `brain.forget(scope="all")` on the agent's bank |
+| `memory.reset(agent_id=...)` | `brain.clear_bank()` on the agent's bank |
 
 ## API reference
 

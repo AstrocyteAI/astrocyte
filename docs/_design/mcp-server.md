@@ -34,7 +34,7 @@ This is a major distribution channel: every Claude Code user, every Cursor user,
 | `memory_retain` | Store content into memory | `content`, `bank_id`, `tags`, `metadata`, `occurred_at` |
 | `memory_recall` | Retrieve relevant memories | `query`, `bank_id`, `max_results`, `tags`, `time_range` |
 | `memory_reflect` | Synthesize an answer from memory | `query`, `bank_id`, `max_tokens`, `include_sources` |
-| `memory_forget` | Remove memories by selector | `bank_id`, `memory_ids`, `tags`, `before_date` |
+| `memory_forget` | Remove memories by selector | `bank_id`, `memory_ids`, `tags`, `before_date`, `scope` |
 | `memory_banks` | List available banks | (none) |
 | `memory_health` | Check system status | (none) |
 

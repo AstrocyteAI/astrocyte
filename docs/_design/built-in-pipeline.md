@@ -136,6 +136,12 @@ flowchart TD
   D2 --> D3[3. Entity cleanup - if graph store]
 ```
 
+### Dedup scan implementation
+
+The dedup scan paginates through all vectors in a bank via `VectorStore.list_vectors()`, compares embeddings pairwise using cosine similarity, and deletes near-duplicates (keeping the first occurrence). The scan is safety-capped at 100k vectors to prevent runaway operations.
+
+If the VectorStore does not implement `list_vectors()`, consolidation is skipped with a warning.
+
 ### Configuration
 
 ```yaml

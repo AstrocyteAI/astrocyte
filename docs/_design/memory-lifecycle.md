@@ -71,15 +71,17 @@ The pipeline tracks when each memory was last recalled (via metadata). Memories 
 ### 3.1 Right to forget (GDPR, PDPA, CCPA)
 
 ```python
-# Delete all memories for a user across all banks
-await brain.forget(
-    selector=ForgetSelector(
-        bank_ids=["user-123"],
-        scope="all",                     # All memories in these banks
-    ),
-    compliance=True,                     # Emit audit event, ensure permanent deletion
-)
+# Delete all memories in a bank (convenience method)
+await brain.clear_bank("user-123")
+
+# Equivalent to:
+await brain.forget("user-123", scope="all")
 ```
+
+> **Note:** `scope="all"` requires `admin` permission when access control is enabled.
+> The `clear_bank()` method is the recommended public API for bank-wide deletion.
+> For Tier 1 pipelines, this paginates through `VectorStore.list_vectors()` and
+> deletes all vectors in batches.
 
 When `compliance=True`:
 - All memories are **permanently deleted** (not archived)
@@ -91,13 +93,14 @@ When `compliance=True`:
 ### 3.2 Selective forget
 
 ```python
-# Forget specific memories
+# Forget specific memories by ID
+await brain.forget("user-123", memory_ids=["mem-abc", "mem-def"])
+
+# Forget by tag and/or date
 await brain.forget(
-    selector=ForgetSelector(
-        bank_ids=["user-123"],
-        tags=["sensitive"],              # Only memories with this tag
-        before_date=datetime(2026, 1, 1), # Only memories before this date
-    ),
+    "user-123",
+    tags=["sensitive"],
+    before_date=datetime(2026, 1, 1),
 )
 ```
 

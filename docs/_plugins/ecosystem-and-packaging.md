@@ -536,14 +536,20 @@ class VectorStore(Protocol):
 class GraphStore(Protocol):
     SPI_VERSION: ClassVar[int] = 1
 
+class DocumentStore(Protocol):
+    SPI_VERSION: ClassVar[int] = 1
+
 class EngineProvider(Protocol):
     SPI_VERSION: ClassVar[int] = 1
 
 class LLMProvider(Protocol):
     SPI_VERSION: ClassVar[int] = 1
+
+class OutboundTransportProvider(Protocol):
+    SPI_VERSION: ClassVar[int] = 1
 ```
 
-The core supports providers targeting the current and previous SPI version. Breaking changes require a major version bump.
+At registration time, Astrocyte validates the provider's `SPI_VERSION` via `check_spi_version(provider, protocol_name)`. Providers without `SPI_VERSION` are assumed to be v1 for backwards compatibility. Unsupported versions raise `ConfigError` with the list of supported versions. Breaking changes require a major version bump.
 
 ### 5.2 DTO evolution
 
