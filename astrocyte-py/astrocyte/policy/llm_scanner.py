@@ -93,8 +93,6 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
             return []
 
         matches: list[PiiMatch] = []
-        # Track used positions to avoid mapping duplicate PII text to the same occurrence
-        used_positions: set[int] = set()
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -107,28 +105,29 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
             if start is not None and end is not None:
                 start = int(start)
                 end = int(end)
-                # Bounds check: clamp to valid range
-                start = max(0, min(start, len(original_text)))
-                end = max(start, min(end, len(original_text)))
+                # Verify the offsets actually point to the claimed text
+                if start >= 0 and end <= len(original_text):
+                    actual = original_text[start:end]
+                    if actual != matched_text and matched_text:
+                        # LLM gave wrong offsets — re-locate
+                        idx = original_text.find(matched_text)
+                        if idx >= 0:
+                            start = idx
+                            end = idx + len(matched_text)
             elif matched_text:
-                # Find the next occurrence not already used
-                search_from = 0
-                while True:
-                    idx = original_text.find(matched_text, search_from)
-                    if idx < 0:
-                        break
-                    if idx not in used_positions:
-                        start = idx
-                        end = idx + len(matched_text)
-                        break
-                    search_from = idx + 1
-                if start is None:
+                # No offsets provided — find text in original.
+                # Use rfind to handle duplicate text more robustly,
+                # but prefer exact offset from LLM when available.
+                idx = original_text.find(matched_text)
+                if idx >= 0:
+                    start = idx
+                    end = idx + len(matched_text)
+                else:
                     continue  # Can't locate — skip
 
             if start is None or end is None:
                 continue
 
-            used_positions.add(start)
             replacement = _TYPE_REPLACEMENTS.get(pii_type, f"[{pii_type.upper()}_REDACTED]")
             matches.append(
                 PiiMatch(

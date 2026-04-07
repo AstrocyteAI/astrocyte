@@ -180,6 +180,24 @@ class TestLegalHoldBypassAuth:
                 context=ctx,
             )
 
+    @pytest.mark.asyncio
+    async def test_compliance_forget_requires_context_even_without_acl(self, tmp_path: Path) -> None:
+        """compliance=True without context should fail even when access_control is disabled."""
+        config = AstrocyteConfig()
+        config.barriers.pii.mode = "disabled"
+        config.access_control.enabled = False  # ACL disabled
+
+        brain = Astrocyte(config)
+        engine = InMemoryEngineProvider()
+        brain.set_engine_provider(engine)
+
+        await brain.retain("test data", bank_id="held-bank")
+        brain.set_legal_hold("held-bank", "hold-1", "litigation")
+
+        # No context provided — should be denied even with ACL off
+        with pytest.raises(AccessDenied):
+            await brain.forget("held-bank", compliance=True)
+
 
 # ---------------------------------------------------------------------------
 # Config unknown keys don't crash

@@ -29,14 +29,16 @@ async def resolve_intent(
 ) -> RoutingDecision:
     """Ask the LLM to route content when mechanical rules cannot resolve.
 
+    System message contains routing instructions (trusted).
+    User message wraps untrusted content in XML delimiters.
     Falls back to passthrough on failure.
     """
-    system_msg = _build_system_prompt(intent_policy, available_banks, input_data)
-    user_msg = _build_user_message(input_data)
-
     max_tokens = 200
     if intent_policy.constraints and "max_tokens" in intent_policy.constraints:
         max_tokens = int(intent_policy.constraints["max_tokens"])
+
+    system_msg = _build_system_message(intent_policy, available_banks)
+    user_msg = _build_user_message(input_data)
 
     try:
         completion = await llm_provider.complete(
@@ -53,45 +55,39 @@ async def resolve_intent(
         return RoutingDecision(resolved_by="passthrough", reasoning="Intent layer LLM call failed")
 
 
-def _build_system_prompt(
+def _build_system_message(
     intent_policy: IntentPolicy,
     available_banks: list[BankDefinition],
-    input_data: RuleEngineInput,
 ) -> str:
-    """Build the system prompt for the LLM intent layer.
-
-    Contains only trusted routing instructions — no user content.
-    """
+    """Build the system message with routing instructions (trusted content only)."""
     banks_str = ", ".join(b.id for b in available_banks) if available_banks else "(none defined)"
-    tags_str = ", ".join(input_data.tags) if input_data.tags else "(none)"
 
     if intent_policy.model_context:
-        base = intent_policy.model_context.replace("{banks}", banks_str).replace("{tags}", tags_str)
+        base = intent_policy.model_context.replace("{banks}", banks_str)
     else:
         base = (
             f"You are a memory routing agent. Route content to the correct bank and apply tags.\n"
             f"Available banks: {banks_str}\n"
-            f"Current tags: {tags_str}\n"
             f"Never override compliance rules."
         )
 
-    return (
-        f"{base}\n\n"
-        f"The user message contains content wrapped in <content> XML tags. "
-        f"Route it to the appropriate bank based on content type, source, and PII status.\n\n"
-        f"Respond with JSON:\n"
-        f'{{\"bank_id\": \"...\", \"tags\": [\"...\"], \"retain_policy\": \"default\", \"reasoning\": \"...\"}}'
-    )
+    return f"""{base}
+
+Respond with a JSON object:
+{{"bank_id": "...", "tags": ["..."], "retain_policy": "default", "reasoning": "..."}}"""
 
 
 def _build_user_message(input_data: RuleEngineInput) -> str:
     """Build the user message with untrusted content wrapped in XML delimiters."""
-    return (
-        f"<content>\n{input_data.content[:500]}\n</content>\n\n"
-        f"Content type: {input_data.content_type or 'text'}\n"
-        f"Source: {input_data.source or 'unknown'}\n"
-        f"PII detected: {input_data.pii_detected}"
-    )
+    tags_str = ", ".join(input_data.tags) if input_data.tags else "(none)"
+    return f"""<content>
+{input_data.content[:500]}
+</content>
+
+Content type: {input_data.content_type or 'text'}
+Source: {input_data.source or 'unknown'}
+Tags: {tags_str}
+PII detected: {input_data.pii_detected}"""
 
 
 def _parse_intent_response(response: str) -> RoutingDecision:

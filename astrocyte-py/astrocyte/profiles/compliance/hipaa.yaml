@@ -8,7 +8,7 @@
 
 barriers:
   pii:
-    mode: rules_then_llm
+    mode: rules_then_llm    # Deterministic regex first, LLM only for context-dependent PHI
     action: reject
 
 lifecycle:

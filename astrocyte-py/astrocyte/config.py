@@ -492,35 +492,35 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         for bid, bdata in data["banks"].items():
             if not isinstance(bdata, dict):
                 continue
-            bank_cfg = BankConfig(
+            bc = BankConfig(
                 profile=bdata.get("profile"),
                 access=bdata.get("access"),
             )
-            if "homeostasis" in bdata and isinstance(bdata["homeostasis"], dict):
+            if "homeostasis" in bdata:
                 h = bdata["homeostasis"]
                 rl = h.get("rate_limits", {})
                 q = h.get("quotas", {})
-                bank_cfg.homeostasis = HomeostasisConfig(
+                bc.homeostasis = HomeostasisConfig(
                     recall_max_tokens=h.get("recall_max_tokens"),
                     reflect_max_tokens=h.get("reflect_max_tokens"),
                     retain_max_content_bytes=h.get("retain_max_content_bytes"),
                     rate_limits=RateLimitConfig(**_filter_dataclass_fields(RateLimitConfig, rl)),
                     quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, q)),
                 )
-            if "barriers" in bdata and isinstance(bdata["barriers"], dict):
+            if "barriers" in bdata:
                 b = bdata["barriers"]
-                bank_cfg.barriers = BarrierConfig(
+                bc.barriers = BarrierConfig(
                     pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, b.get("pii", {}))),
                     validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, b.get("validation", {}))),
                     metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, b.get("metadata", {}))),
                 )
-            if "signal_quality" in bdata and isinstance(bdata["signal_quality"], dict):
+            if "signal_quality" in bdata:
                 sq = bdata["signal_quality"]
-                bank_cfg.signal_quality = SignalQualityConfig(
+                bc.signal_quality = SignalQualityConfig(
                     dedup=DedupConfig(**_filter_dataclass_fields(DedupConfig, sq.get("dedup", {}))),
                     noisy_bank=NoisyBankConfig(**_filter_dataclass_fields(NoisyBankConfig, sq.get("noisy_bank", {}))),
                 )
-            banks[str(bid)] = bank_cfg
+            banks[str(bid)] = bc
         config.banks = banks
 
     return config
