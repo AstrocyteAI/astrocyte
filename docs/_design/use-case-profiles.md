@@ -243,11 +243,7 @@ For users who want the provider abstraction but no governance. Useful for testin
 
 ```yaml
 # profile: minimal
-homeostasis:
-  recall_max_tokens: null          # No limit
-  reflect_max_tokens: null
-  retain_max_content_bytes: null
-  rate_limits: null                # No rate limiting
+# No homeostasis section — uses base defaults (no limits)
 
 barriers:
   pii:

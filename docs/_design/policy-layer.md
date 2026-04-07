@@ -49,7 +49,6 @@ homeostasis:
   quotas:
     retain_per_day: 10000           # Max retain calls per bank per day
     reflect_per_day: 500            # Max reflect calls per bank per day
-    storage_bytes_per_bank: null    # No limit (provider enforces its own)
 ```
 
 Quota state is tracked in-process (resets on restart) or via an optional external store for distributed deployments.
@@ -77,7 +76,7 @@ Scans content before it reaches the memory provider. Three modes:
 ```yaml
 barriers:
   pii:
-    mode: regex                    # "regex" | "ner" | "llm" | "disabled"
+    mode: regex                    # "regex" | "ner" | "llm" | "rules_then_llm" | "disabled"
     action: redact                 # "redact" | "reject" | "warn"
     patterns:                      # Additional patterns (regex mode)
       - name: custom_id
@@ -352,7 +351,8 @@ banks:
         mode: llm
         action: reject
     homeostasis:
-      retain_per_minute: 10
+      rate_limits:
+        retain_per_minute: 10
 ```
 
 ---
