@@ -43,7 +43,7 @@ def astrocyte_adk_tools(
             content: The text to memorize.
             tags: Comma-separated tags for filtering (optional).
         """
-        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+        tag_list = [t.strip() for t in tags.split(",")] if isinstance(tags, str) and tags else None
         result = await brain.retain(content, bank_id=bank_id, tags=tag_list)
         return {"stored": result.stored, "memory_id": result.memory_id}
 

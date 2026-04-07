@@ -194,7 +194,7 @@ class LoComoBenchmark:
             for h in result.hits:
                 if h.memory_id and text_overlap_score([q.answer], h.text) > 0.3:
                     relevant_ids.add(h.memory_id)
-            retrieved_ids = [h.memory_id or "" for h in result.hits]
+            retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
 
             query_results.append(
                 QueryResult(
@@ -282,8 +282,11 @@ def load_locomo_dataset(
             raise FileNotFoundError(f"No JSON files found in {data_path}")
         data_path = candidates[0]
 
-    with open(data_path) as f:
-        raw = json.load(f)
+    try:
+        with open(data_path) as f:
+            raw = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Malformed JSON in LoCoMo benchmark file {data_path}: {e}") from e
 
     # Handle both array and single-object formats
     items = raw if isinstance(raw, list) else [raw]

@@ -143,8 +143,30 @@ class AstrocyteMemory:
     # Sync wrappers for frameworks that don't support async
     def save_context_sync(self, inputs: dict, outputs: dict, **kwargs: Any) -> None:
         """Synchronous wrapper for save_context."""
-        asyncio.get_event_loop().run_until_complete(self.save_context(inputs, outputs, **kwargs))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                pool.submit(asyncio.run, self.save_context(inputs, outputs, **kwargs)).result()
+        else:
+            asyncio.run(self.save_context(inputs, outputs, **kwargs))
 
     def search_sync(self, query: str, **kwargs: Any) -> list[dict]:
         """Synchronous wrapper for search."""
-        return asyncio.get_event_loop().run_until_complete(self.search(query, **kwargs))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, self.search(query, **kwargs)).result()
+        else:
+            return asyncio.run(self.search(query, **kwargs))

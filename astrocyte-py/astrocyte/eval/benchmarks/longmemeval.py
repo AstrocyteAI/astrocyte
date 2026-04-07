@@ -167,7 +167,7 @@ class LongMemEvalBenchmark:
             for h in result.hits:
                 if h.memory_id and text_overlap_score([q.answer], h.text) > 0.3:
                     relevant_ids.add(h.memory_id)
-            retrieved_ids = [h.memory_id or "" for h in result.hits]
+            retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
 
             query_results.append(
                 QueryResult(
@@ -255,8 +255,11 @@ def load_longmemeval_dataset(
         raise FileNotFoundError(f"No JSON files found in {data_path}")
 
     for json_file in json_files:
-        with open(json_file) as f:
-            data = json.load(f)
+        try:
+            with open(json_file) as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Malformed JSON in LongMemEval benchmark file {json_file}: {e}") from e
 
         # Handle both single-object and array formats
         items = data if isinstance(data, list) else [data]
