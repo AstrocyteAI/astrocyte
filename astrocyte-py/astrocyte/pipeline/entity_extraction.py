@@ -6,6 +6,7 @@ Async (I/O-bound). See docs/_design/built-in-pipeline.md section 2.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import TYPE_CHECKING
 
@@ -14,16 +15,14 @@ from astrocyte.types import Entity, Message
 if TYPE_CHECKING:
     from astrocyte.provider import LLMProvider
 
-_EXTRACTION_PROMPT = """Extract named entities from the following text.
+logger = logging.getLogger("astrocyte.pipeline")
+
+_EXTRACTION_SYSTEM_PROMPT = """Extract named entities from user-provided text.
 Return a JSON array of objects with keys: "name", "entity_type", "aliases".
 entity_type must be one of: PERSON, ORG, LOCATION, PRODUCT, EVENT, CONCEPT, OTHER.
 aliases should be an array of alternative names (empty array if none).
 If no entities are found, return an empty array [].
-
-Text:
-{text}
-
-JSON:"""
+Respond with ONLY the JSON array, no other text."""
 
 
 async def extract_entities(
@@ -35,17 +34,20 @@ async def extract_entities(
 
     Returns a list of Entity objects. Returns empty list on failure.
     """
-    prompt = _EXTRACTION_PROMPT.format(text=text)
+    user_msg = f"<content>\n{text[:2000]}\n</content>"
     try:
         completion = await llm_provider.complete(
-            messages=[Message(role="user", content=prompt)],
+            messages=[
+                Message(role="system", content=_EXTRACTION_SYSTEM_PROMPT),
+                Message(role="user", content=user_msg),
+            ],
             model=model,
             max_tokens=512,
             temperature=0.0,
         )
         return _parse_entities(completion.text)
     except Exception:
-        # Entity extraction failure should not block the retain pipeline
+        logger.warning("Entity extraction failed, returning empty list", exc_info=True)
         return []
 
 

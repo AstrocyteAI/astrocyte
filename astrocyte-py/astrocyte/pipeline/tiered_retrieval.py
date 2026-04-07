@@ -150,15 +150,18 @@ class TieredRetriever:
         """Use LLM to reformulate an ambiguous query for better retrieval."""
         from astrocyte.types import Message
 
-        prompt = (
-            "Reformulate this query to improve memory search results. "
+        system_msg = (
+            "Reformulate the user's query to improve memory search results. "
             "Add synonyms, expand abbreviations, and rephrase for clarity. "
-            "Return only the reformulated query, nothing else.\n\n"
-            f"Original query: {query}"
+            "Return only the reformulated query, nothing else."
         )
+        user_msg = f"<query>\n{query[:2000]}\n</query>"
         try:
             completion = await self.pipeline.llm_provider.complete(
-                messages=[Message(role="user", content=prompt)],
+                messages=[
+                    Message(role="system", content=system_msg),
+                    Message(role="user", content=user_msg),
+                ],
                 max_tokens=200,
                 temperature=0.3,
             )
