@@ -9,9 +9,14 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import replace
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from astrocyte.policy.homeostasis import enforce_token_budget
+
+if TYPE_CHECKING:
+    from astrocyte.pipeline.orchestrator import PipelineOrchestrator
+    from astrocyte.provider import EngineProvider
+
 from astrocyte.types import (
     EngineCapabilities,
     ForgetRequest,
@@ -48,8 +53,8 @@ class HybridEngineProvider:
     def __init__(
         self,
         *,
-        engine: Any | None = None,
-        pipeline: Any | None = None,
+        engine: EngineProvider | Any | None = None,
+        pipeline: PipelineOrchestrator | Any | None = None,
         retain_target: Literal["engine", "pipeline"] = "engine",
         engine_recall_weight: float = 1.0,
         pipeline_recall_weight: float = 1.0,
@@ -121,7 +126,7 @@ class HybridEngineProvider:
         engine_w = self._engine_w
         pipeline_w = self._pipeline_w
         if self._router and self._engine:
-            caps = self._engine.capabilities() if hasattr(self._engine, "capabilities") else None
+            caps = self._engine.capabilities()
             engine_w, pipeline_w = self._router.route(request.query, caps, self._engine_w, self._pipeline_w)
 
         tasks: list[Any] = []

@@ -40,7 +40,10 @@ def resolve_provider(name: str, group: str) -> Any:
         # Direct import path
         module_path, class_name = name.rsplit(":", 1)
         module = importlib.import_module(module_path)
-        return getattr(module, class_name)
+        obj = getattr(module, class_name)
+        if not isinstance(obj, type):
+            raise TypeError(f"'{name}' resolved to {type(obj).__name__}, expected a class")
+        return obj
 
     # Entry point lookup
     ep_group = ENTRY_POINT_GROUPS.get(group, group)

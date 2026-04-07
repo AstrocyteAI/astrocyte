@@ -399,9 +399,9 @@ class MockLLMProvider:
         temperature: float = 0.0,
     ) -> Completion:
         self._call_count += 1
-        # Check if entity extraction prompt
-        last_msg = messages[-1].content if messages else ""
-        if isinstance(last_msg, str) and "Extract named entities" in last_msg:
+        # Check if entity extraction prompt (may be in system or user message)
+        all_text = " ".join(m.content for m in messages if isinstance(m.content, str))
+        if "extract named entities" in all_text.lower():
             return Completion(
                 text='[{"name": "Test Entity", "entity_type": "OTHER", "aliases": []}]',
                 model=model or "mock",

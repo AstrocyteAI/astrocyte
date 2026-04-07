@@ -15,7 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import logging
+
 from astrocyte.types import MemoryHit, Metadata, RecallRequest, RecallResult, RetainRequest
+
+logger = logging.getLogger("astrocyte.portability")
 
 # ---------------------------------------------------------------------------
 # AMA header
@@ -188,22 +192,29 @@ def iter_ama_memories(path: str | Path) -> list[AmaMemory]:
             line = line.strip()
             if not line:
                 continue
-            data = json.loads(line)
-            memories.append(
-                AmaMemory(
-                    id=data["id"],
-                    text=data["text"],
-                    fact_type=data.get("fact_type"),
-                    tags=data.get("tags"),
-                    metadata=data.get("metadata"),
-                    occurred_at=data.get("occurred_at"),
-                    created_at=data.get("created_at"),
-                    source=data.get("source"),
-                    bank_id=data.get("bank_id"),
-                    entities=data.get("entities"),
-                    embedding=data.get("embedding"),
+            try:
+                data = json.loads(line)
+                if not isinstance(data, dict) or "id" not in data or "text" not in data:
+                    logger.warning("AMA line %d: missing required fields (id, text)", line_num)
+                    continue
+                memories.append(
+                    AmaMemory(
+                        id=data["id"],
+                        text=data["text"],
+                        fact_type=data.get("fact_type"),
+                        tags=data.get("tags"),
+                        metadata=data.get("metadata"),
+                        occurred_at=data.get("occurred_at"),
+                        created_at=data.get("created_at"),
+                        source=data.get("source"),
+                        bank_id=data.get("bank_id"),
+                        entities=data.get("entities"),
+                        embedding=data.get("embedding"),
+                    )
                 )
-            )
+            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                logger.warning("AMA line %d: %s", line_num, exc)
+                continue
     return memories
 
 
@@ -279,7 +290,8 @@ async def import_bank(
             else:
                 skipped += 1
 
-        except Exception:
+        except Exception as exc:
+            logger.warning("AMA import line %d failed: %s", i + 2, exc)
             errors += 1
 
         if progress_fn and (i + 1) % 10 == 0:

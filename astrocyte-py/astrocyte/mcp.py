@@ -5,12 +5,17 @@ Usage:
     astrocyte-mcp --config astrocyte.yaml --transport sse --port 8080
 
 See docs/_design/mcp-server.md for the full specification.
+
+Note: Access control is limited in MCP deployments — all callers share a
+single principal configured via ``mcp.principal`` (defaults to "agent:mcp").
+Per-caller identity requires MCP transport-level authentication.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -19,6 +24,8 @@ from fastmcp import FastMCP
 from astrocyte._astrocyte import Astrocyte
 from astrocyte.config import AstrocyteConfig, access_grants_for_astrocyte, load_config
 from astrocyte.types import AstrocyteContext
+
+logger = logging.getLogger("astrocyte.mcp")
 
 # ---------------------------------------------------------------------------
 # Server factory
@@ -70,21 +77,28 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
             metadata: Optional key-value metadata.
             occurred_at: ISO 8601 timestamp of when the event happened.
         """
-        bid = _resolve_bank(bank_id)
-        kwargs: dict[str, Any] = {}
-        if occurred_at:
-            kwargs["occurred_at"] = datetime.fromisoformat(occurred_at)
-        result = await brain.retain(
-            content,
-            bank_id=bid,
-            tags=tags,
-            metadata=metadata,
-            context=ctx,
-            **kwargs,
-        )
-        if result.stored:
-            return json.dumps({"stored": True, "memory_id": result.memory_id})
-        return json.dumps({"stored": False, "error": result.error or "unknown"})
+        try:
+            bid = _resolve_bank(bank_id)
+            kwargs: dict[str, Any] = {}
+            if occurred_at:
+                try:
+                    kwargs["occurred_at"] = datetime.fromisoformat(occurred_at)
+                except ValueError:
+                    return json.dumps({"stored": False, "error": "Invalid occurred_at format; expected ISO 8601"})
+            result = await brain.retain(
+                content,
+                bank_id=bid,
+                tags=tags,
+                metadata=metadata,
+                context=ctx,
+                **kwargs,
+            )
+            if result.stored:
+                return json.dumps({"stored": True, "memory_id": result.memory_id})
+            return json.dumps({"stored": False, "error": "Failed to store memory"})
+        except Exception as exc:
+            logger.exception("memory_retain failed")
+            return json.dumps({"stored": False, "error": type(exc).__name__})
 
     # ── memory_recall ──────────────────────────────────────────────
 
@@ -107,44 +121,48 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
             max_results: Maximum number of results.
             tags: Optional tag filter.
         """
-        max_results = min(max_results, mcp_cfg.max_results_limit)
+        try:
+            max_results = max(1, min(max_results, mcp_cfg.max_results_limit))
 
-        if banks:
-            result = await brain.recall(
-                query,
-                banks=banks,
-                strategy=strategy,
-                max_results=max_results,
-                tags=tags,
-                context=ctx,
-            )
-        else:
-            bid = _resolve_bank(bank_id)
-            result = await brain.recall(
-                query,
-                bank_id=bid,
-                max_results=max_results,
-                tags=tags,
-                context=ctx,
-            )
+            if banks:
+                result = await brain.recall(
+                    query,
+                    banks=banks,
+                    strategy=strategy,
+                    max_results=max_results,
+                    tags=tags,
+                    context=ctx,
+                )
+            else:
+                bid = _resolve_bank(bank_id)
+                result = await brain.recall(
+                    query,
+                    bank_id=bid,
+                    max_results=max_results,
+                    tags=tags,
+                    context=ctx,
+                )
 
-        hits = [
-            {
-                "text": h.text,
-                "score": round(h.score, 4),
-                "fact_type": h.fact_type,
-                "bank_id": h.bank_id,
-                "memory_id": h.memory_id,
-            }
-            for h in result.hits
-        ]
-        return json.dumps(
-            {
-                "hits": hits,
-                "total_available": result.total_available,
-                "truncated": result.truncated,
-            }
-        )
+            hits = [
+                {
+                    "text": h.text,
+                    "score": round(h.score, 4),
+                    "fact_type": h.fact_type,
+                    "bank_id": h.bank_id,
+                    "memory_id": h.memory_id,
+                }
+                for h in result.hits
+            ]
+            return json.dumps(
+                {
+                    "hits": hits,
+                    "total_available": result.total_available,
+                    "truncated": result.truncated,
+                }
+            )
+        except Exception as exc:
+            logger.exception("memory_recall failed")
+            return json.dumps({"hits": [], "total_available": 0, "error": type(exc).__name__})
 
     # ── memory_reflect ─────────────────────────────────────────────
 
@@ -169,31 +187,35 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
                 max_tokens: Maximum tokens for the synthesized answer.
                 include_sources: Whether to include source memories.
             """
-            if banks:
-                result = await brain.reflect(
-                    query,
-                    banks=banks,
-                    strategy=strategy,
-                    max_tokens=max_tokens,
-                    context=ctx,
-                    include_sources=include_sources,
-                )
-            else:
-                bid = _resolve_bank(bank_id)
-                result = await brain.reflect(
-                    query,
-                    bank_id=bid,
-                    max_tokens=max_tokens,
-                    context=ctx,
-                    include_sources=include_sources,
-                )
+            try:
+                if banks:
+                    result = await brain.reflect(
+                        query,
+                        banks=banks,
+                        strategy=strategy,
+                        max_tokens=max_tokens,
+                        context=ctx,
+                        include_sources=include_sources,
+                    )
+                else:
+                    bid = _resolve_bank(bank_id)
+                    result = await brain.reflect(
+                        query,
+                        bank_id=bid,
+                        max_tokens=max_tokens,
+                        context=ctx,
+                        include_sources=include_sources,
+                    )
 
-            out: dict[str, Any] = {"answer": result.answer}
-            if include_sources and result.sources:
-                out["sources"] = [
-                    {"text": s.text, "score": round(s.score, 4), "bank_id": s.bank_id} for s in result.sources
-                ]
-            return json.dumps(out)
+                out: dict[str, Any] = {"answer": result.answer}
+                if include_sources and result.sources:
+                    out["sources"] = [
+                        {"text": s.text, "score": round(s.score, 4), "bank_id": s.bank_id} for s in result.sources
+                    ]
+                return json.dumps(out)
+            except Exception as exc:
+                logger.exception("memory_reflect failed")
+                return json.dumps({"answer": "", "error": type(exc).__name__})
 
     # ── memory_forget ──────────────────────────────────────────────
 
@@ -212,19 +234,23 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
                 memory_ids: Specific memory IDs to delete.
                 tags: Delete memories matching these tags.
             """
-            bid = _resolve_bank(bank_id)
-            result = await brain.forget(
-                bid,
-                memory_ids=memory_ids,
-                tags=tags,
-                context=ctx,
-            )
-            return json.dumps(
-                {
-                    "deleted_count": result.deleted_count,
-                    "archived_count": result.archived_count,
-                }
-            )
+            try:
+                bid = _resolve_bank(bank_id)
+                result = await brain.forget(
+                    bid,
+                    memory_ids=memory_ids,
+                    tags=tags,
+                    context=ctx,
+                )
+                return json.dumps(
+                    {
+                        "deleted_count": result.deleted_count,
+                        "archived_count": result.archived_count,
+                    }
+                )
+            except Exception as exc:
+                logger.exception("memory_forget failed")
+                return json.dumps({"deleted_count": 0, "error": type(exc).__name__})
 
     # ── memory_banks ───────────────────────────────────────────────
 
