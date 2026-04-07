@@ -99,6 +99,7 @@ class InMemoryVectorStore:
                 tags=item.tags,
                 fact_type=item.fact_type,
                 occurred_at=item.occurred_at,
+                memory_layer=item.memory_layer,
             )
             for sim, item in results[:limit]
         ]
