@@ -6,6 +6,7 @@ See docs/_design/policy-layer.md section 1 and docs/_design/implementation-langu
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 
@@ -29,14 +30,20 @@ class RateLimiter:
     Sync, stateful, self-contained — Rust migration candidate.
     """
 
+    _MAX_BUCKETS = 10000
+
     def __init__(self, max_per_minute: int) -> None:
         self._max_per_minute = max_per_minute
         self._tokens_per_second = max_per_minute / 60.0
         self._max_tokens = float(max_per_minute)
         self._buckets: dict[str, _BucketState] = {}
+        self._lock = threading.Lock()
 
     def _get_bucket(self, key: str) -> _BucketState:
         if key not in self._buckets:
+            if len(self._buckets) >= self._MAX_BUCKETS:
+                oldest_key = next(iter(self._buckets))
+                del self._buckets[oldest_key]
             self._buckets[key] = _BucketState(tokens=self._max_tokens, last_refill=time.monotonic())
         return self._buckets[key]
 
@@ -48,25 +55,35 @@ class RateLimiter:
 
     def check(self, bank_id: str, operation: str) -> None:
         """Check rate limit. Raises RateLimited if exceeded."""
-        key = f"{bank_id}:{operation}"
-        bucket = self._get_bucket(key)
-        self._refill(bucket)
+        with self._lock:
+            key = f"{bank_id}:{operation}"
+            bucket = self._get_bucket(key)
+            self._refill(bucket)
 
-        if bucket.tokens < 1.0:
-            retry_after = (1.0 - bucket.tokens) / self._tokens_per_second
-            raise RateLimited(bank_id=bank_id, operation=operation, retry_after_seconds=retry_after)
+            if bucket.tokens < 1.0:
+                retry_after = (1.0 - bucket.tokens) / self._tokens_per_second
+                raise RateLimited(bank_id=bank_id, operation=operation, retry_after_seconds=retry_after)
 
     def record(self, bank_id: str, operation: str) -> None:
         """Record a successful operation (consume one token)."""
-        key = f"{bank_id}:{operation}"
-        bucket = self._get_bucket(key)
-        self._refill(bucket)
-        bucket.tokens = max(0.0, bucket.tokens - 1.0)
+        with self._lock:
+            key = f"{bank_id}:{operation}"
+            bucket = self._get_bucket(key)
+            self._refill(bucket)
+            bucket.tokens = max(0.0, bucket.tokens - 1.0)
 
     def check_and_record(self, bank_id: str, operation: str) -> None:
         """Check and consume in one call."""
-        self.check(bank_id, operation)
-        self.record(bank_id, operation)
+        with self._lock:
+            key = f"{bank_id}:{operation}"
+            bucket = self._get_bucket(key)
+            self._refill(bucket)
+
+            if bucket.tokens < 1.0:
+                retry_after = (1.0 - bucket.tokens) / self._tokens_per_second
+                raise RateLimited(bank_id=bank_id, operation=operation, retry_after_seconds=retry_after)
+
+            bucket.tokens = max(0.0, bucket.tokens - 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +133,8 @@ class QuotaTracker:
     Resets are time-based (tracks day boundaries).
     """
 
+    _MAX_COUNTERS = 10000
+
     def __init__(self) -> None:
         # {bank_id:operation -> (count, day_number)}
         self._counters: dict[str, tuple[int, int]] = {}
@@ -149,6 +168,12 @@ class QuotaTracker:
             day = today
 
         self._counters[key] = (count + 1, day)
+
+        # Evict stale entries if over capacity
+        if len(self._counters) > self._MAX_COUNTERS:
+            stale = [k for k, (_, d) in self._counters.items() if d != today]
+            for k in stale:
+                del self._counters[k]
 
     def get_count(self, bank_id: str, operation: str) -> int:
         """Get current count for a bank+operation."""

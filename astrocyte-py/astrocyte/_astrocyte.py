@@ -801,7 +801,6 @@ class Astrocyte:
         path: str,
         *,
         on_conflict: str = "skip",
-        re_embed: bool = True,
         context: AstrocyteContext | None = None,
         progress_fn: Any = None,
     ) -> Any:
@@ -819,7 +818,6 @@ class Astrocyte:
             bank_id=bank_id,
             path=path,
             on_conflict=on_conflict,
-            re_embed=re_embed,
             progress_fn=progress_fn,
         )
         await self._fire_hooks(

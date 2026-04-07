@@ -51,12 +51,25 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
     # Default bank
     default_bank = mcp_cfg.default_bank_id
 
+    _MAX_TAGS = 20
+    _MAX_TAG_LENGTH = 255
+
     def _resolve_bank(bank_id: str | None) -> str:
         if bank_id:
             return bank_id
         if default_bank:
             return default_bank
         raise ValueError("bank_id is required (no default_bank_id configured)")
+
+    def _validate_tags(tags: list[str] | None) -> list[str] | None:
+        if not tags:
+            return tags
+        if len(tags) > _MAX_TAGS:
+            raise ValueError(f"Too many tags ({len(tags)}), max {_MAX_TAGS}")
+        for tag in tags:
+            if not isinstance(tag, str) or len(tag) > _MAX_TAG_LENGTH:
+                raise ValueError(f"Invalid tag (must be string, max {_MAX_TAG_LENGTH} chars)")
+        return tags
 
     # ── memory_retain ──────────────────────────────────────────────
 
@@ -79,6 +92,7 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
         """
         try:
             bid = _resolve_bank(bank_id)
+            tags = _validate_tags(tags)
             kwargs: dict[str, Any] = {}
             if occurred_at:
                 try:
@@ -123,6 +137,7 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
         """
         try:
             max_results = max(1, min(max_results, mcp_cfg.max_results_limit))
+            tags = _validate_tags(tags)
 
             if banks:
                 result = await brain.recall(
@@ -236,6 +251,7 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
             """
             try:
                 bid = _resolve_bank(bank_id)
+                tags = _validate_tags(tags)
                 result = await brain.forget(
                     bid,
                     memory_ids=memory_ids,

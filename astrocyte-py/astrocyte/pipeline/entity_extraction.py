@@ -61,8 +61,11 @@ def _parse_entities(response: str) -> list[Entity]:
             start = text.index("```") + 3
             if text[start:].startswith("json"):
                 start += 4
-            end = text.index("```", start)
-            text = text[start:end].strip()
+            close = text.find("```", start)
+            if close < 0:
+                logger.warning("Malformed markdown code block in entity response")
+                return []
+            text = text[start:close].strip()
 
         entities_data = json.loads(text)
         if not isinstance(entities_data, list):
