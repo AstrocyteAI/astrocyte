@@ -6,6 +6,10 @@ on:
     paths:
       - "docs/**"
       - ".github/workflows/docs.yml"
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main, master]
   workflow_dispatch:  # Manual trigger
 
 permissions:
@@ -25,6 +29,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v6
 
@@ -44,6 +49,15 @@ jobs:
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage
+          path: docs/dist/coverage/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
+        continue-on-error: true  # Don't fail docs deploy if coverage isn't available yet
 
       - uses: actions/upload-pages-artifact@v4
         with:

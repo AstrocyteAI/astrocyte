@@ -53,6 +53,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-xdist>=3.5",
     "pytest-timeout>=2.2",
+    "pytest-cov>=6.0",
     "ruff>=0.4",
     "fastmcp>=3.0",
     "deepeval>=2.0",

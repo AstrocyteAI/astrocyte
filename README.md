@@ -1,5 +1,10 @@
 # Astrocyte
 
+[![PyPI](https://img.shields.io/pypi/v/astrocyte)](https://pypi.org/project/astrocyte/)
+[![PyPI - astrocyte-pgvector](https://img.shields.io/pypi/v/astrocyte-pgvector?label=astrocyte-pgvector)](https://pypi.org/project/astrocyte-pgvector/)
+[![CI](https://github.com/AstrocyteAI/astrocyte/actions/workflows/ci.yml/badge.svg)](https://github.com/AstrocyteAI/astrocyte/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://astrocyteai.github.io/astrocyte/coverage/badge.json)](https://astrocyteai.github.io/astrocyte/coverage/htmlcov/)
+
 **Astrocyte** is an open-source **memory framework** for AI systems. It sits between agents (or applications) and memory storage, and aims to give you a **production-shaped memory layer**: retrieval, governance, observability, and pluggable backends, with a **stable contract** you can implement twice (Python and Rust) without changing integrations.
 
 ## Neuroscience inspiration

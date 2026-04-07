@@ -27,7 +27,43 @@ jobs:
 
       - name: Test astrocyte-py
         working-directory: astrocyte-py
-        run: uv sync --extra dev && uv run python -m pytest
+        run: |
+          uv sync --extra dev
+          if [ "${{ matrix.python-version }}" = "3.12" ]; then
+            uv run python -m pytest --cov=astrocyte --cov-report=json:coverage.json --cov-report=html:htmlcov --cov-report=term
+          else
+            uv run python -m pytest
+          fi
+
+      - name: Generate coverage badge JSON
+        if: matrix.python-version == '3.12'
+        working-directory: astrocyte-py
+        run: |
+          TOTAL=$(python3 -c "import json; print(json.load(open('coverage.json'))['totals']['percent_covered_display'])")
+          if [ "${TOTAL%.*}" -ge 80 ]; then
+            COLOR="brightgreen"
+          elif [ "${TOTAL%.*}" -ge 60 ]; then
+            COLOR="yellow"
+          else
+            COLOR="red"
+          fi
+          mkdir -p coverage-out
+          cp -r htmlcov coverage-out/
+          cat > coverage-out/badge.json <<BADGE
+          {
+            "schemaVersion": 1,
+            "label": "coverage",
+            "message": "${TOTAL}%",
+            "color": "${COLOR}"
+          }
+          BADGE
+
+      - name: Upload coverage artifact
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: astrocyte-py/coverage-out/
 
   # Shell, compose config, and astrocyte-rest tests — run once (same as former `make ci` minus astrocyte-py pytest).
   services-ci:
