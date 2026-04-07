@@ -128,6 +128,4 @@ class AstrocyteLlamaMemory:
 
     async def reset(self) -> None:
         """Clear all memories in the bank."""
-        from astrocyte.types import ForgetRequest
-
-        await self.brain._do_forget(ForgetRequest(bank_id=self.bank_id, scope="all"))
+        await self.brain.clear_bank(self.bank_id)

@@ -111,6 +111,18 @@ class InMemoryVectorStore:
                 count += 1
         return count
 
+    async def list_vectors(
+        self,
+        bank_id: str,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[VectorItem]:
+        bank_items = sorted(
+            (v for v in self._vectors.values() if v.bank_id == bank_id),
+            key=lambda v: v.id,
+        )
+        return bank_items[offset : offset + limit]
+
     async def health(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="in-memory vector store")
 

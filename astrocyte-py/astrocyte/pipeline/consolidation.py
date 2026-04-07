@@ -5,11 +5,16 @@ Async (coordinates I/O operations). See docs/_design/built-in-pipeline.md sectio
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from astrocyte.policy.signal_quality import cosine_similarity
+
 if TYPE_CHECKING:
     from astrocyte.provider import VectorStore
+
+logger = logging.getLogger("astrocyte.pipeline")
 
 
 @dataclass
@@ -26,18 +31,57 @@ async def run_consolidation(
 ) -> ConsolidationResult:
     """Run basic dedup consolidation on a bank.
 
-    Phase 1: find and remove near-duplicate vectors.
-    Phase 2 (future): merge into observations, archive stale content.
+    Paginates through all vectors via ``list_vectors()``, compares embeddings
+    pairwise, and deletes near-duplicates (keeping the first occurrence).
     """
-    # For Phase 1, we can only consolidate if we can retrieve all vectors
-    # This is a simplified implementation that works with the VectorStore SPI
-    # A production implementation would paginate through the bank
+    if not hasattr(vector_store, "list_vectors"):
+        logger.warning("VectorStore does not support list_vectors; skipping consolidation")
+        return ConsolidationResult(duplicates_removed=0, total_scanned=0)
+
     duplicates_removed = 0
     total_scanned = 0
+    seen_embeddings: list[tuple[str, list[float]]] = []
+    to_delete: list[str] = []
 
-    # TODO: Implement pagination through bank contents
-    # For now, this is a placeholder that returns zero operations
-    # Real implementation requires a list_vectors() method or bank scan capability
+    offset = 0
+    while True:
+        batch = await vector_store.list_vectors(bank_id, offset=offset, limit=batch_size)
+        if not batch:
+            break
+
+        for item in batch:
+            total_scanned += 1
+
+            # Compare against seen embeddings
+            is_dup = False
+            for _, seen_vec in seen_embeddings:
+                try:
+                    sim = cosine_similarity(item.vector, seen_vec)
+                except ValueError:
+                    continue
+                if sim >= similarity_threshold:
+                    to_delete.append(item.id)
+                    is_dup = True
+                    break
+
+            if not is_dup:
+                seen_embeddings.append((item.id, item.vector))
+
+        offset += len(batch)
+        if len(batch) < batch_size:
+            break
+
+        # Safety: prevent runaway scans
+        if offset > 100000:
+            logger.warning("Consolidation scan capped at 100k vectors for bank %s", bank_id)
+            break
+
+    # Delete duplicates in batches
+    if to_delete:
+        for i in range(0, len(to_delete), batch_size):
+            chunk = to_delete[i : i + batch_size]
+            deleted = await vector_store.delete(chunk, bank_id)
+            duplicates_removed += deleted
 
     return ConsolidationResult(
         duplicates_removed=duplicates_removed,

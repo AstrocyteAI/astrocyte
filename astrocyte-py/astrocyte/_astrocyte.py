@@ -220,6 +220,9 @@ class Astrocyte:
 
     def set_engine_provider(self, provider: EngineProvider) -> None:
         """Set the Tier 2 engine provider (for programmatic setup)."""
+        from astrocyte.provider import check_spi_version
+
+        check_spi_version(provider, "EngineProvider")
         self._engine_provider = provider
         if hasattr(provider, "capabilities"):
             self._capabilities = provider.capabilities()
@@ -633,18 +636,36 @@ class Astrocyte:
                 result = self._scan_reflect_output(result)
             return result
 
+    async def clear_bank(
+        self,
+        bank_id: str,
+        *,
+        context: AstrocyteContext | None = None,
+    ) -> ForgetResult:
+        """Delete all memories in a bank. Requires admin access if ACL enabled."""
+        return await self.forget(bank_id, scope="all", context=context)
+
     async def forget(
         self,
         bank_id: str,
         *,
         memory_ids: list[str] | None = None,
         tags: list[str] | None = None,
+        scope: str | None = None,
         context: AstrocyteContext | None = None,
         **kwargs: Any,
     ) -> ForgetResult:
-        """Remove memories."""
+        """Remove memories.
+
+        Use ``scope="all"`` to delete everything in a bank (requires admin).
+        """
         with span("astrocyte.forget", {"astrocyte.bank_id": bank_id}):
-            self._check_access(bank_id, "forget", context)
+            # scope="all" requires admin permission
+            if scope == "all":
+                if self._config.access_control.enabled:
+                    self._check_access(bank_id, "admin", context)
+            else:
+                self._check_access(bank_id, "forget", context)
 
             # Legal hold check — compliance=True bypasses for right-to-forget.
             # Even when access_control is disabled, compliance bypass requires
@@ -665,6 +686,7 @@ class Astrocyte:
                 memory_ids=memory_ids,
                 tags=tags,
                 before_date=kwargs.get("before_date"),
+                scope=scope,
             )
             result = await self._do_forget(request)
             await self._fire_hooks(
@@ -973,9 +995,20 @@ class Astrocyte:
                 return await self._engine_provider.forget(request)
             raise CapabilityNotSupported(self._provider_name, "forget")
         # Pipeline: delete from vector store
-        if self._pipeline and request.memory_ids:
-            count = await self._pipeline.vector_store.delete(request.memory_ids, request.bank_id)
-            return ForgetResult(deleted_count=count)
+        if self._pipeline:
+            if request.scope == "all" and hasattr(self._pipeline.vector_store, "list_vectors"):
+                # Delete all vectors in bank by paginating through them
+                total_deleted = 0
+                while True:
+                    batch = await self._pipeline.vector_store.list_vectors(request.bank_id, offset=0, limit=100)
+                    if not batch:
+                        break
+                    ids = [v.id for v in batch]
+                    total_deleted += await self._pipeline.vector_store.delete(ids, request.bank_id)
+                return ForgetResult(deleted_count=total_deleted)
+            if request.memory_ids:
+                count = await self._pipeline.vector_store.delete(request.memory_ids, request.bank_id)
+                return ForgetResult(deleted_count=count)
         raise CapabilityNotSupported(self._provider_name, "forget")
 
     async def _do_reflect_from_hits(

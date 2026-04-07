@@ -104,7 +104,4 @@ class AstrocyteCrewMemory:
     async def reset(self, *, agent_id: str | None = None) -> None:
         """Reset memory for a bank (forget all)."""
         bank = self._resolve_bank(agent_id)
-        # Use scope="all" to tell the provider to delete everything in this bank
-        from astrocyte.types import ForgetRequest
-
-        await self.brain._do_forget(ForgetRequest(bank_id=bank, scope="all"))
+        await self.brain.clear_bank(bank)
