@@ -8,7 +8,7 @@ import EvalDashboard from "../../../components/EvalDashboard.astro";
 
 Astrocyte runs nightly evaluation suites against the built-in Tier 1 pipeline to track retrieval quality, latency, and LLM token usage over time. Results are published here automatically.
 
-The `basic` suite runs 20 retain + 20 recall + reflect operations against an in-memory vector store with OpenAI embeddings and completions. See the [Evaluation design doc](../design/evaluation/) for details on suites, metrics, and regression detection.
+The `basic` suite runs 20 retain + 20 recall + reflect operations against an in-memory vector store with OpenAI embeddings and completions. See the [Evaluation design doc](../../design/evaluation/) for details on suites, metrics, and regression detection.
 
 ## Results
 
@@ -23,7 +23,7 @@ The `basic` suite runs 20 retain + 20 recall + reflect operations against an in-
 | **NDCG** | Normalized discounted cumulative gain — overall ranking quality |
 | **Precision** | Relevant results / total results returned |
 | **Reflect accuracy** | Topic coverage in synthesized answers (keyword overlap) |
-| **Tokens used** | Total LLM tokens consumed during the eval run ([not global spend](../design/evaluation/#22-per-run-token-tracking-vs-global-llm-spend)) |
+| **Tokens used** | Total LLM tokens consumed during the eval run ([not global spend](../../design/evaluation/#22-per-run-token-tracking-vs-global-llm-spend)) |
 
 ## How it works
 

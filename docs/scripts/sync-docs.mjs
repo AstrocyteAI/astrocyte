@@ -41,16 +41,23 @@ function stripFirstH1(md) {
 }
 
 function repoLinksToGitHub(content) {
-  return content.replace(/\]\((\.\.\/[^)]+)\)/g, (_, rel) => {
+  return content.replace(/\]\((\.\.\/[^)]+)\)/g, (full, rel) => {
     const clean = rel.replace(/^\.\.\//, "");
+    // Don't convert links that target doc source directories — those are
+    // cross-section references handled by docsMarkdownLinksToRoutes.
+    const firstSegment = clean.split("/")[0];
+    if (DOC_SOURCE_DIRS.has(firstSegment)) return full;
     return `](${FILE_BASE}/${clean})`;
   });
 }
 
 /**
  * Resolve ./foo.md and ../_plugins/bar.md relative to the source file, when target is under docs/.
+ *
+ * Emits relative URLs (e.g., `../architecture-framework/`, `../../plugins/provider-spi/`)
+ * instead of root-relative URLs so that links work regardless of the GitHub Pages base path.
  */
-function docsMarkdownLinksToRoutes(content, sourceFileAbs) {
+function docsMarkdownLinksToRoutes(content, sourceFileAbs, destFileAbs) {
   return content.replace(/\]\((\.\.?\/[^)]*\.md)\)/g, (full, href) => {
     const abs = path.resolve(path.dirname(sourceFileAbs), href);
     const rel = path.relative(docsDir, abs);
@@ -71,13 +78,50 @@ function docsMarkdownLinksToRoutes(content, sourceFileAbs) {
       return full;
     }
     const slug = file.replace(/\.md$/, "");
-    const publicSection = publicSectionFromSourceDir(sourceSection);
-    return `](/${publicSection}/${slug}/)`;
+    const targetSection = publicSectionFromSourceDir(sourceSection);
+    // Build target subdirectory path (for nested files like _plugins/integrations/foo.md)
+    const targetSubDir = segments.length > 2 ? segments.slice(1, -1).join("/") : "";
+    const targetRoute = targetSubDir
+      ? `${targetSection}/${targetSubDir}/${slug}`
+      : `${targetSection}/${slug}`;
+
+    // Compute relative path from the destination file's directory to the target route
+    const destDir = path.dirname(destFileAbs);
+    const destRelToContent = path.relative(contentDocs, destDir).replace(/\\/g, "/");
+    const targetFull = path.join(contentDocs, targetRoute);
+    const relPath = path.relative(destDir, targetFull).replace(/\\/g, "/");
+
+    return `](${relPath}/)`;
   });
 }
 
-function transformBody(content, sourceFileAbs) {
-  return repoLinksToGitHub(docsMarkdownLinksToRoutes(content, sourceFileAbs));
+/** Known public sections that appear as root-relative links in authored markdown. */
+const PUBLIC_SECTIONS = new Set([
+  "design", "plugins", "end-user", "tutorials", "eval", "introduction",
+]);
+
+/**
+ * Convert root-relative doc links like ](/design/foo/) or ](/plugins/integrations/bar/)
+ * to relative paths based on the destination file's location within content/docs.
+ */
+function rootRelativeToRelative(content, destFileAbs) {
+  return content.replace(/\]\(\/([\w-]+(?:\/[^)]*)?)\)/g, (full, route) => {
+    const topSegment = route.split("/")[0];
+    if (!PUBLIC_SECTIONS.has(topSegment)) return full;
+    // Strip trailing slash for path computation, then re-add
+    const cleanRoute = route.replace(/\/$/, "");
+    const destDir = path.dirname(destFileAbs);
+    const targetFull = path.join(contentDocs, cleanRoute);
+    const relPath = path.relative(destDir, targetFull).replace(/\\/g, "/");
+    return `](${relPath}/)`;
+  });
+}
+
+function transformBody(content, sourceFileAbs, destFileAbs) {
+  let result = repoLinksToGitHub(content);
+  result = docsMarkdownLinksToRoutes(result, sourceFileAbs, destFileAbs);
+  result = rootRelativeToRelative(result, destFileAbs);
+  return result;
 }
 
 function extractTitle(md) {
@@ -86,11 +130,11 @@ function extractTitle(md) {
 }
 
 /** Matches `id` values in `starlightSidebarTopics` (astro.config.mjs). */
-function ensureFrontmatter(raw, titleFallback, sourceFileAbs, topicId) {
+function ensureFrontmatter(raw, titleFallback, sourceFileAbs, topicId, destFileAbs) {
   const m = raw.match(/^#\s+(.+)$/m);
   const title = m ? m[1].trim() : titleFallback;
   const bodyMd = m ? stripFirstH1(raw) : raw;
-  const body = transformBody(bodyMd, sourceFileAbs);
+  const body = transformBody(bodyMd, sourceFileAbs, destFileAbs);
   const fm = `---\ntitle: "${escapeTitle(title)}"\ndraft: false\ntopic: ${topicId}\n---\n\n`;
   return fm + body;
 }
@@ -126,9 +170,10 @@ function copyAllMdFromSourceSection(sourceDirName, subDir = "") {
     const raw = fs.readFileSync(srcPath, "utf8");
     let fb = extractTitle(raw);
     if (fb === "Untitled") fb = ent.name.replace(/\.md$/, "").replace(/-/g, " ");
-    const body = ensureFrontmatter(raw, fb, srcPath, destSection);
     const destDir = subDir ? path.join(contentDocs, destSection, subDir) : path.join(contentDocs, destSection);
-    writeIfChanged(path.join(destDir, ent.name), body);
+    const destFile = path.join(destDir, ent.name);
+    const body = ensureFrontmatter(raw, fb, srcPath, destSection, destFile);
+    writeIfChanged(destFile, body);
   }
 }
 
@@ -142,10 +187,11 @@ const readmePath = path.join(docsDir, "README.md");
 const readme = fs.readFileSync(readmePath, "utf8");
 let introTitle = extractTitle(readme);
 if (introTitle === "Untitled") introTitle = "Astrocyte documentation";
+const introDestFile = path.join(contentDocs, "introduction.md");
 const introBody =
   `---\ntitle: "${escapeTitle(introTitle)}"\ndraft: false\ntopic: end-user\n---\n\n` +
-  transformBody(stripFirstH1(readme), readmePath);
-writeIfChanged(path.join(contentDocs, "introduction.md"), introBody);
+  transformBody(stripFirstH1(readme), readmePath, introDestFile);
+writeIfChanged(introDestFile, introBody);
 
 console.log(
   "sync-docs: wrote introduction.md; _design→design, _plugins→plugins, _end-user→end-user, _tutorials→tutorials",
