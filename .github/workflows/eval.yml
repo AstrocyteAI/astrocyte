@@ -15,12 +15,17 @@ on:
           - stress
           - reflect
 
+permissions:
+  contents: write # needed to push eval history
+
 jobs:
   eval:
     name: Run eval (${{ inputs.suite || 'basic' }})
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: main
 
       - uses: astral-sh/setup-uv@v8.0.0
         with:
@@ -42,6 +47,51 @@ jobs:
           uv run python scripts/run_eval.py \
             --suite "${{ inputs.suite || 'basic' }}" \
             --output eval-result.json
+
+      - name: Append to eval history
+        if: success()
+        run: |
+          HISTORY_FILE="docs/public/eval/history.json"
+          mkdir -p docs/public/eval
+
+          # Initialize history if it doesn't exist
+          if [ ! -f "$HISTORY_FILE" ]; then
+            echo "[]" > "$HISTORY_FILE"
+          fi
+
+          # Append new result (metrics + metadata only, not per-query details)
+          python3 -c "
+          import json
+          with open('astrocyte-py/eval-result.json') as f:
+              result = json.load(f)
+          # Strip per_query_results to keep history compact
+          entry = {k: v for k, v in result.items() if k != 'per_query_results'}
+          with open('$HISTORY_FILE') as f:
+              history = json.load(f)
+          history.append(entry)
+          with open('$HISTORY_FILE', 'w') as f:
+              json.dump(history, f, indent=2)
+          "
+
+          # Also write latest.json for quick access
+          python3 -c "
+          import json
+          with open('astrocyte-py/eval-result.json') as f:
+              result = json.load(f)
+          summary = {k: v for k, v in result.items() if k != 'per_query_results'}
+          with open('docs/public/eval/latest.json', 'w') as f:
+              json.dump(summary, f, indent=2)
+          "
+
+      - name: Commit eval history
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/public/eval/history.json docs/public/eval/latest.json
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "eval: update history (${{ inputs.suite || 'basic' }} $(date -u +%Y-%m-%d))"
+          git push
 
       - name: Post summary
         if: always()
