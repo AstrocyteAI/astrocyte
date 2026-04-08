@@ -7,7 +7,7 @@
  */
 ---
 
-<div id="eval-dashboard">
+<div id="eval-dashboard" data-base={import.meta.env.BASE_URL}>
   <div id="eval-loading">Loading eval history&hellip;</div>
   <div id="eval-error" style="display:none"></div>
 
@@ -91,9 +91,9 @@
     const charts = document.getElementById("eval-charts");
 
     try {
-      // Resolve base path from <base> tag (GitHub Pages project URL)
-      const baseEl = document.querySelector("base");
-      const base = baseEl ? baseEl.getAttribute("href") || "/" : "/";
+      // Resolve base path from data attribute (set by Astro at build time)
+      const dashboard = document.getElementById("eval-dashboard");
+      const base = dashboard?.dataset.base || "/";
       const historyUrl = `${base}eval/history.json`;
 
       const resp = await fetch(historyUrl);
