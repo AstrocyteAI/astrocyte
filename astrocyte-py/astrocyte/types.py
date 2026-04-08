@@ -496,6 +496,25 @@ class QualityDataPoint:
     reflect_success_rate: float
 
 
+@dataclass
+class UtilizationReport:
+    bank_id: str
+    total_memories: int
+    active_memories: int  # recalled >= 1x in last 30 days
+    stale_memories: int  # never recalled in 30 days
+    never_recalled: int
+    top_recalled: list[MemoryUsage]
+    fact_type_distribution: dict[str, int]
+    tag_distribution: dict[str, int]
+    assessed_at: datetime
+
+
+@dataclass
+class QualityTrends:
+    bank_id: str
+    data_points: list[QualityDataPoint]
+
+
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------

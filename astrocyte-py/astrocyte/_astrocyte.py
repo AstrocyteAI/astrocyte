@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from astrocyte.analytics import BankMetricsCollector, compute_bank_health, counters_to_quality_point
 from astrocyte.config import AstrocyteConfig, load_config
 from astrocyte.errors import (
     AccessDenied,
@@ -193,6 +194,9 @@ class Astrocyte:
             mip_config = load_mip_config(config.mip_config_path)
             self._mip_router = MipRouter(mip_config)
 
+        # Analytics
+        self._analytics = BankMetricsCollector()
+
         # Provider state — typed as protocols (not Any)
         self._engine_provider: EngineProvider | None = None
         self._pipeline: PipelineOrchestrator | None = None
@@ -230,6 +234,9 @@ class Astrocyte:
     def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
         self._pipeline = pipeline
+        # Wire the LLM provider to the MIP router for intent-layer escalation
+        if self._mip_router and hasattr(pipeline, "llm_provider"):
+            self._mip_router._llm_provider = pipeline.llm_provider
 
     def set_access_grants(self, grants: list[AccessGrant]) -> None:
         """Configure access grants."""
@@ -428,6 +435,10 @@ class Astrocyte:
                     t["elapsed_ms"] / 1000,
                     {"bank_id": bank_id, "provider": self._provider_name},
                 )
+                self._analytics.record_retain(
+                    bank_id, len(content),
+                    deduplicated=getattr(result, "deduplicated", False),
+                )
                 await self._fire_hooks(
                     "on_retain",
                     bank_id=bank_id,
@@ -507,6 +518,10 @@ class Astrocyte:
                         "astrocyte_recall_duration_seconds",
                         t["elapsed_ms"] / 1000,
                         {"bank_id": bank_ids[0], "provider": self._provider_name},
+                    )
+                    top_score = result.hits[0].score if result.hits else 0.0
+                    self._analytics.record_recall(
+                        bank_ids[0], len(result.hits), top_score,
                     )
                     await self._fire_hooks(
                         "on_recall",
@@ -613,6 +628,9 @@ class Astrocyte:
                         dispositions=kwargs.get("dispositions"),
                     )
 
+            self._analytics.record_reflect(
+                primary_bank, success=bool(result.answer.strip()),
+            )
             self._quota_tracker.record(primary_bank, "reflect")
             self._metrics.inc_counter(
                 "astrocyte_reflect_total",
@@ -778,12 +796,56 @@ class Astrocyte:
         archived = sum(1 for a in actions if a.action == "archive")
         skipped = sum(1 for a in actions if a.action == "keep")
 
+        # Run dedup consolidation if pipeline has a vector store
+        consolidation_removed = 0
+        if self._pipeline and self._pipeline.vector_store:
+            from astrocyte.pipeline.consolidation import run_consolidation
+
+            cons_result = await run_consolidation(
+                self._pipeline.vector_store,
+                bank_id,
+                graph_store=getattr(self._pipeline, "graph_store", None),
+            )
+            consolidation_removed = cons_result.duplicates_removed
+
         return LifecycleRunResult(
             archived_count=archived,
-            deleted_count=deleted,
+            deleted_count=deleted + consolidation_removed,
             skipped_count=skipped,
             actions=actions,
         )
+
+    # ---------------------------------------------------------------------------
+    # Bank health & analytics
+    # ---------------------------------------------------------------------------
+
+    async def bank_health(self, bank_id: str) -> "BankHealth":
+        """Compute health score and issues for a bank.
+
+        Uses in-memory operation counters collected since process start.
+        Optionally enriches with memory count from the vector store.
+        """
+        counters = self._analytics.get_counters(bank_id)
+        memory_count = 0
+        if self._pipeline and self._pipeline.vector_store:
+            try:
+                items = await self._pipeline.vector_store.list_vectors(bank_id, limit=0)
+                memory_count = len(items)
+            except Exception:
+                pass  # list_vectors with limit=0 may not be supported; that's fine
+        return compute_bank_health(bank_id, counters, memory_count)
+
+    async def all_bank_health(self) -> list["BankHealth"]:
+        """Compute health for all banks that have recorded operations."""
+        results = []
+        for bid in self._analytics.bank_ids():
+            results.append(await self.bank_health(bid))
+        return results
+
+    def bank_quality_snapshot(self, bank_id: str) -> "QualityDataPoint":
+        """Return a QualityDataPoint snapshot of current counters for trend tracking."""
+        counters = self._analytics.get_counters(bank_id)
+        return counters_to_quality_point(counters)
 
     # ---------------------------------------------------------------------------
     # Memory portability
