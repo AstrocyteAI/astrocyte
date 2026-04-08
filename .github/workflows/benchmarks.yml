@@ -1,0 +1,121 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_questions:
+        description: "Max questions per benchmark (leave empty for full run)"
+        required: false
+        type: string
+      benchmarks:
+        description: "Which benchmarks to run"
+        required: false
+        default: "builtin longmemeval locomo"
+        type: string
+  schedule:
+    # Weekly Monday 6am UTC
+    - cron: "0 6 * * 1"
+
+jobs:
+  benchmarks:
+    name: Run memory benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    # Uncomment to add pgvector for production-grade benchmarking:
+    # services:
+    #   postgres:
+    #     image: pgvector/pgvector:pg16
+    #     env:
+    #       POSTGRES_DB: astrocyte_bench
+    #       POSTGRES_USER: astrocyte
+    #       POSTGRES_PASSWORD: bench
+    #     ports: ["5432:5432"]
+    #     options: >-
+    #       --health-cmd pg_isready
+    #       --health-interval 10s
+    #       --health-timeout 5s
+    #       --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Clone benchmark datasets
+        run: |
+          git clone --depth 1 https://github.com/xiaowu0162/LongMemEval.git
+          git clone --depth 1 https://github.com/snap-research/locomo.git
+
+      - name: Install dependencies
+        working-directory: astrocyte-py
+        run: uv sync --extra dev
+
+      - name: Run benchmarks
+        working-directory: astrocyte-py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # DATABASE_URL: postgresql://astrocyte:bench@localhost:5432/astrocyte_bench
+        run: |
+          ARGS="--config benchmarks/config.yaml"
+          ARGS="$ARGS --output-dir benchmark-results"
+
+          # Dataset paths
+          ARGS="$ARGS --longmemeval-path ../LongMemEval/data"
+          ARGS="$ARGS --locomo-path ../locomo/data"
+
+          # Optional: limit questions
+          if [ -n "${{ inputs.max_questions }}" ]; then
+            ARGS="$ARGS --max-questions ${{ inputs.max_questions }}"
+          fi
+
+          # Optional: select benchmarks
+          if [ -n "${{ inputs.benchmarks }}" ]; then
+            ARGS="$ARGS --benchmarks ${{ inputs.benchmarks }}"
+          fi
+
+          uv run python scripts/run_benchmarks.py $ARGS
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results
+          path: astrocyte-py/benchmark-results/
+
+      - name: Post results summary
+        if: always()
+        working-directory: astrocyte-py
+        run: |
+          if [ -f benchmark-results/latest.json ]; then
+            echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+          import json
+          with open('benchmark-results/latest.json') as f:
+              data = json.load(f)
+          # Print summary without per-question details
+          summary = {}
+          for key, val in data.items():
+              if key == '_meta':
+                  summary[key] = val
+              elif isinstance(val, dict) and 'overall_accuracy' in val:
+                  summary[key] = {
+                      'overall_accuracy': val['overall_accuracy'],
+                      'correct': val.get('correct'),
+                      'total_questions': val.get('total_questions'),
+                      'category_accuracy': val.get('category_accuracy'),
+                      'metrics': val.get('metrics'),
+                  }
+              elif isinstance(val, dict):
+                  summary[key] = val
+          print(json.dumps(summary, indent=2, default=str))
+          " >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi

@@ -34,6 +34,7 @@ build/
 .ruff_cache/
 .coverage
 htmlcov/
+benchmark-results/
 
 # Rust
 target/

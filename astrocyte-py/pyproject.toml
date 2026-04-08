@@ -48,6 +48,9 @@ mcp = [
 eval = [
     "deepeval>=2.0",
 ]
+openai = [
+    "openai>=1.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -59,7 +62,7 @@ dev = [
     "deepeval>=2.0",
 ]
 all = [
-    "astrocyte[otel,prometheus,mcp,eval]",
+    "astrocyte[otel,prometheus,mcp,eval,openai]",
 ]
 
 [project.scripts]
@@ -77,6 +80,7 @@ in_memory = "astrocyte.testing.in_memory:InMemoryDocumentStore"
 
 [project.entry-points."astrocyte.llm_providers"]
 mock = "astrocyte.testing.in_memory:MockLLMProvider"
+openai = "astrocyte.providers.openai:OpenAIProvider"
 
 [tool.hatch.version]
 source = "vcs"

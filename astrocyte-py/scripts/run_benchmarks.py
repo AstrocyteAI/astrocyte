@@ -1,0 +1,451 @@
+#!/usr/bin/env python3
+"""Run LongMemEval and LoCoMo benchmarks against Astrocyte.
+
+Usage:
+    # With real providers (requires OPENAI_API_KEY or similar):
+    python scripts/run_benchmarks.py --config benchmarks/config.yaml
+
+    # Quick smoke test with in-memory providers:
+    python scripts/run_benchmarks.py --provider test --max-questions 10
+
+    # Full LongMemEval only:
+    python scripts/run_benchmarks.py --config benchmarks/config.yaml \
+        --benchmarks longmemeval --longmemeval-path ./LongMemEval/data
+
+    # Full LoCoMo only:
+    python scripts/run_benchmarks.py --config benchmarks/config.yaml \
+        --benchmarks locomo --locomo-path ./locomo/data
+
+Environment variables:
+    OPENAI_API_KEY          Required for real LLM/embedding providers.
+    BENCHMARK_RESULTS_DIR   Output directory (default: benchmark-results).
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+import time
+from dataclasses import asdict
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def _build_test_brain():
+    """Create an Astrocyte instance with in-memory providers (no API keys needed)."""
+    from astrocyte._astrocyte import Astrocyte
+    from astrocyte.config import AstrocyteConfig
+    from astrocyte.testing.in_memory import InMemoryEngineProvider
+
+    config = AstrocyteConfig()
+    config.provider = "test"
+    config.barriers.pii.mode = "disabled"
+    brain = Astrocyte(config)
+    engine = InMemoryEngineProvider()
+    brain.set_engine_provider(engine)
+    return brain
+
+
+def _build_pipeline_brain(config_path: str):
+    """Create an Astrocyte instance with Tier 1 pipeline from YAML config.
+
+    The config should specify vector_store, llm_provider, etc.
+    Provider resolution uses entry points or direct import paths.
+    """
+    from astrocyte._astrocyte import Astrocyte
+    from astrocyte._discovery import resolve_provider
+    from astrocyte.config import load_config
+    from astrocyte.pipeline.orchestrator import PipelineOrchestrator
+
+    config = load_config(config_path)
+    brain = Astrocyte(config)
+
+    # Resolve and instantiate providers
+    if config.vector_store:
+        vs_cls = resolve_provider(config.vector_store, "vector_stores")
+        vector_store = vs_cls(**(config.vector_store_config or {}))
+    else:
+        from astrocyte.testing.in_memory import InMemoryVectorStore
+
+        vector_store = InMemoryVectorStore()
+
+    graph_store = None
+    if config.graph_store:
+        gs_cls = resolve_provider(config.graph_store, "graph_stores")
+        graph_store = gs_cls(**(config.graph_store_config or {}))
+
+    document_store = None
+    if config.document_store:
+        ds_cls = resolve_provider(config.document_store, "document_stores")
+        document_store = ds_cls(**(config.document_store_config or {}))
+
+    if config.llm_provider:
+        llm_cls = resolve_provider(config.llm_provider, "llm_providers")
+        llm_provider = llm_cls(**(config.llm_provider_config or {}))
+    else:
+        from astrocyte.testing.in_memory import MockLLMProvider
+
+        llm_provider = MockLLMProvider()
+
+    pipeline = PipelineOrchestrator(
+        vector_store=vector_store,
+        llm_provider=llm_provider,
+        graph_store=graph_store,
+        document_store=document_store,
+    )
+    brain.set_pipeline(pipeline)
+    return brain
+
+
+def _serialize_result(result, benchmark_name: str) -> dict:
+    """Convert benchmark result to a JSON-serializable dict."""
+    data = {
+        "benchmark": benchmark_name,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "overall_accuracy": result.overall_accuracy,
+        "category_accuracy": result.category_accuracy,
+        "total_questions": result.total_questions,
+        "correct": result.correct,
+        "metrics": {
+            "recall_precision": result.eval_result.metrics.recall_precision,
+            "recall_hit_rate": result.eval_result.metrics.recall_hit_rate,
+            "recall_mrr": result.eval_result.metrics.recall_mrr,
+            "recall_ndcg": result.eval_result.metrics.recall_ndcg,
+            "retain_latency_p50_ms": result.eval_result.metrics.retain_latency_p50_ms,
+            "retain_latency_p95_ms": result.eval_result.metrics.retain_latency_p95_ms,
+            "recall_latency_p50_ms": result.eval_result.metrics.recall_latency_p50_ms,
+            "recall_latency_p95_ms": result.eval_result.metrics.recall_latency_p95_ms,
+            "reflect_accuracy": result.eval_result.metrics.reflect_accuracy,
+            "total_duration_seconds": result.eval_result.metrics.total_duration_seconds,
+        },
+        "provider": result.eval_result.provider,
+        "provider_tier": result.eval_result.provider_tier,
+    }
+    return data
+
+
+def _print_result(result, benchmark_name: str) -> None:
+    """Print benchmark results to stdout."""
+    print(f"\n{'=' * 60}")
+    print(f"  {benchmark_name}")
+    print(f"{'=' * 60}")
+    print(f"  Overall accuracy:  {result.overall_accuracy:.1%}")
+    print(f"  Questions:         {result.correct}/{result.total_questions}")
+    print()
+    print("  Category breakdown:")
+    for cat, acc in sorted(result.category_accuracy.items()):
+        print(f"    {cat:<20} {acc:.1%}")
+    print()
+    m = result.eval_result.metrics
+    print("  Retrieval metrics:")
+    print(f"    Precision:       {m.recall_precision:.4f}")
+    print(f"    Hit rate:        {m.recall_hit_rate:.4f}")
+    print(f"    MRR:             {m.recall_mrr:.4f}")
+    print(f"    NDCG:            {m.recall_ndcg:.4f}")
+    print()
+    print("  Latency:")
+    print(f"    Retain p50:      {m.retain_latency_p50_ms:.1f} ms")
+    print(f"    Retain p95:      {m.retain_latency_p95_ms:.1f} ms")
+    print(f"    Recall p50:      {m.recall_latency_p50_ms:.1f} ms")
+    print(f"    Recall p95:      {m.recall_latency_p95_ms:.1f} ms")
+    print()
+    print(f"  Total duration:    {m.total_duration_seconds:.1f}s")
+    print(f"{'=' * 60}")
+
+
+async def run_longmemeval(brain, data_path: str | None, max_questions: int | None) -> dict | None:
+    """Run LongMemEval benchmark."""
+    from astrocyte.eval.benchmarks.longmemeval import (
+        LongMemEvalBenchmark,
+        LongMemEvalQuestion,
+    )
+
+    bench = LongMemEvalBenchmark(brain)
+
+    if data_path:
+        result = await bench.run(
+            data_path=data_path,
+            bank_id="bench-longmemeval",
+            max_questions=max_questions,
+        )
+    else:
+        # Synthetic smoke test when no dataset is available
+        questions = [
+            LongMemEvalQuestion(
+                question_id="synth-1",
+                category="extraction",
+                question="What is Alice's favorite color?",
+                answer="blue",
+                session_ids=["s1"],
+                conversation_context=[
+                    {"content": "My favorite color is blue.", "role": "user", "session_id": "s1"},
+                ],
+            ),
+            LongMemEvalQuestion(
+                question_id="synth-2",
+                category="temporal",
+                question="When did Bob start his new job?",
+                answer="March 2025",
+                session_ids=["s2"],
+                conversation_context=[
+                    {"content": "I started my new job in March 2025.", "role": "user", "session_id": "s2"},
+                ],
+            ),
+            LongMemEvalQuestion(
+                question_id="synth-3",
+                category="reasoning",
+                question="Why does Carol prefer Python?",
+                answer="readability",
+                session_ids=["s3"],
+                conversation_context=[
+                    {
+                        "content": "I prefer Python because of its readability and clean syntax.",
+                        "role": "user",
+                        "session_id": "s3",
+                    },
+                ],
+            ),
+        ]
+        result = await bench.run(
+            questions=questions,
+            bank_id="bench-longmemeval",
+            max_questions=max_questions,
+        )
+
+    _print_result(result, "LongMemEval")
+    return _serialize_result(result, "longmemeval")
+
+
+async def run_locomo(brain, data_path: str | None, max_questions: int | None) -> dict | None:
+    """Run LoCoMo benchmark."""
+    from astrocyte.eval.benchmarks.locomo import (
+        LoComoBenchmark,
+        LoCoMoConversation,
+        LoCoMoQuestion,
+        LoCoMoSession,
+    )
+
+    bench = LoComoBenchmark(brain)
+
+    if data_path:
+        result = await bench.run(
+            data_path=data_path,
+            bank_id="bench-locomo",
+            max_questions=max_questions,
+        )
+    else:
+        # Synthetic smoke test when no dataset is available
+        conversations = [
+            LoCoMoConversation(
+                conversation_id="synth-convo-1",
+                sessions=[
+                    LoCoMoSession(
+                        session_id="session_1",
+                        turns=[
+                            {"speaker": "User1", "text": "I just moved to San Francisco last week."},
+                            {"speaker": "User2", "text": "That's great! I've been living in NYC for 5 years."},
+                        ],
+                        date_time="2025-01-15",
+                    ),
+                    LoCoMoSession(
+                        session_id="session_2",
+                        turns=[
+                            {"speaker": "User1", "text": "I got a new job at a startup working on AI."},
+                            {"speaker": "User2", "text": "Congrats! I'm still at the bank doing data analysis."},
+                        ],
+                        date_time="2025-02-01",
+                    ),
+                ],
+                questions=[
+                    LoCoMoQuestion(
+                        question="Where does User1 live?",
+                        answer="San Francisco",
+                        category="single-hop",
+                        evidence_ids=["session_1"],
+                        conversation_id="synth-convo-1",
+                    ),
+                    LoCoMoQuestion(
+                        question="What does User2 do for work?",
+                        answer="data analysis at a bank",
+                        category="single-hop",
+                        evidence_ids=["session_2"],
+                        conversation_id="synth-convo-1",
+                    ),
+                    LoCoMoQuestion(
+                        question="Who changed cities recently and what is their new job?",
+                        answer="User1 moved to San Francisco and works at an AI startup",
+                        category="multi-hop",
+                        evidence_ids=["session_1", "session_2"],
+                        conversation_id="synth-convo-1",
+                    ),
+                ],
+            )
+        ]
+        result = await bench.run(
+            conversations=conversations,
+            bank_id="bench-locomo",
+            max_questions=max_questions,
+        )
+
+    _print_result(result, "LoCoMo")
+    return _serialize_result(result, "locomo")
+
+
+async def run_builtin_suites(brain) -> dict:
+    """Run built-in evaluation suites (basic + accuracy)."""
+    from astrocyte.eval.evaluator import MemoryEvaluator
+
+    evaluator = MemoryEvaluator(brain)
+    results = {}
+
+    for suite_name in ("basic", "accuracy"):
+        result = await evaluator.run_suite(suite_name, bank_id=f"bench-{suite_name}")
+        m = result.metrics
+
+        print(f"\n{'=' * 60}")
+        print(f"  Built-in suite: {suite_name}")
+        print(f"{'=' * 60}")
+        print(f"  Precision:       {m.recall_precision:.4f}")
+        print(f"  Hit rate:        {m.recall_hit_rate:.4f}")
+        print(f"  MRR:             {m.recall_mrr:.4f}")
+        print(f"  NDCG:            {m.recall_ndcg:.4f}")
+        if m.reflect_accuracy is not None:
+            print(f"  Reflect acc:     {m.reflect_accuracy:.4f}")
+        print(f"  Duration:        {m.total_duration_seconds:.1f}s")
+        print(f"{'=' * 60}")
+
+        results[suite_name] = {
+            "suite": suite_name,
+            "timestamp": result.timestamp.isoformat(),
+            "metrics": {
+                "recall_precision": m.recall_precision,
+                "recall_hit_rate": m.recall_hit_rate,
+                "recall_mrr": m.recall_mrr,
+                "recall_ndcg": m.recall_ndcg,
+                "reflect_accuracy": m.reflect_accuracy,
+                "retain_latency_p50_ms": m.retain_latency_p50_ms,
+                "retain_latency_p95_ms": m.retain_latency_p95_ms,
+                "recall_latency_p50_ms": m.recall_latency_p50_ms,
+                "recall_latency_p95_ms": m.recall_latency_p95_ms,
+                "total_duration_seconds": m.total_duration_seconds,
+            },
+            "provider": result.provider,
+            "provider_tier": result.provider_tier,
+        }
+
+    return results
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(description="Run Astrocyte memory benchmarks")
+    parser.add_argument(
+        "--config",
+        help="Path to Astrocyte YAML config (for real providers)",
+    )
+    parser.add_argument(
+        "--provider",
+        default=None,
+        choices=["test"],
+        help="Use built-in test provider (no API keys needed)",
+    )
+    parser.add_argument(
+        "--benchmarks",
+        nargs="+",
+        default=["builtin", "longmemeval", "locomo"],
+        choices=["builtin", "longmemeval", "locomo"],
+        help="Which benchmarks to run (default: all)",
+    )
+    parser.add_argument(
+        "--longmemeval-path",
+        help="Path to LongMemEval data directory",
+    )
+    parser.add_argument(
+        "--locomo-path",
+        help="Path to LoCoMo data directory or JSON file",
+    )
+    parser.add_argument(
+        "--max-questions",
+        type=int,
+        default=None,
+        help="Limit number of questions per benchmark (for quick testing)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Output directory for results JSON (default: benchmark-results/)",
+    )
+    args = parser.parse_args()
+
+    # Build brain
+    if args.provider == "test" or (not args.config and not args.provider):
+        if not args.config:
+            print("No --config provided, using in-memory test provider.")
+        brain = _build_test_brain()
+    else:
+        brain = _build_pipeline_brain(args.config)
+
+    # Run benchmarks
+    all_results: dict = {}
+    wall_start = time.monotonic()
+
+    if "builtin" in args.benchmarks:
+        all_results["builtin"] = await run_builtin_suites(brain)
+
+    if "longmemeval" in args.benchmarks:
+        result = await run_longmemeval(brain, args.longmemeval_path, args.max_questions)
+        if result:
+            all_results["longmemeval"] = result
+
+    if "locomo" in args.benchmarks:
+        result = await run_locomo(brain, args.locomo_path, args.max_questions)
+        if result:
+            all_results["locomo"] = result
+
+    wall_elapsed = time.monotonic() - wall_start
+
+    # Summary
+    print(f"\n{'#' * 60}")
+    print(f"  All benchmarks complete in {wall_elapsed:.1f}s")
+    print(f"{'#' * 60}")
+
+    # Write results
+    output_dir = Path(args.output_dir or "benchmark-results")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output_file = output_dir / f"results-{timestamp}.json"
+
+    all_results["_meta"] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "wall_time_seconds": wall_elapsed,
+        "provider": brain._provider_name,
+        "provider_tier": brain._config.provider_tier,
+        "max_questions": args.max_questions,
+        "config": args.config,
+    }
+
+    with open(output_file, "w") as f:
+        json.dump(all_results, f, indent=2, default=str)
+
+    print(f"\n  Results written to {output_file}")
+
+    # Also write a latest.json symlink/copy for easy CI access
+    latest = output_dir / "latest.json"
+    with open(latest, "w") as f:
+        json.dump(all_results, f, indent=2, default=str)
+
+    # Exit non-zero if a real dataset benchmark had 0% accuracy (likely broken).
+    # Only check when a dataset path was provided (synthetic tests may legitimately
+    # score 0% with mock providers).
+    has_real_data = args.longmemeval_path or args.locomo_path
+    if has_real_data:
+        for key in ("longmemeval", "locomo"):
+            if key in all_results and all_results[key].get("overall_accuracy", 1.0) == 0.0:
+                print(f"\n  WARNING: {key} had 0% accuracy — something may be wrong.")
+                sys.exit(1)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
