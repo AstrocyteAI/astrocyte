@@ -46,6 +46,50 @@ jobs:
             --suite "${{ inputs.suite || 'basic' }}" \
             --output eval-result.json
 
+      - name: Check for regressions
+        if: success()
+        id: regression-check
+        working-directory: astrocyte-py
+        continue-on-error: true
+        run: |
+          BASELINE="../docs/public/eval/latest.json"
+          if [ ! -f "$BASELINE" ]; then
+            echo "No baseline found — skipping regression check."
+            exit 0
+          fi
+          uv run python -c "
+          import json, sys, os
+          from astrocyte.eval.evaluator import detect_regressions
+          from astrocyte.types import EvalMetrics
+
+          with open('eval-result.json') as f:
+              current_metrics = EvalMetrics(**json.load(f)['metrics'])
+          with open('$BASELINE') as f:
+              baseline_metrics = EvalMetrics(**json.load(f)['metrics'])
+
+          alerts = detect_regressions(current_metrics, baseline_metrics)
+          if not alerts:
+              print('No regressions detected.')
+              sys.exit(0)
+
+          summary_path = os.environ.get('GITHUB_STEP_SUMMARY', '/dev/stdout')
+          with open(summary_path, 'a') as out:
+              out.write('\n## Regression Alerts\n\n')
+              out.write('| Metric | Baseline | Current | Delta | Severity |\n')
+              out.write('|--------|----------|---------|-------|----------|\n')
+              for a in alerts:
+                  icon = ':red_circle:' if a.severity == 'critical' else ':warning:'
+                  out.write(f'| {a.metric} | {a.baseline_value:.4f} | {a.current_value:.4f} | {a.delta_percent:+.1%} | {icon} {a.severity} |\n')
+              out.write('\n')
+
+          has_critical = any(a.severity == 'critical' for a in alerts)
+          for a in alerts:
+              print(f'[{a.severity.upper()}] {a.metric}: {a.baseline_value:.4f} -> {a.current_value:.4f} ({a.delta_percent:+.1%})')
+          if has_critical:
+              print('::error::Critical regressions detected — see step summary.')
+              sys.exit(1)
+          "
+
       - name: Append to eval history
         if: success()
         run: |
@@ -117,3 +161,9 @@ jobs:
           name: eval-result-${{ inputs.suite || 'basic' }}-${{ github.run_number }}
           path: astrocyte-py/eval-result.json
           if-no-files-found: warn
+
+      - name: Fail on critical regressions
+        if: steps.regression-check.outcome == 'failure'
+        run: |
+          echo "::error::Workflow failing due to critical eval regressions."
+          exit 1
