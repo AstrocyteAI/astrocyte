@@ -155,8 +155,8 @@ def _print_result(result, benchmark_name: str) -> None:
     print(f"{'=' * 60}")
 
 
-async def run_longmemeval(brain, data_path: str | None, max_questions: int | None) -> dict | None:
-    """Run LongMemEval benchmark."""
+async def run_longmemeval(brain, data_path: str | None, max_questions: int | None) -> tuple[dict | None, bool]:
+    """Run LongMemEval benchmark. Returns (result_dict, used_real_data)."""
     from astrocyte.eval.benchmarks.longmemeval import (
         LongMemEvalBenchmark,
         LongMemEvalQuestion,
@@ -164,13 +164,17 @@ async def run_longmemeval(brain, data_path: str | None, max_questions: int | Non
 
     bench = LongMemEvalBenchmark(brain)
 
-    if data_path:
+    has_dataset = data_path and any(Path(data_path).glob("*.json")) if data_path else False
+
+    if has_dataset:
         result = await bench.run(
             data_path=data_path,
             bank_id="bench-longmemeval",
             max_questions=max_questions,
         )
     else:
+        if data_path:
+            print(f"  WARNING: No JSON files found in {data_path}, using synthetic data.")
         # Synthetic smoke test when no dataset is available
         questions = [
             LongMemEvalQuestion(
@@ -215,11 +219,11 @@ async def run_longmemeval(brain, data_path: str | None, max_questions: int | Non
         )
 
     _print_result(result, "LongMemEval")
-    return _serialize_result(result, "longmemeval")
+    return _serialize_result(result, "longmemeval"), has_dataset
 
 
-async def run_locomo(brain, data_path: str | None, max_questions: int | None) -> dict | None:
-    """Run LoCoMo benchmark."""
+async def run_locomo(brain, data_path: str | None, max_questions: int | None) -> tuple[dict | None, bool]:
+    """Run LoCoMo benchmark. Returns (result_dict, used_real_data)."""
     from astrocyte.eval.benchmarks.locomo import (
         LoComoBenchmark,
         LoCoMoConversation,
@@ -229,13 +233,18 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
 
     bench = LoComoBenchmark(brain)
 
-    if data_path:
+    dp = Path(data_path) if data_path else None
+    has_dataset = dp and (list(dp.glob("locomo*.json")) or list(dp.glob("*.json"))) if dp else False
+
+    if has_dataset:
         result = await bench.run(
             data_path=data_path,
             bank_id="bench-locomo",
             max_questions=max_questions,
         )
     else:
+        if data_path:
+            print(f"  WARNING: No JSON files found in {data_path}, using synthetic data.")
         # Synthetic smoke test when no dataset is available
         conversations = [
             LoCoMoConversation(
@@ -290,7 +299,7 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
         )
 
     _print_result(result, "LoCoMo")
-    return _serialize_result(result, "locomo")
+    return _serialize_result(result, "locomo"), has_dataset
 
 
 async def run_builtin_suites(brain) -> dict:
@@ -388,20 +397,23 @@ async def main() -> None:
 
     # Run benchmarks
     all_results: dict = {}
+    used_real_data: dict[str, bool] = {}
     wall_start = time.monotonic()
 
     if "builtin" in args.benchmarks:
         all_results["builtin"] = await run_builtin_suites(brain)
 
     if "longmemeval" in args.benchmarks:
-        result = await run_longmemeval(brain, args.longmemeval_path, args.max_questions)
+        result, real = await run_longmemeval(brain, args.longmemeval_path, args.max_questions)
         if result:
             all_results["longmemeval"] = result
+        used_real_data["longmemeval"] = real
 
     if "locomo" in args.benchmarks:
-        result = await run_locomo(brain, args.locomo_path, args.max_questions)
+        result, real = await run_locomo(brain, args.locomo_path, args.max_questions)
         if result:
             all_results["locomo"] = result
+        used_real_data["locomo"] = real
 
     wall_elapsed = time.monotonic() - wall_start
 
@@ -437,11 +449,12 @@ async def main() -> None:
         json.dump(all_results, f, indent=2, default=str)
 
     # Exit non-zero if a real dataset benchmark had 0% accuracy (likely broken).
-    # Only check when a dataset path was provided (synthetic tests may legitimately
-    # score 0% with mock providers).
-    has_real_data = args.longmemeval_path or args.locomo_path
-    if has_real_data:
+    # Only check benchmarks that actually loaded real data (synthetic tests may
+    # legitimately score 0% with mock providers).
+    if any(used_real_data.values()):
         for key in ("longmemeval", "locomo"):
+            if not used_real_data.get(key):
+                continue
             if key in all_results and all_results[key].get("overall_accuracy", 1.0) == 0.0:
                 print(f"\n  WARNING: {key} had 0% accuracy — something may be wrong.")
                 sys.exit(1)

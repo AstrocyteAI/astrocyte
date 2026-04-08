@@ -48,9 +48,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Clone benchmark datasets
+      - name: Download benchmark datasets
         run: |
+          # LongMemEval: data must be fetched from HuggingFace after cloning
           git clone --depth 1 https://github.com/xiaowu0162/LongMemEval.git
+          cd LongMemEval && mkdir -p data
+          wget -q -P data/ https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json
+          cd ..
+
+          # LoCoMo: data is in the repo directly
           git clone --depth 1 https://github.com/snap-research/locomo.git
 
       - name: Install dependencies
