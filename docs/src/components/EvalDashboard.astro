@@ -1,0 +1,292 @@
+---
+/**
+ * EvalDashboard — renders eval trend charts from /eval/history.json.
+ *
+ * Client-side component: fetches history JSON at runtime and renders
+ * charts using Chart.js loaded from CDN (no build dependency).
+ */
+---
+
+<div id="eval-dashboard">
+  <div id="eval-loading">Loading eval history&hellip;</div>
+  <div id="eval-error" style="display:none"></div>
+
+  <div id="eval-latest" style="display:none">
+    <h3>Latest run</h3>
+    <table class="eval-summary-table">
+      <tbody id="eval-latest-body"></tbody>
+    </table>
+  </div>
+
+  <div id="eval-charts" style="display:none">
+    <h3>Quality trends</h3>
+    <div class="eval-chart-row">
+      <div class="eval-chart-container">
+        <canvas id="chart-quality"></canvas>
+      </div>
+      <div class="eval-chart-container">
+        <canvas id="chart-latency"></canvas>
+      </div>
+    </div>
+    <div class="eval-chart-row">
+      <div class="eval-chart-container">
+        <canvas id="chart-tokens"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  #eval-dashboard {
+    margin: 1.5rem 0;
+  }
+  #eval-loading {
+    color: var(--sl-color-gray-3);
+    font-style: italic;
+  }
+  #eval-error {
+    color: var(--sl-color-red);
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--sl-color-red);
+    border-radius: 0.5rem;
+  }
+  .eval-summary-table {
+    width: 100%;
+    max-width: 480px;
+    border-collapse: collapse;
+    margin: 0.75rem 0 1.5rem;
+  }
+  .eval-summary-table td {
+    padding: 0.35rem 0.75rem;
+    border-bottom: 1px solid var(--sl-color-gray-5);
+  }
+  .eval-summary-table td:first-child {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .eval-summary-table td:last-child {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .eval-chart-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .eval-chart-container {
+    position: relative;
+    background: var(--sl-color-gray-6);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    min-height: 280px;
+  }
+</style>
+
+<script>
+  async function initEvalDashboard() {
+    const loading = document.getElementById("eval-loading");
+    const error = document.getElementById("eval-error");
+    const latest = document.getElementById("eval-latest");
+    const charts = document.getElementById("eval-charts");
+
+    try {
+      // Resolve base path from <base> tag (GitHub Pages project URL)
+      const baseEl = document.querySelector("base");
+      const base = baseEl ? baseEl.getAttribute("href") || "/" : "/";
+      const historyUrl = `${base}eval/history.json`;
+
+      const resp = await fetch(historyUrl);
+      if (!resp.ok) throw new Error(`Failed to fetch eval history (${resp.status})`);
+      const history = await resp.json();
+
+      if (!history.length) {
+        loading.textContent = "No eval results yet.";
+        return;
+      }
+
+      loading.style.display = "none";
+
+      // ── Latest run summary ──
+      const last = history[history.length - 1];
+      const m = last.metrics;
+      const rows = [
+        ["Suite", last.suite],
+        ["Date", new Date(last.timestamp).toLocaleDateString()],
+        ["Hit rate", m.recall_hit_rate.toFixed(4)],
+        ["MRR", m.recall_mrr.toFixed(4)],
+        ["NDCG", m.recall_ndcg.toFixed(4)],
+        ["Precision", m.recall_precision.toFixed(4)],
+        ["Recall p50", `${m.recall_latency_p50_ms.toFixed(0)}ms`],
+        ["Tokens", m.total_tokens_used.toLocaleString()],
+        ["Duration", `${m.total_duration_seconds.toFixed(1)}s`],
+      ];
+      if (m.reflect_accuracy != null) {
+        rows.push(["Reflect accuracy", m.reflect_accuracy.toFixed(4)]);
+      }
+      const tbody = document.getElementById("eval-latest-body");
+      rows.forEach(([label, value]) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${label}</td><td>${value}</td>`;
+        tbody.appendChild(tr);
+      });
+      latest.style.display = "block";
+
+      // ── Charts (need >= 2 data points for trends) ──
+      if (history.length < 2) {
+        const note = document.createElement("p");
+        note.textContent = "Trend charts will appear after 2+ eval runs.";
+        note.style.color = "var(--sl-color-gray-3)";
+        note.style.fontStyle = "italic";
+        charts.parentElement.insertBefore(note, charts);
+        return;
+      }
+
+      // Load Chart.js from CDN
+      await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js");
+
+      const labels = history.map((r) =>
+        new Date(r.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      );
+      const Chart = window.Chart;
+
+      // Detect dark mode
+      const isDark = document.documentElement.dataset.theme === "dark" ||
+        (document.documentElement.dataset.theme !== "light" &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches);
+      const gridColor = isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)";
+      const textColor = isDark ? "#a0a0a0" : "#666";
+
+      const baseOpts = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: textColor } } },
+        scales: {
+          x: { ticks: { color: textColor }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor }, grid: { color: gridColor } },
+        },
+      };
+
+      // Quality chart
+      new Chart(document.getElementById("chart-quality"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Hit rate",
+              data: history.map((r) => r.metrics.recall_hit_rate),
+              borderColor: "#2dd4bf",
+              tension: 0.3,
+            },
+            {
+              label: "MRR",
+              data: history.map((r) => r.metrics.recall_mrr),
+              borderColor: "#d97706",
+              tension: 0.3,
+            },
+            {
+              label: "NDCG",
+              data: history.map((r) => r.metrics.recall_ndcg),
+              borderColor: "#6366f1",
+              tension: 0.3,
+            },
+          ],
+        },
+        options: {
+          ...baseOpts,
+          plugins: {
+            ...baseOpts.plugins,
+            title: { display: true, text: "Retrieval Quality", color: textColor },
+          },
+          scales: {
+            ...baseOpts.scales,
+            y: { ...baseOpts.scales.y, min: 0, max: 1 },
+          },
+        },
+      });
+
+      // Latency chart
+      new Chart(document.getElementById("chart-latency"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Retain p50",
+              data: history.map((r) => r.metrics.retain_latency_p50_ms),
+              borderColor: "#2dd4bf",
+              tension: 0.3,
+            },
+            {
+              label: "Recall p50",
+              data: history.map((r) => r.metrics.recall_latency_p50_ms),
+              borderColor: "#d97706",
+              tension: 0.3,
+            },
+          ],
+        },
+        options: {
+          ...baseOpts,
+          plugins: {
+            ...baseOpts.plugins,
+            title: { display: true, text: "Latency (ms, p50)", color: textColor },
+          },
+          scales: {
+            ...baseOpts.scales,
+            y: { ...baseOpts.scales.y, min: 0 },
+          },
+        },
+      });
+
+      // Tokens chart
+      new Chart(document.getElementById("chart-tokens"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Tokens used",
+              data: history.map((r) => r.metrics.total_tokens_used),
+              backgroundColor: "rgba(99,102,241,0.6)",
+              borderColor: "#6366f1",
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          ...baseOpts,
+          plugins: {
+            ...baseOpts.plugins,
+            title: { display: true, text: "LLM Tokens per Run", color: textColor },
+          },
+          scales: {
+            ...baseOpts.scales,
+            y: { ...baseOpts.scales.y, min: 0 },
+          },
+        },
+      });
+
+      charts.style.display = "block";
+    } catch (e) {
+      loading.style.display = "none";
+      error.textContent = `Could not load eval results: ${e.message}`;
+      error.style.display = "block";
+    }
+  }
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) return resolve();
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  // Run on page load and Astro view transitions
+  document.addEventListener("DOMContentLoaded", initEvalDashboard);
+  document.addEventListener("astro:page-load", initEvalDashboard);
+</script>

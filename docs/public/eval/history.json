@@ -1,0 +1,28 @@
+[
+  {
+    "suite": "basic",
+    "provider": "pipeline",
+    "provider_tier": "storage",
+    "timestamp": "2026-04-08T05:00:00+00:00",
+    "metrics": {
+      "recall_precision": 0.1100,
+      "recall_hit_rate": 1.0000,
+      "recall_mrr": 0.9000,
+      "recall_ndcg": 0.9262,
+      "retain_latency_p50_ms": 1908.7,
+      "retain_latency_p95_ms": 2783.6,
+      "recall_latency_p50_ms": 189.1,
+      "recall_latency_p95_ms": 725.4,
+      "total_tokens_used": 1963,
+      "total_duration_seconds": 25.81,
+      "reflect_accuracy": 1.0000,
+      "reflect_completeness": null,
+      "reflect_hallucination_rate": null,
+      "reflect_latency_p50_ms": null,
+      "reflect_latency_p95_ms": null
+    },
+    "config_snapshot": {
+      "judge": "keyword"
+    }
+  }
+]

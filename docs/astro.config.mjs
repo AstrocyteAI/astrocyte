@@ -77,6 +77,7 @@ const topicItems = {
     { label: "Memory export sink", link: "/design/memory-export-sink/" },
     { label: "Bank health & utilization", link: "/design/memory-analytics/" },
     { label: "Evaluation", link: "/design/evaluation/" },
+    { label: "Eval Dashboard", link: "/eval/dashboard/" },
   ],
   tutorials: [
     { label: "100 Agents in 100 Days", link: "/tutorials/100-agents-in-100-days/" },
