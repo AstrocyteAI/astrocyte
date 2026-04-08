@@ -7,7 +7,8 @@ See docs/_design/implementation-language-strategy.md for constraints.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json as _json
+from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from typing import Literal
 
@@ -539,6 +540,21 @@ class EvalResult:
     metrics: EvalMetrics
     per_query_results: list[QueryResult]
     config_snapshot: Metadata | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize to a JSON-safe dict (datetime → ISO 8601 string)."""
+
+        def _convert(obj: object) -> object:
+            if isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            return obj
+
+        raw = asdict(self)
+        return _json.loads(_json.dumps(raw, default=_convert))
+
+    def to_json(self, *, indent: int = 2) -> str:
+        """Serialize to a JSON string."""
+        return _json.dumps(self.to_dict(), indent=indent)
 
 
 @dataclass

@@ -69,6 +69,10 @@ class MemoryEvaluator:
         recall_latencies: list[float] = []
         reflect_latencies: list[float] = []
 
+        # Reset the pipeline's token counter so we measure only this run
+        if self.brain._pipeline:
+            self.brain._pipeline.reset_token_counter()
+
         # ── Phase 1: Retain all test memories ──
         memory_map: dict[str, str] = {}  # content → memory_id (for relevance matching)
 
@@ -191,7 +195,7 @@ class MemoryEvaluator:
             retain_latency_p95_ms=percentile(retain_latencies, 95),
             recall_latency_p50_ms=percentile(recall_latencies, 50),
             recall_latency_p95_ms=percentile(recall_latencies, 95),
-            total_tokens_used=0,  # TODO: track via LLM provider usage
+            total_tokens_used=self.brain._pipeline.tokens_used if self.brain._pipeline else 0,
             total_duration_seconds=total_duration,
             reflect_accuracy=_safe_mean(reflect_scores) if reflect_scores else None,
             reflect_latency_p50_ms=percentile(reflect_latencies, 50) if reflect_latencies else None,
