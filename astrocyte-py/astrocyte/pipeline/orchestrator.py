@@ -18,9 +18,11 @@ from astrocyte.pipeline.retrieval import parallel_retrieve
 from astrocyte.policy.homeostasis import enforce_token_budget
 from astrocyte.policy.signal_quality import DedupDetector
 from astrocyte.types import (
+    Completion,
     EntityLink,
     MemoryEntityAssociation,
     MemoryHit,
+    Message,
     RecallRequest,
     RecallResult,
     RecallTrace,
@@ -34,6 +36,55 @@ from astrocyte.types import (
 
 if TYPE_CHECKING:
     from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore
+
+
+class _TrackingLLMProvider:
+    """Transparent wrapper that accumulates token usage from an LLMProvider.
+
+    All calls are forwarded to the underlying provider. After each ``complete()``
+    call, ``Completion.usage`` (if present) is added to ``tokens_used``.
+    Embedding calls do not consume completion tokens and are forwarded as-is.
+
+    This is used internally by :class:`PipelineOrchestrator` so that the
+    evaluation framework can report ``total_tokens_used`` per run without
+    modifying individual pipeline modules. See ``evaluation.md`` §2.2.
+    """
+
+    SPI_VERSION: int = 1
+
+    def __init__(self, inner: LLMProvider) -> None:
+        self._inner = inner
+        self.tokens_used: int = 0
+
+    async def complete(
+        self,
+        messages: list[Message],
+        model: str | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
+    ) -> Completion:
+        result = await self._inner.complete(
+            messages, model=model, max_tokens=max_tokens, temperature=temperature
+        )
+        if result.usage:
+            self.tokens_used += result.usage.input_tokens + result.usage.output_tokens
+        return result
+
+    async def embed(
+        self,
+        texts: list[str],
+        model: str | None = None,
+    ) -> list[list[float]]:
+        return await self._inner.embed(texts, model=model)
+
+    def capabilities(self):  # noqa: ANN201
+        return self._inner.capabilities()
+
+    def reset_tokens(self) -> int:
+        """Return accumulated tokens and reset counter to zero."""
+        total = self.tokens_used
+        self.tokens_used = 0
+        return total
 
 
 class PipelineOrchestrator:
@@ -54,7 +105,8 @@ class PipelineOrchestrator:
         semantic_overfetch: int = 3,
     ) -> None:
         self.vector_store = vector_store
-        self.llm_provider = llm_provider
+        self._tracker = _TrackingLLMProvider(llm_provider)
+        self.llm_provider: LLMProvider = self._tracker  # type: ignore[assignment]
         self.graph_store = graph_store
         self.document_store = document_store
         self.chunk_strategy = chunk_strategy
@@ -62,6 +114,15 @@ class PipelineOrchestrator:
         self.rrf_k = rrf_k
         self.semantic_overfetch = semantic_overfetch
         self._dedup = DedupDetector(similarity_threshold=0.95)
+
+    @property
+    def tokens_used(self) -> int:
+        """Total LLM tokens consumed through this orchestrator since last reset."""
+        return self._tracker.tokens_used
+
+    def reset_token_counter(self) -> int:
+        """Return accumulated token count and reset to zero."""
+        return self._tracker.reset_tokens()
 
     async def retain(self, request: RetainRequest) -> RetainResult:
         """Retain pipeline: chunk → extract entities → embed → store."""

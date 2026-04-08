@@ -114,6 +114,10 @@ class LoComoBenchmark:
         retain_latencies: list[float] = []
         recall_latencies: list[float] = []
 
+        # Reset token counter for this benchmark run
+        if self.brain._pipeline:
+            self.brain._pipeline.reset_token_counter()
+
         # ── Phase 1: Retain all conversation sessions ──
         for convo in conversations:
             for session in convo.sessions:
@@ -230,7 +234,7 @@ class LoComoBenchmark:
             retain_latency_p95_ms=percentile(retain_latencies, 95),
             recall_latency_p50_ms=percentile(recall_latencies, 50),
             recall_latency_p95_ms=percentile(recall_latencies, 95),
-            total_tokens_used=0,
+            total_tokens_used=self.brain._pipeline.tokens_used if self.brain._pipeline else 0,
             total_duration_seconds=total_duration,
             reflect_accuracy=overall_accuracy,
         )

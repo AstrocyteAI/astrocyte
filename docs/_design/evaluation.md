@@ -65,7 +65,7 @@ class EvalMetrics:
     reflect_latency_p95_ms: float | None
 
     # Efficiency
-    total_tokens_used: int               # LLM tokens consumed during eval
+    total_tokens_used: int               # LLM tokens consumed during this eval run
     total_duration_seconds: float
 
 @dataclass
@@ -78,6 +78,15 @@ class QueryResult:
     reciprocal_rank: float
     latency_ms: float
 ```
+
+### 2.2 Per-run token tracking vs. global LLM spend
+
+`total_tokens_used` tracks the LLM tokens consumed **within a single eval run** — the sum of all `complete()` and `embed()` calls that the pipeline makes during the suite's retain, recall, and reflect phases. This serves two purposes:
+
+1. **Cost-efficiency comparison.** When `compare_providers()` runs the same suite against different configs, token usage is the third leg of the tradeoff alongside latency and accuracy. One provider may score higher but consume 10× more tokens.
+2. **Cost regression detection.** A config change that silently doubles LLM calls shows up as a spike in `total_tokens_used` even if accuracy holds steady.
+
+This is a **separate concern** from **global LLM spend tracking** (cumulative cost across all production calls, budget alerts, per-model breakdowns). Global spend tracking is the responsibility of your **LLM gateway or aggregator** (LiteLLM, Portkey, OpenRouter, etc.) — see `architecture-framework.md` §5 for the boundary. Astrocyte's per-run token counter works with any `LLMProvider` implementation, including ones backed by those gateways, because it accumulates `Completion.usage` at the framework level regardless of which backend is behind the protocol.
 
 ---
 
@@ -200,25 +209,54 @@ This gives users concrete data for the Tier 1 → Tier 2 upgrade decision.
 
 ---
 
-## 5. Continuous quality monitoring
+## 5. Running evaluations in CI
 
-Run evaluations on a schedule against production banks (using a dedicated test partition):
+Evaluations run as a **separate GitHub Actions workflow** (`eval.yml`), not as part of the main CI pipeline. This keeps fast unit-test feedback decoupled from slower, LLM-dependent eval runs.
 
-```yaml
-evaluation:
-  continuous:
-    enabled: true
-    schedule: "0 5 * * 1"               # Weekly, Monday 5am
-    suite: basic
-    bank_id: eval-continuous             # Dedicated bank, not production
-    alert_on_regression: true
-    regression_threshold: 0.05           # Alert if any metric drops >5%
-    alert_hook: on_eval_regression       # Trigger event hook
+### 5.1 Cadence
+
+| Cadence | Suite | Trigger | Purpose |
+|---------|-------|---------|---------|
+| **Nightly** | `basic` | Cron (`0 5 * * *`) | Catch regressions from data drift or provider-side changes |
+| **Ad-hoc** | Any | `workflow_dispatch` (GitHub UI or `gh` CLI) | On-demand validation after config changes, provider upgrades, or before releases |
+
+The `basic` suite (~$0.13/run on GPT-4o-class models) is cheap enough for nightly runs. Heavier suites (`accuracy`, `stress`) are intended for ad-hoc use.
+
+### 5.2 Ad-hoc runs
+
+Trigger from the terminal:
+
+```bash
+gh workflow run eval.yml --field suite=basic
+gh workflow run eval.yml --field suite=accuracy
 ```
 
-### 5.1 Regression detection
+Or from the GitHub Actions UI: **Actions → Eval → Run workflow → select suite**.
 
-The evaluator compares current results against the last N runs:
+### 5.3 Eval workflow design
+
+The eval workflow:
+
+1. Checks out the repo and installs dependencies.
+2. Runs `MemoryEvaluator.run_suite()` with the selected suite.
+3. Uploads `EvalResult` as a JSON artifact (for historical comparison).
+4. Posts a summary table to the workflow run.
+
+The workflow requires an `OPENAI_API_KEY` (or equivalent LLM provider credential) as a repository secret — see the repo's contributing guide for setup. Eval results are **not** gated on PR merge; they are informational. Regressions surface as workflow annotations, not merge blockers.
+
+### 5.4 Why not per-PR?
+
+Per-PR eval runs are feasible (~$0.13/run) but deferred for now:
+
+- Eval suites need a real LLM backend, which means **secrets in CI** — acceptable for nightly runs on `main`, but requires careful scoping for PRs from forks.
+- The `basic` suite takes ~30 seconds, which is fast, but still slower than unit tests. Keeping eval separate avoids slowing down the PR feedback loop.
+- Nightly runs on `main` catch the same regressions within 24 hours.
+
+This can be revisited if the team wants tighter feedback.
+
+### 5.5 Regression detection
+
+The evaluator compares current results against a baseline:
 
 ```python
 @dataclass
@@ -229,6 +267,20 @@ class RegressionAlert:
     delta: float                         # Absolute change
     delta_percent: float                 # Percentage change
     severity: Literal["warning", "critical"]
+```
+
+### 5.6 Astrocyte config for eval
+
+```yaml
+evaluation:
+  continuous:
+    enabled: true
+    schedule: "0 5 * * *"               # Nightly, 5am UTC
+    suite: basic
+    bank_id: eval-continuous             # Dedicated bank, not production
+    alert_on_regression: true
+    regression_threshold: 0.05           # Alert if any metric drops >5%
+    alert_hook: on_eval_regression       # Trigger event hook
 ```
 
 ---
@@ -249,6 +301,8 @@ astrocyte eval --suite ./my-suite.yaml --config astrocyte.yaml
 astrocyte eval --suite basic --format json > results.json
 astrocyte eval --suite basic --format table
 ```
+
+> **Note:** The CLI is specified but not yet implemented. Use the Python API or the GitHub Actions workflow for now.
 
 ---
 

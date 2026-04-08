@@ -1,0 +1,71 @@
+name: Eval
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # Nightly at 5am UTC
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Eval suite to run"
+        default: "basic"
+        type: choice
+        options:
+          - basic
+          - accuracy
+          - stress
+          - reflect
+
+jobs:
+  eval:
+    name: Run eval (${{ inputs.suite || 'basic' }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: astrocyte-py
+        run: uv sync --extra dev
+
+      - name: Run evaluation suite
+        working-directory: astrocyte-py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          uv run python scripts/run_eval.py \
+            --suite "${{ inputs.suite || 'basic' }}" \
+            --output eval-result.json
+
+      - name: Post summary
+        if: always()
+        run: |
+          if [ -f astrocyte-py/eval-result.json ]; then
+            echo "## Eval Results" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            python3 -c "
+          import json
+          with open('astrocyte-py/eval-result.json') as f:
+              data = json.load(f)
+          summary = {k: v for k, v in data.items() if k != 'per_query_results'}
+          print(json.dumps(summary, indent=2))
+          " >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Eval Results" >> "$GITHUB_STEP_SUMMARY"
+            echo "Eval run failed — no results produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload eval artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eval-result-${{ inputs.suite || 'basic' }}-${{ github.run_number }}
+          path: astrocyte-py/eval-result.json
+          if-no-files-found: warn

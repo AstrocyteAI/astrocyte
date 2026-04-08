@@ -270,12 +270,14 @@ Astrocyte and **LLM gateways** (LiteLLM, Portkey, OpenRouter, Vercel AI Gateway,
 |---|---|---|
 | Normalize LLM provider APIs | Yes (primary job) | No |
 | Route completion/embedding requests | Yes | No |
-| Track LLM spend | Yes | No |
+| Track LLM spend (global) | Yes | No ¹ |
 | Normalize memory provider APIs | No | Yes (primary job) |
 | Built-in memory intelligence pipeline | No | Yes |
 | Enforce memory governance policies | No | Yes |
 | Memory-layer observability | No | Yes |
 | Needs LLM access internally | N/A | Yes (for pipeline + policies) |
+
+> ¹ Astrocyte does **not** track global LLM spend — that is the gateway's job. However, the **evaluation framework** accumulates `Completion.usage` tokens **per eval run** so that `compare_providers()` and regression detection can report cost-efficiency alongside accuracy and latency. These are separate concerns: per-run eval token counts live in `EvalMetrics.total_tokens_used`; global spend, budgets, and per-model cost breakdowns belong to your LLM gateway. See `evaluation.md` §2.2.
 
 **How they compose:**
 
