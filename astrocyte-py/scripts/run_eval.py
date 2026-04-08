@@ -142,7 +142,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     parser = argparse.ArgumentParser(description="Run Astrocyte eval suite")
-    parser.add_argument("--suite", default="basic", help="Suite name (basic, accuracy, stress, reflect)")
+    parser.add_argument("--suite", default="basic", help="Suite name (basic, accuracy) or path to YAML suite")
     parser.add_argument("--output", default=None, help="Output JSON file path")
     args = parser.parse_args()
 

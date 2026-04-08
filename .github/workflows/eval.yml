@@ -12,8 +12,6 @@ on:
         options:
           - basic
           - accuracy
-          - stress
-          - reflect
 
 permissions:
   contents: write # needed to push eval history

@@ -156,48 +156,89 @@ _BASIC_SUITE = EvalSuite(
 _ACCURACY_SUITE = EvalSuite(
     name="accuracy",
     retains=[
+        # -- Baseline facts --
         RetainCase(content="Calvin prefers dark mode in all applications", tags=["preference"]),
-        RetainCase(content="The deployment pipeline uses GitHub Actions", tags=["technical"]),
-        RetainCase(content="Our team follows trunk-based development", tags=["process"]),
-        RetainCase(content="Calvin's favorite language is Python", tags=["preference"]),
-        RetainCase(content="The database is PostgreSQL 16 with pgvector", tags=["technical"]),
-        RetainCase(content="Weekly standup is Monday at 9am Pacific", tags=["meeting"]),
-        RetainCase(content="API rate limit is 100 requests per minute", tags=["technical"]),
-        RetainCase(content="Calvin joined in January 2025", tags=["personal"]),
-        RetainCase(content="Production runs on AWS us-east-1", tags=["infra"]),
-        RetainCase(content="Code reviews need two approvals", tags=["process"]),
-        RetainCase(content="The frontend uses React 18 with TypeScript", tags=["technical"]),
-        RetainCase(content="Monitoring uses Grafana dashboards with Prometheus metrics", tags=["technical"]),
-        RetainCase(content="The CI pipeline runs tests in parallel with 8 workers", tags=["technical"]),
-        RetainCase(content="Feature flags are managed through LaunchDarkly", tags=["technical"]),
-        RetainCase(content="The team uses Slack for communication and GitHub Issues for tracking", tags=["process"]),
+        RetainCase(content="The primary database is PostgreSQL 16 with pgvector extension", tags=["technical"]),
+        RetainCase(content="Production runs on AWS us-east-1 with a failover in us-west-2", tags=["infra"]),
+        RetainCase(content="The API rate limit is 100 requests per minute per user", tags=["technical", "api"]),
+        RetainCase(content="Calvin joined the company in January 2025 as a senior engineer", tags=["personal"]),
+        # -- Contradicting / superseding facts (tests temporal update handling) --
+        RetainCase(content="The API rate limit was increased to 500 requests per minute per user", tags=["technical", "api"]),
+        RetainCase(content="Calvin was promoted to staff engineer in March 2025", tags=["personal"]),
+        # -- Overlapping facts with different specificity --
+        RetainCase(content="We use PostgreSQL for the main application and Redis for caching and rate limiting", tags=["technical"]),
+        RetainCase(content="The Redis cluster runs 3 nodes with 64GB RAM each in production", tags=["technical", "infra"]),
+        # -- Dense multi-entity facts --
+        RetainCase(
+            content="The Q1 2025 incident was caused by a pgvector index rebuild that locked the memories table "
+            "for 47 minutes, affecting 12,000 users across us-east-1",
+            tags=["incident"],
+        ),
+        # -- Subtly related facts requiring disambiguation --
+        RetainCase(content="The team uses OpenAI text-embedding-3-small for vector embeddings", tags=["technical", "ai"]),
+        RetainCase(content="The LLM gateway routes completions through LiteLLM to OpenAI and Anthropic", tags=["technical", "ai"]),
+        # -- Facts with numeric precision --
+        RetainCase(content="Average recall latency in production is 23ms at p50 and 89ms at p95", tags=["performance"]),
+        RetainCase(content="The vector index contains 2.4 million embeddings across 180 banks", tags=["scale"]),
+        # -- Negation / absence facts --
+        RetainCase(content="We evaluated Pinecone but chose not to use it due to vendor lock-in concerns", tags=["decision"]),
     ],
     recalls=[
-        # Exact match queries
-        RecallCase(query="What UI theme does Calvin prefer?", expected_contains=["dark mode"]),
-        RecallCase(query="What CI/CD tool is used for deployment?", expected_contains=["GitHub Actions"]),
-        RecallCase(query="What database technology is used?", expected_contains=["PostgreSQL"]),
-        # Semantic similarity queries (paraphrased)
-        RecallCase(query="Tell me about Calvin's display preferences", expected_contains=["dark mode"]),
-        RecallCase(query="How do we ship code to production?", expected_contains=["GitHub Actions"]),
-        RecallCase(query="What data store does the application use?", expected_contains=["PostgreSQL"]),
-        # Entity-based queries
-        RecallCase(query="What do we know about Calvin?", expected_contains=["dark mode"]),
-        RecallCase(query="What runs on AWS?", expected_contains=["production", "us-east-1"]),
-        # Negative queries (should still return something tangentially related)
-        RecallCase(query="What is the company's vacation policy?", expected_contains=[]),
-        RecallCase(query="How many employees are there?", expected_contains=[]),
-        # Multi-fact queries
-        RecallCase(query="Describe the development workflow", expected_contains=["trunk-based"]),
-        RecallCase(query="What monitoring tools are used?", expected_contains=["Grafana", "Prometheus"]),
-        RecallCase(query="How are feature flags managed?", expected_contains=["LaunchDarkly"]),
-        RecallCase(query="What frontend technologies are used?", expected_contains=["React", "TypeScript"]),
-        RecallCase(query="How does the team communicate?", expected_contains=["Slack"]),
+        # -- Semantic paraphrase (very different wording) --
+        RecallCase(query="Which cloud region hosts our services?", expected_contains=["AWS", "us-east-1"]),
+        RecallCase(query="What is Calvin's display theme preference?", expected_contains=["dark mode"]),
+        # -- Temporal / superseding facts (should surface the latest info) --
+        RecallCase(query="What is the current API rate limit?", expected_contains=["500"]),
+        RecallCase(query="What is Calvin's current role?", expected_contains=["staff engineer"]),
+        # -- Multi-hop: connecting facts across retained memories --
+        RecallCase(
+            query="What databases and caching layers make up our data tier?",
+            expected_contains=["PostgreSQL", "Redis"],
+        ),
+        RecallCase(
+            query="Which AI providers do we use and for what?",
+            expected_contains=["OpenAI", "embedding"],
+        ),
+        # -- Numeric precision retrieval --
+        RecallCase(query="What is our p95 recall latency?", expected_contains=["89ms"]),
+        RecallCase(query="How many embeddings are in the index?", expected_contains=["2.4 million"]),
+        # -- Specificity: broad query should pull multiple related facts --
+        RecallCase(
+            query="Tell me everything about our infrastructure",
+            expected_contains=["AWS"],
+        ),
+        # -- Negation understanding --
+        RecallCase(query="Do we use Pinecone?", expected_contains=["not"]),
+        # -- Incident detail retrieval --
+        RecallCase(query="What happened in the Q1 2025 incident?", expected_contains=["pgvector", "index"]),
+        RecallCase(query="How many users were affected by the outage?", expected_contains=["12,000"]),
+        # -- Entity disambiguation (OpenAI for embeddings vs completions) --
+        RecallCase(query="What model do we use for embeddings?", expected_contains=["text-embedding-3-small"]),
+        # -- Out-of-scope queries (nothing relevant retained) --
+        RecallCase(query="What is our revenue forecast for next quarter?", expected_contains=[]),
+        RecallCase(query="Who is the CEO?", expected_contains=[]),
     ],
     reflects=[
-        ReflectCase(query="Summarize the technical stack", expected_topics=["PostgreSQL", "React", "AWS"]),
-        ReflectCase(query="What are Calvin's preferences?", expected_topics=["dark mode", "Python"]),
-        ReflectCase(query="Describe the team's development process", expected_topics=["trunk-based", "code review"]),
+        # -- Multi-source synthesis: requires combining 3+ facts --
+        ReflectCase(
+            query="Describe our complete data infrastructure including databases, caching, and vector storage",
+            expected_topics=["PostgreSQL", "pgvector", "Redis", "2.4 million"],
+        ),
+        # -- Temporal reasoning: should prefer the updated fact --
+        ReflectCase(
+            query="Summarize Calvin's history at the company",
+            expected_topics=["January 2025", "staff engineer"],
+        ),
+        # -- Analytical synthesis: requires judgment, not just retrieval --
+        ReflectCase(
+            query="What are the key risks and past incidents in our infrastructure?",
+            expected_topics=["pgvector", "index", "12,000", "failover"],
+        ),
+        # -- Broad synthesis across many facts --
+        ReflectCase(
+            query="Give a technical overview of our AI and memory stack",
+            expected_topics=["OpenAI", "embedding", "LiteLLM", "pgvector"],
+        ),
     ],
 )
 
