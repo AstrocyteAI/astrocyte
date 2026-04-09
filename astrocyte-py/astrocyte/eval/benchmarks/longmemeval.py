@@ -126,22 +126,24 @@ class LongMemEvalBenchmark:
         # ── Phase 1: Retain conversation sessions ──
         total_questions = len(questions)
 
-        # Pre-count unique sessions so we can show progress as N/total
+        # Pre-count unique sessions so we can show progress as N/total.
+        # Deduplicate by session_id (not per-question) since multiple questions
+        # share the same haystack sessions.
         _all_session_keys: set[str] = set()
         for q in questions:
             for msg in q.conversation_context:
-                sk = f"{q.question_id}:{msg.get('session_id', '')}"
+                sk = msg.get("session_id", "")
                 if msg.get("content", "").strip():
                     _all_session_keys.add(sk)
         total_sessions = len(_all_session_keys)
 
-        print(f"  [LongMemEval] Retaining {total_sessions} sessions from {total_questions} questions...")
+        print(f"  [LongMemEval] Retaining {total_sessions} unique sessions from {total_questions} questions...")
         sessions_retained: set[str] = set()
         retain_count = 0
         retain_phase_start = time.monotonic()
         for q in questions:
             for msg in q.conversation_context:
-                session_key = f"{q.question_id}:{msg.get('session_id', '')}"
+                session_key = msg.get("session_id", "")
                 if session_key in sessions_retained:
                     continue
                 sessions_retained.add(session_key)
