@@ -150,8 +150,8 @@ class PipelineOrchestrator:
         chunks = [chunks[i] for i in keep_indices]
         embeddings = [embeddings[i] for i in keep_indices]
 
-        # 3. Extract entities (from full content, not per-chunk)
-        entities = await extract_entities(request.content, self.llm_provider)
+        # 3. Extract entities (only when graph store is configured — skip the LLM call otherwise)
+        entities = await extract_entities(request.content, self.llm_provider) if self.graph_store else []
 
         # 4. Store vectors
         memory_ids: list[str] = []

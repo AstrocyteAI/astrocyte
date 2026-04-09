@@ -390,16 +390,18 @@ class TestTokenTracking:
 
         assert pipeline.tokens_used == 0
 
-    async def test_retain_accumulates_tokens(self):
-        """A retain call goes through embed + entity extraction, accumulating tokens."""
+    async def test_retain_and_reflect_accumulates_tokens(self):
+        """Retain + reflect accumulates tokens via LLM synthesis calls."""
         brain, llm = _make_tier1_brain()
         assert brain._pipeline is not None
         assert brain._pipeline.tokens_used == 0
 
         await brain.retain("Calvin prefers dark mode", bank_id="tok-test")
 
-        # MockLLMProvider returns 30 tokens per complete() call (10 in + 20 out).
-        # Retain calls: entity extraction (1 complete). Embed uses embed() not complete().
+        # Retain without graph_store skips entity extraction (no complete() calls).
+        # Embed uses embed() which doesn't track tokens. So retain alone = 0 tokens.
+        # Reflect calls complete() for synthesis, which accumulates tokens.
+        await brain.reflect("What does Calvin prefer?", bank_id="tok-test")
         assert brain._pipeline.tokens_used > 0
 
     async def test_reset_token_counter(self):
@@ -408,6 +410,8 @@ class TestTokenTracking:
         assert brain._pipeline is not None
 
         await brain.retain("Test content", bank_id="tok-reset")
+        # Reflect to accumulate tokens (retain alone doesn't call complete() without graph_store)
+        await brain.reflect("What is the test content?", bank_id="tok-reset")
         tokens_before = brain._pipeline.tokens_used
         assert tokens_before > 0
 
@@ -416,7 +420,7 @@ class TestTokenTracking:
         assert brain._pipeline.tokens_used == 0
 
     async def test_eval_reports_tokens(self):
-        """Evaluator reports non-zero total_tokens_used for Tier 1 pipeline."""
+        """Evaluator reports non-zero total_tokens_used when reflect cases are included."""
         brain, _ = _make_tier1_brain()
         evaluator = MemoryEvaluator(brain)
 
@@ -424,10 +428,12 @@ class TestTokenTracking:
             name="token-test",
             retains=[RetainCase(content="Dark mode is preferred")],
             recalls=[RecallCase(query="dark mode", expected_contains=["dark"])],
+            reflects=[ReflectCase(query="What mode is preferred?", expected_topics=["dark"])],
         )
         result = await evaluator.run_suite(custom, bank_id="eval-tok")
 
-        # Tier 1 pipeline makes LLM calls for entity extraction during retain/recall
+        # Reflect calls complete() for synthesis, which accumulates tokens.
+        # Retain/recall without graph_store don't call complete().
         assert result.metrics.total_tokens_used > 0
 
 
