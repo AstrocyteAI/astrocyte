@@ -76,5 +76,31 @@
     "config_snapshot": {
       "judge": "keyword"
     }
+  },
+  {
+    "suite": "basic",
+    "provider": "pipeline",
+    "provider_tier": "storage",
+    "timestamp": "2026-04-09T06:16:32.984422+00:00",
+    "metrics": {
+      "recall_precision": 0.11000000000000001,
+      "recall_hit_rate": 1.0,
+      "recall_mrr": 0.9,
+      "recall_ndcg": 0.9261859507142916,
+      "retain_latency_p50_ms": 752.2534679999992,
+      "retain_latency_p95_ms": 1313.074842450001,
+      "recall_latency_p50_ms": 175.31667749999613,
+      "recall_latency_p95_ms": 222.09423289999708,
+      "total_tokens_used": 2077,
+      "total_duration_seconds": 12.301002367999999,
+      "reflect_accuracy": 1.0,
+      "reflect_completeness": null,
+      "reflect_hallucination_rate": null,
+      "reflect_latency_p50_ms": 964.2919659999975,
+      "reflect_latency_p95_ms": 1136.4415665999963
+    },
+    "config_snapshot": {
+      "judge": "keyword"
+    }
   }
 ]
