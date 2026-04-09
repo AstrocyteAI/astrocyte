@@ -61,21 +61,23 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
     if not items or not query:
         return items
 
-    # Split query once, then derive both normalized terms and proper nouns from it.
-    query_words = query.split()
+    # Tokenize query once; filter common question words for overlap scoring
     query_terms = {
-        t for t in (w.strip(punctuation).lower() for w in query_words) if t
+        t for t in _tokenize_terms(query) if t not in COMMON_QUESTION_WORDS
     }
+
+    # Detect proper nouns from all words (check capitalization + name structure).
+    # Also exclude common question words so "Who" isn't treated as a name.
     proper_nouns: set[str] = set()
-    for w in query_words[1:]:  # skip first word (always capitalized)
+    for w in query.split():
         cleaned = w.strip(punctuation)
-        if cleaned and cleaned.istitle() and _is_name_token(cleaned):
+        if (
+            cleaned
+            and cleaned.istitle()
+            and _is_name_token(cleaned)
+            and cleaned.lower() not in COMMON_QUESTION_WORDS
+        ):
             proper_nouns.add(cleaned.lower())
-    # Also include first word if it looks like a name (not a common question word)
-    if query_words:
-        first = query_words[0].strip(punctuation)
-        if first and first.istitle() and _is_name_token(first) and first.lower() not in COMMON_QUESTION_WORDS:
-            proper_nouns.add(first.lower())
 
     reranked: list[ScoredItem] = []
     for item in items:
