@@ -257,7 +257,7 @@ class TestMetadataAndTags:
         assert sorted(items[0].tags) == ["a", "b", "c"]
 
     async def test_occurred_at_roundtrip(self, store: PgVectorStore):
-        ts = datetime(2025, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        ts = datetime(2000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         await store.store_vectors([make_item("v1", vector=[1.0, 0.0, 0.0], occurred_at=ts)])
 
         items = await store.list_vectors("bank-1")

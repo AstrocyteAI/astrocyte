@@ -5,7 +5,8 @@ from __future__ import annotations
 import dataclasses
 import sys
 from datetime import datetime, timezone
-from typing import get_type_hints
+import collections.abc
+from typing import Any, get_args, get_origin, get_type_hints
 
 import pytest
 
@@ -230,6 +231,30 @@ class TestFFISafety:
         "ClassVar",
     }
 
+    @staticmethod
+    def _contains_any(tp: object) -> bool:
+        """Return True if typing.Any appears anywhere in the type annotation."""
+        if tp is Any:
+            return True
+        origin = get_origin(tp)
+        if origin is Any:
+            return True
+        for arg in get_args(tp):
+            if TestFFISafety._contains_any(arg):
+                return True
+        return False
+
+    @staticmethod
+    def _contains_callable(tp: object) -> bool:
+        """Return True if Callable appears anywhere in the type annotation."""
+        origin = get_origin(tp)
+        if origin is collections.abc.Callable:
+            return True
+        for arg in get_args(tp):
+            if TestFFISafety._contains_callable(arg):
+                return True
+        return False
+
     def test_no_any_in_dtos(self):
         """Ensure no DTO field uses typing.Any."""
 
@@ -237,8 +262,9 @@ class TestFFISafety:
             if dataclasses.is_dataclass(obj) and isinstance(obj, type):
                 hints = get_type_hints(obj)
                 for field_name, field_type in hints.items():
-                    type_str = str(field_type)
-                    assert "Any" not in type_str, f"{name}.{field_name} uses Any: {type_str}"
+                    assert not self._contains_any(field_type), (
+                        f"{name}.{field_name} uses Any: {field_type}"
+                    )
 
     def test_no_callable_in_dtos(self):
         """Ensure no DTO field uses Callable."""
@@ -247,5 +273,6 @@ class TestFFISafety:
             if dataclasses.is_dataclass(obj) and isinstance(obj, type):
                 hints = get_type_hints(obj)
                 for field_name, field_type in hints.items():
-                    type_str = str(field_type)
-                    assert "Callable" not in type_str, f"{name}.{field_name} uses Callable: {type_str}"
+                    assert not self._contains_callable(field_type), (
+                        f"{name}.{field_name} uses Callable: {field_type}"
+                    )

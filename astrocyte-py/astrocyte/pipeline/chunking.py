@@ -28,16 +28,16 @@ def chunk_text(
         return []
 
     if strategy == "sentence":
-        return _chunk_sentences(text, max_chunk_size)
+        return _chunk_sentences(text, max_chunk_size, overlap)
     elif strategy == "paragraph":
-        return _chunk_paragraphs(text, max_chunk_size)
+        return _chunk_paragraphs(text, max_chunk_size, overlap)
     elif strategy == "fixed":
         return _chunk_fixed(text, max_chunk_size, overlap)
     else:
         raise ValueError(f"Unknown chunking strategy: {strategy}")
 
 
-def _chunk_sentences(text: str, max_size: int) -> list[str]:
+def _chunk_sentences(text: str, max_size: int, overlap: int) -> list[str]:
     """Split on sentence boundaries, merging short sentences up to max_size."""
     # Split on sentence-ending punctuation followed by whitespace
     sentences = re.split(r"(?<=[.!?])\s+", text.strip())
@@ -54,7 +54,7 @@ def _chunk_sentences(text: str, max_size: int) -> list[str]:
             if current.strip():
                 chunks.append(current.strip())
                 current = ""
-            chunks.extend(_chunk_fixed(sentence, max_size, overlap=50))
+            chunks.extend(_chunk_fixed(sentence, max_size, overlap=overlap))
             continue
 
         if current and len(current) + len(sentence) + 1 > max_size:
@@ -69,7 +69,7 @@ def _chunk_sentences(text: str, max_size: int) -> list[str]:
     return [c for c in chunks if c]
 
 
-def _chunk_paragraphs(text: str, max_size: int) -> list[str]:
+def _chunk_paragraphs(text: str, max_size: int, overlap: int) -> list[str]:
     """Split on double newlines, merging short paragraphs up to max_size."""
     paragraphs = re.split(r"\n\s*\n", text.strip())
     chunks: list[str] = []
@@ -85,7 +85,7 @@ def _chunk_paragraphs(text: str, max_size: int) -> list[str]:
             if current.strip():
                 chunks.append(current.strip())
                 current = ""
-            chunks.extend(_chunk_fixed(para, max_size, overlap=50))
+            chunks.extend(_chunk_fixed(para, max_size, overlap=overlap))
             continue
 
         if current and len(current) + len(para) + 2 > max_size:

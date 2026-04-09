@@ -78,7 +78,8 @@ class VectorStore(Protocol):
         configured embedding dimensions.
 
         Returns:
-            List of stored IDs (same order as ``items``).
+            List of stored IDs (same order as ``items``). If ``items`` is empty,
+            implementations must treat this as a no-op and return an empty list.
 
         Raises:
             ValueError: If any vector's length does not match embedding dimensions.
@@ -96,7 +97,8 @@ class VectorStore(Protocol):
 
         Returns:
             Hits sorted by similarity descending. Each hit's ``score`` must be
-            in the range [0.0, 1.0] where 1.0 is an exact match.
+            in the range [0.0, 1.0] where 1.0 is an exact match. Returns an
+            empty list if ``bank_id`` does not exist.
 
         Raises:
             ValueError: If ``query_vector`` length does not match embedding dimensions.
