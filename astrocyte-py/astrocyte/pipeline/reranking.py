@@ -79,25 +79,20 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
         ):
             proper_nouns.add(cleaned.lower())
 
-    reranked: list[ScoredItem] = []
-    for item in items:
-        item_terms = set(_tokenize_terms(item.text))
-        # General keyword overlap
-        overlap = len(query_terms & item_terms)
-        bonus = overlap * KEYWORD_OVERLAP_WEIGHT
-        # Proper noun / name boost
-        name_matches = len(proper_nouns & item_terms)
-        bonus += name_matches * PROPER_NOUN_WEIGHT
-        reranked.append(
+    return sorted(
+        (
             ScoredItem(
                 id=item.id,
                 text=item.text,
-                score=item.score + bonus,
+                score=item.score
+                + len(query_terms & (item_terms := set(_tokenize_terms(item.text)))) * KEYWORD_OVERLAP_WEIGHT
+                + len(proper_nouns & item_terms) * PROPER_NOUN_WEIGHT,
                 fact_type=item.fact_type,
                 metadata=item.metadata,
                 tags=item.tags,
             )
-        )
-
-    reranked.sort(key=lambda x: x.score, reverse=True)
-    return reranked
+            for item in items
+        ),
+        key=lambda x: x.score,
+        reverse=True,
+    )
