@@ -122,6 +122,7 @@ class LoComoBenchmark:
         total_sessions = sum(len(c.sessions) for c in conversations)
         print(f"  [LoCoMo] Retaining {total_sessions} sessions from {len(conversations)} conversations...")
         retain_count = 0
+        retain_phase_start = time.monotonic()
         for convo in conversations:
             for session in convo.sessions:
                 # Combine all turns in the session into one memory
@@ -151,7 +152,14 @@ class LoComoBenchmark:
                 retain_latencies.append((time.monotonic() - t0) * 1000)
                 retain_count += 1
                 if retain_count % 20 == 0:
-                    print(f"  [LoCoMo] Retained {retain_count}/{total_sessions} sessions...", flush=True)
+                    elapsed_r = time.monotonic() - retain_phase_start
+                    rate = retain_count / elapsed_r
+                    remaining = (total_sessions - retain_count) / rate if rate > 0 else 0
+                    print(
+                        f"  [LoCoMo] Retained {retain_count}/{total_sessions} sessions "
+                        f"({elapsed_r:.0f}s elapsed, ~{remaining:.0f}s remaining)",
+                        flush=True,
+                    )
 
         print(f"  [LoCoMo] Retain complete: {retain_count} sessions stored.")
 
@@ -172,6 +180,7 @@ class LoComoBenchmark:
 
         total_q = len(all_questions)
         print(f"  [LoCoMo] Evaluating {total_q} questions...")
+        eval_phase_start = time.monotonic()
         for qi, q in enumerate(all_questions, 1):
             category_total[q.category] = category_total.get(q.category, 0) + 1
 
@@ -194,9 +203,13 @@ class LoComoBenchmark:
 
             if qi % 10 == 0 or qi == total_q:
                 acc_so_far = correct / qi
+                elapsed_e = time.monotonic() - eval_phase_start
+                rate_e = qi / elapsed_e if elapsed_e > 0 else 0
+                remaining_e = (total_q - qi) / rate_e if rate_e > 0 else 0
                 print(
                     f"  [LoCoMo] Question {qi}/{total_q} — "
-                    f"running accuracy: {acc_so_far:.1%} ({correct}/{qi})",
+                    f"accuracy: {acc_so_far:.1%} ({correct}/{qi}) — "
+                    f"~{remaining_e:.0f}s remaining",
                     flush=True,
                 )
 

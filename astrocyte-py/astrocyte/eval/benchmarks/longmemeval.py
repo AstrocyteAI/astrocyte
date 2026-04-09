@@ -125,9 +125,20 @@ class LongMemEvalBenchmark:
 
         # ── Phase 1: Retain conversation sessions ──
         total_questions = len(questions)
-        print(f"  [LongMemEval] Retaining context from {total_questions} questions...")
+
+        # Pre-count unique sessions so we can show progress as N/total
+        _all_session_keys: set[str] = set()
+        for q in questions:
+            for msg in q.conversation_context:
+                sk = f"{q.question_id}:{msg.get('session_id', '')}"
+                if msg.get("content", "").strip():
+                    _all_session_keys.add(sk)
+        total_sessions = len(_all_session_keys)
+
+        print(f"  [LongMemEval] Retaining {total_sessions} sessions from {total_questions} questions...")
         sessions_retained: set[str] = set()
         retain_count = 0
+        retain_phase_start = time.monotonic()
         for q in questions:
             for msg in q.conversation_context:
                 session_key = f"{q.question_id}:{msg.get('session_id', '')}"
@@ -149,7 +160,14 @@ class LongMemEvalBenchmark:
                 retain_latencies.append((time.monotonic() - t0) * 1000)
                 retain_count += 1
                 if retain_count % 20 == 0:
-                    print(f"  [LongMemEval] Retained {retain_count} sessions...", flush=True)
+                    elapsed_r = time.monotonic() - retain_phase_start
+                    rate = retain_count / elapsed_r
+                    remaining = (total_sessions - retain_count) / rate if rate > 0 else 0
+                    print(
+                        f"  [LongMemEval] Retained {retain_count}/{total_sessions} sessions "
+                        f"({elapsed_r:.0f}s elapsed, ~{remaining:.0f}s remaining)",
+                        flush=True,
+                    )
 
         print(f"  [LongMemEval] Retain complete: {retain_count} sessions stored.")
 
@@ -161,6 +179,7 @@ class LongMemEvalBenchmark:
         query_results: list[QueryResult] = []
 
         print(f"  [LongMemEval] Evaluating {total_questions} questions...")
+        eval_phase_start = time.monotonic()
         for qi, q in enumerate(questions, 1):
             category_total[q.category] = category_total.get(q.category, 0) + 1
 
@@ -183,9 +202,13 @@ class LongMemEvalBenchmark:
 
             if qi % 10 == 0 or qi == total_questions:
                 acc_so_far = correct / qi
+                elapsed_e = time.monotonic() - eval_phase_start
+                rate_e = qi / elapsed_e if elapsed_e > 0 else 0
+                remaining_e = (total_questions - qi) / rate_e if rate_e > 0 else 0
                 print(
                     f"  [LongMemEval] Question {qi}/{total_questions} — "
-                    f"running accuracy: {acc_so_far:.1%} ({correct}/{qi})",
+                    f"accuracy: {acc_so_far:.1%} ({correct}/{qi}) — "
+                    f"~{remaining_e:.0f}s remaining",
                     flush=True,
                 )
 
