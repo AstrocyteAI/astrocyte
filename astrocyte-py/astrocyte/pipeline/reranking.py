@@ -10,6 +10,15 @@ from string import punctuation
 
 from astrocyte.pipeline.fusion import ScoredItem
 
+COMMON_QUESTION_WORDS: set[str] = {
+    "what", "when", "where", "who", "why", "how", "which",
+    "did", "does", "do", "is", "are", "was", "were", "has", "have",
+    "can", "could", "would", "should", "will", "tell", "describe",
+}
+
+KEYWORD_OVERLAP_WEIGHT = 0.05
+PROPER_NOUN_WEIGHT = 0.10
+
 
 def _tokenize_terms(text: str) -> list[str]:
     """Tokenize text consistently for keyword and item matching.
@@ -35,7 +44,7 @@ def _is_name_token(token: str) -> bool:
         return False
     # Interior characters must be letters, apostrophes, or hyphens
     for ch in token:
-        if not (ch.isalpha() or ch in ("'", "'", "-")):
+        if not (ch.isalpha() or ch in ("'", "\u2018", "\u2019", "-")):
             return False
     return True
 
@@ -44,8 +53,8 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
     """Rerank items using keyword overlap and proper-noun boosting.
 
     Adds bonuses to items whose text contains:
-    - General query terms (0.05 per matching term)
-    - Proper nouns / names from the query (0.10 per matching proper noun)
+    - General query terms (KEYWORD_OVERLAP_WEIGHT per matching term)
+    - Proper nouns / names from the query (PROPER_NOUN_WEIGHT per match)
 
     This is a heuristic — production systems should use cross-encoders.
     """
@@ -64,11 +73,7 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
     # Also include first word if it looks like a name (not a common question word)
     if query_words:
         first = query_words[0].strip(punctuation)
-        if first and first.istitle() and _is_name_token(first) and first.lower() not in {
-            "what", "when", "where", "who", "why", "how", "which",
-            "did", "does", "do", "is", "are", "was", "were", "has", "have",
-            "can", "could", "would", "should", "will", "tell", "describe",
-        }:
+        if first and first.istitle() and _is_name_token(first) and first.lower() not in COMMON_QUESTION_WORDS:
             proper_nouns.add(first.lower())
 
     reranked: list[ScoredItem] = []
@@ -76,10 +81,10 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
         item_terms = set(_tokenize_terms(item.text))
         # General keyword overlap
         overlap = len(query_terms & item_terms)
-        bonus = overlap * 0.05
+        bonus = overlap * KEYWORD_OVERLAP_WEIGHT
         # Proper noun / name boost
         name_matches = len(proper_nouns & item_terms)
-        bonus += name_matches * 0.10
+        bonus += name_matches * PROPER_NOUN_WEIGHT
         reranked.append(
             ScoredItem(
                 id=item.id,
