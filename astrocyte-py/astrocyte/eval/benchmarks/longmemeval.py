@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -287,7 +288,7 @@ class LongMemEvalBenchmark:
             try:
                 await self.brain._do_forget(ForgetRequest(bank_id=bank_id, scope="all"))
             except Exception:
-                pass
+                logging.getLogger("astrocyte.eval").debug("Cleanup forget failed for bank %s", bank_id, exc_info=True)
 
         return LongMemEvalResult(
             overall_accuracy=overall_accuracy,

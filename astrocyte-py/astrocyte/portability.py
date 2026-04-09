@@ -270,7 +270,7 @@ async def import_bank(
                 try:
                     occurred_at = datetime.fromisoformat(mem.occurred_at)
                 except ValueError:
-                    pass
+                    logger.debug("Skipping unparseable occurred_at: %s", mem.occurred_at)
 
             request = RetainRequest(
                 content=mem.text,

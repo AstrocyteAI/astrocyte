@@ -9,7 +9,7 @@ import pytest
 from astrocyte.types import VectorFilters
 from astrocyte_pgvector.store import PgVectorStore
 
-from .conftest import DIM, make_item
+from .conftest import make_item
 
 
 # ---------------------------------------------------------------------------

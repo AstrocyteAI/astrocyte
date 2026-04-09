@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime
+
 from typing import Any, ClassVar
 
 import psycopg
