@@ -22,17 +22,19 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
         return items
 
     query_terms = set(query.lower().split())
-    # Proper nouns: capitalized words that aren't sentence starters (rough heuristic)
+    # Proper nouns: capitalized words that aren't sentence starters (rough heuristic).
+    # Strip trailing punctuation so "John," and "Alice." are still detected.
+    _PUNCT = ".,;:!?\"'()[]{}"""
     query_words = query.split()
-    proper_nouns = {
-        w.lower()
-        for w in query_words[1:]  # skip first word (always capitalized)
-        if w and w[0].isupper() and w.isalpha()
-    }
+    proper_nouns: set[str] = set()
+    for w in query_words[1:]:  # skip first word (always capitalized)
+        cleaned = w.rstrip(_PUNCT)
+        if cleaned and cleaned[0].isupper() and cleaned.isalpha():
+            proper_nouns.add(cleaned.lower())
     # Also include first word if it looks like a name (not a common question word)
     if query_words:
-        first = query_words[0]
-        if first and first[0].isupper() and first.lower() not in {
+        first = query_words[0].rstrip(_PUNCT)
+        if first and first[0].isupper() and first.isalpha() and first.lower() not in {
             "what", "when", "where", "who", "why", "how", "which",
             "did", "does", "do", "is", "are", "was", "were", "has", "have",
             "can", "could", "would", "should", "will", "tell", "describe",
