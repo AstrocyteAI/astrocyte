@@ -61,10 +61,11 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
     if not items or not query:
         return items
 
-    query_terms = set(_tokenize_terms(query))
-    # Proper nouns: capitalized words that aren't sentence starters (rough heuristic).
-    # Strip edge punctuation so "John," and "(Alice)." are still detected.
+    # Split query once, then derive both normalized terms and proper nouns from it.
     query_words = query.split()
+    query_terms = {
+        t for t in (w.strip(punctuation).lower() for w in query_words) if t
+    }
     proper_nouns: set[str] = set()
     for w in query_words[1:]:  # skip first word (always capitalized)
         cleaned = w.strip(punctuation)
