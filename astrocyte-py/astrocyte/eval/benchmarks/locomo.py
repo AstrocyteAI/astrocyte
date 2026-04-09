@@ -266,6 +266,15 @@ class LoComoBenchmark:
         )
 
 
+_LOCOMO_CATEGORY_MAP: dict[int, str] = {
+    1: "single-hop",
+    2: "multi-hop",
+    3: "open-domain",
+    4: "temporal",
+    5: "adversarial",
+}
+
+
 def load_locomo_dataset(
     data_path: str | Path,
     max_conversations: int | None = None,
@@ -275,6 +284,11 @@ def load_locomo_dataset(
     Handles both:
     - Single file: locomo10.json (array of conversations)
     - Directory: looks for locomo10.json or *.json inside
+
+    Each entry has:
+    - qa: list of {question, answer, category (int 1-5), evidence}
+    - conversation: {speaker_a, speaker_b, session_1, session_1_date_time, ...}
+    - Session turns: {speaker, dia_id, text}
 
     Returns list of LoCoMoConversation objects.
     """
@@ -303,14 +317,17 @@ def load_locomo_dataset(
 
         convo_id = str(item.get("id", item.get("conversation_id", f"convo-{i}")))
 
-        # Parse sessions
+        # Sessions live inside item["conversation"], not at the top level.
+        convo_data = item.get("conversation", item)
+        session_source = convo_data if isinstance(convo_data, dict) else item
+
+        # Parse sessions from session_1, session_2, etc.
         sessions: list[LoCoMoSession] = []
-        for key, value in item.items():
+        for key, value in session_source.items():
             if key.startswith("session_") and not key.endswith(("_observation", "_date_time", "_summary")):
-                # This is a session with turns
                 session_id = key
                 date_key = f"{key}_date_time"
-                date_time = item.get(date_key)
+                date_time = session_source.get(date_key)
 
                 turns: list[dict[str, str]] = []
                 if isinstance(value, list):
@@ -331,18 +348,23 @@ def load_locomo_dataset(
                     )
                 )
 
-        # Parse QA
+        # Parse QA — category is an integer (1-5) in the real dataset
         questions: list[LoCoMoQuestion] = []
         qa_data = item.get("qa", item.get("questions", []))
         if isinstance(qa_data, list):
             for qa in qa_data:
                 if not isinstance(qa, dict) or "question" not in qa:
                     continue
+                raw_category = qa.get("category", "general")
+                if isinstance(raw_category, int):
+                    category = _LOCOMO_CATEGORY_MAP.get(raw_category, f"category-{raw_category}")
+                else:
+                    category = str(raw_category)
                 questions.append(
                     LoCoMoQuestion(
                         question=qa["question"],
                         answer=str(qa.get("answer", "")),
-                        category=qa.get("category", "general"),
+                        category=category,
                         evidence_ids=qa.get("evidence", []),
                         conversation_id=convo_id,
                     )

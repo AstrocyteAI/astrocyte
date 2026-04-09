@@ -1,11 +1,11 @@
 """LongMemEval benchmark adapter.
 
 LongMemEval (ICLR 2025) tests five long-term memory abilities:
-1. Information extraction
+1. Information extraction (single-session-user, single-session-assistant, single-session-preference)
 2. Multi-session reasoning
 3. Temporal reasoning
 4. Knowledge updates
-5. Abstention
+5. Abstention (question_type ending in "_abs")
 
 Dataset: https://github.com/xiaowu0162/LongMemEval
 Paper: https://arxiv.org/abs/2410.10813
@@ -31,6 +31,24 @@ from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
+
+
+# Map question_type to high-level category for reporting
+_CATEGORY_MAP: dict[str, str] = {
+    "single-session-user": "extraction",
+    "single-session-assistant": "extraction",
+    "single-session-preference": "extraction",
+    "multi-session": "reasoning",
+    "temporal-reasoning": "temporal",
+    "knowledge-update": "update",
+}
+
+
+def _classify_question_type(question_type: str) -> str:
+    """Map a LongMemEval question_type to a high-level category."""
+    if question_type.endswith("_abs"):
+        return "abstention"
+    return _CATEGORY_MAP.get(question_type, question_type)
 
 
 @dataclass
@@ -246,14 +264,19 @@ def load_longmemeval_dataset(
     """Load LongMemEval dataset from JSON files.
 
     Expects the directory structure from https://github.com/xiaowu0162/LongMemEval:
-    - data_path/questions.json (or *.json files with question arrays)
+    - data_path/*.json (e.g., longmemeval_s_cleaned.json)
+
+    Each entry has:
+    - question_id, question_type, question, answer
+    - haystack_sessions: list of session turn lists
+    - haystack_session_ids: list of session ID strings
+    - answer_session_ids: sessions containing the evidence
 
     Returns list of LongMemEvalQuestion objects.
     """
     data_path = Path(data_path)
     questions: list[LongMemEvalQuestion] = []
 
-    # Try loading from a single questions.json or all JSON files
     json_files = list(data_path.glob("*.json"))
     if not json_files:
         raise FileNotFoundError(f"No JSON files found in {data_path}")
@@ -265,20 +288,62 @@ def load_longmemeval_dataset(
         except json.JSONDecodeError as e:
             raise ValueError(f"Malformed JSON in LongMemEval benchmark file {json_file}: {e}") from e
 
-        # Handle both single-object and array formats
         items = data if isinstance(data, list) else [data]
 
         for item in items:
             if not isinstance(item, dict):
                 continue
-            # Map to our question format — adapt field names from LongMemEval
+
+            # Extract question_type and map to category
+            question_type = item.get("question_type", item.get("category", item.get("type", "general")))
+            category = _classify_question_type(str(question_type))
+
+            # Extract question and answer
+            question_text = str(item.get("question", item.get("query", "")))
+            answer_text = str(item.get("answer", item.get("gold_answer", "")))
+
+            # Extract session IDs
+            session_ids = item.get("haystack_session_ids", item.get("answer_session_ids", item.get("session_ids", [])))
+
+            # Build conversation context from haystack_sessions.
+            # haystack_sessions is a list of sessions, each session is a list of turns:
+            #   [[ {"role": "user", "content": "..."}, {"role": "assistant", "content": "..."} ], ...]
+            # We flatten into a list of turn dicts with session_id added.
+            conversation_context: list[dict[str, str]] = []
+            haystack_sessions = item.get("haystack_sessions", [])
+            haystack_session_id_list = item.get("haystack_session_ids", [])
+
+            if isinstance(haystack_sessions, list):
+                for sess_idx, session_turns in enumerate(haystack_sessions):
+                    sess_id = haystack_session_id_list[sess_idx] if sess_idx < len(haystack_session_id_list) else f"session_{sess_idx}"
+                    if isinstance(session_turns, list):
+                        for turn in session_turns:
+                            if isinstance(turn, dict) and turn.get("content"):
+                                conversation_context.append({
+                                    "role": turn.get("role", "user"),
+                                    "content": str(turn["content"]),
+                                    "session_id": str(sess_id),
+                                })
+
+            # Fallback: try older field names if haystack_sessions wasn't found
+            if not conversation_context:
+                raw_context = item.get("conversation", item.get("context", []))
+                if isinstance(raw_context, list):
+                    for turn in raw_context:
+                        if isinstance(turn, dict) and turn.get("content"):
+                            conversation_context.append({
+                                "role": turn.get("role", "user"),
+                                "content": str(turn["content"]),
+                                "session_id": turn.get("session_id", ""),
+                            })
+
             q = LongMemEvalQuestion(
-                question_id=str(item.get("id", item.get("question_id", ""))),
-                category=item.get("category", item.get("type", "general")),
-                question=str(item.get("question", item.get("query", ""))),
-                answer=str(item.get("answer", item.get("gold_answer", ""))),
-                session_ids=item.get("session_ids", []),
-                conversation_context=item.get("conversation", item.get("context", [])),
+                question_id=str(item.get("question_id", item.get("id", ""))),
+                category=category,
+                question=question_text,
+                answer=answer_text,
+                session_ids=[str(s) for s in session_ids] if isinstance(session_ids, list) else [],
+                conversation_context=conversation_context,
             )
             if q.question and q.answer:
                 questions.append(q)
