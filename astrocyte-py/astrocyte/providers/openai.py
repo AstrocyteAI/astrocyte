@@ -110,7 +110,7 @@ class OpenAIProvider:
         # text-embedding-3-small has an 8192-token limit (~30K chars).
         # Truncating at 28K chars provides a safe margin.
         max_chars = 28_000
-        safe_texts = [t[:max_chars] if len(t) > max_chars else t for t in texts]
+        safe_texts = [_sanitize_text(t)[:max_chars] for t in texts]
 
         response = await self._client.embeddings.create(
             model=use_model,
@@ -122,16 +122,22 @@ class OpenAIProvider:
         return [d.embedding for d in sorted_data]
 
 
+def _sanitize_text(text: str) -> str:
+    """Remove control characters that break the OpenAI API's JSON parser."""
+    # Remove null bytes and other C0 control chars except \t \n \r
+    return "".join(ch for ch in text if ch in ("\t", "\n", "\r") or (ord(ch) >= 32))
+
+
 def _to_oai_message(msg: Message) -> dict:
     """Convert an Astrocyte Message to an OpenAI API message dict."""
     if isinstance(msg.content, str):
-        return {"role": msg.role, "content": msg.content}
+        return {"role": msg.role, "content": _sanitize_text(msg.content)}
 
     # Multimodal: list of ContentPart
     parts = []
     for part in msg.content:
         if part.type == "text" and part.text:
-            parts.append({"type": "text", "text": part.text})
+            parts.append({"type": "text", "text": _sanitize_text(part.text)})
         elif part.type == "image_url" and part.image_url:
             parts.append({
                 "type": "image_url",
