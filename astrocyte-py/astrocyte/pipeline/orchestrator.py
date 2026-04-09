@@ -102,7 +102,7 @@ class PipelineOrchestrator:
         chunk_strategy: str = "sentence",
         max_chunk_size: int = 512,
         rrf_k: int = 60,
-        semantic_overfetch: int = 3,
+        semantic_overfetch: int = 5,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -126,19 +126,29 @@ class PipelineOrchestrator:
 
     async def retain(self, request: RetainRequest) -> RetainResult:
         """Retain pipeline: chunk → extract entities → embed → store."""
-        # 1. Chunk
-        chunks = chunk_text(request.content, strategy=self.chunk_strategy, max_chunk_size=self.max_chunk_size)
+        # 1. Chunk — use dialogue strategy for conversational content
+        strategy = self.chunk_strategy
+        if getattr(request, "content_type", None) == "conversation":
+            strategy = "dialogue"
+        chunks = chunk_text(request.content, strategy=strategy, max_chunk_size=self.max_chunk_size)
         if not chunks:
             return RetainResult(stored=False, error="No content after chunking")
 
         # 2. Generate embeddings for all chunks
         embeddings = await generate_embeddings(chunks, self.llm_provider)
 
-        # 2b. Dedup check — skip if any chunk is near-duplicate of existing memory
-        for emb in embeddings:
-            is_dup, sim = self._dedup.is_duplicate(request.bank_id, emb)
-            if is_dup:
-                return RetainResult(stored=False, deduplicated=True, error=f"Near-duplicate (similarity={sim:.3f})")
+        # 2b. Per-chunk dedup — skip individual duplicate chunks, store the rest
+        keep_indices: list[int] = []
+        for i, emb in enumerate(embeddings):
+            is_dup, _sim = self._dedup.is_duplicate(request.bank_id, emb)
+            if not is_dup:
+                keep_indices.append(i)
+
+        if not keep_indices:
+            return RetainResult(stored=False, deduplicated=True, error="All chunks are near-duplicates")
+
+        chunks = [chunks[i] for i in keep_indices]
+        embeddings = [embeddings[i] for i in keep_indices]
 
         # 3. Extract entities (from full content, not per-chunk)
         entities = await extract_entities(request.content, self.llm_provider)
@@ -282,7 +292,7 @@ class PipelineOrchestrator:
         recall_request = RecallRequest(
             query=request.query,
             bank_id=request.bank_id,
-            max_results=20,  # Larger set for synthesis context
+            max_results=30,  # Larger set for synthesis context
             max_tokens=request.max_tokens,
         )
         recall_result = await self.recall(recall_request)

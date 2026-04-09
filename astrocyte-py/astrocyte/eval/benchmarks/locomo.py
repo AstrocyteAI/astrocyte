@@ -138,6 +138,17 @@ class LoComoBenchmark:
                     continue
 
                 session_text = "\n".join(session_text_parts)
+
+                # Parse session date for temporal retrieval
+                occurred_at = None
+                if session.date_time:
+                    for fmt in ("%B %d, %Y", "%Y-%m-%d", "%m/%d/%Y", "%d %B %Y"):
+                        try:
+                            occurred_at = datetime.strptime(session.date_time, fmt).replace(tzinfo=timezone.utc)
+                            break
+                        except ValueError:
+                            continue
+
                 t0 = time.monotonic()
                 await self.brain.retain(
                     session_text,
@@ -149,6 +160,8 @@ class LoComoBenchmark:
                         "session_id": session.session_id,
                         "date_time": session.date_time or "",
                     },
+                    occurred_at=occurred_at,
+                    content_type="conversation",
                 )
                 retain_latencies.append((time.monotonic() - t0) * 1000)
                 retain_count += 1

@@ -19,7 +19,12 @@ def _build_system_prompt(dispositions: Dispositions | None) -> str:
         "You are a memory synthesis agent. "
         "You have been given a set of memories relevant to a query. "
         "Synthesize a clear, concise answer based only on the provided memories. "
-        "If the memories do not contain enough information, say so honestly."
+        "If the memories do not contain enough information, say so honestly.\n\n"
+        "Guidelines:\n"
+        "- When the query asks about a specific person, prioritize memories that explicitly mention that person by name.\n"
+        "- Consider connections between different memories. If one memory mentions a person and another mentions an event involving that person, combine those facts.\n"
+        "- Pay attention to dates and temporal ordering when memories include timestamps.\n"
+        "- If multiple memories provide different details about the same topic, synthesize them into a coherent answer."
     )
     if dispositions:
         traits: list[str] = []
@@ -47,8 +52,11 @@ def _format_memories(hits: list[MemoryHit]) -> str:
         prefix = f"[Memory {i}]"
         if hit.fact_type:
             prefix += f" ({hit.fact_type})"
+        # Prefer occurred_at timestamp; fall back to date_time from metadata
         if hit.occurred_at:
             prefix += f" [{hit.occurred_at.isoformat()}]"
+        elif hit.metadata and hit.metadata.get("date_time"):
+            prefix += f" [{hit.metadata['date_time']}]"
         lines.append(f"{prefix}: {hit.text}")
     return "\n".join(lines)
 
