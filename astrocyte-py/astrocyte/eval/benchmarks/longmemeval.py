@@ -275,8 +275,8 @@ def load_longmemeval_dataset(
             q = LongMemEvalQuestion(
                 question_id=str(item.get("id", item.get("question_id", ""))),
                 category=item.get("category", item.get("type", "general")),
-                question=item.get("question", item.get("query", "")),
-                answer=item.get("answer", item.get("gold_answer", "")),
+                question=str(item.get("question", item.get("query", ""))),
+                answer=str(item.get("answer", item.get("gold_answer", ""))),
                 session_ids=item.get("session_ids", []),
                 conversation_context=item.get("conversation", item.get("context", [])),
             )

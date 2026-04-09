@@ -72,6 +72,6 @@ def text_overlap_score(expected_keywords: list[str], actual_text: str) -> float:
     """
     if not expected_keywords:
         return 1.0  # No expectations = pass
-    actual_lower = actual_text.lower()
-    found = sum(1 for kw in expected_keywords if kw.lower() in actual_lower)
+    actual_lower = str(actual_text).lower()
+    found = sum(1 for kw in expected_keywords if str(kw).lower() in actual_lower)
     return found / len(expected_keywords)

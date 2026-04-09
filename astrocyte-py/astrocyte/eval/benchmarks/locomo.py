@@ -341,7 +341,7 @@ def load_locomo_dataset(
                 questions.append(
                     LoCoMoQuestion(
                         question=qa["question"],
-                        answer=qa.get("answer", ""),
+                        answer=str(qa.get("answer", "")),
                         category=qa.get("category", "general"),
                         evidence_ids=qa.get("evidence", []),
                         conversation_id=convo_id,
