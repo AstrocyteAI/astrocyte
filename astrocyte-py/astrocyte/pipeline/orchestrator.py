@@ -6,7 +6,7 @@ Async (coordinates I/O stages). See docs/_design/built-in-pipeline.md.
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from astrocyte.pipeline.chunking import chunk_text
 from astrocyte.pipeline.embedding import generate_embeddings
@@ -77,7 +77,7 @@ class _TrackingLLMProvider:
     ) -> list[list[float]]:
         return await self._inner.embed(texts, model=model)
 
-    def capabilities(self):  # noqa: ANN201
+    def capabilities(self) -> Any:
         return self._inner.capabilities()
 
     def reset_tokens(self) -> int:

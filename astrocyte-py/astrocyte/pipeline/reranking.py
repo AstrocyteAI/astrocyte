@@ -32,7 +32,7 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
     # Also include first word if it looks like a name (not a common question word)
     if query_words:
         first = query_words[0]
-        if first[0].isupper() and first.lower() not in {
+        if first and first[0].isupper() and first.lower() not in {
             "what", "when", "where", "who", "why", "how", "which",
             "did", "does", "do", "is", "are", "was", "were", "has", "have",
             "can", "could", "would", "should", "will", "tell", "describe",

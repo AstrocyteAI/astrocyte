@@ -30,6 +30,11 @@ from typing import TYPE_CHECKING, Any
 from astrocyte.eval.metrics import text_overlap_score
 from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 
+# Minimum text overlap score to consider an answer correct.
+# Tuned empirically: 0.3 balances recall (catching paraphrases) against
+# precision (rejecting unrelated text). See eval/metrics.py for scoring details.
+ANSWER_OVERLAP_THRESHOLD = 0.3
+
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
@@ -142,12 +147,24 @@ class LoComoBenchmark:
                 # Parse session date for temporal retrieval
                 occurred_at = None
                 if session.date_time:
-                    for fmt in ("%B %d, %Y", "%Y-%m-%d", "%m/%d/%Y", "%d %B %Y"):
+                    date_formats = ("%B %d, %Y", "%Y-%m-%d", "%m/%d/%Y", "%d %B %Y")
+                    parsed = False
+                    for fmt in date_formats:
                         try:
                             occurred_at = datetime.strptime(session.date_time, fmt).replace(tzinfo=timezone.utc)
+                            parsed = True
                             break
                         except ValueError:
                             continue
+                    if not parsed:
+                        logging.getLogger("astrocyte.eval").debug(
+                            "LoCoMo: failed to parse session date_time '%s' for "
+                            "conversation_id=%s session_id=%s; supported formats=%s",
+                            session.date_time,
+                            convo.conversation_id,
+                            session.session_id,
+                            date_formats,
+                        )
 
                 t0 = time.monotonic()
                 await self.brain.retain(
@@ -204,11 +221,11 @@ class LoComoBenchmark:
             recall_latencies.append(elapsed)
 
             # Check if answer appears in recall hits
-            answer_in_recall = any(text_overlap_score([q.answer], h.text) > 0.3 for h in result.hits)
+            answer_in_recall = any(text_overlap_score([q.answer], h.text) > ANSWER_OVERLAP_THRESHOLD for h in result.hits)
 
             # Also try reflect
             reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
-            answer_in_reflect = text_overlap_score([q.answer], reflect_result.answer) > 0.3
+            answer_in_reflect = text_overlap_score([q.answer], reflect_result.answer) > ANSWER_OVERLAP_THRESHOLD
 
             is_correct = answer_in_recall or answer_in_reflect
             if is_correct:
@@ -241,7 +258,7 @@ class LoComoBenchmark:
             # Build QueryResult for standard metrics
             relevant_ids: set[str] = set()
             for h in result.hits:
-                if h.memory_id and text_overlap_score([q.answer], h.text) > 0.3:
+                if h.memory_id and text_overlap_score([q.answer], h.text) > ANSWER_OVERLAP_THRESHOLD:
                     relevant_ids.add(h.memory_id)
             retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
 
