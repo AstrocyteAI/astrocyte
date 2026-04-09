@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+import sys
 from datetime import datetime, timezone
 from typing import get_type_hints
 
 import pytest
 
-import astrocyte.types as types_module
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
@@ -233,7 +233,7 @@ class TestFFISafety:
     def test_no_any_in_dtos(self):
         """Ensure no DTO field uses typing.Any."""
 
-        for name, obj in vars(types_module).items():
+        for name, obj in vars(sys.modules["astrocyte.types"]).items():
             if dataclasses.is_dataclass(obj) and isinstance(obj, type):
                 hints = get_type_hints(obj)
                 for field_name, field_type in hints.items():
@@ -243,7 +243,7 @@ class TestFFISafety:
     def test_no_callable_in_dtos(self):
         """Ensure no DTO field uses Callable."""
 
-        for name, obj in vars(types_module).items():
+        for name, obj in vars(sys.modules["astrocyte.types"]).items():
             if dataclasses.is_dataclass(obj) and isinstance(obj, type):
                 hints = get_type_hints(obj)
                 for field_name, field_type in hints.items():
