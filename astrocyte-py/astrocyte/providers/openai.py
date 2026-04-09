@@ -22,7 +22,6 @@ from typing import ClassVar
 
 from astrocyte.types import (
     Completion,
-    ContentPart,
     LLMCapabilities,
     Message,
     TokenUsage,

@@ -8,6 +8,7 @@ from typing import get_type_hints
 
 import pytest
 
+import astrocyte.types as types_module
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
@@ -231,7 +232,6 @@ class TestFFISafety:
 
     def test_no_any_in_dtos(self):
         """Ensure no DTO field uses typing.Any."""
-        import astrocyte.types as types_module
 
         for name, obj in vars(types_module).items():
             if dataclasses.is_dataclass(obj) and isinstance(obj, type):
@@ -242,7 +242,6 @@ class TestFFISafety:
 
     def test_no_callable_in_dtos(self):
         """Ensure no DTO field uses Callable."""
-        import astrocyte.types as types_module
 
         for name, obj in vars(types_module).items():
             if dataclasses.is_dataclass(obj) and isinstance(obj, type):
