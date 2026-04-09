@@ -8,34 +8,36 @@ on:
         required: false
         type: string
       benchmarks:
-        description: "Which benchmarks to run"
+        description: "Which benchmarks to run (comma-separated: builtin,longmemeval,locomo)"
         required: false
-        default: "builtin longmemeval locomo"
+        default: "builtin,longmemeval,locomo"
         type: string
   schedule:
     # Weekly Monday 6am UTC
     - cron: "0 6 * * 1"
 
 jobs:
-  benchmarks:
-    name: Run memory benchmarks
+  matrix-setup:
+    name: Configure benchmark matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          INPUT="${{ inputs.benchmarks || 'builtin,longmemeval,locomo' }}"
+          # Convert comma-separated string to JSON array
+          JSON=$(echo "$INPUT" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -sc .)
+          echo "matrix={\"benchmark\":$JSON}" >> "$GITHUB_OUTPUT"
 
-    # Uncomment to add pgvector for production-grade benchmarking:
-    # services:
-    #   postgres:
-    #     image: pgvector/pgvector:pg16
-    #     env:
-    #       POSTGRES_DB: astrocyte_bench
-    #       POSTGRES_USER: astrocyte
-    #       POSTGRES_PASSWORD: bench
-    #     ports: ["5432:5432"]
-    #     options: >-
-    #       --health-cmd pg_isready
-    #       --health-interval 10s
-    #       --health-timeout 5s
-    #       --health-retries 5
+  benchmark:
+    name: "Run: ${{ matrix.benchmark }}"
+    needs: matrix-setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix-setup.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v6
@@ -48,42 +50,41 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Download benchmark datasets
+      - name: Download LongMemEval dataset
+        if: matrix.benchmark == 'longmemeval'
         run: |
-          # LongMemEval: data must be fetched from HuggingFace after cloning
           git clone --depth 1 https://github.com/xiaowu0162/LongMemEval.git
           cd LongMemEval && mkdir -p data
           wget -q -P data/ https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json
-          cd ..
 
-          # LoCoMo: data is in the repo directly
+      - name: Download LoCoMo dataset
+        if: matrix.benchmark == 'locomo'
+        run: |
           git clone --depth 1 https://github.com/snap-research/locomo.git
 
       - name: Install dependencies
         working-directory: astrocyte-py
         run: uv sync --extra dev
 
-      - name: Run benchmarks
+      - name: Run ${{ matrix.benchmark }} benchmark
         working-directory: astrocyte-py
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # DATABASE_URL: postgresql://astrocyte:bench@localhost:5432/astrocyte_bench
         run: |
           ARGS="--config benchmarks/config.yaml"
           ARGS="$ARGS --output-dir benchmark-results"
+          ARGS="$ARGS --benchmarks ${{ matrix.benchmark }}"
 
-          # Dataset paths
-          ARGS="$ARGS --longmemeval-path ../LongMemEval/data"
-          ARGS="$ARGS --locomo-path ../locomo/data"
-
-          # Optional: limit questions
-          if [ -n "${{ inputs.max_questions }}" ]; then
-            ARGS="$ARGS --max-questions ${{ inputs.max_questions }}"
+          if [ "${{ matrix.benchmark }}" = "longmemeval" ]; then
+            ARGS="$ARGS --longmemeval-path ../LongMemEval/data"
           fi
 
-          # Optional: select benchmarks
-          if [ -n "${{ inputs.benchmarks }}" ]; then
-            ARGS="$ARGS --benchmarks ${{ inputs.benchmarks }}"
+          if [ "${{ matrix.benchmark }}" = "locomo" ]; then
+            ARGS="$ARGS --locomo-path ../locomo/data"
+          fi
+
+          if [ -n "${{ inputs.max_questions }}" ]; then
+            ARGS="$ARGS --max-questions ${{ inputs.max_questions }}"
           fi
 
           uv run python scripts/run_benchmarks.py $ARGS
@@ -92,36 +93,70 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-results
+          name: benchmark-results-${{ matrix.benchmark }}
           path: astrocyte-py/benchmark-results/
 
-      - name: Post results summary
-        if: always()
-        working-directory: astrocyte-py
+  summarize:
+    name: Aggregate results
+    needs: benchmark
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all result artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: benchmark-results-*
+          path: all-results
+          merge-multiple: true
+
+      - name: Merge and summarize
         run: |
-          if [ -f benchmark-results/latest.json ]; then
-            echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
-            echo '```json' >> $GITHUB_STEP_SUMMARY
-            python3 -c "
-          import json
-          with open('benchmark-results/latest.json') as f:
-              data = json.load(f)
-          # Print summary without per-question details
-          summary = {}
-          for key, val in data.items():
-              if key == '_meta':
-                  summary[key] = val
-              elif isinstance(val, dict) and 'overall_accuracy' in val:
-                  summary[key] = {
-                      'overall_accuracy': val['overall_accuracy'],
-                      'correct': val.get('correct'),
-                      'total_questions': val.get('total_questions'),
-                      'category_accuracy': val.get('category_accuracy'),
-                      'metrics': val.get('metrics'),
-                  }
-              elif isinstance(val, dict):
-                  summary[key] = val
-          print(json.dumps(summary, indent=2, default=str))
-          " >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+
+          # Merge all latest.json files into one combined result
+          python3 -c "
+          import json, glob, os
+
+          combined = {}
+          for f in sorted(glob.glob('all-results/*.json')):
+              if os.path.basename(f) == 'latest.json':
+                  continue
+              with open(f) as fh:
+                  data = json.load(fh)
+              for key, val in data.items():
+                  if key != '_meta':
+                      combined[key] = val
+                  elif '_meta' not in combined:
+                      combined['_meta'] = val
+
+          if not combined:
+              print('No results found.')
+          else:
+              # Print summary without per-question details
+              summary = {}
+              for key, val in combined.items():
+                  if key == '_meta':
+                      summary[key] = val
+                  elif isinstance(val, dict) and 'overall_accuracy' in val:
+                      summary[key] = {
+                          'overall_accuracy': val['overall_accuracy'],
+                          'correct': val.get('correct'),
+                          'total_questions': val.get('total_questions'),
+                          'category_accuracy': val.get('category_accuracy'),
+                          'metrics': val.get('metrics'),
+                      }
+                  elif isinstance(val, dict):
+                      summary[key] = val
+              print(json.dumps(summary, indent=2, default=str))
+          " > summary.json
+
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat summary.json >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload combined results
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results-combined
+          path: all-results/
