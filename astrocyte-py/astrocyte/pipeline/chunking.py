@@ -49,6 +49,14 @@ def _chunk_sentences(text: str, max_size: int) -> list[str]:
         if not sentence:
             continue
 
+        # If a single sentence exceeds max_size, split it with fixed-size chunking
+        if len(sentence) > max_size:
+            if current.strip():
+                chunks.append(current.strip())
+                current = ""
+            chunks.extend(_chunk_fixed(sentence, max_size, overlap=50))
+            continue
+
         if current and len(current) + len(sentence) + 1 > max_size:
             chunks.append(current.strip())
             current = sentence
@@ -70,6 +78,14 @@ def _chunk_paragraphs(text: str, max_size: int) -> list[str]:
     for para in paragraphs:
         para = para.strip()
         if not para:
+            continue
+
+        # If a single paragraph exceeds max_size, split it with fixed-size chunking
+        if len(para) > max_size:
+            if current.strip():
+                chunks.append(current.strip())
+                current = ""
+            chunks.extend(_chunk_fixed(para, max_size, overlap=50))
             continue
 
         if current and len(current) + len(para) + 2 > max_size:

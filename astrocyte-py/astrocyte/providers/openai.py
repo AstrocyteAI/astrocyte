@@ -106,9 +106,15 @@ class OpenAIProvider:
     ) -> list[list[float]]:
         use_model = model or self._embedding_model
 
+        # Truncate texts that would exceed the model's token limit.
+        # text-embedding-3-small has an 8192-token limit (~30K chars).
+        # Truncating at 28K chars provides a safe margin.
+        max_chars = 28_000
+        safe_texts = [t[:max_chars] if len(t) > max_chars else t for t in texts]
+
         response = await self._client.embeddings.create(
             model=use_model,
-            input=texts,
+            input=safe_texts,
         )
 
         # Sort by index to guarantee order matches input
