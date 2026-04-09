@@ -55,7 +55,11 @@ class OpenAIProvider:
                 "OpenAI API key is required. Pass api_key= or set OPENAI_API_KEY."
             )
 
-        self._client = openai.AsyncOpenAI(api_key=resolved_key, base_url=base_url)
+        self._client = openai.AsyncOpenAI(
+            api_key=resolved_key,
+            base_url=base_url,
+            max_retries=3,  # Retry on 429 / 5xx with exponential backoff
+        )
         self._model = model
         self._embedding_model = embedding_model
 
