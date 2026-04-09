@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       max_questions:
-        description: "Max questions per benchmark (leave empty for full run)"
+        description: "Max questions per benchmark (default: 200, 0 for full run)"
         required: false
+        default: "200"
         type: string
       benchmarks:
         description: "Which benchmarks to run (comma-separated: builtin,longmemeval,locomo)"
@@ -34,7 +35,7 @@ jobs:
     name: "Run: ${{ matrix.benchmark }}"
     needs: matrix-setup
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix-setup.outputs.matrix) }}
@@ -83,8 +84,10 @@ jobs:
             ARGS="$ARGS --locomo-path ../locomo/data"
           fi
 
-          if [ -n "${{ inputs.max_questions }}" ]; then
-            ARGS="$ARGS --max-questions ${{ inputs.max_questions }}"
+          # Default 200 questions for CI; pass 0 for a full run
+          MAX_Q="${{ inputs.max_questions || '200' }}"
+          if [ "$MAX_Q" != "0" ]; then
+            ARGS="$ARGS --max-questions $MAX_Q"
           fi
 
           uv run python scripts/run_benchmarks.py $ARGS
