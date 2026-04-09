@@ -124,7 +124,10 @@ class LongMemEvalBenchmark:
             self.brain._pipeline.reset_token_counter()
 
         # ── Phase 1: Retain conversation sessions ──
+        total_questions = len(questions)
+        print(f"  [LongMemEval] Retaining context from {total_questions} questions...")
         sessions_retained: set[str] = set()
+        retain_count = 0
         for q in questions:
             for msg in q.conversation_context:
                 session_key = f"{q.question_id}:{msg.get('session_id', '')}"
@@ -144,6 +147,11 @@ class LongMemEvalBenchmark:
                     metadata={"session_id": msg.get("session_id", ""), "source": "longmemeval"},
                 )
                 retain_latencies.append((time.monotonic() - t0) * 1000)
+                retain_count += 1
+                if retain_count % 20 == 0:
+                    print(f"  [LongMemEval] Retained {retain_count} sessions...", flush=True)
+
+        print(f"  [LongMemEval] Retain complete: {retain_count} sessions stored.")
 
         # ── Phase 2: Evaluate questions ──
         correct = 0
@@ -152,7 +160,8 @@ class LongMemEvalBenchmark:
         per_question: list[dict[str, Any]] = []
         query_results: list[QueryResult] = []
 
-        for q in questions:
+        print(f"  [LongMemEval] Evaluating {total_questions} questions...")
+        for qi, q in enumerate(questions, 1):
             category_total[q.category] = category_total.get(q.category, 0) + 1
 
             t0 = time.monotonic()
@@ -171,6 +180,14 @@ class LongMemEvalBenchmark:
             if is_correct:
                 correct += 1
                 category_correct[q.category] = category_correct.get(q.category, 0) + 1
+
+            if qi % 10 == 0 or qi == total_questions:
+                acc_so_far = correct / qi
+                print(
+                    f"  [LongMemEval] Question {qi}/{total_questions} — "
+                    f"running accuracy: {acc_so_far:.1%} ({correct}/{qi})",
+                    flush=True,
+                )
 
             per_question.append(
                 {

@@ -119,6 +119,9 @@ class LoComoBenchmark:
             self.brain._pipeline.reset_token_counter()
 
         # ── Phase 1: Retain all conversation sessions ──
+        total_sessions = sum(len(c.sessions) for c in conversations)
+        print(f"  [LoCoMo] Retaining {total_sessions} sessions from {len(conversations)} conversations...")
+        retain_count = 0
         for convo in conversations:
             for session in convo.sessions:
                 # Combine all turns in the session into one memory
@@ -146,6 +149,11 @@ class LoComoBenchmark:
                     },
                 )
                 retain_latencies.append((time.monotonic() - t0) * 1000)
+                retain_count += 1
+                if retain_count % 20 == 0:
+                    print(f"  [LoCoMo] Retained {retain_count}/{total_sessions} sessions...", flush=True)
+
+        print(f"  [LoCoMo] Retain complete: {retain_count} sessions stored.")
 
         # ── Phase 2: Collect all questions ──
         all_questions: list[LoCoMoQuestion] = []
@@ -162,7 +170,9 @@ class LoComoBenchmark:
         per_question: list[dict[str, Any]] = []
         query_results: list[QueryResult] = []
 
-        for q in all_questions:
+        total_q = len(all_questions)
+        print(f"  [LoCoMo] Evaluating {total_q} questions...")
+        for qi, q in enumerate(all_questions, 1):
             category_total[q.category] = category_total.get(q.category, 0) + 1
 
             t0 = time.monotonic()
@@ -181,6 +191,14 @@ class LoComoBenchmark:
             if is_correct:
                 correct += 1
                 category_correct[q.category] = category_correct.get(q.category, 0) + 1
+
+            if qi % 10 == 0 or qi == total_q:
+                acc_so_far = correct / qi
+                print(
+                    f"  [LoCoMo] Question {qi}/{total_q} — "
+                    f"running accuracy: {acc_so_far:.1%} ({correct}/{qi})",
+                    flush=True,
+                )
 
             per_question.append(
                 {
