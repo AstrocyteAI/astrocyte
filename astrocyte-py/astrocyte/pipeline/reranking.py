@@ -19,6 +19,10 @@ COMMON_QUESTION_WORDS: set[str] = {
 KEYWORD_OVERLAP_WEIGHT = 0.05
 PROPER_NOUN_WEIGHT = 0.10
 
+# Characters allowed inside proper names (apostrophes and hyphens).
+# Straight apostrophe, left/right single quotation marks, and hyphen.
+NAME_CONNECTOR_CHARS = ("'", "\u2018", "\u2019", "-")
+
 
 def _tokenize_terms(text: str) -> list[str]:
     """Tokenize text consistently for keyword and item matching.
@@ -44,7 +48,7 @@ def _is_name_token(token: str) -> bool:
         return False
     # Interior characters must be letters, apostrophes, or hyphens
     for ch in token:
-        if not (ch.isalpha() or ch in ("'", "\u2018", "\u2019", "-")):
+        if not (ch.isalpha() or ch in NAME_CONNECTOR_CHARS):
             return False
     return True
 
@@ -79,19 +83,22 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
         ):
             proper_nouns.add(cleaned.lower())
 
+    # Pre-compute tokenized terms for all items to avoid repeated work.
+    item_terms_by_item = [(item, set(_tokenize_terms(item.text))) for item in items]
+
     return sorted(
         (
             ScoredItem(
                 id=item.id,
                 text=item.text,
                 score=item.score
-                + len(query_terms & (item_terms := set(_tokenize_terms(item.text)))) * KEYWORD_OVERLAP_WEIGHT
+                + len(query_terms & item_terms) * KEYWORD_OVERLAP_WEIGHT
                 + len(proper_nouns & item_terms) * PROPER_NOUN_WEIGHT,
                 fact_type=item.fact_type,
                 metadata=item.metadata,
                 tags=item.tags,
             )
-            for item in items
+            for item, item_terms in item_terms_by_item
         ),
         key=lambda x: x.score,
         reverse=True,
