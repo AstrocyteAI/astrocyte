@@ -310,10 +310,19 @@ def _format_managed_session_error(event: Any) -> str:
         return err
     model_dump = getattr(err, "model_dump", None)
     if callable(model_dump):
+        payload = None
         try:
-            return json.dumps(model_dump(), default=str)
+            payload = model_dump(mode="json")
         except Exception:
-            pass
+            try:
+                payload = model_dump()
+            except Exception:
+                pass
+        if payload is not None:
+            try:
+                return json.dumps(payload, default=str)
+            except Exception:
+                pass
     parts: list[str] = []
     for key in ("type", "message", "code", "detail"):
         val = getattr(err, key, None)
