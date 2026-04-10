@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import collections.abc
 import dataclasses
 import sys
 from datetime import datetime, timezone
-import collections.abc
 from typing import Any, get_args, get_origin, get_type_hints
 
 import pytest

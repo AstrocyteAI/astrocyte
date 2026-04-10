@@ -13,7 +13,6 @@ from datetime import date, datetime, timezone
 
 from astrocyte.types import BankHealth, HealthIssue, QualityDataPoint
 
-
 # ---------------------------------------------------------------------------
 # Per-bank operation counters (in-memory, reset on restart)
 # ---------------------------------------------------------------------------

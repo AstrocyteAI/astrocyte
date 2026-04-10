@@ -192,7 +192,7 @@ def astrocyte_claude_agent_server(
     For session-scoped memory with Managed Agents, see
     :mod:`astrocyte.integrations.managed_agents`.
     """
-    from claude_agent_sdk import create_sdk_mcp_server, tool, ToolAnnotations
+    from claude_agent_sdk import ToolAnnotations, create_sdk_mcp_server, tool
 
     sdk_tools = []
 

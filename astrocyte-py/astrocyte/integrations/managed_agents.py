@@ -229,7 +229,7 @@ def create_coordinator_server(
 
     Requires ``claude_agent_sdk`` to be installed.
     """
-    from claude_agent_sdk import tool, create_sdk_mcp_server
+    from claude_agent_sdk import create_sdk_mcp_server, tool
 
     coord_bank = coordinator_bank_id(session_id)
 
@@ -290,7 +290,7 @@ def create_subagent_memory_server(
 
     Requires ``claude_agent_sdk`` to be installed.
     """
-    from claude_agent_sdk import tool, create_sdk_mcp_server
+    from claude_agent_sdk import create_sdk_mcp_server, tool
 
     own_bank = agent_bank_id(session_id, role)
     coord_bank = coordinator_bank_id(session_id)

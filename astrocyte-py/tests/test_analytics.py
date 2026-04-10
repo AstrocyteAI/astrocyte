@@ -9,7 +9,6 @@ import pytest
 
 from astrocyte.analytics import BankMetricsCollector, compute_bank_health, counters_to_quality_point
 
-
 # ---------------------------------------------------------------------------
 # BankMetricsCollector
 # ---------------------------------------------------------------------------
@@ -169,8 +168,7 @@ class TestAstrocyteAnalyticsIntegration:
         from astrocyte._astrocyte import Astrocyte
         from astrocyte.config import AstrocyteConfig
         from astrocyte.pipeline.orchestrator import PipelineOrchestrator
-        from astrocyte.testing.in_memory import InMemoryVectorStore
-        from astrocyte.testing.in_memory import MockLLMProvider
+        from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
 
         config = AstrocyteConfig()
         config.provider_tier = "storage"

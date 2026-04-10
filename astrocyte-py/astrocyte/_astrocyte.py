@@ -33,6 +33,7 @@ from astrocyte.policy.observability import MetricsCollector, StructuredLogger, s
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
+    BankHealth,
     EngineCapabilities,
     ForgetRequest,
     ForgetResult,
@@ -42,6 +43,7 @@ from astrocyte.types import (
     LifecycleRunResult,
     MemoryHit,
     MultiBankStrategy,
+    QualityDataPoint,
     RecallRequest,
     RecallResult,
     ReflectRequest,

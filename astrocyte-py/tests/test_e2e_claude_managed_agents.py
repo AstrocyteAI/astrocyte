@@ -31,14 +31,14 @@ _skip = pytest.mark.skipif(
     reason=_skip_reason_sdk if not _has_sdk else _skip_reason_key,
 )
 
-from astrocyte import Astrocyte
-from astrocyte.config import AstrocyteConfig
-from astrocyte.integrations.claude_managed_agents import (
+from astrocyte import Astrocyte  # noqa: E402
+from astrocyte.config import AstrocyteConfig  # noqa: E402
+from astrocyte.integrations.claude_managed_agents import (  # noqa: E402
     delete_managed_session,
     memory_tool_definitions,
     run_session_with_memory,
 )
-from astrocyte.testing.in_memory import InMemoryEngineProvider
+from astrocyte.testing.in_memory import InMemoryEngineProvider  # noqa: E402
 
 
 def _make_brain() -> Astrocyte:

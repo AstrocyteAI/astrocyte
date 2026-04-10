@@ -38,9 +38,9 @@ _skip = pytest.mark.skipif(
     reason=_skip_reason_sdk if not _has_sdk else _skip_reason_key,
 )
 
-from astrocyte import Astrocyte
-from astrocyte.config import AstrocyteConfig
-from astrocyte.testing.in_memory import InMemoryEngineProvider
+from astrocyte import Astrocyte  # noqa: E402
+from astrocyte.config import AstrocyteConfig  # noqa: E402
+from astrocyte.testing.in_memory import InMemoryEngineProvider  # noqa: E402
 
 
 def _make_brain() -> Astrocyte:
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     try:
-        import claude_agent_sdk
+        import claude_agent_sdk  # noqa: F401
     except ImportError:
         print("claude-agent-sdk not installed, skipping e2e tests")
         sys.exit(0)
