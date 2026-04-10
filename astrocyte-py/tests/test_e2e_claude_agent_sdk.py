@@ -70,8 +70,9 @@ def _resolve_cli_path() -> str | None:
 def _make_options(server):
     """Create ClaudeAgentOptions for CI.
 
-    Uses acceptEdits permission mode and captures stderr for debugging.
-    The allowed_tools list auto-approves memory tool calls.
+    SDK MCP servers require ``ClaudeSDKClient``, not ``query()`` with a string
+    prompt: ``query()`` closes stdin after the first result (see upstream
+    ``e2e-tests/test_sdk_mcp_tools.py``), which breaks the control channel.
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -94,28 +95,13 @@ def _make_options(server):
     )
 
 
-@_skip
-async def test_single_agent_memory() -> None:
-    """Agent stores a fact via memory_retain, then recalls it."""
-    from claude_agent_sdk import ResultMessage, query
+async def _run_turn(client, prompt: str) -> str:
+    """Send one user turn and return the final result text (success subtype)."""
+    from claude_agent_sdk import ResultMessage
 
-    from astrocyte.integrations.claude_agent_sdk import astrocyte_claude_agent_server
-
-    brain = _make_brain()
-    server = astrocyte_claude_agent_server(brain, bank_id="e2e-test")
-    options = _make_options(server)
-
-    # Turn 1: store a fact
+    await client.query(prompt)
     result_text = ""
-    async for message in query(
-        prompt=(
-            "Use the memory_retain tool to store this exact fact: "
-            "'Astrocyte is an open-source memory framework for AI agents.' "
-            "Then confirm you stored it."
-        ),
-        options=options,
-    ):
-        # Log all messages for debugging
+    async for message in client.receive_response():
         msg_type = getattr(message, "type", "?")
         msg_sub = getattr(message, "subtype", "?")
         print(f"  [msg] type={msg_type} subtype={msg_sub}")
@@ -123,33 +109,50 @@ async def test_single_agent_memory() -> None:
             result_text = message.result or ""
             if message.subtype != "success":
                 print(f"  [error] {message.subtype}: {result_text[:500]}")
+    return result_text
 
-    assert result_text, "Agent should have produced a result"
-    print(f"[Turn 1 — Retain] {result_text[:200]}")
 
-    # Turn 2: recall the fact
-    result_text = ""
-    async for message in query(
-        prompt=(
-            "Use the memory_recall tool to search for 'Astrocyte'. "
-            "Tell me what you found."
-        ),
-        options=_make_options(server),
-    ):
-        if isinstance(message, ResultMessage) and message.subtype == "success":
-            result_text = message.result
+@_skip
+async def test_single_agent_memory() -> None:
+    """Agent stores a fact via memory_retain, then recalls it."""
+    from claude_agent_sdk import ClaudeSDKClient
 
-    assert result_text, "Agent should have produced a result"
-    assert "astrocyte" in result_text.lower() or "memory" in result_text.lower(), (
-        f"Recall result should mention Astrocyte or memory, got: {result_text[:200]}"
-    )
-    print(f"[Turn 2 — Recall] {result_text[:200]}")
+    from astrocyte.integrations.claude_agent_sdk import astrocyte_claude_agent_server
+
+    brain = _make_brain()
+    server = astrocyte_claude_agent_server(brain, bank_id="e2e-test")
+    options = _make_options(server)
+
+    async with ClaudeSDKClient(options=options) as client:
+        result_text = await _run_turn(
+            client,
+            (
+                "Use the memory_retain tool to store this exact fact: "
+                "'Astrocyte is an open-source memory framework for AI agents.' "
+                "Then confirm you stored it."
+            ),
+        )
+        assert result_text, "Agent should have produced a result"
+        print(f"[Turn 1 — Retain] {result_text[:200]}")
+
+        result_text = await _run_turn(
+            client,
+            (
+                "Use the memory_recall tool to search for 'Astrocyte'. "
+                "Tell me what you found."
+            ),
+        )
+        assert result_text, "Agent should have produced a result"
+        assert "astrocyte" in result_text.lower() or "memory" in result_text.lower(), (
+            f"Recall result should mention Astrocyte or memory, got: {result_text[:200]}"
+        )
+        print(f"[Turn 2 — Recall] {result_text[:200]}")
 
 
 @_skip
 async def test_managed_agents_session_memory() -> None:
     """Session-scoped memory server creates isolated banks."""
-    from claude_agent_sdk import ResultMessage, query
+    from claude_agent_sdk import ClaudeSDKClient
 
     from astrocyte.integrations.managed_agents import create_memory_server
 
@@ -157,17 +160,15 @@ async def test_managed_agents_session_memory() -> None:
     server = create_memory_server(brain, session_id="e2e-session-001")
     options = _make_options(server)
 
-    result_text = ""
-    async for message in query(
-        prompt=(
-            "Use memory_retain to store: 'Session memory works end-to-end.' "
-            "Then use memory_recall to search for 'session'. "
-            "Report what you found."
-        ),
-        options=options,
-    ):
-        if isinstance(message, ResultMessage) and message.subtype == "success":
-            result_text = message.result
+    async with ClaudeSDKClient(options=options) as client:
+        result_text = await _run_turn(
+            client,
+            (
+                "Use memory_retain to store: 'Session memory works end-to-end.' "
+                "Then use memory_recall to search for 'session'. "
+                "Report what you found."
+            ),
+        )
 
     assert result_text, "Agent should have produced a result"
     print(f"[Session memory] {result_text[:200]}")
