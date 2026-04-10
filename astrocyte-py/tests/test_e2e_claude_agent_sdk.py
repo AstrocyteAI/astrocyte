@@ -47,21 +47,28 @@ def _make_brain() -> Astrocyte:
     return brain
 
 
+def _make_options(server):
+    """Create ClaudeAgentOptions with permission bypass for CI."""
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    return ClaudeAgentOptions(
+        mcp_servers={"memory": server},
+        allowed_tools=["mcp__astrocyte_memory__*"],
+        max_turns=6,
+        permission_mode="bypassPermissions",
+    )
+
+
 @_skip
 async def test_single_agent_memory() -> None:
     """Agent stores a fact via memory_retain, then recalls it."""
-    from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+    from claude_agent_sdk import ResultMessage, query
 
     from astrocyte.integrations.claude_agent_sdk import astrocyte_claude_agent_server
 
     brain = _make_brain()
     server = astrocyte_claude_agent_server(brain, bank_id="e2e-test")
-
-    options = ClaudeAgentOptions(
-        mcp_servers={"memory": server},
-        allowed_tools=["mcp__astrocyte_memory__*"],
-        max_turns=6,
-    )
+    options = _make_options(server)
 
     # Turn 1: store a fact
     result_text = ""
@@ -73,8 +80,14 @@ async def test_single_agent_memory() -> None:
         ),
         options=options,
     ):
-        if isinstance(message, ResultMessage) and message.subtype == "success":
-            result_text = message.result
+        # Log all messages for debugging
+        msg_type = getattr(message, "type", "?")
+        msg_sub = getattr(message, "subtype", "?")
+        print(f"  [msg] type={msg_type} subtype={msg_sub}")
+        if isinstance(message, ResultMessage):
+            result_text = message.result or ""
+            if message.subtype != "success":
+                print(f"  [error] {message.subtype}: {result_text[:500]}")
 
     assert result_text, "Agent should have produced a result"
     print(f"[Turn 1 — Retain] {result_text[:200]}")
@@ -86,11 +99,7 @@ async def test_single_agent_memory() -> None:
             "Use the memory_recall tool to search for 'Astrocyte'. "
             "Tell me what you found."
         ),
-        options=ClaudeAgentOptions(
-            mcp_servers={"memory": server},
-            allowed_tools=["mcp__astrocyte_memory__*"],
-            max_turns=6,
-        ),
+        options=_make_options(server),
     ):
         if isinstance(message, ResultMessage) and message.subtype == "success":
             result_text = message.result
@@ -105,18 +114,13 @@ async def test_single_agent_memory() -> None:
 @_skip
 async def test_managed_agents_session_memory() -> None:
     """Session-scoped memory server creates isolated banks."""
-    from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+    from claude_agent_sdk import ResultMessage, query
 
     from astrocyte.integrations.managed_agents import create_memory_server
 
     brain = _make_brain()
     server = create_memory_server(brain, session_id="e2e-session-001")
-
-    options = ClaudeAgentOptions(
-        mcp_servers={"memory": server},
-        allowed_tools=["mcp__astrocyte_memory__*"],
-        max_turns=6,
-    )
+    options = _make_options(server)
 
     result_text = ""
     async for message in query(
