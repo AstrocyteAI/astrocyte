@@ -147,7 +147,7 @@ jobs:
         working-directory: astrocyte-py
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: uv run python tests/test_e2e_claude_agent_sdk.py
+        run: uv run python -m pytest tests/test_e2e_claude_agent_sdk.py -v --timeout=120
 
   # Single green gate for branch protection (optional — pin this job instead of each matrix leg).
   ci:

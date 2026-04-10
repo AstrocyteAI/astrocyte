@@ -14,6 +14,24 @@ import json
 import os
 import sys
 
+import pytest
+
+_skip_reason_sdk = "claude-agent-sdk not installed"
+_skip_reason_key = "ANTHROPIC_API_KEY not set"
+
+try:
+    import claude_agent_sdk  # noqa: F401
+    _has_sdk = True
+except ImportError:
+    _has_sdk = False
+
+_has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+_skip = pytest.mark.skipif(
+    not _has_sdk or not _has_key,
+    reason=_skip_reason_sdk if not _has_sdk else _skip_reason_key,
+)
+
 from astrocyte import Astrocyte
 from astrocyte.config import AstrocyteConfig
 from astrocyte.testing.in_memory import InMemoryEngineProvider
@@ -29,6 +47,7 @@ def _make_brain() -> Astrocyte:
     return brain
 
 
+@_skip
 async def test_single_agent_memory() -> None:
     """Agent stores a fact via memory_retain, then recalls it."""
     from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
@@ -83,6 +102,7 @@ async def test_single_agent_memory() -> None:
     print(f"[Turn 2 — Recall] {result_text[:200]}")
 
 
+@_skip
 async def test_managed_agents_session_memory() -> None:
     """Session-scoped memory server creates isolated banks."""
     from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
