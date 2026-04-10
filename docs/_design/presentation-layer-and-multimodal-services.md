@@ -94,30 +94,67 @@ llm_provider_config:
 
 Use this **only when** the API truly matches **message-in, text-out** (and embed if needed). **Do not** point `api_base` at a **video-only** REST root expecting it to behave like `/v1/chat/completions`.
 
-### 3.3 Feeding memory into presentation (your glue code)
+### 3.3 Feeding memory into presentation (composer pattern)
 
-Typical pattern:
+Treat your **application orchestrator** (often a **Backend for Frontend** or API service) as the **composer**: it **assembles** what the presentation vendor sees—**Astrocyte** supplies **durable semantic memory** (`retain` / `recall` / `reflect` / `forget`); the **vendor SDK or REST API** supplies the **conversation surface** (room, avatar, realtime audio/video). Astrocyte **does not** fetch your CRM, billing DB, or identity store unless you **retain** derived text there; **canonical business facts** normally live in **your system of record** and are **read at compose time** under your **authorization rules**.
 
-1. **`recall()`** or **`reflect()`** returns context for the agent.
-2. Your service passes that text (or a shortened prompt) into **the video platform’s** “conversation” or “script” or **LLM hook** API **according to their docs**.
-3. New user utterances from the session can be **`retain()`**’d as memories on a schedule or at session end (with policy checks).
+Typical end-to-end pattern:
+
+1. Composer **loads** allowed facts from **your SoR** (profile, entitlements, tickets, …) and **retrieves** from Astrocyte via **`recall()`** or **`reflect()`** (or both—see latency trade-offs in your product).
+2. Composer **renders** a single **briefing string** (or vendor-specific fields) with explicit **ordering, truncation, and precedence** (e.g. SoR wins on conflicting subscription tier).
+3. Composer **starts or updates** the vendor session using **their** API (session URL, `conversational_context`, script payload, custom LLM URL—per vendor docs).
+4. New information from the session is **`retain()`**’d through **explicit tools**, **async summarization**, or **webhooks**, always through **policy** and **`AstrocyteContext`** (principal + bank binding at the server—see `sandbox-awareness-and-exfiltration.md`).
+
+#### SoR vs Astrocyte
+
+| Source | Role in the composed briefing |
+|--------|-------------------------------|
+| **System of record** (your databases, CRM, support tools) | **Authoritative** operational data; read **through** the composer with field-level **allowlists** and **TTL / freshness** rules you own. |
+| **Astrocyte** | **Learned / recalled agent memory** (user-stated preferences, past conversation distilled facts, RAG you chose to retain) with **governance** (PII, quotas, access grants, lifecycle). |
+
+Do not assume the video platform merges these sources; **composition is your contract**.
+
+#### Fusing SoR snippets with memory in one `recall`
+
+When you want **vector memory** and **external snippets** fused under **one token budget**, use **`RecallRequest.external_context`**: pass curated SoR (or RAG) hits as **`MemoryHit`** rows alongside the query. The pipeline / provider **recall** path blends them with stored memory—see **`innovations.md`** (cross-source fusion) and **`built-in-pipeline.md`** (`external_context` and `detail_level`). Your composer still **fetches** SoR data and **maps** it to `MemoryHit`; Astrocyte remains the **memory engine**, not the CRM client. If your integration uses the high-level **`brain.recall(query, bank_id=…)`** helper only, **merge** SoR snippets with `recall` hits **in the composer** before rendering the briefing until your stack wires `external_context` through that entry point.
+
+#### Example: Tavus Conversational Video Interface (CVI)
+
+[Tavus](https://docs.tavus.io/api-reference/overview) is representative of CVI products: **server-side** session creation, **client-side** realtime UI.
+
+**Server (composer),** holding the Tavus API key only here:
+
+1. Build `conversational_context` from **briefing blocks** (SoR summaries + Astrocyte `recall` / `reflect` output), capped for latency and model context.
+2. `POST https://tavusapi.com/v2/conversations` with `persona_id`, `replica_id`, and optional [`memory_stores`](https://docs.tavus.io/sections/conversational-video-interface/memories) (vendor-native cross-session memory, orthogonal to Astrocyte unless you design sync).
+3. Return **`conversation_url`** (and **`meeting_token`** if using private rooms) to the **browser**; never expose Tavus or Astrocyte secrets to the client.
+
+**Client (CVI / Daily):** Tavus does **not** execute LLM **tool calls** on your behalf. Listen for [`conversation.tool_call`](https://docs.tavus.io/sections/event-schemas/conversation-toolcall) on the realtime channel, call **your** HTTPS endpoint, run **`retain` / `recall` / `forget`** on Astrocyte, then inject compact results with [`conversation.append_llm_context`](https://docs.tavus.io/sections/onboarding-guide/tool-calling-examples) or [`conversation.echo`](https://docs.tavus.io/sections/onboarding-guide/tool-calling-examples) per [Tavus tool-calling guidance](https://docs.tavus.io/sections/onboarding-guide/tool-calling-examples).
 
 ```python
-# Illustrative - APIs differ per vendor
-context = await brain.recall("What do we know about this user?", bank_id=bank_id, context=ctx)
-summary_text = merge_hits_for_prompt(context)
-
-# Pseudocode: start or update vendor session with summary + live STT text
-await video_platform.start_conversation(
-    replica_id="...",
-    system_context=summary_text,
-    # ...
+# Illustrative: composer builds a briefing, then opens a CVI session (names differ per vendor).
+# Merge Astrocyte hits with SoR snippets in the composer (or use RecallRequest.external_context
+# on a pipeline recall(RecallRequest) path—see built-in-pipeline.md).
+recall_result = await brain.recall(
+    "What should we remember for this support call?",
+    bank_id=bank_id,
+    max_results=5,
+    context=ctx,
 )
+sor_blocks = [f"Plan: {user_row['plan_tier']}"]  # fetch + allowlist in your SoR layer
+briefing = render_briefing(sor_blocks=sor_blocks, astrocyte_hits=recall_result.hits)
 
-# On turn end or async:
+# Pseudocode: Tavus create conversation — see Tavus API reference for full schema.
+# await tavus_client.create_conversation(
+#     persona_id="...",
+#     replica_id="...",
+#     conversational_context=briefing,
+#     memory_stores=[f"{user_id}_{persona_id}"],
+# )
+
+# On tool execution or async pipeline:
 await brain.retain(
     f"User said: {user_utterance}",
-    metadata={"source": "tavus_session", "session_id": sid},
+    metadata={"source": "tavus_cvi", "session_id": sid},
     bank_id=bank_id,
     context=ctx,
 )
@@ -142,5 +179,6 @@ Memory writes still go through **`retain()`** based on **text** you choose to pe
 | Does LLM-gateway integration (LiteLLM-style routing) “include” Tavus / HeyGen / ElevenLabs automatically? | **No** - those are **not** generic chat/embedding backends for the SPI unless they expose **compatible text APIs** you configure explicitly. |
 | Are they competitors? | **Partially.** Many **video avatar** platforms compete with **Tavus** on CVI or marketing video; **ElevenLabs** competes on **voice**, often as a **component** next to video or text agents. |
 | How does Astrocyte “allow” integration? | **Composition:** memory and text LLM via **`LLMProvider`**; **presentation** via **vendor SDKs/REST** in your app. Optional **shared** OpenAI-compatible LLM URL when the vendor supports it. |
+| Who merges CRM / DB facts with `recall` for a CVI session? | **Your application composer** (BFF / API). Astrocyte holds **learned memory**; your **system of record** stays authoritative for operational data unless you **retain** derived text into Astrocyte. Use **`RecallRequest.external_context`** on pipeline recall where supported, or **merge** SoR snippets with `brain.recall()` hits before rendering the vendor briefing. |
 
 For vendor-specific steps, always follow **their** API reference (sessions, webhooks, custom LLM URLs). Astrocyte stays stable on **`retain` / `recall` / `reflect`** and **text + embeddings** for intelligence and governance.

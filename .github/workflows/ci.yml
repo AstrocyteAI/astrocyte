@@ -201,6 +201,36 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: uv run python -m pytest tests/test_e2e_claude_managed_agents.py -v --timeout=120
 
+  # End-to-end: application composer (SoR fixture + Astrocyte) + Tavus Create Conversation (test_mode).
+  # Manual only — requires Tavus API key and persona/replica IDs. Not run on push/PR.
+  e2e-tavus-cvi:
+    name: e2e Tavus CVI composer
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: astrocyte-py
+        run: uv sync --extra dev
+
+      - name: Run e2e tests
+        working-directory: astrocyte-py
+        env:
+          TAVUS_API_KEY: ${{ secrets.TAVUS_API_KEY }}
+          TAVUS_PERSONA_ID: ${{ secrets.TAVUS_PERSONA_ID }}
+          TAVUS_REPLICA_ID: ${{ secrets.TAVUS_REPLICA_ID }}
+        run: uv run python -m pytest tests/test_e2e_tavus_cvi_composer.py -v --timeout=120
+
   # Single green gate for branch protection (optional — pin this job instead of each matrix leg).
   ci:
     name: CI
