@@ -15,7 +15,8 @@ in CI). See `Tavus create conversation <https://docs.tavus.io/api-reference/conv
 
 **GitHub Actions:** add repository secrets ``TAVUS_API_KEY``, ``TAVUS_PERSONA_ID``,
 ``TAVUS_REPLICA_ID`` (or use ``vars`` for the two IDs if you prefer). Run the
-``e2e-tavus-cvi`` workflow via **workflow_dispatch** only (not on every PR).
+**e2e Tavus CVI** workflow (``.github/workflows/e2e-tavus-cvi.yml``) via **Run workflow**
+— it only executes this pytest file, not the full CI matrix.
 """
 
 from __future__ import annotations
