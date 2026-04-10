@@ -75,6 +75,8 @@ Usage — high-level helper:
         bank_id="user-123",
     )
     print(result)
+
+    # When deleting the session, send user.interrupt first (see delete_managed_session).
 """
 
 from __future__ import annotations
@@ -446,3 +448,22 @@ async def run_session_with_memory(
         return "".join(agent_text_parts)
 
     return await asyncio.wait_for(_run(), timeout=timeout_seconds)
+
+
+def delete_managed_session(client: Any, session_id: str) -> None:
+    """Delete a Managed Agents session.
+
+    The API returns 400 if the session is still considered **running** (for
+    example immediately after closing the per-turn SSE stream). In that case
+    the error says to send a ``user.interrupt`` event or wait for completion.
+    We send ``user.interrupt`` first (errors ignored if already idle), then
+    ``DELETE`` the session.
+    """
+    try:
+        client.beta.sessions.events.send(
+            session_id,
+            events=[{"type": "user.interrupt"}],
+        )
+    except Exception:
+        pass
+    client.beta.sessions.delete(session_id)

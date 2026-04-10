@@ -34,6 +34,7 @@ _skip = pytest.mark.skipif(
 from astrocyte import Astrocyte
 from astrocyte.config import AstrocyteConfig
 from astrocyte.integrations.claude_managed_agents import (
+    delete_managed_session,
     memory_tool_definitions,
     run_session_with_memory,
 )
@@ -132,8 +133,8 @@ async def test_retain_and_recall_via_managed_agent() -> None:
         )
         print(f"[Turn 2 — Recall] {agent_text[:200]}")
 
-        # Clean up session
-        client.beta.sessions.delete(session.id)
+        # API rejects DELETE while session is still "running" after stream close.
+        delete_managed_session(client, session.id)
 
     finally:
         # Clean up resources
