@@ -10,8 +10,8 @@ triggered by push to main or manual dispatch.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
+import shutil
 import sys
 
 import pytest
@@ -47,6 +47,26 @@ def _make_brain() -> Astrocyte:
     return brain
 
 
+def _resolve_cli_path() -> str | None:
+    """CLI binary for Claude Agent SDK.
+
+    The PyPI wheel bundles ``claude``, but that binary often exits immediately on
+    headless Linux (e.g. GitHub Actions). Passing an explicit ``cli_path`` skips
+    the bundled binary. Upstream CI installs the real CLI via install.sh.
+
+    Override: ``CLAUDE_CODE_CLI_PATH``. On ``CI=true``, use ``shutil.which("claude")``
+    when present so workflow-installed CLIs are used.
+    """
+    explicit = (os.environ.get("CLAUDE_CODE_CLI_PATH") or "").strip()
+    if explicit:
+        return explicit
+    if os.environ.get("CI", "").lower() in ("1", "true", "yes"):
+        found = shutil.which("claude")
+        if found:
+            return found
+    return None
+
+
 def _make_options(server):
     """Create ClaudeAgentOptions for CI.
 
@@ -55,12 +75,14 @@ def _make_options(server):
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
+    cli_path = _resolve_cli_path()
     return ClaudeAgentOptions(
         mcp_servers={"memory": server},
         allowed_tools=["mcp__astrocyte_memory__*"],
         max_turns=6,
         permission_mode="acceptEdits",
         stderr=lambda line: print(f"  [cli stderr] {line}"),
+        **({"cli_path": cli_path} if cli_path else {}),
     )
 
 

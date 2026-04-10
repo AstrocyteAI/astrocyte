@@ -121,17 +121,23 @@ jobs:
 
   # End-to-end: Claude Agent SDK + Astrocyte memory (real API calls).
   # Runs only on main push or manual dispatch. Not required for CI gate.
-  # Known issue: the bundled Claude Code CLI crashes in GitHub Actions
-  # (exit code 1, no useful stderr). Marked continue-on-error until
-  # upstream fixes the CLI packaging for headless Linux environments.
+  # Install the official Claude Code CLI: the SDK’s bundled binary often fails on
+  # headless Linux; tests pass cli_path when CI=true (see test file).
   e2e-claude-agent-sdk:
     name: e2e Claude Agent SDK
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    continue-on-error: true
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+
+      - name: Install Claude Code CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Claude CLI
+        run: claude -v
 
       - uses: astral-sh/setup-uv@v8.0.0
         with:
@@ -141,32 +147,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Install dependencies
         working-directory: astrocyte-py
         run: |
           uv sync --extra dev
           uv pip install claude-agent-sdk
 
-      - name: Verify SDK setup
+      - name: Verify SDK + CLI resolution
         working-directory: astrocyte-py
         run: |
-          echo "=== Versions ==="
-          echo "Node: $(node --version)"
           echo "Python: $(python --version)"
-          uv run python -c "import claude_agent_sdk; print(f'SDK version: {claude_agent_sdk.__version__}')"
-
-          echo "=== Bundled CLI ==="
-          CLI=$(uv run python -c "import claude_agent_sdk, pathlib; print(pathlib.Path(claude_agent_sdk.__file__).parent / '_bundled' / 'claude')")
-          ls -la "$CLI" 2>/dev/null || echo "Bundled CLI not found at $CLI"
-          file "$CLI" 2>/dev/null || true
-          ldd "$CLI" 2>/dev/null || true
-
-          echo "=== CLI version check ==="
-          "$CLI" --version 2>&1 || echo "CLI --version failed with exit code $?"
+          uv run python -c "import claude_agent_sdk; print(f'SDK: {claude_agent_sdk.__version__}')"
+          echo "PATH claude: $(command -v claude)"
+          claude -v
 
       - name: Run e2e tests
         working-directory: astrocyte-py
