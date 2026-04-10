@@ -301,6 +301,27 @@ async def handle_memory_tool(
 # ---------------------------------------------------------------------------
 
 
+def _format_managed_session_error(event: Any) -> str:
+    """Best-effort message for ``session.error`` events (SDK shapes vary)."""
+    err = getattr(event, "error", None)
+    if err is None:
+        return repr(event)
+    if isinstance(err, str):
+        return err
+    model_dump = getattr(err, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return json.dumps(model_dump(), default=str)
+        except Exception:
+            pass
+    parts: list[str] = []
+    for key in ("type", "message", "code", "detail"):
+        val = getattr(err, key, None)
+        if val is not None:
+            parts.append(f"{key}={val!r}")
+    return ", ".join(parts) if parts else repr(err)
+
+
 async def run_session_with_memory(
     client: Any,
     brain: Astrocyte,
@@ -357,6 +378,12 @@ async def run_session_with_memory(
 
                 elif event.type == "agent.custom_tool_use":
                     events_by_id[event.id] = event
+
+                elif event.type == "session.error":
+                    raise RuntimeError(
+                        "Managed Agents session error: "
+                        f"{_format_managed_session_error(event)}"
+                    )
 
                 elif event.type == "session.status_idle":
                     stop = getattr(event, "stop_reason", None)
