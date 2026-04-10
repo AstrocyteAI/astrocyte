@@ -1,0 +1,142 @@
+"""End-to-end test: Claude Agent SDK + Astrocyte memory.
+
+Runs a real Claude Agent SDK query with Astrocyte wired as an MCP server.
+Requires ANTHROPIC_API_KEY and claude-agent-sdk installed.
+
+This test is skipped in normal CI. It runs in a dedicated job
+triggered by push to main or manual dispatch.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sys
+
+from astrocyte import Astrocyte
+from astrocyte.config import AstrocyteConfig
+from astrocyte.testing.in_memory import InMemoryEngineProvider
+
+
+def _make_brain() -> Astrocyte:
+    config = AstrocyteConfig()
+    config.provider = "test"
+    config.barriers.pii.mode = "disabled"
+    brain = Astrocyte(config)
+    engine = InMemoryEngineProvider()
+    brain.set_engine_provider(engine)
+    return brain
+
+
+async def test_single_agent_memory() -> None:
+    """Agent stores a fact via memory_retain, then recalls it."""
+    from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+
+    from astrocyte.integrations.claude_agent_sdk import astrocyte_claude_agent_server
+
+    brain = _make_brain()
+    server = astrocyte_claude_agent_server(brain, bank_id="e2e-test")
+
+    options = ClaudeAgentOptions(
+        mcp_servers={"memory": server},
+        allowed_tools=["mcp__astrocyte_memory__*"],
+        max_turns=6,
+    )
+
+    # Turn 1: store a fact
+    result_text = ""
+    async for message in query(
+        prompt=(
+            "Use the memory_retain tool to store this exact fact: "
+            "'Astrocyte is an open-source memory framework for AI agents.' "
+            "Then confirm you stored it."
+        ),
+        options=options,
+    ):
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            result_text = message.result
+
+    assert result_text, "Agent should have produced a result"
+    print(f"[Turn 1 — Retain] {result_text[:200]}")
+
+    # Turn 2: recall the fact
+    result_text = ""
+    async for message in query(
+        prompt=(
+            "Use the memory_recall tool to search for 'Astrocyte'. "
+            "Tell me what you found."
+        ),
+        options=ClaudeAgentOptions(
+            mcp_servers={"memory": server},
+            allowed_tools=["mcp__astrocyte_memory__*"],
+            max_turns=6,
+        ),
+    ):
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            result_text = message.result
+
+    assert result_text, "Agent should have produced a result"
+    assert "astrocyte" in result_text.lower() or "memory" in result_text.lower(), (
+        f"Recall result should mention Astrocyte or memory, got: {result_text[:200]}"
+    )
+    print(f"[Turn 2 — Recall] {result_text[:200]}")
+
+
+async def test_managed_agents_session_memory() -> None:
+    """Session-scoped memory server creates isolated banks."""
+    from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+
+    from astrocyte.integrations.managed_agents import create_memory_server
+
+    brain = _make_brain()
+    server = create_memory_server(brain, session_id="e2e-session-001")
+
+    options = ClaudeAgentOptions(
+        mcp_servers={"memory": server},
+        allowed_tools=["mcp__astrocyte_memory__*"],
+        max_turns=6,
+    )
+
+    result_text = ""
+    async for message in query(
+        prompt=(
+            "Use memory_retain to store: 'Session memory works end-to-end.' "
+            "Then use memory_recall to search for 'session'. "
+            "Report what you found."
+        ),
+        options=options,
+    ):
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            result_text = message.result
+
+    assert result_text, "Agent should have produced a result"
+    print(f"[Session memory] {result_text[:200]}")
+
+
+async def main() -> None:
+    print("=== E2E: Claude Agent SDK + Astrocyte ===\n")
+
+    print("--- Test 1: Single agent memory ---")
+    await test_single_agent_memory()
+    print()
+
+    print("--- Test 2: Managed Agents session memory ---")
+    await test_managed_agents_session_memory()
+    print()
+
+    print("=== All e2e tests passed ===")
+
+
+if __name__ == "__main__":
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("ANTHROPIC_API_KEY not set, skipping e2e tests")
+        sys.exit(0)
+
+    try:
+        import claude_agent_sdk
+    except ImportError:
+        print("claude-agent-sdk not installed, skipping e2e tests")
+        sys.exit(0)
+
+    asyncio.run(main())

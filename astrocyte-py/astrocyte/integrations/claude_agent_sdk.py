@@ -188,15 +188,19 @@ def astrocyte_claude_agent_server(
             mcp_servers={"memory": memory_server},
             allowed_tools=["mcp__memory__*"],
         )
+
+    For session-scoped memory with Managed Agents, see
+    :mod:`astrocyte.integrations.managed_agents`.
     """
-    from claude_agent_sdk import create_sdk_mcp_server, tool
+    from claude_agent_sdk import create_sdk_mcp_server, tool, ToolAnnotations
 
     sdk_tools = []
 
     @tool(
         "memory_retain",
-        "Store content into long-term memory for future recall.",
-        {"content": str},
+        "Store content into long-term memory for future recall. "
+        "Optionally pass comma-separated tags for categorization.",
+        {"content": str, "tags": str},
     )
     async def memory_retain(args: dict[str, Any]) -> dict[str, Any]:
         content = args["content"]
@@ -213,6 +217,7 @@ def astrocyte_claude_agent_server(
         "memory_recall",
         "Search long-term memory for information relevant to a query.",
         {"query": str, "max_results": int},
+        annotations=ToolAnnotations(readOnlyHint=True),
     )
     async def memory_recall(args: dict[str, Any]) -> dict[str, Any]:
         query_text = args["query"]
@@ -227,8 +232,10 @@ def astrocyte_claude_agent_server(
 
         @tool(
             "memory_reflect",
-            "Synthesize a comprehensive answer from long-term memory.",
+            "Synthesize a comprehensive answer from long-term memory. "
+            "Use this instead of recall when you need a narrative answer rather than raw hits.",
             {"query": str},
+            annotations=ToolAnnotations(readOnlyHint=True),
         )
         async def memory_reflect(args: dict[str, Any]) -> dict[str, Any]:
             result = await brain.reflect(args["query"], bank_id=bank_id)
@@ -242,6 +249,7 @@ def astrocyte_claude_agent_server(
             "memory_forget",
             "Remove specific memories by their IDs (comma-separated).",
             {"memory_ids": str},
+            annotations=ToolAnnotations(destructiveHint=True),
         )
         async def memory_forget(args: dict[str, Any]) -> dict[str, Any]:
             ids = [mid.strip() for mid in args["memory_ids"].split(",")]
