@@ -48,14 +48,19 @@ def _make_brain() -> Astrocyte:
 
 
 def _make_options(server):
-    """Create ClaudeAgentOptions with permission bypass for CI."""
+    """Create ClaudeAgentOptions for CI.
+
+    Uses acceptEdits permission mode and captures stderr for debugging.
+    The allowed_tools list auto-approves memory tool calls.
+    """
     from claude_agent_sdk import ClaudeAgentOptions
 
     return ClaudeAgentOptions(
         mcp_servers={"memory": server},
         allowed_tools=["mcp__astrocyte_memory__*"],
         max_turns=6,
-        permission_mode="bypassPermissions",
+        permission_mode="acceptEdits",
+        stderr=lambda line: print(f"  [cli stderr] {line}"),
     )
 
 

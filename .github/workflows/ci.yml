@@ -121,10 +121,14 @@ jobs:
 
   # End-to-end: Claude Agent SDK + Astrocyte memory (real API calls).
   # Runs only on main push or manual dispatch. Not required for CI gate.
+  # Known issue: the bundled Claude Code CLI crashes in GitHub Actions
+  # (exit code 1, no useful stderr). Marked continue-on-error until
+  # upstream fixes the CLI packaging for headless Linux environments.
   e2e-claude-agent-sdk:
     name: e2e Claude Agent SDK
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    continue-on-error: true
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
@@ -150,12 +154,19 @@ jobs:
       - name: Verify SDK setup
         working-directory: astrocyte-py
         run: |
+          echo "=== Versions ==="
           echo "Node: $(node --version)"
           echo "Python: $(python --version)"
-          uv run python -c "import claude_agent_sdk; print('SDK imported OK')"
-          # Check if bundled CLI exists and is executable
+          uv run python -c "import claude_agent_sdk; print(f'SDK version: {claude_agent_sdk.__version__}')"
+
+          echo "=== Bundled CLI ==="
           CLI=$(uv run python -c "import claude_agent_sdk, pathlib; print(pathlib.Path(claude_agent_sdk.__file__).parent / '_bundled' / 'claude')")
           ls -la "$CLI" 2>/dev/null || echo "Bundled CLI not found at $CLI"
+          file "$CLI" 2>/dev/null || true
+          ldd "$CLI" 2>/dev/null || true
+
+          echo "=== CLI version check ==="
+          "$CLI" --version 2>&1 || echo "CLI --version failed with exit code $?"
 
       - name: Run e2e tests
         working-directory: astrocyte-py
