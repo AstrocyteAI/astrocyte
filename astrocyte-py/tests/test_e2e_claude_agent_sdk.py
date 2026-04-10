@@ -75,12 +75,20 @@ def _make_options(server):
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
+    # Tool IDs are mcp__<mcp_servers dict key>__<tool_name>, not the server's
+    # internal create_sdk_mcp_server(name=...) — see claude_agent_sdk docs.
     cli_path = _resolve_cli_path()
+    if cli_path:
+        print(f"  [e2e] cli_path={cli_path}")
     return ClaudeAgentOptions(
         mcp_servers={"memory": server},
-        allowed_tools=["mcp__astrocyte_memory__*"],
+        allowed_tools=[
+            "mcp__memory__memory_retain",
+            "mcp__memory__memory_recall",
+            "mcp__memory__memory_reflect",
+        ],
         max_turns=6,
-        permission_mode="acceptEdits",
+        permission_mode="bypassPermissions",
         stderr=lambda line: print(f"  [cli stderr] {line}"),
         **({"cli_path": cli_path} if cli_path else {}),
     )
