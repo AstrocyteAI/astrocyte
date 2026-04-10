@@ -3,8 +3,14 @@
 Runs a real Claude Agent SDK query with Astrocyte wired as an MCP server.
 Requires ANTHROPIC_API_KEY and claude-agent-sdk installed.
 
-This test is skipped in normal CI. It runs in a dedicated job
-triggered by push to main or manual dispatch.
+This test is skipped in normal CI. It runs only when the
+``e2e-claude-agent-sdk`` workflow job is manually dispatched in GitHub Actions.
+
+Billing note: this path uses the **Claude Code CLI** (via the SDK). With
+``ANTHROPIC_API_KEY`` set, usage is charged against your **Anthropic Console /
+API account** (prepaid balance, workspace limits, etc.). That is not the same
+meter as a **claude.ai** subscription UI or as **Managed Agents** REST calls
+alone—those can succeed while the API wallet the CLI uses is empty.
 """
 
 from __future__ import annotations
@@ -95,6 +101,22 @@ def _make_options(server):
     )
 
 
+def _fail_if_cli_billing_error(result_text: str, step: str) -> None:
+    """Claude Code often reports API-wallet issues as a normal result string."""
+    t = result_text.lower()
+    if "credit balance is too low" in t or "insufficient credits" in t:
+        pytest.fail(
+            f"Claude Code CLI billing/quota error during {step}: {result_text!r}\n\n"
+            "The Agent SDK shells out to Claude Code. With ANTHROPIC_API_KEY set, "
+            "that flow uses your Anthropic API / Console spend, not claude.ai "
+            "subscription credits shown in the consumer app. Managed Agents e2e "
+            "hits the API directly and can pass with the same key while this job "
+            "fails if API prepaid balance or org limits block Code. "
+            "Top up or switch key in Console (Usage & billing) for the workspace "
+            "that owns this API key."
+        )
+
+
 async def _run_turn(client, prompt: str) -> str:
     """Send one user turn and return the final result text (success subtype)."""
     from claude_agent_sdk import ResultMessage
@@ -109,6 +131,7 @@ async def _run_turn(client, prompt: str) -> str:
             result_text = message.result or ""
             if message.subtype != "success":
                 print(f"  [error] {message.subtype}: {result_text[:500]}")
+    _fail_if_cli_billing_error(result_text, "agent turn")
     return result_text
 
 

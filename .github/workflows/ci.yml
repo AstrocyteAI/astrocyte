@@ -120,12 +120,12 @@ jobs:
         run: uv sync --extra dev && uv run python -m pytest
 
   # End-to-end: Claude Agent SDK + Astrocyte memory (real API calls).
-  # Runs only on main push or manual dispatch. Not required for CI gate.
+  # Manual only (workflow_dispatch) — not run on push/PR. Not required for CI gate.
   # Install the official Claude Code CLI: the SDK’s bundled binary often fails on
   # headless Linux; tests pass cli_path when CI=true (see test file).
   e2e-claude-agent-sdk:
     name: e2e Claude Agent SDK
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
