@@ -17,12 +17,19 @@ import sys
 import pytest
 
 _skip_reason_key = "ANTHROPIC_API_KEY not set"
+_skip_reason_sdk = "anthropic SDK not installed"
 
 _has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
+try:
+    import anthropic  # noqa: F401
+    _has_sdk = True
+except ImportError:
+    _has_sdk = False
+
 _skip = pytest.mark.skipif(
-    not _has_key,
-    reason=_skip_reason_key,
+    not _has_sdk or not _has_key,
+    reason=_skip_reason_sdk if not _has_sdk else _skip_reason_key,
 )
 
 from astrocyte import Astrocyte

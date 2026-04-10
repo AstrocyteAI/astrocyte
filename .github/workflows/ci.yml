@@ -183,7 +183,13 @@ jobs:
 
       - name: Install dependencies
         working-directory: astrocyte-py
-        run: uv sync --extra dev
+        run: |
+          uv sync --extra dev
+          uv pip install anthropic
+
+      - name: Verify SDK setup
+        working-directory: astrocyte-py
+        run: uv run python -c "import anthropic; print(f'anthropic SDK {anthropic.__version__} OK')"
 
       - name: Run e2e tests
         working-directory: astrocyte-py
