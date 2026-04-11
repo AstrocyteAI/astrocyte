@@ -44,12 +44,17 @@ from astrocyte.provider import (
 from astrocyte.recall import (
     PLACE_BANK,
     PLACE_QUERY,
+    auth_with_oauth_cache_namespace,
     build_proxy_headers,
     clear_oauth2_token_cache_for_tests,
+    exchange_oauth2_authorization_code,
+    fetch_oauth2_client_credentials_token,
+    fetch_oauth2_refresh_access_token,
     fetch_proxy_recall_hits,
     gather_proxy_hits_for_bank,
     merge_external_into_recall_result,
     merge_manual_and_proxy_hits,
+    post_oauth2_token_endpoint,
 )
 from astrocyte.types import (
     AccessGrant,
@@ -119,12 +124,17 @@ __all__ = [
     # M4.1 federated recall
     "PLACE_QUERY",
     "PLACE_BANK",
+    "auth_with_oauth_cache_namespace",
     "build_proxy_headers",
     "clear_oauth2_token_cache_for_tests",
+    "exchange_oauth2_authorization_code",
+    "fetch_oauth2_client_credentials_token",
+    "fetch_oauth2_refresh_access_token",
     "fetch_proxy_recall_hits",
     "gather_proxy_hits_for_bank",
     "merge_manual_and_proxy_hits",
     "merge_external_into_recall_result",
+    "post_oauth2_token_endpoint",
     # Errors
     "AstrocyteError",
     "ConfigError",

@@ -82,6 +82,10 @@ sources:
       token: ${REMOTE_SEARCH_TOKEN}
       # or: type: api_key — header: X-API-Key, value: …
       # or: type: oauth2_client_credentials — token_url, client_id, client_secret, optional scope (RFC 6749)
+      # or: type: oauth2_refresh — refresh_token + same token_url/client_*; supports refresh_token rotation in-memory
+      # or: oauth2 + grant_type: refresh_token (alias for oauth2_refresh)
+      # token_endpoint_auth_method: client_secret_post (default) | client_secret_basic (HTTP Basic at token URL)
+      # One-time code→tokens (browser redirect): use library ``exchange_oauth2_authorization_code`` then persist refresh_token
       # or: headers: { X-Custom: "…" } merged after bearer / api_key / OAuth
 ```
 
@@ -91,6 +95,7 @@ sources:
 - `auth` uses `_env` suffixes for secrets, resolved via existing env var substitution (`${VAR_NAME}` pattern already in `config.py`).
 - `extraction_profile` references a profile name. Profile definitions are co-located in a new `extraction_profiles` section (below).
 - **`type: proxy`** (M4.1) is recall-only: `url`, `target_bank`, optional `recall_method` / `recall_body`, and `auth` for outbound calls. It does not use `extraction_profile` (nothing is ingested). Response JSON uses a `hits` or `results` array of `{ text, score?, memory_id?, … }`. With **`observability.prometheus_enabled`**, proxy calls emit `astrocyte_proxy_recall_total{source_id,status}` and `astrocyte_proxy_recall_duration_seconds{source_id}`.
+- **OAuth (proxy `auth`) — intentional scope**: the library implements client-credentials, refresh (with rotation), authorization-code **exchange**, and HTTP Basic at the token endpoint; callers own redirect UX and token persistence. The following can be **layered on later** when needed: a **hosted redirect / callback server** (or deeper gateway integration) for the full authorization-code UX end-to-end, **PKCE**, and **device** / **JWT bearer** token grants (RFC 6749 / OIDC extensions).
 
 ### Section 2: `agents`
 

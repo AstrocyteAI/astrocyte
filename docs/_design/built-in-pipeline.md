@@ -49,7 +49,7 @@ Details: chunking uses sentence, paragraph, dialogue, or fixed-size strategies; 
 
 ### M4 — Webhook ingest (library)
 
-HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook_ingest` with the matching `SourceConfig`. JSON body: `content` or `text`, optional `principal`, `content_type`, `metadata`. **HMAC** when `auth.type: hmac` (`secret`, optional `header`). **Bank**: `target_bank` or `target_bank_template` with `{principal}`. Optional **`astrocyte[gateway]`**: `create_ingest_webhook_app` (Starlette ASGI) exposes `POST /v1/ingest/webhook/{source_id}`. Full gateway (JWT, OpenAPI, Docker) is M6. **M4.1** federated recall (`astrocyte.recall.proxy`, RRF merge) is separate from gateway HTTP; see `product-roadmap-v1.md` §M4.1.
+HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook_ingest` with the matching `SourceConfig`. JSON body: `content` or `text`, optional `principal`, `content_type`, `metadata`. **HMAC** when `auth.type: hmac` (`secret`, optional `header`). **Bank**: `target_bank` or `target_bank_template` with `{principal}`. Optional **`astrocyte[gateway]`**: `create_ingest_webhook_app` (Starlette ASGI) exposes `POST /v1/ingest/webhook/{source_id}`. Full gateway (JWT, OpenAPI, Docker) is M6. **M4.1** federated recall (`astrocyte.recall.proxy`, RRF merge) is separate from gateway HTTP; see `product-roadmap-v1.md` §M4.1. OAuth for proxy sources is documented in **`adr-003-config-schema.md`** (proxy `auth`). Not in core today but can be added when needed: a **hosted redirect/callback** flow, **PKCE**, and **device / JWT bearer** grants — see that ADR for the explicit “layered on later” note.
 
 ### Multimodal content (optional)
 

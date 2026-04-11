@@ -35,10 +35,20 @@ def _expand_proxy_url(template: str, query: str) -> str:
     return f"{template}{sep}q={quote(query, safe='')}"
 
 
+def auth_with_oauth_cache_namespace(
+    auth: dict[str, str | int | float | bool | None] | None,
+    source_id: str,
+) -> dict[str, str | int | float | bool | None] | None:
+    """Attach ``_oauth_cache_id`` so OAuth token caches do not collide across proxy sources."""
+    if not auth:
+        return None
+    return {**auth, "_oauth_cache_id": source_id}
+
+
 async def build_proxy_headers(
     auth: dict[str, str | int | float | bool | None] | None,
 ) -> dict[str, str]:
-    """Build HTTP headers for a proxy request (Bearer, API key, OAuth2 client_credentials, optional static ``headers``)."""
+    """Build HTTP headers (Bearer, API key, OAuth2 client_credentials / refresh, optional static ``headers``)."""
     out: dict[str, str] = {}
     if not auth:
         return out
@@ -48,10 +58,16 @@ async def build_proxy_headers(
             if isinstance(v, (str, int, float, bool)):
                 out[str(k)] = str(v)
     t = (str(auth.get("type") or "")).strip().lower()
-    if t in ("oauth2", "oauth2_client_credentials"):
+    grant = (str(auth.get("grant_type") or "")).strip().lower()
+    if t in ("oauth2", "oauth2_client_credentials") and grant in ("", "client_credentials"):
         from astrocyte.recall.oauth import fetch_oauth2_client_credentials_token
 
         token = await fetch_oauth2_client_credentials_token(auth)
+        out["Authorization"] = f"Bearer {token}"
+    elif t == "oauth2_refresh" or (t in ("oauth2",) and grant == "refresh_token"):
+        from astrocyte.recall.oauth import fetch_oauth2_refresh_access_token
+
+        token = await fetch_oauth2_refresh_access_token(auth)
         out["Authorization"] = f"Bearer {token}"
     elif t == "bearer":
         token = auth.get("token")
@@ -189,7 +205,9 @@ async def fetch_proxy_recall_hits(
     ):
         with timed() as t:
             try:
-                headers = await build_proxy_headers(source.auth)
+                headers = await build_proxy_headers(
+                    auth_with_oauth_cache_namespace(source.auth, source_id),
+                )
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     if method == "POST":
                         url = _expand_proxy_url(base_url, query) if "{query}" in base_url else base_url
