@@ -76,6 +76,10 @@ class MipRoutingError(AstrocyteError):
     """MIP routing configuration or evaluation error."""
 
 
+class IngestError(AstrocyteError):
+    """Inbound ingest (webhook, stream, …) rejected a payload or configuration."""
+
+
 class LegalHoldActive(AstrocyteError):
     """Operation blocked because bank is under legal hold."""
 

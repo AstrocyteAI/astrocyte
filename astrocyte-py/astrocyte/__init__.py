@@ -11,6 +11,7 @@ from astrocyte.errors import (
     CapabilityNotSupported,
     ConfigError,
     CrossBorderViolation,
+    IngestError,
     LegalHoldActive,
     MipRoutingError,
     PiiRejected,
@@ -108,6 +109,7 @@ __all__ = [
     # Errors
     "AstrocyteError",
     "ConfigError",
+    "IngestError",
     "CapabilityNotSupported",
     "AccessDenied",
     "RateLimited",

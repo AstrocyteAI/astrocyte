@@ -181,7 +181,7 @@ class IdentityConfig:
 
 @dataclass
 class SourceConfig:
-    """External data source definition (ingestion wiring lands in M4)."""
+    """External data source definition (webhook ingest: see ``astrocyte.ingest``)."""
 
     type: str = ""
     extraction_profile: str | None = None

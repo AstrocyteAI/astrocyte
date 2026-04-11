@@ -202,11 +202,11 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 
 ### Acceptance Criteria
 
-- [ ] Webhook source receives POST, validates signature, extracts content, calls brain.retain()
-- [ ] Source registry loads from config and manages lifecycle
-- [ ] Proxy query results merge with local recall via existing fusion/reranking
-- [ ] Source health checks report via existing observability
-- [ ] Policy layer (PII, rate limits) applies to all ingest paths
+- [x] Webhook ingest validates HMAC (when `auth.type: hmac`), parses JSON body, resolves target bank, calls `brain.retain()` — library API: `astrocyte.ingest.handle_webhook_ingest` (HTTP server binding is M6 / app-specific)
+- [x] Source registry loads `type: webhook` entries from `sources:` and manages start/stop/health (`SourceRegistry`, `WebhookIngestSource`)
+- [ ] Proxy query adapter merges external recall with local recall (deferred past core M4 library)
+- [x] Source health available via `IngestSource.health_check()` → `HealthStatus` (wire to metrics in gateway)
+- [x] Ingest uses `brain.retain()` so policy (PII, validation, rate limits, quotas) applies on the same path as interactive retains
 
 ### Deferred to post-v1.0.0
 

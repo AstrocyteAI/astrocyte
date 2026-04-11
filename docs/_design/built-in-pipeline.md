@@ -47,6 +47,10 @@ Details: chunking uses sentence, paragraph, dialogue, or fixed-size strategies; 
 - **Stable imports**: `from astrocyte import prepare_retain_input, merged_extraction_profiles, extraction_profile_for_source, PreparedRetainInput` (also exposed on `astrocyte.pipeline`).
 - **Normalizer** behavior is intentionally shallow: UTF-8 BOM strip, CRLF→LF, transcript/document blank-line collapse, email heuristic (RFC-like header block + body split, `-- ` signature trim). **Not** implemented here: HTML/MIME decoding, full mail parsing, calendar ICS parsing, or binary formats.
 
+### M4 — Webhook ingest (library)
+
+HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook_ingest` with the matching `SourceConfig`. JSON body: `content` or `text`, optional `principal`, `content_type`, `metadata`. **HMAC** when `auth.type: hmac` (`secret`, optional `header`). **Bank**: `target_bank` or `target_bank_template` with `{principal}`. A bundled HTTP server is out of scope here (standalone gateway / M6); **proxy recall** remains a separate adapter.
+
 ### Multimodal content (optional)
 
 When **`RetainRequest`** (or the public API) includes **image/audio** as `ContentPart` lists (see `multimodal-llm-spi.md`), the pipeline does **not** assume every stage consumes raw media:

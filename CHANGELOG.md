@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- **M4 ingest (library)**: `astrocyte.ingest` — `IngestSource` protocol, `WebhookIngestSource`, `SourceRegistry`, HMAC helpers, `handle_webhook_ingest` → `retain()`; `IngestError` for bad payloads/config.
 - **M3 extraction polish**: stable imports `prepare_retain_input`, `merged_extraction_profiles`, `extraction_profile_for_source`, `PreparedRetainInput` from `astrocyte` and `astrocyte.pipeline`.
 - **Packaged default profiles**: `astrocyte/pipeline/extraction_builtin.yaml` merged over code builtins (user `extraction_profiles` still wins); included in wheels via Hatch `force-include`.
 - **`ExtractionProfileConfig.fact_type`**: sets `VectorItem.fact_type` for retained chunks (default `world` when unset).
