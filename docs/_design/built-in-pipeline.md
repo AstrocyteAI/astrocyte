@@ -144,6 +144,8 @@ Synthesis uses a memory-agent system prompt and optional disposition hints when 
 
 **Today:** reflect behavior is driven by `ReflectRequest`, `homeostasis.reflect_max_tokens`, and the orchestrator implementation — not a nested `pipeline.reflect` YAML block.
 
+**Structured recall authority (M7):** When `recall_authority.enabled` and `apply_to_reflect: true` (default), the same formatted block as `RecallResult.authority_context` is **prepended** to the synthesis user message inside `<authority_context>` (before `<memories>`). At retain time, `recall_authority.tier_by_bank` and optional `extraction_profiles.*.authority_tier` set `metadata["authority_tier"]` on stored chunks so recall/reflect can bucket hits. See `docs/_design/adr/adr-004-recall-authority.md`.
+
 **Roadmap sketch (illustrative):**
 
 ```yaml

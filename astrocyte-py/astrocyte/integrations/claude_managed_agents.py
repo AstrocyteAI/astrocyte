@@ -77,6 +77,10 @@ Usage — high-level helper:
     print(result)
 
     # When deleting the session, send user.interrupt first (see delete_managed_session).
+
+``memory_reflect`` uses :meth:`astrocyte._astrocyte.Astrocyte.reflect`; when YAML sets
+``recall_authority.enabled`` and ``apply_to_reflect: true``, synthesis includes the
+``<authority_context>`` block automatically (same behavior as direct ``brain.reflect``).
 """
 
 from __future__ import annotations

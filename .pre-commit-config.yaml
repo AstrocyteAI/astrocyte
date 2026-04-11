@@ -4,6 +4,11 @@
 #
 # Mirrors CI / publish: `uv run ruff check astrocyte/ tests/` in astrocyte-py/
 #
+# Do not pass `--fix` here: autofix rewrites files during the hook and conflicts with
+# pre-commit’s stash of **unstaged** changes (partial `git add`), so the hook rolls back
+# and the commit fails. Run fixes locally instead:
+#   uv run ruff check astrocyte tests --fix && uv run ruff format astrocyte tests
+#
 # CodeQL is not run here: it builds a DB and analyzes the whole tree (minutes + large CLI).
 # Use repo **Settings → Code security → Code scanning** (GitHub default/setup) for CodeQL in CI.
 repos:
@@ -11,5 +16,4 @@ repos:
     rev: v0.15.10
     hooks:
       - id: ruff
-        args: [--fix]
         files: ^astrocyte-py/(astrocyte|tests)/.*\.py$

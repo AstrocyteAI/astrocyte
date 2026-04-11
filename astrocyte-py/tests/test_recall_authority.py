@@ -82,7 +82,10 @@ def test_load_config_parses_recall_authority(tmp_path) -> None:
         """
 recall_authority:
   enabled: true
+  apply_to_reflect: false
   rules_inline: "R"
+  tier_by_bank:
+    mem: t1
   tiers:
     - id: t1
       priority: 1
@@ -92,6 +95,8 @@ recall_authority:
     )
     cfg = load_config(p)
     assert cfg.recall_authority.enabled is True
+    assert cfg.recall_authority.apply_to_reflect is False
     assert cfg.recall_authority.rules_inline == "R"
+    assert cfg.recall_authority.tier_by_bank == {"mem": "t1"}
     assert len(cfg.recall_authority.tiers) == 1
     assert cfg.recall_authority.tiers[0].id == "t1"

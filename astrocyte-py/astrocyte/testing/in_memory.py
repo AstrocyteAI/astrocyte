@@ -397,6 +397,8 @@ class MockLLMProvider:
     def __init__(self, default_response: str = "Mock LLM response") -> None:
         self._default_response = default_response
         self._call_count = 0
+        #: Last ``complete()`` user message content (for tests asserting prompt structure).
+        self.last_user_message: str | None = None
 
     def capabilities(self) -> LLMCapabilities:
         return LLMCapabilities()
@@ -409,6 +411,10 @@ class MockLLMProvider:
         temperature: float = 0.0,
     ) -> Completion:
         self._call_count += 1
+        for m in reversed(messages):
+            if m.role == "user" and isinstance(m.content, str):
+                self.last_user_message = m.content
+                break
         # Check if entity extraction prompt (may be in system or user message)
         all_text = " ".join(m.content for m in messages if isinstance(m.content, str))
         if "extract named entities" in all_text.lower():

@@ -61,7 +61,9 @@ class TestDeepEvalScores:
 class TestDeepEvalImportCheck:
     def test_deepeval_importable(self):
         """Verify deepeval is installed when optional extra ``eval`` is present."""
-        pytest.importorskip("deepeval", reason="install optional extra: pip install 'astrocyte[eval]' or pip install deepeval")
+        pytest.importorskip(
+            "deepeval", reason="install optional extra: pip install 'astrocyte[eval]' or pip install deepeval"
+        )
         from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric
         from deepeval.test_case import LLMTestCase
 

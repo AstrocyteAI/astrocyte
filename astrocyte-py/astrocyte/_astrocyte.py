@@ -247,6 +247,7 @@ class Astrocyte:
         from astrocyte.pipeline.extraction import merged_extraction_profiles
 
         pipeline.extraction_profiles = merged_extraction_profiles(self._config)
+        pipeline.recall_authority = self._config.recall_authority
         # Wire the LLM provider to the MIP router for intent-layer escalation
         if self._mip_router and hasattr(pipeline, "llm_provider"):
             self._mip_router._llm_provider = pipeline.llm_provider
@@ -748,12 +749,18 @@ class Astrocyte:
                         kwargs=kwargs,
                         strategy=strat,
                     )
+                    auth_ctx: str | None = None
+                    ra = self._config.recall_authority
+                    if ra.enabled and ra.apply_to_reflect:
+                        recall_result = apply_recall_authority(recall_result, ra)
+                        auth_ctx = recall_result.authority_context
                     result = await self._do_reflect_from_hits(
                         query=query,
                         hits=recall_result.hits,
                         bank_id=primary_bank,
                         max_tokens=max_tokens,
                         dispositions=kwargs.get("dispositions"),
+                        authority_context=auth_ctx,
                     )
 
             self._analytics.record_reflect(
@@ -1148,10 +1155,7 @@ class Astrocyte:
 
     async def _do_recall(self, request: RecallRequest) -> RecallResult:
         if self._engine_provider:
-            if (
-                self._tiered_retriever is not None
-                and self._config.tiered_retrieval.full_recall == "hybrid"
-            ):
+            if self._tiered_retriever is not None and self._config.tiered_retrieval.full_recall == "hybrid":
                 return await self._tiered_retriever.retrieve(request)
             result = await self._engine_provider.recall(request)
             # Hybrid merges pipeline (which already fuses external_context in RRF); do not merge twice.
@@ -1222,6 +1226,7 @@ class Astrocyte:
         bank_id: str,
         max_tokens: int | None = None,
         dispositions: Any = None,
+        authority_context: str | None = None,
     ) -> ReflectResult:
         """Synthesize over pre-fetched hits (used by multi-bank reflect).
 
@@ -1241,6 +1246,7 @@ class Astrocyte:
                 llm_provider=self._pipeline.llm_provider,
                 dispositions=dispositions,
                 max_tokens=max_tokens or 2048,
+                authority_context=authority_context,
             )
 
         # If engine supports reflect, we can't easily pass pre-fetched hits to it,

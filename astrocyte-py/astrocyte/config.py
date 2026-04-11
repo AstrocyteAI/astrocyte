@@ -133,6 +133,10 @@ class RecallAuthorityConfig:
     rules_inline: str | None = None
     rules_path: str | None = None
     tiers: list[RecallAuthorityTierConfig] = field(default_factory=list)
+    #: When True, :meth:`Astrocyte.reflect` / pipeline reflect inject ``authority_context`` into the synthesis prompt.
+    apply_to_reflect: bool = True
+    #: Default ``metadata[\"authority_tier\"]`` for vectors in a bank (profile ``authority_tier`` overrides).
+    tier_by_bank: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -265,6 +269,8 @@ class ExtractionProfileConfig:
     tag_rules: list[dict[str, str | list[str]]] | None = None
     chunk_size: int | None = None
     fact_type: str | None = None  # default "world"; e.g. "experience", "observation"
+    #: Optional recall-authority band id (overrides ``recall_authority.tier_by_bank`` for this profile).
+    authority_tier: str | None = None
 
 
 @dataclass
@@ -580,15 +586,17 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         if isinstance(tiers_raw, list):
             for row in tiers_raw:
                 if isinstance(row, dict):
-                    tiers.append(
-                        RecallAuthorityTierConfig(
-                            **_filter_dataclass_fields(RecallAuthorityTierConfig, row)
-                        )
-                    )
+                    tiers.append(RecallAuthorityTierConfig(**_filter_dataclass_fields(RecallAuthorityTierConfig, row)))
+        tb = ra.get("tier_by_bank")
+        tier_by_bank: dict[str, str] = {}
+        if isinstance(tb, dict):
+            tier_by_bank = {str(k): str(v) for k, v in tb.items()}
         config.recall_authority = RecallAuthorityConfig(
             enabled=bool(ra.get("enabled", False)),
             rules_inline=ra.get("rules_inline"),
             rules_path=ra.get("rules_path"),
+            apply_to_reflect=bool(ra.get("apply_to_reflect", True)),
+            tier_by_bank=tier_by_bank,
             tiers=tiers,
         )
 

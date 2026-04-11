@@ -12,9 +12,32 @@ from dataclasses import replace
 from pathlib import Path
 
 from astrocyte.config import RecallAuthorityConfig
-from astrocyte.types import MemoryHit, RecallResult
+from astrocyte.types import MemoryHit, Metadata, RecallResult
 
 _METADATA_KEY = "authority_tier"
+
+
+def merge_retain_metadata_authority_tier(
+    metadata: Metadata | None,
+    *,
+    bank_id: str,
+    profile_authority_tier: str | None,
+    recall_authority: RecallAuthorityConfig | None,
+) -> Metadata | None:
+    """Set ``metadata[\"authority_tier\"]`` from extraction profile or ``tier_by_bank`` (M7 producers)."""
+    if recall_authority is None or not recall_authority.enabled:
+        return metadata
+    tier: str | None = None
+    if profile_authority_tier and str(profile_authority_tier).strip():
+        tier = str(profile_authority_tier).strip()
+    elif recall_authority.tier_by_bank:
+        raw = recall_authority.tier_by_bank.get(bank_id)
+        tier = str(raw).strip() if raw else None
+    if not tier:
+        return metadata
+    out: Metadata = dict(metadata or {})
+    out[_METADATA_KEY] = tier
+    return out
 
 
 def load_authority_rules(cfg: RecallAuthorityConfig) -> str:

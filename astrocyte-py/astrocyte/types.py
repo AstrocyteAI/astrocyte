@@ -237,6 +237,8 @@ class ReflectResult:
     confidence: float | None = None
     sources: list[MemoryHit] | None = None
     observations: list[str] | None = None
+    #: Same structured block as :attr:`RecallResult.authority_context` when reflect used recall authority.
+    authority_context: str | None = None
 
 
 @dataclass

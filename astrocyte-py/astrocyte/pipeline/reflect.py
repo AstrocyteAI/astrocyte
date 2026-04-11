@@ -68,6 +68,7 @@ async def synthesize(
     dispositions: Dispositions | None = None,
     max_tokens: int = 2048,
     model: str | None = None,
+    authority_context: str | None = None,
 ) -> ReflectResult:
     """Synthesize an answer from recall hits using LLM.
 
@@ -78,11 +79,14 @@ async def synthesize(
         return ReflectResult(
             answer="I don't have any relevant memories to answer this question.",
             sources=[],
+            authority_context=authority_context,
         )
 
     system_prompt = _build_system_prompt(dispositions)
     memories_text = _format_memories(hits)
     user_prompt = f"<memories>\n{memories_text}\n</memories>\n\n<query>\n{query}\n</query>"
+    if authority_context and str(authority_context).strip():
+        user_prompt = f"<authority_context>\n{authority_context.strip()}\n</authority_context>\n\n" + user_prompt
 
     completion = await llm_provider.complete(
         messages=[
@@ -97,4 +101,5 @@ async def synthesize(
     return ReflectResult(
         answer=completion.text,
         sources=hits,
+        authority_context=authority_context,
     )

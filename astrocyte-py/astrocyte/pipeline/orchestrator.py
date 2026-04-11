@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from astrocyte.config import ExtractionProfileConfig
+from astrocyte.config import ExtractionProfileConfig, RecallAuthorityConfig
 from astrocyte.pipeline.chunking import chunk_text
 from astrocyte.pipeline.embedding import generate_embeddings
 from astrocyte.pipeline.entity_extraction import extract_entities
@@ -23,6 +23,7 @@ from astrocyte.pipeline.reranking import basic_rerank
 from astrocyte.pipeline.retrieval import parallel_retrieve
 from astrocyte.policy.homeostasis import enforce_token_budget
 from astrocyte.policy.signal_quality import DedupDetector
+from astrocyte.recall.authority import apply_recall_authority, merge_retain_metadata_authority_tier
 from astrocyte.types import (
     Completion,
     EntityLink,
@@ -120,6 +121,8 @@ class PipelineOrchestrator:
         self.rrf_k = rrf_k
         self.semantic_overfetch = semantic_overfetch
         self._dedup = DedupDetector(similarity_threshold=0.95)
+        #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when ``recall_authority`` is configured.
+        self.recall_authority: RecallAuthorityConfig | None = None
 
     @property
     def tokens_used(self) -> int:
@@ -172,6 +175,14 @@ class PipelineOrchestrator:
         # 3. Extract entities (profile can disable; requires graph store)
         entities = await extract_entities(prepared.text, self.llm_provider) if prepared.extract_entities else []
 
+        profile_tier = profile.authority_tier if profile else None
+        chunk_metadata = merge_retain_metadata_authority_tier(
+            prepared.metadata,
+            bank_id=request.bank_id,
+            profile_authority_tier=profile_tier,
+            recall_authority=self.recall_authority,
+        )
+
         # 4. Store vectors
         memory_ids: list[str] = []
         items: list[VectorItem] = []
@@ -184,7 +195,7 @@ class PipelineOrchestrator:
                     bank_id=request.bank_id,
                     vector=embedding,
                     text=chunk,
-                    metadata=prepared.metadata,
+                    metadata=chunk_metadata,
                     tags=prepared.tags,
                     fact_type=prepared.fact_type,
                     occurred_at=request.occurred_at,
@@ -324,6 +335,12 @@ class PipelineOrchestrator:
         )
         recall_result = await self.recall(recall_request)
 
+        auth_ctx: str | None = None
+        ra = self.recall_authority
+        if ra and ra.enabled and ra.apply_to_reflect:
+            recall_result = apply_recall_authority(recall_result, ra)
+            auth_ctx = recall_result.authority_context
+
         # 2. Synthesize via LLM
         return await synthesize(
             query=request.query,
@@ -331,4 +348,5 @@ class PipelineOrchestrator:
             llm_provider=self.llm_provider,
             dispositions=request.dispositions,
             max_tokens=request.max_tokens or 2048,
+            authority_context=auth_ctx,
         )
