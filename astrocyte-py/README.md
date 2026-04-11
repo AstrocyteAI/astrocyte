@@ -150,6 +150,8 @@ Hooks run automatically on `git commit`; run on all files anytime with:
 uv run --project astrocyte-py pre-commit run --all-files
 ```
 
+**CodeQL** is not run in pre-commit (too slow for every commit). Enable **Code scanning** under the repo’s **Settings → Code security** so GitHub runs CodeQL on pushes/PRs using the default or advanced setup.
+
 ## Documentation
 
 **[astrocyteai.github.io/astrocyte](https://astrocyteai.github.io/astrocyte/)**
