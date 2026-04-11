@@ -5,7 +5,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY astrocyte-py /build/astrocyte-py
-COPY astrocyte-services-py/astrocyte-pgvector /build/astrocyte-pgvector
+COPY adapters-py/astrocyte-pgvector /build/astrocyte-pgvector
 COPY astrocyte-services-py/astrocyte-rest /build/astrocyte-rest
 
 RUN pip install --no-cache-dir /build/astrocyte-py \

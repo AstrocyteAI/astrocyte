@@ -116,7 +116,7 @@ Mechanical rules resolve deterministically with zero LLM cost. When no rule matc
 
 ## 3. Reference REST server (Docker, recommended)
 
-The **`astrocyte-services-py/`** tree hosts Compose, **`astrocyte-rest`**, and **`astrocyte-pgvector`**.
+The **`astrocyte-services-py/`** tree hosts Compose and **`astrocyte-rest`**. The optional **`astrocyte-pgvector`** package (PostgreSQL + pgvector) lives under **`adapters-py/`** and is pulled in via the **`[pgvector]`** extra on **`astrocyte-rest`** when you use that stack.
 
 ### Fastest path
 

@@ -24,7 +24,7 @@ uv run --directory astrocyte-services-py/astrocyte-rest astrocyte-rest
 
 **uv:** `pyproject.toml` pins **`[tool.uv.sources]`** so `astrocyte` resolves from **`../../astrocyte-py`** (editable). Run `uv sync` from **`astrocyte-services-py/astrocyte-rest/`**. Plain **`pip`** users should `pip install -e ../../astrocyte-py` first, then install this package.
 
-**PostgreSQL (pgvector):** Install the optional adapter (`uv sync --extra pgvector`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts **Postgres + this service** together. For Postgres only on the host, see [`astrocyte-pgvector`](../astrocyte-pgvector/README.md).
+**PostgreSQL (pgvector):** Install the optional adapter (`uv sync --extra pgvector`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts **Postgres + this service** together. For Postgres only on the host, see [`astrocyte-pgvector`](../../adapters-py/astrocyte-pgvector/README.md).
 
 Then set `vector_store: pgvector` in YAML or `ASTROCYTES_VECTOR_STORE=pgvector`, and pass a DSN via `vector_store_config.dsn` or `DATABASE_URL` / `ASTROCYTES_PG_DSN`.
 
@@ -43,7 +43,7 @@ Then set `vector_store: pgvector` in YAML or `ASTROCYTES_VECTOR_STORE=pgvector`,
 | `ASTROCYTES_LLM_PROVIDER` | Override `llm_provider` when no YAML file is used (default `mock`). |
 | `ASTROCYTES_GRAPH_STORE` | Optional graph store name. |
 | `ASTROCYTES_DOCUMENT_STORE` | Optional document store name. |
-| `DATABASE_URL` / `ASTROCYTES_PG_DSN` | When using **`pgvector`**, connection URI for PostgreSQL (see [`astrocyte-pgvector`](../astrocyte-pgvector/README.md)); can be omitted if `dsn` is set in YAML `vector_store_config`. |
+| `DATABASE_URL` / `ASTROCYTES_PG_DSN` | When using **`pgvector`**, connection URI for PostgreSQL (see [`astrocyte-pgvector`](../../adapters-py/astrocyte-pgvector/README.md)); can be omitted if `dsn` is set in YAML `vector_store_config`. |
 
 If **`ASTROCYTES_CONFIG_PATH`** is **not** set, the process uses an empty `AstrocyteConfig` plus the env overrides above and applies **dev-style** defaults (PII off, access control off), matching the previous reference behavior. Install **`astrocyte-pgvector`** (`uv sync --extra pgvector`) before selecting `pgvector` as the vector store.
 

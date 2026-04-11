@@ -7,7 +7,7 @@
 From the monorepo (with `astrocyte` available):
 
 ```bash
-cd astrocyte-services-py/astrocyte-pgvector
+cd adapters-py/astrocyte-pgvector
 uv sync
 # or: pip install -e ../../astrocyte-py && pip install -e .
 ```
@@ -16,7 +16,7 @@ Entry point name: **`pgvector`** (group `astrocyte.vector_stores`).
 
 ## PostgreSQL with Docker
 
-Use the **combined** Compose stack in **[`../docker-compose.yml`](../docker-compose.yml)** (directory **`astrocyte-services-py/`**) to run **Postgres (pgvector) + the reference REST service** together:
+Use the **combined** Compose stack in **[`../../astrocyte-services-py/docker-compose.yml`](../../astrocyte-services-py/docker-compose.yml)** to run **Postgres (pgvector) + the reference REST service** together:
 
 ```bash
 cd astrocyte-services-py
@@ -42,13 +42,13 @@ DDL is shipped as **plain SQL** under [`migrations/`](migrations/) and applied w
 
 ```bash
 export DATABASE_URL='postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte'
-cd astrocyte-services-py/astrocyte-pgvector
+cd adapters-py/astrocyte-pgvector
 ./scripts/migrate.sh
 ```
 
 Requirements: **PostgreSQL 15+** (for `CREATE INDEX CONCURRENTLY IF NOT EXISTS`), **psql** on `PATH`.
 
-After migrations are applied, set **`bootstrap_schema: false`** in `vector_store_config` so the app does not run `CREATE TABLE` / indexes at runtime (see configuration table below). For a **single command** that starts Postgres, runs migrations, then starts the stack with runbook config, use **[`scripts/runbook-up.sh`](../scripts/runbook-up.sh)** (see **[Runbook](../README.md#runbook)**).
+After migrations are applied, set **`bootstrap_schema: false`** in `vector_store_config` so the app does not run `CREATE TABLE` / indexes at runtime (see configuration table below). For a **single command** that starts Postgres, runs migrations, then starts the stack with runbook config, use **[`runbook-up.sh`](../../astrocyte-services-py/scripts/runbook-up.sh)** (see **[Runbook](../../astrocyte-services-py/README.md#runbook)**).
 
 **Embedding width:** [`migrations/002_astrocyte_vectors.sql`](migrations/002_astrocyte_vectors.sql) defines `vector(128)`. That must match **`embedding_dimensions`** in config. For another width, add a new migration (or edit before first deploy) and keep the Python config aligned.
 

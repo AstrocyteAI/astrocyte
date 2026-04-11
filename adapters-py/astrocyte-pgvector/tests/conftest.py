@@ -8,8 +8,8 @@ from datetime import datetime
 
 import psycopg
 import pytest
-
 from astrocyte.types import VectorItem
+
 from astrocyte_pgvector.store import PgVectorStore
 
 DIM = 3  # small vectors for tests

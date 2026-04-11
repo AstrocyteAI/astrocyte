@@ -34,7 +34,8 @@ For how this maps to vendor-neutral **applied AI / agentic-stack** teaching (mem
 |------|----------|
 | [`docs/`](docs/README.md) | Design specification: architecture, SPIs, policy, packaging, evaluation, governance. |
 | [`astrocyte-py/`](astrocyte-py/README.md) | Python implementation of the Astrocyte service. |
-| [`astrocyte-services-py/`](astrocyte-services-py/README.md) | Optional Python **services**: reference REST server (**[`astrocyte-rest/`](astrocyte-services-py/astrocyte-rest/README.md)**) and **PostgreSQL + pgvector** adapter (**[`astrocyte-pgvector/`](astrocyte-services-py/astrocyte-pgvector/README.md)**). Compose for API + DB: [`astrocyte-services-py/docker-compose.yml`](astrocyte-services-py/docker-compose.yml). |
+| [`astrocyte-services-py/`](astrocyte-services-py/README.md) | Optional reference **REST** server (**[`astrocyte-rest/`](astrocyte-services-py/astrocyte-rest/README.md)**). Compose for API + DB: [`astrocyte-services-py/docker-compose.yml`](astrocyte-services-py/docker-compose.yml). |
+| [`adapters-py/`](adapters-py/README.md) | Optional **Tier 1** store adapters, including **PostgreSQL + pgvector** (**[`astrocyte-pgvector/`](adapters-py/astrocyte-pgvector/README.md)**), Qdrant, Neo4j, Elasticsearch. |
 | [`astrocyte-rs/`](astrocyte-rs/README.md) | Rust implementation of the Astrocyte service (same contract). |
 
 For scope, vocabulary, and a full reading order, start with [`docs/README.md`](docs/README.md).

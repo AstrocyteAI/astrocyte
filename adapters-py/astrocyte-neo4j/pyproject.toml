@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocyte-neo4j"
+version = "0.1.0"
+description = "Neo4j GraphStore adapter for Astrocyte"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "astrocyte",
+    "neo4j>=5.14",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.entry-points."astrocyte.graph_stores"]
+neo4j = "astrocyte_neo4j.store:Neo4jGraphStore"
+
+[tool.hatch.build.targets.wheel]
+packages = ["astrocyte_neo4j"]
+
+[tool.uv.sources]
+astrocyte = { path = "../../astrocyte-py", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]

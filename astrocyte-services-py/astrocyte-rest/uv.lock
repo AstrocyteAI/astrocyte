@@ -34,34 +34,52 @@ wheels = [
 ]
 
 [[package]]
-name = "astrocytes"
-version = "0.1.0"
-source = { editable = "../../astrocytes-py" }
+name = "astrocyte"
+source = { editable = "../../astrocyte-py" }
 dependencies = [
+    { name = "httpx" },
     { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "astrocytes", extras = ["otel", "prometheus"], marker = "extra == 'all'" },
+    { name = "deepeval", marker = "extra == 'all'", specifier = ">=2.0" },
+    { name = "deepeval", marker = "extra == 'dev'", specifier = ">=2.0" },
+    { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0" },
+    { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'gateway'", specifier = ">=0.115" },
+    { name = "fastmcp", marker = "extra == 'all'", specifier = ">=3.0" },
+    { name = "fastmcp", marker = "extra == 'dev'", specifier = ">=3.0" },
+    { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "openai", marker = "extra == 'all'", specifier = ">=1.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
+    { name = "opentelemetry-api", marker = "extra == 'all'", specifier = ">=1.20" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.20" },
+    { name = "opentelemetry-sdk", marker = "extra == 'all'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0" },
+    { name = "prometheus-client", marker = "extra == 'all'", specifier = ">=0.20" },
     { name = "prometheus-client", marker = "extra == 'prometheus'", specifier = ">=0.20" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.2" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'all'", specifier = ">=0.30" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'dev'", specifier = ">=0.30" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'gateway'", specifier = ">=0.30" },
 ]
-provides-extras = ["otel", "prometheus", "dev", "all"]
+provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "prometheus"]
 
 [[package]]
-name = "astrocytes-pgvector"
-version = "0.1.0"
-source = { editable = "../astrocytes-pgvector" }
+name = "astrocyte-pgvector"
+source = { editable = "../../adapters-py/astrocyte-pgvector" }
 dependencies = [
-    { name = "astrocytes" },
+    { name = "astrocyte" },
     { name = "pgvector" },
     { name = "psycopg", extra = ["binary"] },
     { name = "psycopg-pool" },
@@ -69,18 +87,22 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "astrocytes", editable = "../../astrocytes-py" },
+    { name = "astrocyte", editable = "../../astrocyte-py" },
     { name = "pgvector", specifier = ">=0.4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "psycopg-pool", specifier = ">=3.2" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.2" },
 ]
+provides-extras = ["dev"]
 
 [[package]]
-name = "astrocytes-rest"
+name = "astrocyte-rest"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "astrocytes" },
+    { name = "astrocyte" },
     { name = "fastapi" },
     { name = "pyjwt" },
     { name = "uvicorn", extra = ["standard"] },
@@ -92,13 +114,13 @@ dev = [
     { name = "pytest" },
 ]
 pgvector = [
-    { name = "astrocytes-pgvector" },
+    { name = "astrocyte-pgvector" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "astrocytes", editable = "../../astrocytes-py" },
-    { name = "astrocytes-pgvector", marker = "extra == 'pgvector'", editable = "../astrocytes-pgvector" },
+    { name = "astrocyte", editable = "../../astrocyte-py" },
+    { name = "astrocyte-pgvector", marker = "extra == 'pgvector'", editable = "../../adapters-py/astrocyte-pgvector" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "pyjwt", specifier = ">=2.8" },

@@ -7,6 +7,7 @@ by Astrocyte's runtime type check (``isinstance(obj, VectorStore)`` etc.).
 Built-in implementations:
 - In-memory test doubles: ``astrocyte.testing.in_memory``
 - PostgreSQL + pgvector: ``astrocyte_pgvector.store.PgVectorStore``
+- Optional wheels (repo ``adapters-py/``): ``astrocyte-pgvector``, ``astrocyte-qdrant``, ``astrocyte-neo4j``, ``astrocyte-elasticsearch``
 
 Each protocol has a SPI_VERSION ClassVar for compatibility checking.
 All methods are async except capabilities() and transport methods.

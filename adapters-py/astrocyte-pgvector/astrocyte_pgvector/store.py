@@ -6,16 +6,14 @@ import asyncio
 import json
 import os
 import re
-
 from typing import Any, ClassVar
 
 import psycopg
+from astrocyte.types import HealthStatus, VectorFilters, VectorHit, VectorItem
 from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from psycopg_pool import AsyncConnectionPool
-
-from astrocyte.types import HealthStatus, VectorFilters, VectorHit, VectorItem
 
 _TABLE_SAFE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 

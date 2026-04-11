@@ -116,7 +116,7 @@ jobs:
           python-version: "3.12"
 
       - name: Test astrocyte-pgvector
-        working-directory: astrocyte-services-py/astrocyte-pgvector
+        working-directory: adapters-py/astrocyte-pgvector
         run: uv sync --extra dev && uv run python -m pytest
 
   # End-to-end: Claude Agent SDK + Astrocyte memory (real API calls).
