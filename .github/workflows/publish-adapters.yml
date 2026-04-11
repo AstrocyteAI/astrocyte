@@ -1,0 +1,161 @@
+# Publish all Tier-1 adapter wheels (adapters-py/*) to PyPI on version tags.
+# Trusted Publishing (OIDC): configure each PyPI project + GitHub environment "release".
+name: Publish adapters to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: pgvector
+            path: adapters-py/astrocyte-pgvector
+            pypi: astrocyte-pgvector
+            wheel_glob: astrocyte_pgvector-*
+            vcs: true
+          - id: qdrant
+            path: adapters-py/astrocyte-qdrant
+            pypi: astrocyte-qdrant
+            wheel_glob: astrocyte_qdrant-*
+            vcs: false
+          - id: neo4j
+            path: adapters-py/astrocyte-neo4j
+            pypi: astrocyte-neo4j
+            wheel_glob: astrocyte_neo4j-*
+            vcs: false
+          - id: elasticsearch
+            path: adapters-py/astrocyte-elasticsearch
+            pypi: astrocyte-elasticsearch
+            wheel_glob: astrocyte_elasticsearch-*
+            vcs: false
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # hatch-vcs (pgvector) needs tags
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Extract version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pin version in pyproject.toml (static metadata)
+        if: matrix.vcs == false
+        working-directory: ${{ matrix.path }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+
+      - name: Build package
+        working-directory: ${{ matrix.path }}
+        env:
+          # hatch-vcs / setuptools-scm pretend (pgvector); harmless for static packages
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.ver.outputs.version }}
+        run: uv build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.id }}
+          path: ${{ matrix.path }}/dist/
+
+  attest:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: pgvector
+            wheel_glob: astrocyte_pgvector-*
+          - id: qdrant
+            wheel_glob: astrocyte_qdrant-*
+          - id: neo4j
+            wheel_glob: astrocyte_neo4j-*
+          - id: elasticsearch
+            wheel_glob: astrocyte_elasticsearch-*
+
+    permissions:
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-${{ matrix.id }}
+          path: dist/
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/${{ matrix.wheel_glob }}"
+
+  publish:
+    needs: attest
+    runs-on: ubuntu-latest
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: pgvector
+            pypi: astrocyte-pgvector
+          - id: qdrant
+            pypi: astrocyte-qdrant
+          - id: neo4j
+            pypi: astrocyte-neo4j
+          - id: elasticsearch
+            pypi: astrocyte-elasticsearch
+
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-${{ matrix.id }}
+          path: dist/
+
+      - name: Check if version already exists on PyPI
+        id: check
+        env:
+          REF_VERSION: ${{ github.ref_name }}
+        run: |
+          V="${REF_VERSION#v}"
+          echo "version=$V"
+          echo "pypi=${{ matrix.pypi }}"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/${{ matrix.pypi }}/$V/json")
+          if [ "$STATUS" = "200" ]; then
+            echo "Version $V already exists on PyPI for ${{ matrix.pypi }} — skipping upload"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $V not on PyPI — proceeding with upload"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to PyPI
+        if: steps.check.outputs.skip != 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+          attestations: false
