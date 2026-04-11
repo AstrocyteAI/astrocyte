@@ -147,7 +147,8 @@ class RetainRequest:
     tags: list[str] | None = None
     occurred_at: datetime | None = None
     source: str | None = None
-    content_type: str = "text"  # "text", "conversation", "document"
+    content_type: str = "text"  # "text", "conversation", "document", "email", ...
+    extraction_profile: str | None = None  # key in astrocyte.yml extraction_profiles (M3)
 
 
 @dataclass

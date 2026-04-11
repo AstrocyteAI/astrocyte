@@ -26,6 +26,12 @@ from astrocyte.identity import (
     parse_principal,
     resolve_actor,
 )
+from astrocyte.pipeline import (
+    PreparedRetainInput,
+    extraction_profile_for_source,
+    merged_extraction_profiles,
+    prepare_retain_input,
+)
 from astrocyte.provider import (
     DocumentStore,
     EngineProvider,
@@ -94,6 +100,11 @@ __all__ = [
     # Main class
     "Astrocyte",
     "HybridEngineProvider",
+    # M3 extraction (stable imports)
+    "prepare_retain_input",
+    "merged_extraction_profiles",
+    "extraction_profile_for_source",
+    "PreparedRetainInput",
     # Errors
     "AstrocyteError",
     "ConfigError",

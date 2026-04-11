@@ -238,6 +238,7 @@ class ExtractionProfileConfig:
     metadata_mapping: dict[str, str] | None = None
     tag_rules: list[dict[str, str | list[str]]] | None = None
     chunk_size: int | None = None
+    fact_type: str | None = None  # default "world"; e.g. "experience", "observation"
 
 
 @dataclass
@@ -695,11 +696,13 @@ def _resolve_agent_bank_ids(
 def validate_astrocyte_config(config: AstrocyteConfig) -> None:
     """Cross-field checks for ADR-003 sections (v0.5.0 with M1)."""
     if config.sources:
+        from astrocyte.pipeline.extraction import merged_extraction_profiles
+
+        profiles = merged_extraction_profiles(config)
         for name, src in config.sources.items():
             if not (src.type or "").strip():
                 raise ConfigError(f"sources.{name}: type is required")
             if src.extraction_profile:
-                profiles = config.extraction_profiles or {}
                 if src.extraction_profile not in profiles:
                     raise ConfigError(
                         f"sources.{name}: extraction_profile {src.extraction_profile!r} not found under extraction_profiles"

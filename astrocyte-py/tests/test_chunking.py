@@ -62,3 +62,26 @@ class TestFixedChunking:
     def test_unknown_strategy(self):
         with pytest.raises(ValueError, match="Unknown"):
             chunk_text("hello", strategy="invalid")
+
+
+class TestDialogueChunking:
+    """M3 — speaker turns and grouping (see ``pipeline/chunking._chunk_dialogue``)."""
+
+    def test_two_speakers_two_turns_one_chunk_when_short(self):
+        text = "Alice: hello there\nBob: hi back"
+        chunks = chunk_text(text, strategy="dialogue", max_chunk_size=200)
+        assert len(chunks) == 1
+        assert "Alice:" in chunks[0] and "Bob:" in chunks[0]
+
+    def test_oversized_turn_gets_split_with_speaker_prefix(self):
+        long_body = "word " * 200
+        text = f"Alice: {long_body.strip()}"
+        chunks = chunk_text(text, strategy="dialogue", max_chunk_size=80)
+        assert len(chunks) >= 2
+        assert all("Alice:" in c for c in chunks)
+
+    def test_multiline_turn_continuation(self):
+        text = "Alice: line one\nand still alice\nBob: reply"
+        chunks = chunk_text(text, strategy="dialogue", max_chunk_size=120)
+        assert len(chunks) >= 1
+        assert "line one" in chunks[0]

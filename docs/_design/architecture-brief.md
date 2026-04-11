@@ -246,6 +246,8 @@ flowchart LR
 
 **Key design decision**: Inbound data always enters through `brain.retain()` after extraction. The extraction pipeline normalizes raw content (HTML, JSON, plain text) into structured memories. This means all policy enforcement (PII barriers, access control, rate limiting) applies uniformly regardless of data source.
 
+**Library implementation (M3)**: The Tier 1 orchestrator applies a **normalize → chunk → optional LLM entity extraction → embed → store** sequence. Per-`content_type` normalization is heuristic (line endings, light email body extraction); heavy MIME/HTML/ICS handling remains out of scope until M4+ connectors. Config and builtins are documented in `built-in-pipeline.md` (section 2).
+
 ### 5. Infrastructure Requirements by Deployment Model
 
 #### 5.1 Library (Embedded)

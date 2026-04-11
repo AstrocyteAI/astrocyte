@@ -90,6 +90,9 @@ raw-options = { root = ".." }  # Git root is one level up from astrocyte-py/
 [tool.hatch.build.targets.wheel]
 packages = ["astrocyte"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"astrocyte/pipeline/extraction_builtin.yaml" = "astrocyte/pipeline/extraction_builtin.yaml"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

@@ -8,9 +8,15 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from astrocyte.config import ExtractionProfileConfig
 from astrocyte.pipeline.chunking import chunk_text
 from astrocyte.pipeline.embedding import generate_embeddings
 from astrocyte.pipeline.entity_extraction import extract_entities
+from astrocyte.pipeline.extraction import (
+    merged_user_and_builtin_profiles,
+    prepare_retain_input,
+    resolve_retain_chunking,
+)
 from astrocyte.pipeline.fusion import rrf_fusion
 from astrocyte.pipeline.reflect import synthesize
 from astrocyte.pipeline.reranking import basic_rerank
@@ -103,6 +109,7 @@ class PipelineOrchestrator:
         max_chunk_size: int = 512,
         rrf_k: int = 60,
         semantic_overfetch: int = 5,
+        extraction_profiles: dict[str, ExtractionProfileConfig] | None = None,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -111,6 +118,7 @@ class PipelineOrchestrator:
         self.document_store = document_store
         self.chunk_strategy = chunk_strategy
         self.max_chunk_size = max_chunk_size
+        self.extraction_profiles = extraction_profiles
         self.rrf_k = rrf_k
         self.semantic_overfetch = semantic_overfetch
         self._dedup = DedupDetector(similarity_threshold=0.95)
@@ -125,12 +133,25 @@ class PipelineOrchestrator:
         return self._tracker.reset_tokens()
 
     async def retain(self, request: RetainRequest) -> RetainResult:
-        """Retain pipeline: chunk → extract entities → embed → store."""
-        # 1. Chunk — use dialogue strategy for conversational content
-        strategy = self.chunk_strategy
-        if getattr(request, "content_type", None) == "conversation":
-            strategy = "dialogue"
-        chunks = chunk_text(request.content, strategy=strategy, max_chunk_size=self.max_chunk_size)
+        """Retain pipeline: normalize → chunk → extract entities → embed → store."""
+        # 0–1. Raw → normalizer → profile metadata/tags (M3 extraction chain)
+        profile: ExtractionProfileConfig | None = None
+        name = getattr(request, "extraction_profile", None)
+        profile_table = merged_user_and_builtin_profiles(self.extraction_profiles)
+        if name:
+            profile = profile_table.get(name)
+        prepared = prepare_retain_input(
+            request,
+            profile,
+            graph_store_configured=self.graph_store is not None,
+        )
+        strategy, max_chunk = resolve_retain_chunking(
+            prepared.effective_content_type,
+            profile=profile,
+            default_strategy=self.chunk_strategy,
+            default_max_chunk_size=self.max_chunk_size,
+        )
+        chunks = chunk_text(prepared.text, strategy=strategy, max_chunk_size=max_chunk)
         if not chunks:
             return RetainResult(stored=False, error="No content after chunking")
 
@@ -150,8 +171,12 @@ class PipelineOrchestrator:
         chunks = [chunks[i] for i in keep_indices]
         embeddings = [embeddings[i] for i in keep_indices]
 
-        # 3. Extract entities (only when graph store is configured — skip the LLM call otherwise)
-        entities = await extract_entities(request.content, self.llm_provider) if self.graph_store else []
+        # 3. Extract entities (profile can disable; requires graph store)
+        entities = (
+            await extract_entities(prepared.text, self.llm_provider)
+            if prepared.extract_entities
+            else []
+        )
 
         # 4. Store vectors
         memory_ids: list[str] = []
@@ -165,9 +190,9 @@ class PipelineOrchestrator:
                     bank_id=request.bank_id,
                     vector=embedding,
                     text=chunk,
-                    metadata=request.metadata,
-                    tags=request.tags,
-                    fact_type="world",  # Default; could be classified by LLM
+                    metadata=prepared.metadata,
+                    tags=prepared.tags,
+                    fact_type=prepared.fact_type,
                     occurred_at=request.occurred_at,
                 )
             )

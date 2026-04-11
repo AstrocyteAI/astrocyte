@@ -237,6 +237,9 @@ class Astrocyte:
     def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
         self._pipeline = pipeline
+        from astrocyte.pipeline.extraction import merged_extraction_profiles
+
+        pipeline.extraction_profiles = merged_extraction_profiles(self._config)
         # Wire the LLM provider to the MIP router for intent-layer escalation
         if self._mip_router and hasattr(pipeline, "llm_provider"):
             self._mip_router._llm_provider = pipeline.llm_provider
@@ -369,7 +372,12 @@ class Astrocyte:
         context: AstrocyteContext | None = None,
         **kwargs: Any,
     ) -> RetainResult:
-        """Store content into memory."""
+        """Store content into memory.
+
+        Keyword args include ``content_type`` (``text``, ``conversation``, ``document``, …),
+        ``extraction_profile`` (name under YAML ``extraction_profiles:``), and other
+        pipeline fields (``occurred_at``, ``source``, …).
+        """
         with span("astrocyte.retain", {"astrocyte.bank_id": bank_id}):
             # Access control
             self._check_access(bank_id, "write", context)
@@ -443,6 +451,7 @@ class Astrocyte:
                 occurred_at=kwargs.get("occurred_at"),
                 source=kwargs.get("source"),
                 content_type=kwargs.get("content_type", "text"),
+                extraction_profile=kwargs.get("extraction_profile"),
             )
 
             # Route to provider

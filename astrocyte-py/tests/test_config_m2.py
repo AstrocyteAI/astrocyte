@@ -114,6 +114,21 @@ deployment:
 
 
 class TestM2Validation:
+    def test_source_may_reference_builtin_extraction_profile_without_yaml_block(self, tmp_path: Path):
+        p = _write(
+            tmp_path,
+            """
+provider: test
+sources:
+  ext:
+    type: webhook
+    extraction_profile: builtin_conversation
+""",
+        )
+        config = load_config(p)
+        assert config.sources is not None
+        assert config.sources["ext"].extraction_profile == "builtin_conversation"
+
     def test_source_requires_type(self, tmp_path: Path):
         p = _write(
             tmp_path,

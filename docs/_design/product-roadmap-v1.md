@@ -155,11 +155,11 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 
 ### Acceptance Criteria
 
-- [ ] Dialogue chunker preserves speaker attribution in chunks
-- [ ] Content type routing selects correct chunking strategy
-- [ ] Extraction profiles are loadable from config
-- [ ] Pipeline produces valid `brain.retain()` calls with metadata
-- [ ] Existing retain pipeline unchanged when no content_type specified
+- [x] Dialogue chunker preserves speaker attribution in chunks (see `chunking._chunk_dialogue` + tests in `tests/test_chunking.py`)
+- [x] Content type routing selects chunking strategy; optional `extraction_profile` overrides (`astrocyte.pipeline.extraction.resolve_retain_chunking`, `PipelineOrchestrator.retain`)
+- [x] Extraction profiles load from YAML `extraction_profiles:`; built-ins `builtin_text` / `builtin_conversation` merged at runtime (`merged_extraction_profiles` / `merged_user_and_builtin_profiles`)
+- [x] Inbound chain: normalize → chunk → optional entity extract → embed → store; profile-driven `metadata_mapping`, `tag_rules`, and `entity_extraction` applied on retain (`prepare_retain_input`)
+- [x] Default `RetainRequest.content_type` remains `text`; omitting `extraction_profile` preserves prior behavior aside from light normalization and builtin profile table merge inside the orchestrator
 
 ---
 

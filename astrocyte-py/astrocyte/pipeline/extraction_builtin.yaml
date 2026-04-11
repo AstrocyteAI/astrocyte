@@ -1,0 +1,10 @@
+# Packaged default extraction profiles (merged over code in BUILTIN_EXTRACTION_PROFILES, then user astrocyte.yml).
+# Edit to tune defaults without a library release; user extraction_profiles: still win on the same key names.
+
+builtin_text:
+  content_type: text
+  chunking_strategy: sentence
+
+builtin_conversation:
+  content_type: conversation
+  chunking_strategy: dialogue

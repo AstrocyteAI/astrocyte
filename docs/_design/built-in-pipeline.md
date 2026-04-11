@@ -22,18 +22,30 @@ When you change **retain** or **recall** stage ordering, **fusion/rerank** behav
 
 ## 2. Retain pipeline
 
+**M3 (v0.6.0) — explicit extraction chain** (before chunk/embed): **Raw → content normalizer → chunker → entity extraction (optional) → embeddings → storage**. Implementation: `astrocyte.pipeline.extraction` (`normalize_content`, `prepare_retain_input`, `resolve_retain_chunking`) and `PipelineOrchestrator.retain`.
+
 ```mermaid
 flowchart TD
   IN[Content via brain.retain] --> POL[Policy: PII, validation, dedup - see policy-layer.md]
-  POL --> S1[1. Chunking]
-  S1 --> S2[2. Entity extraction - NER or LLM]
-  S2 --> S3[3. Fact type classification]
+  POL --> N0[0. Content normalizer - per content_type]
+  N0 --> S1[1. Chunking - strategy from content_type + extraction profile]
+  S1 --> S2[2. Entity extraction - LLM when graph store + profile allows]
+  S2 --> S3[3. Fact type - from extraction profile or default world]
   S3 --> S4[4. Embedding generation - LLM SPI embed]
   S4 --> S5[5. Storage - Vector / Graph / Document stores]
   S5 --> S6[6. Link creation - if graph store]
 ```
 
-Details: chunking uses sentence or fixed-size strategies; entity modes are `ner` or `llm`; fact types include `world`, `experience`, `observation`; storage calls `VectorStore`, optional `GraphStore` and `DocumentStore`; link creation adds co-occurrence and temporal links when configured.
+Details: chunking uses sentence, paragraph, dialogue, or fixed-size strategies; entity extraction uses the LLM provider when a graph store is configured and the active **extraction profile** does not set `entity_extraction: false` / `disabled`; **fact type** defaults to `world` and can be set per profile via `ExtractionProfileConfig.fact_type` (not LLM-classified in the baseline path); storage calls `VectorStore`, optional `GraphStore` and `DocumentStore`; link creation adds co-occurrence links when configured.
+
+### M3 — `content_type`, `extraction_profile`, and normalization scope
+
+- **`RetainRequest.content_type`** (string, default `text`) participates in routing after optional **profile** resolution. Supported built-in values used for chunking and normalization: **`text`**, **`conversation`**, **`transcript`**, **`document`**, **`email`**, **`event`**. Unknown values fall back to the orchestrator default chunking strategy (same as `text`).
+- **`RetainRequest.extraction_profile`** names an entry under config `extraction_profiles:` **or** a **built-in** profile (`builtin_text`, `builtin_conversation` — merged at runtime with user profiles; user definitions override the same name). Use **`astrocyte.pipeline.extraction.extraction_profile_for_source(source_id, config.sources)`** to resolve a profile from `sources.*.extraction_profile` before calling `retain` (full webhook ingest wiring is M4).
+- **`ExtractionProfileConfig`** fields applied on retain: `content_type` (override for routing/normalization), `chunking_strategy`, `chunk_size`, `entity_extraction`, `fact_type`, `metadata_mapping` (JSON `$.path` values plus literal strings), `tag_rules` (`contains` / `match` substring → `tags`). Profile-derived metadata is merged with request metadata; **request metadata wins** on key conflicts.
+- **Packaged defaults**: `astrocyte.pipeline.extraction_builtin.yaml` is merged over code constants (`builtin_text`, `builtin_conversation`) and under user `extraction_profiles:` (same merge order as elsewhere: **user wins**). Shipped in the wheel via Hatch `force-include` so integrators can patch the file in a venv if needed.
+- **Stable imports**: `from astrocyte import prepare_retain_input, merged_extraction_profiles, extraction_profile_for_source, PreparedRetainInput` (also exposed on `astrocyte.pipeline`).
+- **Normalizer** behavior is intentionally shallow: UTF-8 BOM strip, CRLF→LF, transcript/document blank-line collapse, email heuristic (RFC-like header block + body split, `-- ` signature trim). **Not** implemented here: HTML/MIME decoding, full mail parsing, calendar ICS parsing, or binary formats.
 
 ### Multimodal content (optional)
 
@@ -44,28 +56,29 @@ When **`RetainRequest`** (or the public API) includes **image/audio** as `Conten
 
 Query analysis and reflect can pass **multimodal `Message`** lists to **`complete()`** when the configured model supports vision/audio.
 
-### Configuration
+### Configuration (what exists today vs. roadmap)
 
-> **Note:** The `pipeline:` top-level config key is a design target — not yet in
-> `AstrocyteConfig`. Pipeline stages currently use hardcoded defaults. The YAML
-> below shows the planned configuration surface.
+**In `AstrocyteConfig` today (retain-related):**
+
+- **`homeostasis`**: `retain_max_content_bytes`, rate limits / quotas (apply before the pipeline runs).
+- **`extraction_profiles`**: named `ExtractionProfileConfig` entries (chunking, entity flags, metadata/tags, `fact_type`, etc.). Merged at runtime with **code + packaged** built-ins (`builtin_text`, `builtin_conversation`; see `astrocyte/pipeline/extraction_builtin.yaml`).
+- **`sources`**: `extraction_profile` references validated against merged profiles (ingest wiring is M4).
+- **Programmatic `PipelineOrchestrator`**: `chunk_strategy`, `max_chunk_size`, `rrf_k`, `semantic_overfetch`, `extraction_profiles` — used when not overridden by `RetainRequest` / profile resolution.
+
+**Not a single YAML `pipeline:` block yet.** A future top-level `pipeline:` key may unify chunk/entity/embed knobs; until then the above fields and orchestrator constructor arguments are the real surface.
+
+**Roadmap sketch (not implemented as one nested `pipeline:` tree):**
 
 ```yaml
+# Future — illustrative only
 pipeline:
   chunking:
-    strategy: sentence           # "sentence" | "paragraph" | "fixed"
-    max_chunk_size: 512          # Characters
-    overlap: 50                  # Characters (for "fixed" strategy)
-
+    strategy: sentence
+    max_chunk_size: 512
   entity_extraction:
-    mode: llm                    # "llm" | "ner" | "disabled"
-
-  fact_classification:
-    enabled: true                # If false, all chunks default to "world"
-
+    mode: llm
   embedding:
-    model: null                  # Uses LLM provider's default if null
-    dimensions: null             # Uses model's default if null
+    model: null
 ```
 
 ---
@@ -91,19 +104,21 @@ Parallel retrieval runs **2a–2c** concurrently where configured; semantic over
 
 ### Configuration
 
+**Today:** `PipelineOrchestrator` takes `rrf_k` and `semantic_overfetch` (constructor); other recall tuning lives in code defaults until a unified `pipeline:` section exists.
+
+**Roadmap sketch (illustrative):**
+
 ```yaml
 pipeline:
   retrieval:
-    semantic_overfetch_multiplier: 3   # Fetch 3x max_results for fusion
-    graph_max_depth: 2                 # Max hops in graph traversal
-    graph_max_results: 20              # Max graph hits before fusion
-
+    semantic_overfetch_multiplier: 3
+    graph_max_depth: 2
+    graph_max_results: 20
   fusion:
-    rrf_k: 60                          # RRF constant
-
+    rrf_k: 60
   reranking:
-    mode: disabled                     # "flashrank" | "llm" | "disabled"
-    top_n: 20                          # Only rerank top N fused results
+    mode: disabled
+    top_n: 20
 ```
 
 ---
@@ -123,12 +138,16 @@ Synthesis uses a memory-agent system prompt and optional disposition hints when 
 
 ### Configuration
 
+**Today:** reflect behavior is driven by `ReflectRequest`, `homeostasis.reflect_max_tokens`, and the orchestrator implementation — not a nested `pipeline.reflect` YAML block.
+
+**Roadmap sketch (illustrative):**
+
 ```yaml
 pipeline:
   reflect:
-    recall_max_results: 20             # More results for synthesis context
-    synthesis_max_tokens: 2048         # Max tokens for LLM synthesis output
-    temperature: 0.1                   # Low temperature for factual synthesis
+    recall_max_results: 20
+    synthesis_max_tokens: 2048
+    temperature: 0.1
 ```
 
 ---
