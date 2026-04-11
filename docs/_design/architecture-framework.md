@@ -2,9 +2,9 @@
 
 This document defines the layer boundaries, composition model, and relationship to adjacent systems (memory engines, LLM gateways, storage backends, optional outbound HTTP/credential gateways, **authentication (AuthN)** and **authorization (AuthZ)** integration) for the Astrocyte open-source framework.
 
-**AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); Astrocyte consumes a **principal** string. Deciding **what** that principal may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable grants and optional external policy engines - see section 4.6, `access-control.md`, and `identity-and-external-policy.md`.
+**AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); the app maps credentials to an `AstrocyteContext` (at minimum a **principal** string; optionally structured `actor`, **on-behalf-of**, **tenant** per [ADR-002](./adr/adr-002-identity-model.md)). Deciding **what** that identity may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable `access_grants` (including OBO permission intersection) and, in future, optional external policy engines — see section 4.6.
 
-For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the design principles these layers implement, see `design-principles.md`.
+For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the design principles these layers implement, see `design-principles.md`. For **C4 context/container diagrams**, deployment-model trade-offs, bounded-context map, and sequence diagrams aligned to product milestones, see `architecture-brief.md` and `product-roadmap-v1.md`.
 
 ---
 
@@ -17,7 +17,7 @@ Astrocyte is an **open-source memory framework** that sits between AI agents and
 - A **pluggable provider interface** at two tiers: **Tier 1 retrieval adapters** (vector / graph / lexical stores, including **warehouse or lakehouse serving** surfaces when you implement the Retrieval SPI against their query APIs) and **Tier 2 memory engine providers** (Mystique, Mem0, Zep) that bring their own pipeline.
 - An **optional outbound transport plugin surface** for credential gateways and enterprise proxies (HTTP/TLS/proxy configuration shared by LLM adapters and other outbound HTTP) - orthogonal to memory tiers; see section 4.5 and `outbound-transport.md`.
 - An **optional memory export sink** surface for warehouses, lakehouses, and open table formats (event-oriented durability for BI and compliance—not online `recall`); see section 4.4, `storage-and-data-planes.md`, and `memory-export-sink.md`.
-- **AuthN / AuthZ integration:** **Authentication (AuthN)** - external IdPs and middleware map credentials to an **opaque principal**; Astrocyte does not validate passwords or issue tokens. **Authorization (AuthZ)** - per-bank `read` / `write` / `forget` / `admin` checks run in the core (`access-control.md`); an optional **AccessPolicyProvider** can delegate allow/deny to enterprise PDPs (OPA, Cerbos, Casbin, …) - see section 4.6 and `identity-and-external-policy.md`.
+- **AuthN / AuthZ integration:** **Authentication (AuthN)** - external IdPs and middleware map credentials to **`AstrocyteContext`** (opaque **principal** and/or structured fields — [ADR-002](./adr/adr-002-identity-model.md)); Astrocyte does not validate passwords or issue tokens. **Authorization (AuthZ)** - per-bank `read` / `write` / `forget` / `admin` checks run in the core against `access_grants`; an optional **AccessPolicyProvider** can delegate allow/deny to enterprise PDPs (OPA, Cerbos, Casbin, …) — see section 4.6.
 - A **policy layer** that enforces neuroscience-inspired governance (homeostasis, barriers, pruning, observability) regardless of which backend is plugged in.
 
 Astrocyte is **not** an LLM gateway. It does not route completion requests, track LLM spend, or normalize chat formats. That is the job of **LLM gateways and model aggregators** — for example LiteLLM, Portkey, OpenRouter, Vercel AI Gateway, or your cloud provider’s unified model APIs — and of **direct** first-party SDKs when you call each vendor without an intermediary.
@@ -114,7 +114,7 @@ flowchart TD
 
 Typical pattern:
 
-- Declare separate banks (e.g. `org-policies`, `team-docs`, `user-calvin-episodic`, `agent-session`) and grant each **principal** the right **read / write / forget** on the banks they should see (`access-control.md`).
+- Declare separate banks (e.g. `org-policies`, `team-docs`, `user-calvin-episodic`, `agent-session`) and grant each **principal** the right **read / write / forget** on the banks they should see (config `access_grants` / per-bank `access`; [ADR-002](./adr/adr-002-identity-model.md) for structured identity and OBO).
 - Use **single-bank** recall when only one slice is needed, or **multi-bank** `cascade` / `parallel` so one `recall` fans out across allowed banks and merges hits (`multi-bank-orchestration.md`).
 - **Tier 1** still means the built-in pipeline issues retrieval against the stores backing those banks; **Tier 2** means the engine does the same *logical* job using its internal storage—either way, **which** org vs personal vs agent data appears is **which banks are in scope**, filtered by **AuthZ**.
 
@@ -256,9 +256,9 @@ Astrocyte exposes an **optional** `OutboundTransportProvider` interface applied 
 
 ### 4.6 Authentication (AuthN) and authorization (AuthZ)
 
-**Authentication (AuthN)** - Astrocyte is **not** an identity provider. Proving identity (OIDC, SAML, API keys, workload identity, sessions) completes **outside** the framework. The application passes an **opaque `principal`** on `AstrocyteContext` after your middleware or gateway validates credentials (`access-control.md` §7). Open-source IAMs such as **[Casdoor](https://casdoor.org/)** fit here: you run Casdoor, validate tokens, map claims to `user:…` / `agent:…` strings.
+**Authentication (AuthN)** - Astrocyte is **not** an identity provider. Proving identity (OIDC, SAML, API keys, workload identity, sessions) completes **outside** the framework. The application passes **`AstrocyteContext`** after your middleware or gateway validates credentials: at minimum `principal="user:…"` / `agent:…`, and optionally structured **`actor`**, **`on_behalf_of`**, **`tenant_id`** ([ADR-002](./adr/adr-002-identity-model.md)). Open-source IAMs such as **[Casdoor](https://casdoor.org/)** fit here: you run Casdoor, validate tokens, map claims to principals or structured actors.
 
-**Authorization (AuthZ)** - Who may **read / write / forget / administer** which **memory bank** is decided by Astrocyte: default **declarative grants** in config, enforced before pipeline or engine calls. Teams may add an optional **`AccessPolicyProvider`** so allow/deny is delegated to remote PDPs (OPA, Cerbos, …) or **in-process [Casbin](https://casbin.org/)** via **`astrocyte-access-policy-*`** packages; the framework still owns **enforcement order** and **audit events**. Full integration patterns: `identity-and-external-policy.md`.
+**Authorization (AuthZ)** - Who may **read / write / forget / administer** which **memory bank** is decided by Astrocyte: default **declarative grants** in config, enforced before pipeline or engine calls (including **intersection** when **on-behalf-of** is set). Teams may add an optional **`AccessPolicyProvider`** so allow/deny is delegated to remote PDPs (OPA, Cerbos, …) or **in-process [Casbin](https://casbin.org/)** via **`astrocyte-access-policy-*`** packages; the framework still owns **enforcement order** and **audit events**.
 
 ---
 
@@ -442,13 +442,13 @@ Beyond intelligence and governance, the framework provides capabilities that no 
 | MCP server | Any MCP-capable agent gets memory without code integration | `mcp-server.md` |
 | Agent framework middleware | One integration per framework, works with every provider (N+M, not NxM) | `agent-framework-middleware.md` |
 | Memory lifecycle | TTL policies, compliance purge (GDPR/PDPA), legal hold, archival, audit trail | `memory-lifecycle.md` |
-| AuthZ (access control) | Per-bank read/write/forget/admin for principals; enforced in core | `access-control.md` |
+| AuthZ (access control) | Per-bank read/write/forget/admin; OBO intersection; enforced in core | [ADR-002](./adr/adr-002-identity-model.md), config `access_grants` |
 | Event hooks | Webhooks and alerts for retain, PII detection, circuit breaker, lifecycle events | `event-hooks.md` |
 | Bank health & utilization | In-process bank health scores, noisy agent detection, utilization reports, quality trends | `memory-analytics.md` |
 | Evaluation | Benchmark suites, provider comparison, regression detection | `evaluation.md` |
 | Data governance | Classification, PII taxonomy, residency, encryption, DLP, compliance profiles (GDPR/HIPAA/PDPA) | `data-governance.md` |
 | Outbound transport | Optional plugins for credential gateways and enterprise HTTP/TLS; env-only path without plugins | `outbound-transport.md` |
-| AuthN wiring + external AuthZ | Map IdP claims to principals; optional PDP/Casbin adapters beyond config grants | `identity-and-external-policy.md` |
+| AuthN wiring + external AuthZ | Map IdP claims to principals / `AstrocyteContext`; optional PDP/Casbin adapters beyond config grants | [ADR-002](./adr/adr-002-identity-model.md); external PDP docs TBD |
 | Presentation / multimodal (non-LLM API) | How Tavus-class video, voice (e.g. ElevenLabs), and related APIs compose **beside** the LLM SPI | `presentation-layer-and-multimodal-services.md` |
 | Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for multi-provider gateways (LiteLLM / OpenRouter–class and similar) | `multimodal-llm-spi.md` |
 
@@ -466,7 +466,7 @@ Capabilities inspired by ByteRover (agent-native curation, progressive retrieval
 | Curated recall | Implemented | Post-retrieval re-scoring by freshness, reliability, salience | `innovations.md` §2.3 |
 | Progressive retrieval | Implemented | `detail_level: "titles"` for 10x token savings | `innovations.md` §2.4 |
 | Cross-source fusion | Implemented | `external_context` for RAG/graph blending | `innovations.md` §2.5 |
-| Cross-engine routing | Implemented | Adaptive per-query weights in HybridEngineProvider | `innovations.md` §2.6 |
+| Cross-engine routing | Implemented | Adaptive per-query weights in HybridEngineProvider | `innovations.md` §2.6; implementation and selection rules in `astrocyte.hybrid` (``HybridEngineProvider``, ``AdaptiveRouter``) |
 
 **Open-core principle:** Every innovation listed above is in the open-source framework. Mystique's advantage is **execution quality** (better algorithms for the same operations), not withheld capabilities. See `innovations.md` for the full split rationale.
 
@@ -510,7 +510,7 @@ These capabilities exist at the **framework layer** — they apply regardless of
 | **Identity helpers (optional)** | | |
 | Example: web framework → principal wiring | `astrocyte-identity-{framework}` | Apache 2.0 |
 
-Community memory and LLM providers follow the naming convention `astrocyte-{provider}`. Outbound transport plugins use **`astrocyte-transport-{name}`** and the `astrocyte.outbound_transports` entry point group (see `ecosystem-and-packaging.md` and `outbound-transport.md`). Memory export sink packages use **`astrocyte-sink-{target}`** and `astrocyte.memory_export_sinks` (see `memory-export-sink.md` and `ecosystem-and-packaging.md` §2.6 / §3.5). External access policy plugins use **`astrocyte-access-policy-{name}`** and `astrocyte.access_policies` (see `identity-and-external-policy.md`).
+Community memory and LLM providers follow the naming convention `astrocyte-{provider}`. Outbound transport plugins use **`astrocyte-transport-{name}`** and the `astrocyte.outbound_transports` entry point group (see `ecosystem-and-packaging.md` and `outbound-transport.md`). Memory export sink packages use **`astrocyte-sink-{target}`** and `astrocyte.memory_export_sinks` (see `memory-export-sink.md` and `ecosystem-and-packaging.md` §2.6 / §3.5). External access policy plugins use **`astrocyte-access-policy-{name}`** and `astrocyte.access_policies` (integration patterns to be documented alongside gateway work).
 
 ---
 

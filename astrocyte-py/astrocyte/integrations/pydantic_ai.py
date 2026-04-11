@@ -20,11 +20,14 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 def astrocyte_tools(
     brain: Astrocyte,
     bank_id: str,
     *,
+    context: AstrocyteContext | None = None,
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> list[dict[str, Any]]:
@@ -37,7 +40,7 @@ def astrocyte_tools(
 
     async def memory_retain(content: str, tags: list[str] | None = None) -> str:
         """Store content into long-term memory."""
-        result = await brain.retain(content, bank_id=bank_id, tags=tags)
+        result = await brain.retain(content, bank_id=bank_id, tags=tags, context=context)
         if result.stored:
             return f"Stored memory (id: {result.memory_id})"
         return f"Failed to store: {result.error}"
@@ -52,7 +55,7 @@ def astrocyte_tools(
 
     async def memory_recall(query: str, max_results: int = 5) -> str:
         """Search long-term memory for relevant information."""
-        result = await brain.recall(query, bank_id=bank_id, max_results=max_results)
+        result = await brain.recall(query, bank_id=bank_id, max_results=max_results, context=context)
         if not result.hits:
             return "No relevant memories found."
         lines = [f"- [{h.score:.2f}] {h.text}" for h in result.hits]
@@ -70,7 +73,7 @@ def astrocyte_tools(
 
         async def memory_reflect(query: str) -> str:
             """Synthesize an answer from long-term memory."""
-            result = await brain.reflect(query, bank_id=bank_id)
+            result = await brain.reflect(query, bank_id=bank_id, context=context)
             return result.answer
 
         tools.append(
@@ -85,7 +88,7 @@ def astrocyte_tools(
 
         async def memory_forget(memory_ids: list[str]) -> str:
             """Remove specific memories by their IDs."""
-            result = await brain.forget(bank_id, memory_ids=memory_ids)
+            result = await brain.forget(bank_id, memory_ids=memory_ids, context=context)
             return f"Deleted {result.deleted_count} memories."
 
         tools.append(

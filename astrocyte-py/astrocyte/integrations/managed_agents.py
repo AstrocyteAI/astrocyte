@@ -52,6 +52,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from astrocyte.types import AstrocyteContext
+
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
@@ -100,10 +102,12 @@ async def _handle_retain(
     brain: Astrocyte,
     bank_id: str,
     args: dict[str, Any],
+    *,
+    context: AstrocyteContext | None = None,
 ) -> dict[str, Any]:
     """Retain handler: store content into a specific bank."""
     tag_list = _parse_tags(args.get("tags"))
-    result = await brain.retain(args["content"], bank_id=bank_id, tags=tag_list)
+    result = await brain.retain(args["content"], bank_id=bank_id, tags=tag_list, context=context)
     return _format_sdk_response({"stored": result.stored, "memory_id": result.memory_id})
 
 
@@ -112,6 +116,8 @@ async def _handle_coordinator_recall(
     session_id: str,
     coord_bank: str,
     args: dict[str, Any],
+    *,
+    context: AstrocyteContext | None = None,
 ) -> dict[str, Any]:
     """Coordinator recall: search coordinator bank + optional sub-agent banks."""
     query_text = args["query"]
@@ -126,7 +132,11 @@ async def _handle_coordinator_recall(
                 banks.append(agent_bank_id(session_id, role))
 
     result = await brain.recall(
-        query_text, banks=banks, strategy="parallel", max_results=max_results
+        query_text,
+        banks=banks,
+        strategy="parallel",
+        max_results=max_results,
+        context=context,
     )
     hits = [
         {"text": h.text, "score": round(h.score, 4), "bank_id": h.bank_id}
@@ -140,6 +150,8 @@ async def _handle_coordinator_reflect(
     session_id: str,
     coord_bank: str,
     args: dict[str, Any],
+    *,
+    context: AstrocyteContext | None = None,
 ) -> dict[str, Any]:
     """Coordinator reflect: synthesize from coordinator + optional sub-agent banks."""
     query_text = args["query"]
@@ -152,7 +164,7 @@ async def _handle_coordinator_reflect(
             if role:
                 banks.append(agent_bank_id(session_id, role))
 
-    result = await brain.reflect(query_text, banks=banks, strategy="parallel")
+    result = await brain.reflect(query_text, banks=banks, strategy="parallel", context=context)
     return _format_sdk_response(result.answer)
 
 
@@ -161,6 +173,8 @@ async def _handle_subagent_recall(
     own_bank: str,
     coord_bank: str,
     args: dict[str, Any],
+    *,
+    context: AstrocyteContext | None = None,
 ) -> dict[str, Any]:
     """Sub-agent recall: search own bank + coordinator bank."""
     query_text = args["query"]
@@ -171,6 +185,7 @@ async def _handle_subagent_recall(
         banks=[own_bank, coord_bank],
         strategy="parallel",
         max_results=max_results,
+        context=context,
     )
     hits = [
         {"text": h.text, "score": round(h.score, 4), "bank_id": h.bank_id}
@@ -190,6 +205,7 @@ def create_memory_server(
     server_name: str = "astrocyte_memory",
     include_reflect: bool = True,
     include_forget: bool = False,
+    context: AstrocyteContext | None = None,
 ) -> Any:
     """Create an in-process MCP server with session-scoped memory.
 
@@ -208,6 +224,7 @@ def create_memory_server(
         server_name=server_name,
         include_reflect=include_reflect,
         include_forget=include_forget,
+        context=context,
     )
 
 
@@ -221,6 +238,7 @@ def create_coordinator_server(
     session_id: str,
     server_name: str = "astrocyte_memory",
     include_reflect: bool = True,
+    context: AstrocyteContext | None = None,
 ) -> Any:
     """Create an MCP server for the coordinator agent.
 
@@ -242,7 +260,7 @@ def create_coordinator_server(
         {"content": str, "tags": str},
     )
     async def memory_retain(args: dict[str, Any]) -> dict[str, Any]:
-        return await _handle_retain(brain, coord_bank, args)
+        return await _handle_retain(brain, coord_bank, args, context=context)
 
     sdk_tools.append(memory_retain)
 
@@ -253,7 +271,7 @@ def create_coordinator_server(
         {"query": str, "max_results": int, "include_agents": str},
     )
     async def memory_recall(args: dict[str, Any]) -> dict[str, Any]:
-        return await _handle_coordinator_recall(brain, session_id, coord_bank, args)
+        return await _handle_coordinator_recall(brain, session_id, coord_bank, args, context=context)
 
     sdk_tools.append(memory_recall)
 
@@ -265,7 +283,7 @@ def create_coordinator_server(
             {"query": str, "include_agents": str},
         )
         async def memory_reflect(args: dict[str, Any]) -> dict[str, Any]:
-            return await _handle_coordinator_reflect(brain, session_id, coord_bank, args)
+            return await _handle_coordinator_reflect(brain, session_id, coord_bank, args, context=context)
 
         sdk_tools.append(memory_reflect)
 
@@ -282,6 +300,7 @@ def create_subagent_memory_server(
     session_id: str,
     role: str,
     server_name: str | None = None,
+    context: AstrocyteContext | None = None,
 ) -> Any:
     """Create an MCP server for a sub-agent's private memory bank.
 
@@ -304,7 +323,7 @@ def create_subagent_memory_server(
         {"content": str, "tags": str},
     )
     async def memory_retain(args: dict[str, Any]) -> dict[str, Any]:
-        return await _handle_retain(brain, own_bank, args)
+        return await _handle_retain(brain, own_bank, args, context=context)
 
     sdk_tools.append(memory_retain)
 
@@ -314,7 +333,7 @@ def create_subagent_memory_server(
         {"query": str, "max_results": int},
     )
     async def memory_recall(args: dict[str, Any]) -> dict[str, Any]:
-        return await _handle_subagent_recall(brain, own_bank, coord_bank, args)
+        return await _handle_subagent_recall(brain, own_bank, coord_bank, args, context=context)
 
     sdk_tools.append(memory_recall)
 
@@ -334,6 +353,7 @@ def create_subagent_definition(
     prompt: str,
     tools: list[str] | None = None,
     model: str | None = None,
+    context: AstrocyteContext | None = None,
 ) -> dict[str, Any]:
     """Create an AgentDefinition dict for a sub-agent with its own memory bank.
 
@@ -342,7 +362,7 @@ def create_subagent_definition(
     and reads from both its bank and the coordinator bank.
     """
     memory_server = create_subagent_memory_server(
-        brain, session_id=session_id, role=role
+        brain, session_id=session_id, role=role, context=context
     )
     server_name = f"astrocyte_memory_{role}"
 

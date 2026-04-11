@@ -24,11 +24,14 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 def astrocyte_strands_tools(
     brain: Astrocyte,
     bank_id: str,
     *,
+    context: AstrocyteContext | None = None,
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> list[dict[str, Any]]:
@@ -44,7 +47,7 @@ def astrocyte_strands_tools(
     async def retain_handler(tool_input: dict[str, Any]) -> str:
         content = tool_input["content"]
         tags = tool_input.get("tags")
-        result = await brain.retain(content, bank_id=bank_id, tags=tags)
+        result = await brain.retain(content, bank_id=bank_id, tags=tags, context=context)
         return json.dumps({"stored": result.stored, "memory_id": result.memory_id})
 
     tools.append(
@@ -76,7 +79,7 @@ def astrocyte_strands_tools(
     async def recall_handler(tool_input: dict[str, Any]) -> str:
         query = tool_input["query"]
         max_results = tool_input.get("max_results", 5)
-        result = await brain.recall(query, bank_id=bank_id, max_results=max_results)
+        result = await brain.recall(query, bank_id=bank_id, max_results=max_results, context=context)
         hits = [{"text": h.text, "score": round(h.score, 4)} for h in result.hits]
         return json.dumps({"hits": hits, "total": result.total_available})
 
@@ -106,7 +109,7 @@ def astrocyte_strands_tools(
 
         async def reflect_handler(tool_input: dict[str, Any]) -> str:
             query = tool_input["query"]
-            result = await brain.reflect(query, bank_id=bank_id)
+            result = await brain.reflect(query, bank_id=bank_id, context=context)
             return json.dumps({"answer": result.answer})
 
         tools.append(
@@ -136,7 +139,7 @@ def astrocyte_strands_tools(
             memory_ids = tool_input["memory_ids"]
             if isinstance(memory_ids, str):
                 memory_ids = [mid.strip() for mid in memory_ids.split(",")]
-            result = await brain.forget(bank_id, memory_ids=memory_ids)
+            result = await brain.forget(bank_id, memory_ids=memory_ids, context=context)
             return json.dumps({"deleted_count": result.deleted_count})
 
         tools.append(

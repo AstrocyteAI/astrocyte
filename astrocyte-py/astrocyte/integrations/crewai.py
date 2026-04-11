@@ -9,6 +9,7 @@ Usage:
     crew = Crew(
         agents=[support_agent, research_agent],
         memory=AstrocyteCrewMemory(brain, bank_id="team-support"),
+        # Optional: context=AstrocyteContext(principal="user:me") for ACL / OBO
     )
 
 Maps:
@@ -24,12 +25,17 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocyteCrewMemory:
     """Astrocyte-backed memory for CrewAI crews and agents.
 
     Implements the interface pattern expected by CrewAI's memory system:
     save(), search(), reset().
+
+    Pass optional ``context`` (:class:`~astrocyte.types.AstrocyteContext`) for
+    access control and OBO when ``access_control`` is enabled.
 
     Thin wrapper — all policy enforcement happens inside Astrocyte.
     """
@@ -39,11 +45,13 @@ class AstrocyteCrewMemory:
         brain: Astrocyte,
         bank_id: str,
         *,
+        context: AstrocyteContext | None = None,
         agent_banks: dict[str, str] | None = None,
         auto_retain: bool = False,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
         self._agent_banks = agent_banks or {}
         self.auto_retain = auto_retain
 
@@ -73,6 +81,7 @@ class AstrocyteCrewMemory:
             bank_id=bank,
             tags=tags or ["crewai"],
             metadata=meta,
+            context=self._context,
         )
 
     async def search(
@@ -90,6 +99,7 @@ class AstrocyteCrewMemory:
             bank_id=bank,
             max_results=max_results,
             tags=tags,
+            context=self._context,
         )
         return [
             {
@@ -104,4 +114,4 @@ class AstrocyteCrewMemory:
     async def reset(self, *, agent_id: str | None = None) -> None:
         """Reset memory for a bank (forget all)."""
         bank = self._resolve_bank(agent_id)
-        await self.brain.clear_bank(bank)
+        await self.brain.clear_bank(bank, context=self._context)

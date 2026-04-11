@@ -1,6 +1,6 @@
 # Identity integration and external access policy
 
-This document defines how Astrocyte **composes** with authentication (AuthN) and external authorization (AuthZ) systems **without** becoming an identity provider or coupling to any single vendor. For the default in-framework model (opaque principals + YAML grants), see `access-control.md`.
+This document defines how Astrocyte **composes** with authentication (AuthN) and external authorization (AuthZ) systems **without** becoming an identity provider or coupling to any single vendor. For the default in-framework model (opaque principals + YAML grants, structured `AstrocyteContext`, and OBO intersection in the core), see `access-control.md` and [ADR-002](./adr/adr-002-identity-model.md).
 
 ---
 

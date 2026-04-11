@@ -368,10 +368,27 @@ class AccessGrant:
 
 
 @dataclass
+class ActorIdentity:
+    """Structured actor for access control and bank resolution (ADR-002)."""
+
+    type: str  # "user" | "agent" | "service"
+    id: str
+    claims: dict[str, str] | None = None
+
+
+@dataclass
 class AstrocyteContext:
-    """Caller identity for access control."""
+    """Caller identity for access control.
+
+    ``principal`` remains the backwards-compatible primary string. When ``actor``
+    is set, identity resolution uses ``actor`` (and optional ``on_behalf_of`` for OBO);
+    ``principal`` is still useful for logging and integrations that have not migrated.
+    """
 
     principal: str  # e.g. "agent:support-bot-1", "user:calvin"
+    actor: ActorIdentity | None = None
+    on_behalf_of: ActorIdentity | None = None
+    tenant_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

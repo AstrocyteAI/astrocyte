@@ -53,6 +53,17 @@ const topicItems = {
     { label: "Neuroscience & vocabulary", link: "/design/neuroscience-astrocyte/" },
     { label: "Design principles", link: "/design/design-principles/" },
     { label: "Architecture framework", link: "/design/architecture-framework/" },
+    { label: "Architecture brief (C4 & domain)", link: "/design/architecture-brief/" },
+    { label: "Product roadmap v1", link: "/design/product-roadmap-v1/" },
+    {
+      label: "ADRs",
+      collapsed: true,
+      items: [
+        { label: "ADR-001 Deployment models", link: "/design/adr/adr-001-deployment-models/" },
+        { label: "ADR-002 Identity model", link: "/design/adr/adr-002-identity-model/" },
+        { label: "ADR-003 Config schema", link: "/design/adr/adr-003-config-schema/" },
+      ],
+    },
     { label: "Storage and data planes", link: "/design/storage-and-data-planes/" },
     { label: "Fellowship curriculum mapping", link: "/design/curriculum-mapping/" },
     { label: "Implementation language strategy", link: "/design/implementation-language-strategy/" },

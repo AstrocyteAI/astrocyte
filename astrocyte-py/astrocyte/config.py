@@ -162,6 +162,16 @@ class AccessControlConfig:
 
 
 @dataclass
+class IdentityConfig:
+    """Identity-driven bank resolution and ACL helpers (M1 / v0.5.0)."""
+
+    auto_resolve_banks: bool = False
+    user_bank_prefix: str = "user-"
+    agent_bank_prefix: str = "agent-"
+    service_bank_prefix: str = "service-"
+
+
+@dataclass
 class McpConfig:
     default_bank_id: str | None = None
     expose_reflect: bool = True
@@ -253,6 +263,7 @@ class AstrocyteConfig:
     escalation: EscalationConfig = field(default_factory=EscalationConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     access_control: AccessControlConfig = field(default_factory=AccessControlConfig)
+    identity: IdentityConfig = field(default_factory=IdentityConfig)
     defaults: DefaultsConfig = field(default_factory=DefaultsConfig)
 
     # MCP
@@ -426,6 +437,9 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
 
     if "access_control" in data:
         config.access_control = AccessControlConfig(**_filter_dataclass_fields(AccessControlConfig, data["access_control"]))
+
+    if "identity" in data:
+        config.identity = IdentityConfig(**_filter_dataclass_fields(IdentityConfig, data["identity"]))
 
     if "defaults" in data:
         config.defaults = DefaultsConfig(**_filter_dataclass_fields(DefaultsConfig, data["defaults"]))

@@ -22,11 +22,14 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 def astrocyte_ms_agent_tools(
     brain: Astrocyte,
     bank_id: str,
     *,
+    context: AstrocyteContext | None = None,
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -40,6 +43,7 @@ def astrocyte_ms_agent_tools(
     return astrocyte_tool_definitions(
         brain,
         bank_id,
+        context=context,
         include_reflect=include_reflect,
         include_forget=include_forget,
     )

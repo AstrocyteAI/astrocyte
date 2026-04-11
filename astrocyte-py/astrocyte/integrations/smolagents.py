@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocyteSmolTool:
     """A single Astrocyte tool compatible with smolagents' Tool protocol.
@@ -66,6 +68,7 @@ def astrocyte_smolagent_tools(
     brain: Astrocyte,
     bank_id: str,
     *,
+    context: AstrocyteContext | None = None,
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> list[AstrocyteSmolTool]:
@@ -78,7 +81,7 @@ def astrocyte_smolagent_tools(
 
     async def _retain(content: str, tags: str = "") -> str:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        result = await brain.retain(content, bank_id=bank_id, tags=tag_list)
+        result = await brain.retain(content, bank_id=bank_id, tags=tag_list, context=context)
         if result.stored:
             return f"Stored memory with id: {result.memory_id}"
         return f"Failed to store: {result.error}"
@@ -97,7 +100,7 @@ def astrocyte_smolagent_tools(
     )
 
     async def _recall(query: str, max_results: int = 5) -> str:
-        result = await brain.recall(query, bank_id=bank_id, max_results=max_results)
+        result = await brain.recall(query, bank_id=bank_id, max_results=max_results, context=context)
         if not result.hits:
             return "No relevant memories found."
         lines = [f"- [{h.score:.2f}] {h.text}" for h in result.hits]
@@ -119,7 +122,7 @@ def astrocyte_smolagent_tools(
     if include_reflect:
 
         async def _reflect(query: str) -> str:
-            result = await brain.reflect(query, bank_id=bank_id)
+            result = await brain.reflect(query, bank_id=bank_id, context=context)
             return result.answer
 
         tools.append(
@@ -138,7 +141,7 @@ def astrocyte_smolagent_tools(
 
         async def _forget(memory_ids: str) -> str:
             ids = [mid.strip() for mid in memory_ids.split(",")]
-            result = await brain.forget(bank_id, memory_ids=ids)
+            result = await brain.forget(bank_id, memory_ids=ids, context=context)
             return f"Deleted {result.deleted_count} memories."
 
         tools.append(

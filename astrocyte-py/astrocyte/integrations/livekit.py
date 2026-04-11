@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocyteLiveKitMemory:
     """Astrocyte memory adapter for LiveKit real-time agents.
@@ -47,11 +49,13 @@ class AstrocyteLiveKitMemory:
         brain: Astrocyte,
         bank_id: str,
         *,
+        context: AstrocyteContext | None = None,
         session_bank_prefix: str | None = None,
         max_context_items: int = 10,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
         self._session_prefix = session_bank_prefix
         self.max_context_items = max_context_items
 
@@ -77,6 +81,7 @@ class AstrocyteLiveKitMemory:
             query,
             bank_id=bank,
             max_results=max_results or self.max_context_items,
+            context=self._context,
         )
         if not result.hits:
             return ""
@@ -94,7 +99,7 @@ class AstrocyteLiveKitMemory:
         Returns structured results for programmatic use.
         """
         bank = self._session_bank(session_id)
-        result = await self.brain.recall(query, bank_id=bank, max_results=max_results)
+        result = await self.brain.recall(query, bank_id=bank, max_results=max_results, context=self._context)
         return [{"text": h.text, "score": h.score, "memory_id": h.memory_id} for h in result.hits]
 
     async def retain_from_session(
@@ -113,7 +118,7 @@ class AstrocyteLiveKitMemory:
         all_tags = list(tags or [])
         all_tags.append("livekit")
 
-        result = await self.brain.retain(content, bank_id=bank, tags=all_tags, metadata=meta)
+        result = await self.brain.retain(content, bank_id=bank, tags=all_tags, metadata=meta, context=self._context)
         return result.memory_id if result.stored else None
 
     async def summarize_session(
@@ -124,5 +129,5 @@ class AstrocyteLiveKitMemory:
     ) -> str:
         """Use reflect to synthesize session memories into a summary."""
         bank = self._session_bank(session_id)
-        result = await self.brain.reflect(query, bank_id=bank)
+        result = await self.brain.reflect(query, bank_id=bank, context=self._context)
         return result.answer

@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocyteBeeTool:
     """A single Astrocyte tool compatible with BeeAI's Tool interface.
@@ -51,6 +53,7 @@ def astrocyte_bee_tools(
     brain: Astrocyte,
     bank_id: str,
     *,
+    context: AstrocyteContext | None = None,
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> list[AstrocyteBeeTool]:
@@ -61,7 +64,7 @@ def astrocyte_bee_tools(
         content = input_data["content"]
         tags = input_data.get("tags")
         tag_list = [t.strip() for t in tags.split(",")] if isinstance(tags, str) and tags else tags
-        result = await brain.retain(content, bank_id=bank_id, tags=tag_list)
+        result = await brain.retain(content, bank_id=bank_id, tags=tag_list, context=context)
         return json.dumps({"stored": result.stored, "memory_id": result.memory_id})
 
     tools.append(
@@ -76,7 +79,7 @@ def astrocyte_bee_tools(
     async def _recall(input_data: dict[str, Any]) -> str:
         query = input_data["query"]
         max_results = input_data.get("max_results", 5)
-        result = await brain.recall(query, bank_id=bank_id, max_results=max_results)
+        result = await brain.recall(query, bank_id=bank_id, max_results=max_results, context=context)
         hits = [{"text": h.text, "score": round(h.score, 4)} for h in result.hits]
         return json.dumps({"hits": hits, "total": result.total_available})
 
@@ -92,7 +95,7 @@ def astrocyte_bee_tools(
     if include_reflect:
 
         async def _reflect(input_data: dict[str, Any]) -> str:
-            result = await brain.reflect(input_data["query"], bank_id=bank_id)
+            result = await brain.reflect(input_data["query"], bank_id=bank_id, context=context)
             return result.answer
 
         tools.append(
@@ -110,7 +113,7 @@ def astrocyte_bee_tools(
             ids = input_data["memory_ids"]
             if isinstance(ids, str):
                 ids = [mid.strip() for mid in ids.split(",")]
-            result = await brain.forget(bank_id, memory_ids=ids)
+            result = await brain.forget(bank_id, memory_ids=ids, context=context)
             return json.dumps({"deleted_count": result.deleted_count})
 
         tools.append(

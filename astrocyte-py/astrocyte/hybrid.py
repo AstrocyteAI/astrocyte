@@ -1,7 +1,28 @@
 """Hybrid Tier-2 engine + Tier-1 pipeline as a single :class:`~astrocyte.provider.EngineProvider`.
 
-Both backends answer the same ``bank_id``; recall merges ranked hits (weighted, deduped).
-Retain writes to exactly one backend via ``retain_target``.
+**Selection rules (summary)**
+
+1. **Retain path** — Exactly one backend receives writes, chosen by ``retain_target``:
+   ``"engine"`` → Tier-2 ``EngineProvider.retain`` (requires ``engine=``);
+   ``"pipeline"`` → ``PipelineOrchestrator.retain`` (requires ``pipeline=``).
+
+2. **Recall path** — If both sides are configured, ``recall`` runs them **concurrently**
+   (``asyncio.gather``), tags hits with ``source`` ``tier2_engine`` vs ``tier1_pipeline``,
+   optionally **dedupes** by text (keeping best score), then applies per-source **weights**
+   (``engine_recall_weight`` / ``pipeline_recall_weight``). Results are sorted by weighted
+   score and trimmed to ``max_results`` / token budget.
+
+3. **Adaptive routing** (optional, ``adaptive_routing=True``) — :class:`AdaptiveRouter`
+   adjusts engine vs pipeline weights per query using heuristics: temporal cues (regex),
+   entity density (capitalized words), question shape (how/why vs what/who/list), and
+   short queries; engine boosts require matching ``EngineCapabilities`` (e.g. temporal/graph).
+
+4. **Reflect / forget** — Prefer engine when it advertises capability; otherwise pipeline
+   or raise ``NotImplementedError`` (see implementation).
+
+When changing merge semantics or router heuristics, update **tests**:
+``tests/test_astrocyte_tier2.py`` (Tier-2 engine), ``tests/test_hybrid_engine.py`` (merge +
+``retain_target``), and ``tests/test_phase2_innovations.py`` (adaptive router).
 """
 
 from __future__ import annotations

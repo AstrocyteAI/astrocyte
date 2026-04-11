@@ -2,6 +2,8 @@
 
 Astrocyte enforces who can read, write, reflect, and administer each memory bank. The framework is the natural enforcement point - it sits between every caller and every provider.
 
+Structured identity (**`ActorIdentity`**, **on-behalf-of**, **tenant** fields on `AstrocyteContext`) and **on-behalf-of permission intersection** are specified in [ADR-002](./adr/adr-002-identity-model.md); this document focuses on principals, grants, and config.
+
 This maps to **Principle 6 (Barrier maintenance)** - controlling what crosses boundaries, applied to identity and authorization, not just content validation.
 
 **External IdPs and policy engines:** To plug in OIDC/SAML/API-key flows and optional enterprise PDPs (OPA, Cerbos, etc.) without coupling the core to vendors, see **`identity-and-external-policy.md`**. For **which packages** implement grants vs PDP adapters vs the reference REST wiring in this repository, see **`identity-and-external-policy.md` §8**.
@@ -12,7 +14,7 @@ This maps to **Principle 6 (Barrier maintenance)** - controlling what crosses bo
 
 ### 1.1 Principals
 
-A principal is an identity that accesses memory. Principals are **opaque strings** - Astrocyte does not manage user databases or authentication. It receives a principal identifier from the caller and enforces policies against it.
+A principal is an identity that accesses memory. Callers usually pass an **opaque string** on `AstrocyteContext.principal` — Astrocyte does not manage user databases or authentication. The framework may also accept a structured **`actor`** (and optional **`on_behalf_of`**) for delegation; see [ADR-002](./adr/adr-002-identity-model.md). Grant rows still match **`type:id`** strings (e.g. `user:calvin`, `agent:support-bot-1`).
 
 ```python
 # Principal comes from caller context
@@ -41,7 +43,9 @@ Principal format is convention-based:
 | `forget` | `forget()` memories from the bank (selective deletion) |
 | `admin` | Bank configuration, export, import, legal hold, delete bank, `forget(scope="all")` / `clear_bank()` |
 
-Permissions are **additive** - a principal's effective permissions are the union of all grants.
+For a **single** identity (no on-behalf-of), effective permissions for a bank are the **union** of all matching grant rows (same as before).
+
+When **`on_behalf_of`** is set (agent acting for a user), effective permissions for a bank are the **intersection** of: (1) the union of grants matching the **actor**, and (2) the union of grants matching the **on-behalf-of** identity — see [ADR-002](./adr/adr-002-identity-model.md). This prevents privilege escalation via delegation.
 
 ### 1.3 Grant structure
 
@@ -58,7 +62,7 @@ class AccessGrant:
 Many products need **humans and agents to see the same bank**—not a bypass of isolation, but **explicit** overlap in who holds **which permissions** on **`bank_id`**.
 
 - **One bank, multiple principals:** Grant both `user:{id}` and `agent:{id}` **read** and/or **write** on the same bank (with asymmetric permissions if you want—for example user gets **admin**, agent only **read** and **write**, no **forget**).
-- **One principal per request:** Each `recall` / `retain` still runs under a **single** `AstrocyteContext.principal`. Sharing is expressed in **config grants** (or PDP rules), not by merging identities in one call.
+- **Identity per request:** Each call uses one `AstrocyteContext` — typically one **principal** string, optionally **`actor`** + **`on_behalf_of`** for OBO. Sharing across humans/agents is expressed in **config grants** (or PDP rules).
 - **Revocation:** When an agent must lose access, **revoke** or narrow grants (§5); do not rely on the model to “forget” the API.
 - **Contrast with accidental access:** If the **wrong** principal or **wrong** bank is chosen—especially from an **untrusted** execution environment—recall becomes an **exfiltration** channel. Bind **identity at the BFF** and align **agent card → principal + bank** mapping with environment/sandbox context; see `sandbox-awareness-and-exfiltration.md`.
 

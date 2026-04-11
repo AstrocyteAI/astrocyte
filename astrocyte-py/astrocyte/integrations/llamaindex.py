@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocyteLlamaMemory:
     """Astrocyte-backed memory for LlamaIndex agents and chat engines.
@@ -40,10 +42,12 @@ class AstrocyteLlamaMemory:
         brain: Astrocyte,
         bank_id: str,
         *,
+        context: AstrocyteContext | None = None,
         max_results: int = 10,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
         self.max_results = max_results
 
     async def put(
@@ -59,6 +63,7 @@ class AstrocyteLlamaMemory:
             bank_id=self.bank_id,
             tags=tags or ["llamaindex"],
             metadata=metadata or {"source": "llamaindex"},
+            context=self._context,
         )
         return result.memory_id if result.stored else None
 
@@ -77,6 +82,7 @@ class AstrocyteLlamaMemory:
             query,
             bank_id=self.bank_id,
             max_results=max_results or self.max_results,
+            context=self._context,
         )
         if not result.hits:
             return ""
@@ -91,6 +97,7 @@ class AstrocyteLlamaMemory:
             "*",
             bank_id=self.bank_id,
             max_results=1000,
+            context=self._context,
         )
         return [
             {
@@ -115,6 +122,7 @@ class AstrocyteLlamaMemory:
             bank_id=self.bank_id,
             max_results=max_results or self.max_results,
             tags=tags,
+            context=self._context,
         )
         return [
             {
@@ -128,4 +136,4 @@ class AstrocyteLlamaMemory:
 
     async def reset(self) -> None:
         """Clear all memories in the bank."""
-        await self.brain.clear_bank(self.bank_id)
+        await self.brain.clear_bank(self.bank_id, context=self._context)

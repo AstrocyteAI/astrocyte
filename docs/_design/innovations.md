@@ -2,7 +2,7 @@
 
 This document describes Astrocyte's innovation roadmap — capabilities inspired by ByteRover (agent-native curation, zero-infra, progressive retrieval) and Hindsight (biomimetic memory, multi-strategy retrieval, mental models). Each innovation is independently implementable, backward-compatible, and feature-gated.
 
-For the core architecture see `architecture-framework.md`. For the built-in pipeline see `built-in-pipeline.md`.
+For the core architecture see `architecture-framework.md`. For the built-in pipeline see `built-in-pipeline.md`. For **C4 / deployment / domain model** detail and **v1 milestone sequencing** (M1–M6), see `architecture-brief.md` and `product-roadmap-v1.md`.
 
 ---
 

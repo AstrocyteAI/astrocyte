@@ -1,4 +1,8 @@
-"""Tests for HybridEngineProvider (Tier-2 engine + Tier-1 pipeline recall merge)."""
+"""Tests for HybridEngineProvider (Tier-2 engine + Tier-1 pipeline recall merge).
+
+Selection rules (retain target, concurrent recall, dedupe) live in ``astrocyte/hybrid.py``.
+Adaptive routing tests: ``tests/test_phase2_innovations.py`` (``AdaptiveRouter``).
+"""
 
 import pytest
 

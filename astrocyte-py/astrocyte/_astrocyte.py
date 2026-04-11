@@ -30,6 +30,7 @@ from astrocyte.policy.barriers import ContentValidator, MetadataSanitizer, PiiSc
 from astrocyte.policy.escalation import CircuitBreaker, DegradedModeHandler
 from astrocyte.policy.homeostasis import QuotaTracker, RateLimiter, enforce_token_budget
 from astrocyte.policy.observability import MetricsCollector, StructuredLogger, span, timed
+from astrocyte.identity import BankResolver, accessible_read_banks, context_principal_label, effective_permissions
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
@@ -298,6 +299,34 @@ class Astrocyte:
     # Access control
     # ---------------------------------------------------------------------------
 
+    def _make_bank_resolver(self) -> BankResolver:
+        i = self._config.identity
+        return BankResolver(
+            user_prefix=i.user_bank_prefix,
+            agent_prefix=i.agent_bank_prefix,
+            service_prefix=i.service_bank_prefix,
+        )
+
+    def _resolve_read_bank_ids(
+        self,
+        bank_id: str | None,
+        banks: list[str] | None,
+        context: AstrocyteContext | None,
+    ) -> list[str]:
+        """Resolve bank list for recall/reflect; optional identity-driven auto-resolve."""
+        bank_ids = banks or ([bank_id] if bank_id else [])
+        if not bank_ids and self._config.identity.auto_resolve_banks and context is not None:
+            known = list((self._config.banks or {}).keys())
+            bank_ids = accessible_read_banks(
+                context,
+                self._access_grants,
+                known_bank_ids=known or None,
+                resolver=self._make_bank_resolver(),
+            )
+        if not bank_ids:
+            raise ConfigError("Either bank_id or banks must be provided")
+        return bank_ids
+
     def _check_access(self, bank_id: str, permission: str, context: AstrocyteContext | None) -> None:
         """Check access control. Raises AccessDenied if denied."""
         if not self._config.access_control.enabled:
@@ -307,19 +336,14 @@ class Astrocyte:
                 return
             raise AccessDenied("anonymous", bank_id, permission)
 
-        principal = context.principal
+        eff = effective_permissions(context, self._access_grants, bank_id)
+        if permission in eff:
+            return
 
-        for grant in self._access_grants:
-            bank_match = grant.bank_id == "*" or grant.bank_id == bank_id
-            principal_match = grant.principal == "*" or grant.principal == principal
-            if bank_match and principal_match and permission in grant.permissions:
-                return
-
-        # Check default policy
         if self._config.access_control.default_policy == "open":
             return
 
-        raise AccessDenied(principal, bank_id, permission)
+        raise AccessDenied(context_principal_label(context), bank_id, permission)
 
     # ---------------------------------------------------------------------------
     # Rate limiting
@@ -480,9 +504,7 @@ class Astrocyte:
         ``parallel`` (default), ``cascade`` (widen until enough hits), or ``first_match``.
         """
         # Resolve bank(s)
-        bank_ids = banks or ([bank_id] if bank_id else [])
-        if not bank_ids:
-            raise ConfigError("Either bank_id or banks must be provided")
+        bank_ids = self._resolve_read_bank_ids(bank_id, banks, context)
 
         max_tokens = max_tokens or self._config.homeostasis.recall_max_tokens
 
@@ -573,9 +595,7 @@ class Astrocyte:
         recall across multiple banks and synthesize over the fused results.
         """
         # Resolve bank(s)
-        bank_ids = banks or ([bank_id] if bank_id else [])
-        if not bank_ids:
-            raise ConfigError("Either bank_id or banks must be provided")
+        bank_ids = self._resolve_read_bank_ids(bank_id, banks, context)
 
         max_tokens = max_tokens or self._config.homeostasis.reflect_max_tokens
         primary_bank = bank_ids[0]

@@ -16,6 +16,10 @@ docs/src/content/docs/tutorials/
 # Local reference material (not tracked)
 references/
 
+# nWave feature artifacts (per-feature discover/deliver, roadmaps, execution logs).
+# Intended to be a separate private worktree or nested git repo; not part of public Astrocyte.
+docs/feature/
+
 # Python
 __pycache__/
 *.py[cod]

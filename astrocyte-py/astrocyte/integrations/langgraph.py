@@ -6,6 +6,7 @@ Usage:
 
     brain = Astrocyte.from_config("astrocyte.yaml")
     memory = AstrocyteMemory(brain, bank_id="user-123")
+    # Optional: memory = AstrocyteMemory(..., context=AstrocyteContext(principal="user:me"))
 
     # Use as LangGraph memory store
     graph = StateGraph(AgentState)
@@ -25,12 +26,17 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocyteMemory:
     """Astrocyte-backed memory for LangGraph / LangChain agents.
 
     Implements the interface pattern expected by LangGraph's memory store:
     save_context(), load_memory_variables(), search().
+
+    Pass optional ``context`` (:class:`~astrocyte.types.AstrocyteContext`) for
+    access control and OBO when ``access_control`` is enabled.
 
     This is a thin wrapper — all policy enforcement happens inside Astrocyte.
     """
@@ -40,12 +46,14 @@ class AstrocyteMemory:
         brain: Astrocyte,
         bank_id: str,
         *,
+        context: AstrocyteContext | None = None,
         auto_retain: bool = False,
         auto_retain_filter: str | None = None,
         thread_to_bank: dict[str, str] | None = None,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
         self.auto_retain = auto_retain
         self.auto_retain_filter = auto_retain_filter
         self._thread_to_bank = thread_to_bank or {}
@@ -88,6 +96,7 @@ class AstrocyteMemory:
             bank_id=bank,
             tags=tags or ["langgraph"],
             metadata={"source": "langgraph", "thread_id": thread_id or ""},
+            context=self._context,
         )
 
     async def search(
@@ -108,6 +117,7 @@ class AstrocyteMemory:
             bank_id=bank,
             max_results=max_results,
             tags=tags,
+            context=self._context,
         )
         return [
             {

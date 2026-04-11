@@ -87,6 +87,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 # ---------------------------------------------------------------------------
 # Tool names — canonical set
@@ -244,6 +246,7 @@ async def handle_memory_tool(
     tool_input: dict[str, Any],
     *,
     bank_id: str,
+    context: AstrocyteContext | None = None,
 ) -> str:
     """Execute an Astrocyte memory tool and return the result as a string.
 
@@ -266,7 +269,7 @@ async def handle_memory_tool(
     if tool_name == MEMORY_RETAIN:
         tag_list = _parse_tags(tool_input.get("tags"))
         result = await brain.retain(
-            tool_input["content"], bank_id=bank_id, tags=tag_list
+            tool_input["content"], bank_id=bank_id, tags=tag_list, context=context
         )
         return json.dumps({
             "stored": result.stored,
@@ -276,7 +279,7 @@ async def handle_memory_tool(
     elif tool_name == MEMORY_RECALL:
         max_results = tool_input.get("max_results", 5)
         result = await brain.recall(
-            tool_input["query"], bank_id=bank_id, max_results=max_results
+            tool_input["query"], bank_id=bank_id, max_results=max_results, context=context
         )
         hits = [
             {"text": h.text, "score": round(h.score, 4)}
@@ -285,13 +288,13 @@ async def handle_memory_tool(
         return json.dumps({"hits": hits, "total": result.total_available})
 
     elif tool_name == MEMORY_REFLECT:
-        result = await brain.reflect(tool_input["query"], bank_id=bank_id)
+        result = await brain.reflect(tool_input["query"], bank_id=bank_id, context=context)
         return result.answer
 
     elif tool_name == MEMORY_FORGET:
         ids_raw = tool_input["memory_ids"]
         memory_ids = [mid.strip() for mid in ids_raw.split(",") if mid.strip()]
-        result = await brain.forget(bank_id, memory_ids=memory_ids)
+        result = await brain.forget(bank_id, memory_ids=memory_ids, context=context)
         return json.dumps({"deleted_count": result.deleted_count})
 
     else:
@@ -340,6 +343,7 @@ async def run_session_with_memory(
     session_id: str,
     prompt: str,
     bank_id: str,
+    context: AstrocyteContext | None = None,
     non_memory_tool_handler: Any | None = None,
     timeout_seconds: float = 120,
 ) -> str:
@@ -413,6 +417,7 @@ async def run_session_with_memory(
                                     tool_event.name,
                                     tool_event.input,
                                     bank_id=bank_id,
+                                    context=context,
                                 )
                             elif non_memory_tool_handler is not None:
                                 result_text = await non_memory_tool_handler(

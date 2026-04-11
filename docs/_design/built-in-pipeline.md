@@ -14,6 +14,10 @@ It handles: chunking, entity extraction, embedding generation, multi-strategy re
 
 The pipeline is intentionally a **good baseline**, not a competitor to premium engines. It uses standard, well-understood algorithms. Premium engines like Mystique can provide materially better results through proprietary tuning, advanced fusion, agentic reflect, and disposition-aware synthesis.
 
+### Tier 1 (storage-tier) regression coverage
+
+When you change **retain** or **recall** stage ordering, **fusion/rerank** behavior, or **recall trace** fields (`strategies_used`, etc.), treat **`astrocyte-py/tests/test_astrocyte_tier1.py`** as the first line of defense: it runs `Astrocyte` with `provider_tier: storage`, an in-memory `VectorStore`, and a mock LLM, and asserts end-to-end **retain → recall → reflect** plus presence of **semantic** in `RecallTrace.strategies_used`. Update that file together with this document so CI and reviewers see the contract.
+
 ---
 
 ## 2. Retain pipeline

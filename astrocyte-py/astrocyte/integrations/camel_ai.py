@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocyteCamelMemory:
     """Astrocyte-backed memory for CAMEL-AI multi-agent systems.
@@ -35,10 +37,12 @@ class AstrocyteCamelMemory:
         brain: Astrocyte,
         bank_id: str,
         *,
+        context: AstrocyteContext | None = None,
         role_banks: dict[str, str] | None = None,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
         self._role_banks = role_banks or {}
 
     def _resolve_bank(self, role: str | None = None) -> str:
@@ -67,7 +71,7 @@ class AstrocyteCamelMemory:
         if role:
             all_tags.append(f"role:{role}")
 
-        result = await self.brain.retain(content, bank_id=bank, tags=all_tags, metadata=meta)
+        result = await self.brain.retain(content, bank_id=bank, tags=all_tags, metadata=meta, context=self._context)
         return result.memory_id if result.stored else None
 
     async def read(
@@ -79,7 +83,7 @@ class AstrocyteCamelMemory:
     ) -> list[dict[str, Any]]:
         """Read from memory. Returns list of hit dicts."""
         bank = self._resolve_bank(role)
-        result = await self.brain.recall(query, bank_id=bank, max_results=max_results)
+        result = await self.brain.recall(query, bank_id=bank, max_results=max_results, context=self._context)
         return [
             {"text": h.text, "score": h.score, "metadata": h.metadata, "memory_id": h.memory_id} for h in result.hits
         ]
@@ -94,10 +98,10 @@ class AstrocyteCamelMemory:
     async def reflect(self, query: str, *, role: str | None = None) -> str:
         """Synthesize an answer from memory."""
         bank = self._resolve_bank(role)
-        result = await self.brain.reflect(query, bank_id=bank)
+        result = await self.brain.reflect(query, bank_id=bank, context=self._context)
         return result.answer
 
     async def clear(self, *, role: str | None = None) -> None:
         """Clear all memory for a role or the shared bank."""
         bank = self._resolve_bank(role)
-        await self.brain.clear_bank(bank)
+        await self.brain.clear_bank(bank, context=self._context)

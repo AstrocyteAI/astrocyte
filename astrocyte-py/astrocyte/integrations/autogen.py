@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocyteAutoGenMemory:
     """Astrocyte-backed memory for AutoGen / AG2 agents.
@@ -38,10 +40,12 @@ class AstrocyteAutoGenMemory:
         brain: Astrocyte,
         bank_id: str,
         *,
+        context: AstrocyteContext | None = None,
         agent_banks: dict[str, str] | None = None,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
         self._agent_banks = agent_banks or {}
 
     def _resolve_bank(self, agent_id: str | None = None) -> str:
@@ -63,6 +67,7 @@ class AstrocyteAutoGenMemory:
             bank_id=bank,
             tags=tags or ["autogen"],
             metadata={"source": "autogen", "agent_id": agent_id or ""},
+            context=self._context,
         )
         return result.memory_id if result.stored else None
 
@@ -75,7 +80,7 @@ class AstrocyteAutoGenMemory:
     ) -> list[dict[str, Any]]:
         """Query memory. Returns list of hit dicts."""
         bank = self._resolve_bank(agent_id)
-        result = await self.brain.recall(query, bank_id=bank, max_results=max_results)
+        result = await self.brain.recall(query, bank_id=bank, max_results=max_results, context=self._context)
         return [{"text": h.text, "score": h.score, "memory_id": h.memory_id} for h in result.hits]
 
     async def get_context(
@@ -98,12 +103,16 @@ class AstrocyteAutoGenMemory:
         """
         from astrocyte.integrations.openai_agents import astrocyte_tool_definitions
 
-        tools, _handlers = astrocyte_tool_definitions(self.brain, self.bank_id, include_reflect=include_reflect)
+        tools, _handlers = astrocyte_tool_definitions(
+            self.brain, self.bank_id, context=self._context, include_reflect=include_reflect
+        )
         return tools
 
     def get_handlers(self, *, include_reflect: bool = True) -> dict[str, Any]:
         """Return handler functions for dispatching tool calls."""
         from astrocyte.integrations.openai_agents import astrocyte_tool_definitions
 
-        _tools, handlers = astrocyte_tool_definitions(self.brain, self.bank_id, include_reflect=include_reflect)
+        _tools, handlers = astrocyte_tool_definitions(
+            self.brain, self.bank_id, context=self._context, include_reflect=include_reflect
+        )
         return handlers

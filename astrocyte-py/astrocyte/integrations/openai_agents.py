@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 # Type alias for handler functions
 ToolHandler = Callable[..., Awaitable[str]]
 
@@ -31,6 +33,7 @@ def astrocyte_tool_definitions(
     brain: Astrocyte,
     bank_id: str,
     *,
+    context: AstrocyteContext | None = None,
     include_reflect: bool = True,
     include_forget: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, ToolHandler]]:
@@ -72,7 +75,7 @@ def astrocyte_tool_definitions(
     )
 
     async def _retain(content: str, tags: list[str] | None = None, **kwargs: Any) -> str:
-        result = await brain.retain(content, bank_id=bank_id, tags=tags)
+        result = await brain.retain(content, bank_id=bank_id, tags=tags, context=context)
         return json.dumps({"stored": result.stored, "memory_id": result.memory_id, "error": result.error})
 
     handlers["memory_retain"] = _retain
@@ -98,7 +101,7 @@ def astrocyte_tool_definitions(
     )
 
     async def _recall(query: str, max_results: int = 5, **kwargs: Any) -> str:
-        result = await brain.recall(query, bank_id=bank_id, max_results=max_results)
+        result = await brain.recall(query, bank_id=bank_id, max_results=max_results, context=context)
         hits = [{"text": h.text, "score": round(h.score, 4)} for h in result.hits]
         return json.dumps({"hits": hits, "total": result.total_available})
 
@@ -125,7 +128,7 @@ def astrocyte_tool_definitions(
         )
 
         async def _reflect(query: str, **kwargs: Any) -> str:
-            result = await brain.reflect(query, bank_id=bank_id)
+            result = await brain.reflect(query, bank_id=bank_id, context=context)
             return json.dumps({"answer": result.answer})
 
         handlers["memory_reflect"] = _reflect
@@ -155,7 +158,7 @@ def astrocyte_tool_definitions(
         )
 
         async def _forget(memory_ids: list[str], **kwargs: Any) -> str:
-            result = await brain.forget(bank_id, memory_ids=memory_ids)
+            result = await brain.forget(bank_id, memory_ids=memory_ids, context=context)
             return json.dumps({"deleted_count": result.deleted_count})
 
         handlers["memory_forget"] = _forget

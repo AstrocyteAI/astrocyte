@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocytePlugin:
     """Astrocyte memory plugin for Microsoft Semantic Kernel.
@@ -40,11 +42,13 @@ class AstrocytePlugin:
         brain: Astrocyte,
         bank_id: str,
         *,
+        context: AstrocyteContext | None = None,
         include_reflect: bool = True,
         include_forget: bool = False,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
         self._include_reflect = include_reflect
         self._include_forget = include_forget
 
@@ -56,7 +60,7 @@ class AstrocytePlugin:
             tags: Comma-separated tags for filtering (optional).
         """
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        result = await self.brain.retain(content, bank_id=self.bank_id, tags=tag_list)
+        result = await self.brain.retain(content, bank_id=self.bank_id, tags=tag_list, context=self._context)
         if result.stored:
             return f"Stored memory (id: {result.memory_id})"
         return f"Failed to store: {result.error}"
@@ -68,7 +72,7 @@ class AstrocytePlugin:
             query: Natural language search query.
             max_results: Maximum number of results to return.
         """
-        result = await self.brain.recall(query, bank_id=self.bank_id, max_results=max_results)
+        result = await self.brain.recall(query, bank_id=self.bank_id, max_results=max_results, context=self._context)
         if not result.hits:
             return "No relevant memories found."
         lines = [f"- [{h.score:.2f}] {h.text}" for h in result.hits]
@@ -80,7 +84,7 @@ class AstrocytePlugin:
         Args:
             query: The question to answer from memory.
         """
-        result = await self.brain.reflect(query, bank_id=self.bank_id)
+        result = await self.brain.reflect(query, bank_id=self.bank_id, context=self._context)
         return result.answer
 
     async def forget(self, memory_ids: str) -> str:
@@ -90,7 +94,7 @@ class AstrocytePlugin:
             memory_ids: Comma-separated memory IDs to delete.
         """
         ids = [mid.strip() for mid in memory_ids.split(",")]
-        result = await self.brain.forget(self.bank_id, memory_ids=ids)
+        result = await self.brain.forget(self.bank_id, memory_ids=ids, context=self._context)
         return f"Deleted {result.deleted_count} memories."
 
     def get_functions(self) -> list[dict[str, Any]]:

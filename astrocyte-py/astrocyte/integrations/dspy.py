@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 class AstrocyteRM:
     """Astrocyte-backed retrieval model for DSPy.
@@ -39,10 +41,12 @@ class AstrocyteRM:
         brain: Astrocyte,
         bank_id: str,
         *,
+        context: AstrocyteContext | None = None,
         default_k: int = 5,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
         self.default_k = default_k
 
     def __call__(self, query: str, k: int | None = None) -> list[str]:
@@ -64,7 +68,7 @@ class AstrocyteRM:
         return asyncio.run(self._retrieve(query, k))
 
     async def _retrieve(self, query: str, k: int) -> list[str]:
-        result = await self.brain.recall(query, bank_id=self.bank_id, max_results=k)
+        result = await self.brain.recall(query, bank_id=self.bank_id, max_results=k, context=self._context)
         return [h.text for h in result.hits]
 
     async def aretrieve(self, query: str, k: int | None = None) -> list[str]:
@@ -73,10 +77,11 @@ class AstrocyteRM:
 
     async def aretain(self, content: str, **kwargs: Any) -> str | None:
         """Store content for later retrieval. Returns memory_id."""
-        result = await self.brain.retain(content, bank_id=self.bank_id, **kwargs)
+        ctx = kwargs.pop("context", self._context)
+        result = await self.brain.retain(content, bank_id=self.bank_id, context=ctx, **kwargs)
         return result.memory_id if result.stored else None
 
     async def areflect(self, query: str) -> str:
         """Synthesize an answer from memory."""
-        result = await self.brain.reflect(query, bank_id=self.bank_id)
+        result = await self.brain.reflect(query, bank_id=self.bank_id, context=self._context)
         return result.answer

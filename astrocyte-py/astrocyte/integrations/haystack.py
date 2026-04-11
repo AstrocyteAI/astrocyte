@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.types import AstrocyteContext
+
 
 @dataclass
 class AstrocyteDocument:
@@ -56,10 +58,12 @@ class AstrocyteRetriever:
         brain: Astrocyte,
         bank_id: str,
         *,
+        context: AstrocyteContext | None = None,
         top_k: int = 10,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
         self.top_k = top_k
 
     async def arun(
@@ -78,6 +82,7 @@ class AstrocyteRetriever:
             bank_id=self.bank_id,
             max_results=top_k or self.top_k,
             tags=tags,
+            context=self._context,
         )
         documents = [
             AstrocyteDocument(
@@ -117,9 +122,12 @@ class AstrocyteWriter:
         self,
         brain: Astrocyte,
         bank_id: str,
+        *,
+        context: AstrocyteContext | None = None,
     ) -> None:
         self.brain = brain
         self.bank_id = bank_id
+        self._context = context
 
     async def arun(self, documents: list[AstrocyteDocument | dict[str, Any]]) -> dict[str, int]:
         """Write documents to Astrocyte memory."""
@@ -139,6 +147,7 @@ class AstrocyteWriter:
                 bank_id=self.bank_id,
                 metadata=meta,
                 tags=["haystack"],
+                context=self._context,
             )
             if result.stored:
                 written += 1

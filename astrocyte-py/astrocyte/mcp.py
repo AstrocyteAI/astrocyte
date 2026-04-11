@@ -6,9 +6,11 @@ Usage:
 
 See docs/_design/mcp-server.md for the full specification.
 
-Note: Access control is limited in MCP deployments — all callers share a
-single principal configured via ``mcp.principal`` (defaults to "agent:mcp").
-Per-caller identity requires MCP transport-level authentication.
+Note: Access control in MCP deployments typically uses one principal from
+``mcp.principal`` (defaults to ``agent:mcp``), or pass
+``astrocyte_context=...`` to :func:`create_mcp_server` when your host maps
+callers to identity. Per-caller identity still requires transport-level auth
+at the MCP host.
 """
 
 from __future__ import annotations
@@ -32,8 +34,18 @@ logger = logging.getLogger("astrocyte.mcp")
 # ---------------------------------------------------------------------------
 
 
-def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
-    """Create a FastMCP server wired to an Astrocyte instance."""
+def create_mcp_server(
+    brain: Astrocyte,
+    config: AstrocyteConfig,
+    *,
+    astrocyte_context: AstrocyteContext | None = None,
+) -> FastMCP:
+    """Create a FastMCP server wired to an Astrocyte instance.
+
+    If ``astrocyte_context`` is set, it is used for all tool calls (access control,
+    OBO, etc.). Otherwise the context is built from ``mcp.principal`` (default
+    ``agent:mcp``).
+    """
 
     mcp_cfg = config.mcp
     mcp = FastMCP(
@@ -46,7 +58,7 @@ def create_mcp_server(brain: Astrocyte, config: AstrocyteConfig) -> FastMCP:
     )
 
     # Build context for access control
-    ctx = AstrocyteContext(principal=mcp_cfg.principal or "agent:mcp")
+    ctx = astrocyte_context or AstrocyteContext(principal=mcp_cfg.principal or "agent:mcp")
 
     # Default bank
     default_bank = mcp_cfg.default_bank_id

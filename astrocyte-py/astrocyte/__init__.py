@@ -4,6 +4,7 @@ Public API surface. Import from here, not from submodules.
 """
 
 from astrocyte._astrocyte import Astrocyte
+from astrocyte.config import IdentityConfig
 from astrocyte.errors import (
     AccessDenied,
     AstrocyteError,
@@ -17,6 +18,14 @@ from astrocyte.errors import (
     RateLimited,
 )
 from astrocyte.hybrid import HybridEngineProvider
+from astrocyte.identity import (
+    BankResolver,
+    accessible_read_banks,
+    effective_permissions,
+    format_principal,
+    parse_principal,
+    resolve_actor,
+)
 from astrocyte.provider import (
     DocumentStore,
     EngineProvider,
@@ -27,6 +36,7 @@ from astrocyte.provider import (
 )
 from astrocyte.types import (
     AccessGrant,
+    ActorIdentity,
     AstrocyteContext,
     AuditEvent,
     BankHealth,
@@ -145,7 +155,16 @@ __all__ = [
     "MultiBankStrategy",
     # Types — access control
     "AccessGrant",
+    "ActorIdentity",
     "AstrocyteContext",
+    "IdentityConfig",
+    # Identity (M1)
+    "BankResolver",
+    "resolve_actor",
+    "format_principal",
+    "parse_principal",
+    "effective_permissions",
+    "accessible_read_banks",
     # Types — hooks
     "HookEvent",
     # Types — governance

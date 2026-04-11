@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
+    from astrocyte.types import AstrocyteContext
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +48,7 @@ def astrocyte_claude_agent_tools(
     *,
     include_reflect: bool = True,
     include_forget: bool = False,
+    context: AstrocyteContext | None = None,
 ) -> list[dict[str, Any]]:
     """Create Claude Agent SDK tool definitions as plain dicts.
 
@@ -65,7 +67,7 @@ def astrocyte_claude_agent_tools(
         content = args["content"]
         tags = args.get("tags")
         tag_list = [t.strip() for t in tags.split(",")] if isinstance(tags, str) and tags else None
-        result = await brain.retain(content, bank_id=bank_id, tags=tag_list)
+        result = await brain.retain(content, bank_id=bank_id, tags=tag_list, context=context)
         return {
             "content": [
                 {
@@ -89,7 +91,7 @@ def astrocyte_claude_agent_tools(
     async def recall_handler(args: dict[str, Any]) -> dict[str, Any]:
         query = args["query"]
         max_results = args.get("max_results", 5)
-        result = await brain.recall(query, bank_id=bank_id, max_results=max_results)
+        result = await brain.recall(query, bank_id=bank_id, max_results=max_results, context=context)
         hits = [{"text": h.text, "score": round(h.score, 4)} for h in result.hits]
         return {
             "content": [
@@ -115,7 +117,7 @@ def astrocyte_claude_agent_tools(
 
         async def reflect_handler(args: dict[str, Any]) -> dict[str, Any]:
             query = args["query"]
-            result = await brain.reflect(query, bank_id=bank_id)
+            result = await brain.reflect(query, bank_id=bank_id, context=context)
             return {
                 "content": [
                     {
@@ -142,7 +144,7 @@ def astrocyte_claude_agent_tools(
             memory_ids = args["memory_ids"]
             if isinstance(memory_ids, str):
                 memory_ids = [mid.strip() for mid in memory_ids.split(",")]
-            result = await brain.forget(bank_id, memory_ids=memory_ids)
+            result = await brain.forget(bank_id, memory_ids=memory_ids, context=context)
             return {
                 "content": [
                     {
@@ -176,6 +178,7 @@ def astrocyte_claude_agent_server(
     server_name: str = "astrocyte_memory",
     include_reflect: bool = True,
     include_forget: bool = False,
+    context: AstrocyteContext | None = None,
 ) -> Any:
     """Create a Claude Agent SDK in-process MCP server backed by Astrocyte.
 
@@ -206,7 +209,7 @@ def astrocyte_claude_agent_server(
         content = args["content"]
         tags = args.get("tags")
         tag_list = [t.strip() for t in tags.split(",")] if isinstance(tags, str) and tags else None
-        result = await brain.retain(content, bank_id=bank_id, tags=tag_list)
+        result = await brain.retain(content, bank_id=bank_id, tags=tag_list, context=context)
         return {
             "content": [{"type": "text", "text": json.dumps({"stored": result.stored, "memory_id": result.memory_id})}]
         }
@@ -222,7 +225,7 @@ def astrocyte_claude_agent_server(
     async def memory_recall(args: dict[str, Any]) -> dict[str, Any]:
         query_text = args["query"]
         max_results = args.get("max_results", 5)
-        result = await brain.recall(query_text, bank_id=bank_id, max_results=max_results)
+        result = await brain.recall(query_text, bank_id=bank_id, max_results=max_results, context=context)
         hits = [{"text": h.text, "score": round(h.score, 4)} for h in result.hits]
         return {"content": [{"type": "text", "text": json.dumps({"hits": hits, "total": result.total_available})}]}
 
@@ -238,7 +241,7 @@ def astrocyte_claude_agent_server(
             annotations=ToolAnnotations(readOnlyHint=True),
         )
         async def memory_reflect(args: dict[str, Any]) -> dict[str, Any]:
-            result = await brain.reflect(args["query"], bank_id=bank_id)
+            result = await brain.reflect(args["query"], bank_id=bank_id, context=context)
             return {"content": [{"type": "text", "text": result.answer}]}
 
         sdk_tools.append(memory_reflect)
@@ -253,7 +256,7 @@ def astrocyte_claude_agent_server(
         )
         async def memory_forget(args: dict[str, Any]) -> dict[str, Any]:
             ids = [mid.strip() for mid in args["memory_ids"].split(",")]
-            result = await brain.forget(bank_id, memory_ids=ids)
+            result = await brain.forget(bank_id, memory_ids=ids, context=context)
             return {"content": [{"type": "text", "text": json.dumps({"deleted_count": result.deleted_count})}]}
 
         sdk_tools.append(memory_forget)
