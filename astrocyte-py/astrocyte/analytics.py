@@ -107,18 +107,24 @@ def compute_bank_health(bank_id: str, counters: _BankCounters, memory_count: int
         hit_rate = 0.0
     metrics["recall_hit_rate"] = hit_rate
     if counters.recall_count >= 5 and hit_rate < 0.3:
-        issues.append(HealthIssue(
-            severity="critical", code="LOW_RECALL_HIT_RATE",
-            message=f"Recall hit rate is {hit_rate:.0%} (< 30%)",
-            recommendation="Check that retained content matches expected recall queries. "
-                           "Review embedding model quality.",
-        ))
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                code="LOW_RECALL_HIT_RATE",
+                message=f"Recall hit rate is {hit_rate:.0%} (< 30%)",
+                recommendation="Check that retained content matches expected recall queries. "
+                "Review embedding model quality.",
+            )
+        )
     elif counters.recall_count >= 5 and hit_rate < 0.6:
-        issues.append(HealthIssue(
-            severity="warning", code="LOW_RECALL_HIT_RATE",
-            message=f"Recall hit rate is {hit_rate:.0%} (< 60%)",
-            recommendation="Review retained content relevance and embedding quality.",
-        ))
+        issues.append(
+            HealthIssue(
+                severity="warning",
+                code="LOW_RECALL_HIT_RATE",
+                message=f"Recall hit rate is {hit_rate:.0%} (< 60%)",
+                recommendation="Review retained content relevance and embedding quality.",
+            )
+        )
 
     # -- Average recall score --
     if counters.recall_hits > 0:
@@ -134,12 +140,15 @@ def compute_bank_health(bank_id: str, counters: _BankCounters, memory_count: int
         dedup_rate = 0.0
     metrics["dedup_rate"] = dedup_rate
     if counters.retain_count >= 10 and dedup_rate > 0.5:
-        issues.append(HealthIssue(
-            severity="warning", code="HIGH_DEDUP_RATE",
-            message=f"Dedup rate is {dedup_rate:.0%} (> 50%)",
-            recommendation="Agent may be retaining duplicate content. "
-                           "Check for retain loops or missing dedup at the application layer.",
-        ))
+        issues.append(
+            HealthIssue(
+                severity="warning",
+                code="HIGH_DEDUP_RATE",
+                message=f"Dedup rate is {dedup_rate:.0%} (> 50%)",
+                recommendation="Agent may be retaining duplicate content. "
+                "Check for retain loops or missing dedup at the application layer.",
+            )
+        )
 
     # -- Reflect success rate --
     if counters.reflect_count > 0:
@@ -148,11 +157,14 @@ def compute_bank_health(bank_id: str, counters: _BankCounters, memory_count: int
         reflect_rate = 1.0  # no reflects = no failures
     metrics["reflect_success_rate"] = reflect_rate
     if counters.reflect_count >= 3 and reflect_rate < 0.5:
-        issues.append(HealthIssue(
-            severity="warning", code="LOW_REFLECT_SUCCESS",
-            message=f"Reflect success rate is {reflect_rate:.0%} (< 50%)",
-            recommendation="Check that the bank has enough relevant content for synthesis.",
-        ))
+        issues.append(
+            HealthIssue(
+                severity="warning",
+                code="LOW_REFLECT_SUCCESS",
+                message=f"Reflect success rate is {reflect_rate:.0%} (< 50%)",
+                recommendation="Check that the bank has enough relevant content for synthesis.",
+            )
+        )
 
     # -- Average content length --
     if counters.retain_count > 0:
@@ -161,11 +173,14 @@ def compute_bank_health(bank_id: str, counters: _BankCounters, memory_count: int
         avg_len = 0.0
     metrics["avg_content_length"] = avg_len
     if counters.retain_count >= 5 and avg_len < 20:
-        issues.append(HealthIssue(
-            severity="info", code="SHORT_CONTENT",
-            message=f"Average content length is {avg_len:.0f} chars (< 20)",
-            recommendation="Very short content may not embed well. Consider batching related facts.",
-        ))
+        issues.append(
+            HealthIssue(
+                severity="info",
+                code="SHORT_CONTENT",
+                message=f"Average content length is {avg_len:.0f} chars (< 20)",
+                recommendation="Very short content may not embed well. Consider batching related facts.",
+            )
+        )
 
     # -- Recall-to-retain ratio --
     if counters.retain_count > 0:

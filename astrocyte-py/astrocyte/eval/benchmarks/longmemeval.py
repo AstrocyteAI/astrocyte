@@ -358,15 +358,21 @@ def load_longmemeval_dataset(
 
             if isinstance(haystack_sessions, list):
                 for sess_idx, session_turns in enumerate(haystack_sessions):
-                    sess_id = haystack_session_id_list[sess_idx] if sess_idx < len(haystack_session_id_list) else f"session_{sess_idx}"
+                    sess_id = (
+                        haystack_session_id_list[sess_idx]
+                        if sess_idx < len(haystack_session_id_list)
+                        else f"session_{sess_idx}"
+                    )
                     if isinstance(session_turns, list):
                         for turn in session_turns:
                             if isinstance(turn, dict) and turn.get("content"):
-                                conversation_context.append({
-                                    "role": turn.get("role", "user"),
-                                    "content": str(turn["content"]),
-                                    "session_id": str(sess_id),
-                                })
+                                conversation_context.append(
+                                    {
+                                        "role": turn.get("role", "user"),
+                                        "content": str(turn["content"]),
+                                        "session_id": str(sess_id),
+                                    }
+                                )
 
             # Fallback: try older field names if haystack_sessions wasn't found
             if not conversation_context:
@@ -374,11 +380,13 @@ def load_longmemeval_dataset(
                 if isinstance(raw_context, list):
                     for turn in raw_context:
                         if isinstance(turn, dict) and turn.get("content"):
-                            conversation_context.append({
-                                "role": turn.get("role", "user"),
-                                "content": str(turn["content"]),
-                                "session_id": turn.get("session_id", ""),
-                            })
+                            conversation_context.append(
+                                {
+                                    "role": turn.get("role", "user"),
+                                    "content": str(turn["content"]),
+                                    "session_id": turn.get("session_id", ""),
+                                }
+                            )
 
             q = LongMemEvalQuestion(
                 question_id=str(item.get("question_id", item.get("id", ""))),

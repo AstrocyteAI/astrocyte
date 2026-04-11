@@ -11,9 +11,29 @@ from string import punctuation
 from astrocyte.pipeline.fusion import ScoredItem
 
 COMMON_QUESTION_WORDS: set[str] = {
-    "what", "when", "where", "who", "why", "how", "which",
-    "did", "does", "do", "is", "are", "was", "were", "has", "have",
-    "can", "could", "would", "should", "will", "tell", "describe",
+    "what",
+    "when",
+    "where",
+    "who",
+    "why",
+    "how",
+    "which",
+    "did",
+    "does",
+    "do",
+    "is",
+    "are",
+    "was",
+    "were",
+    "has",
+    "have",
+    "can",
+    "could",
+    "would",
+    "should",
+    "will",
+    "tell",
+    "describe",
 }
 
 KEYWORD_OVERLAP_WEIGHT = 0.05
@@ -66,21 +86,14 @@ def basic_rerank(items: list[ScoredItem], query: str) -> list[ScoredItem]:
         return items
 
     # Tokenize query once; filter common question words for overlap scoring
-    query_terms = {
-        t for t in _tokenize_terms(query) if t not in COMMON_QUESTION_WORDS
-    }
+    query_terms = {t for t in _tokenize_terms(query) if t not in COMMON_QUESTION_WORDS}
 
     # Detect proper nouns from all words (check capitalization + name structure).
     # Also exclude common question words so "Who" isn't treated as a name.
     proper_nouns: set[str] = set()
     for w in query.split():
         cleaned = w.strip(punctuation)
-        if (
-            cleaned
-            and cleaned.istitle()
-            and _is_name_token(cleaned)
-            and cleaned.lower() not in COMMON_QUESTION_WORDS
-        ):
+        if cleaned and cleaned.istitle() and _is_name_token(cleaned) and cleaned.lower() not in COMMON_QUESTION_WORDS:
             proper_nouns.add(cleaned.lower())
 
     # Pre-compute tokenized terms for all items to avoid repeated work.

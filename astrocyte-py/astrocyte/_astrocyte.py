@@ -31,6 +31,7 @@ from astrocyte.policy.barriers import ContentValidator, MetadataSanitizer, PiiSc
 from astrocyte.policy.escalation import CircuitBreaker, DegradedModeHandler
 from astrocyte.policy.homeostasis import QuotaTracker, RateLimiter, enforce_token_budget
 from astrocyte.policy.observability import MetricsCollector, StructuredLogger, span, timed
+from astrocyte.recall.merge_result import merge_external_into_recall_result
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
@@ -55,6 +56,7 @@ from astrocyte.types import (
 
 if TYPE_CHECKING:
     from astrocyte.pipeline.orchestrator import PipelineOrchestrator
+    from astrocyte.pipeline.tiered_retrieval import TieredRetriever
     from astrocyte.provider import EngineProvider
 
 # Hook handler type — FFI-safe: takes a HookEvent, returns an awaitable or None.
@@ -204,6 +206,8 @@ class Astrocyte:
         self._engine_provider: EngineProvider | None = None
         self._pipeline: PipelineOrchestrator | None = None
         self._capabilities: EngineCapabilities | None = None
+        # Tiered retrieval (optional; wired when ``tiered_retrieval.enabled`` and pipeline is set)
+        self._tiered_retriever: TieredRetriever | None = None
 
     async def __aenter__(self) -> "Astrocyte":
         return self
@@ -243,6 +247,32 @@ class Astrocyte:
         # Wire the LLM provider to the MIP router for intent-layer escalation
         if self._mip_router and hasattr(pipeline, "llm_provider"):
             self._mip_router._llm_provider = pipeline.llm_provider
+        self._rebuild_tiered_retrieval()
+
+    def _rebuild_tiered_retrieval(self) -> None:
+        """Construct :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` when enabled."""
+        from astrocyte.pipeline.recall_cache import RecallCache
+        from astrocyte.pipeline.tiered_retrieval import TieredRetriever
+
+        self._tiered_retriever = None
+        if not self._pipeline or not self._config.tiered_retrieval.enabled:
+            return
+        trc = self._config.tiered_retrieval
+        rcc = self._config.recall_cache
+        cache: RecallCache | None = None
+        if rcc.enabled:
+            cache = RecallCache(
+                similarity_threshold=rcc.similarity_threshold,
+                max_entries=rcc.max_entries,
+                ttl_seconds=rcc.ttl_seconds,
+            )
+        self._tiered_retriever = TieredRetriever(
+            self._pipeline,
+            recall_cache=cache,
+            min_results=trc.min_results,
+            min_score=trc.min_score,
+            max_tier=trc.max_tier,
+        )
 
     def set_access_grants(self, grants: list[AccessGrant]) -> None:
         """Configure access grants."""
@@ -471,7 +501,8 @@ class Astrocyte:
                     {"bank_id": bank_id, "provider": self._provider_name},
                 )
                 self._analytics.record_retain(
-                    bank_id, len(content),
+                    bank_id,
+                    len(content),
                     deduplicated=getattr(result, "deduplicated", False),
                 )
                 await self._fire_hooks(
@@ -494,6 +525,38 @@ class Astrocyte:
                 )
                 raise
 
+    async def _make_recall_request(
+        self,
+        query: str,
+        bank_id: str,
+        max_results: int,
+        max_tokens: int | None,
+        tags: list[str] | None,
+        kwargs: dict[str, Any],
+    ) -> RecallRequest:
+        from astrocyte.recall.proxy import merge_manual_and_proxy_hits
+
+        ext = await merge_manual_and_proxy_hits(
+            self._config,
+            query=query,
+            bank_id=bank_id,
+            manual=kwargs.get("external_context"),
+            metrics=self._metrics,
+        )
+        return RecallRequest(
+            query=query,
+            bank_id=bank_id,
+            max_results=max_results,
+            max_tokens=max_tokens,
+            tags=tags,
+            fact_types=kwargs.get("fact_types"),
+            time_range=kwargs.get("time_range"),
+            include_sources=kwargs.get("include_sources", False),
+            layer_weights=kwargs.get("layer_weights"),
+            detail_level=kwargs.get("detail_level"),
+            external_context=ext,
+        )
+
     async def recall(
         self,
         query: str,
@@ -511,6 +574,18 @@ class Astrocyte:
 
         With multiple ``banks``, use ``strategy`` (or a :class:`MultiBankStrategy`) to choose
         ``parallel`` (default), ``cascade`` (widen until enough hits), or ``first_match``.
+
+        **Keyword-only (``**kwargs``) — pipeline / M4.1**
+
+        - ``external_context``: list of :class:`~astrocyte.types.MemoryHit` merged with retrieval
+          (RRF in the built-in pipeline). Combined with configured ``sources:`` entries of
+          ``type: proxy`` for the active bank.
+        - ``fact_types``, ``time_range``, ``include_sources``, ``layer_weights``, ``detail_level``:
+          forwarded to :class:`~astrocyte.types.RecallRequest` when supported by the provider.
+
+        When ``tiered_retrieval.enabled`` is set in config and a pipeline is configured, recall uses
+        :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` (not when recall is served only
+        by a Tier-2 engine). Proxy HTTP metrics require ``observability.prometheus_enabled``.
         """
         # Resolve bank(s)
         bank_ids = self._resolve_read_bank_ids(bank_id, banks, context)
@@ -528,15 +603,13 @@ class Astrocyte:
 
             # Single bank — direct
             if len(bank_ids) == 1:
-                request = RecallRequest(
-                    query=query,
-                    bank_id=bank_ids[0],
-                    max_results=max_results,
-                    max_tokens=max_tokens,
-                    tags=tags,
-                    fact_types=kwargs.get("fact_types"),
-                    time_range=kwargs.get("time_range"),
-                    include_sources=kwargs.get("include_sources", False),
+                request = await self._make_recall_request(
+                    query,
+                    bank_ids[0],
+                    max_results,
+                    max_tokens,
+                    tags,
+                    kwargs,
                 )
                 try:
                     self._circuit_breaker.check(self._provider_name)
@@ -554,7 +627,9 @@ class Astrocyte:
                     )
                     top_score = result.hits[0].score if result.hits else 0.0
                     self._analytics.record_recall(
-                        bank_ids[0], len(result.hits), top_score,
+                        bank_ids[0],
+                        len(result.hits),
+                        top_score,
                     )
                     await self._fire_hooks(
                         "on_recall",
@@ -660,7 +735,8 @@ class Astrocyte:
                     )
 
             self._analytics.record_reflect(
-                primary_bank, success=bool(result.answer.strip()),
+                primary_bank,
+                success=bool(result.answer.strip()),
             )
             self._quota_tracker.record(primary_bank, "reflect")
             self._metrics.inc_counter(
@@ -1050,8 +1126,16 @@ class Astrocyte:
 
     async def _do_recall(self, request: RecallRequest) -> RecallResult:
         if self._engine_provider:
-            return await self._engine_provider.recall(request)
+            result = await self._engine_provider.recall(request)
+            # Hybrid merges pipeline (which already fuses external_context in RRF); do not merge twice.
+            from astrocyte.hybrid import HybridEngineProvider
+
+            if request.external_context and not isinstance(self._engine_provider, HybridEngineProvider):
+                return merge_external_into_recall_result(result, request.external_context, request.max_results)
+            return result
         if self._pipeline:
+            if self._tiered_retriever is not None:
+                return await self._tiered_retriever.retrieve(request)
             return await self._pipeline.recall(request)
         raise ConfigError("No provider or pipeline configured")
 
@@ -1177,19 +1261,12 @@ class Astrocyte:
         kwargs: dict[str, Any],
         strategy: MultiBankStrategy,
     ) -> RecallResult:
-        tasks = [
-            self._do_recall(
-                RecallRequest(
-                    query=query,
-                    bank_id=bid,
-                    max_results=max_results,
-                    max_tokens=None,
-                    tags=tags,
-                    fact_types=kwargs.get("fact_types"),
-                )
+        reqs: list[RecallRequest] = []
+        for bid in bank_ids:
+            reqs.append(
+                await self._make_recall_request(query, bid, max_results, None, tags, kwargs),
             )
-            for bid in bank_ids
-        ]
+        tasks = [self._do_recall(r) for r in reqs]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -1233,14 +1310,7 @@ class Astrocyte:
 
         for bid in order:
             result = await self._do_recall(
-                RecallRequest(
-                    query=query,
-                    bank_id=bid,
-                    max_results=max_results,
-                    max_tokens=None,
-                    tags=tags,
-                    fact_types=kwargs.get("fact_types"),
-                )
+                await self._make_recall_request(query, bid, max_results, None, tags, kwargs),
             )
             total_available += result.total_available
             accumulated.extend(_tag_hits_with_bank(result.hits, bid))
@@ -1272,14 +1342,7 @@ class Astrocyte:
         total_available = 0
         for bid in order:
             result = await self._do_recall(
-                RecallRequest(
-                    query=query,
-                    bank_id=bid,
-                    max_results=max_results,
-                    max_tokens=None,
-                    tags=tags,
-                    fact_types=kwargs.get("fact_types"),
-                )
+                await self._make_recall_request(query, bid, max_results, None, tags, kwargs),
             )
             total_available += result.total_available
             if result.hits:

@@ -147,7 +147,7 @@ def _chunk_dialogue(text: str, max_size: int, overlap: int) -> list[str]:
             match = re.match(r"^([A-Za-z][\w\s]*:)\s*", turn)
             if match:
                 speaker_prefix = match.group(1) + " "
-                turn_text = turn[match.end():]
+                turn_text = turn[match.end() :]
                 sub_chunks = _chunk_sentences(turn_text, max_size - len(speaker_prefix), overlap)
                 chunks.extend(f"{speaker_prefix}{sc}" for sc in sub_chunks)
             else:

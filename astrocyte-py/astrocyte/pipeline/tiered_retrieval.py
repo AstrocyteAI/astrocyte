@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from astrocyte.pipeline.recall_cache import RecallCache
+from astrocyte.recall.merge_result import merge_external_into_recall_result
 from astrocyte.types import MemoryHit, RecallRequest, RecallResult, RecallTrace
 
 if TYPE_CHECKING:
@@ -45,8 +46,11 @@ class TieredRetriever:
         """Run tiered retrieval, escalating until sufficient results found."""
         from astrocyte.pipeline.embedding import generate_embeddings
 
+        # Federated / proxy hits must not use stale cache entries and are not cached themselves.
+        allow_cache = not request.external_context
+
         # ── Tier 0: Cache ──
-        if self.recall_cache and self.max_tier >= 0:
+        if self.recall_cache and self.max_tier >= 0 and allow_cache:
             query_embeddings = await generate_embeddings([request.query], self.pipeline.llm_provider)
             query_vector = query_embeddings[0]
 
@@ -97,8 +101,12 @@ class TieredRetriever:
                             cache_hit=False,
                         ),
                     )
+                    if request.external_context:
+                        result = merge_external_into_recall_result(
+                            result, request.external_context, request.max_results
+                        )
                     # Cache the result for future queries
-                    if self.recall_cache and query_vector:
+                    if self.recall_cache and query_vector and allow_cache:
                         self.recall_cache.put(request.bank_id, query_vector, result)
                     return result
 
@@ -113,7 +121,7 @@ class TieredRetriever:
             # Check if sufficient
             if len(result.hits) >= self.min_results or self.max_tier <= 3:
                 # Cache the result
-                if self.recall_cache and query_vector:
+                if self.recall_cache and query_vector and allow_cache:
                     self.recall_cache.put(request.bank_id, query_vector, result)
                 return result
 
@@ -127,6 +135,11 @@ class TieredRetriever:
                 max_tokens=request.max_tokens,
                 tags=request.tags,
                 fact_types=request.fact_types,
+                time_range=request.time_range,
+                include_sources=request.include_sources,
+                layer_weights=request.layer_weights,
+                detail_level=request.detail_level,
+                external_context=request.external_context,
             )
             result = await self.pipeline.recall(reformulated_request)
             if result.trace:
@@ -134,17 +147,20 @@ class TieredRetriever:
                 result.trace.cache_hit = False
                 result.trace.strategies_used = (result.trace.strategies_used or []) + ["agentic_reformulation"]
 
-            if self.recall_cache and query_vector:
+            if self.recall_cache and query_vector and allow_cache:
                 self.recall_cache.put(request.bank_id, query_vector, result)
             return result
 
-        # Fallback: empty result
-        return RecallResult(
+        # Fallback: empty result (still surface federated hits if present)
+        empty = RecallResult(
             hits=[],
             total_available=0,
             truncated=False,
             trace=RecallTrace(tier_used=0, cache_hit=False),
         )
+        if request.external_context:
+            return merge_external_into_recall_result(empty, request.external_context, request.max_results)
+        return empty
 
     async def _reformulate_query(self, query: str) -> str:
         """Use LLM to reformulate an ambiguous query for better retrieval."""

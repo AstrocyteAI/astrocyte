@@ -45,15 +45,12 @@ class OpenAIProvider:
             import openai
         except ImportError as e:
             raise ImportError(
-                "The 'openai' package is required for OpenAIProvider. "
-                "Install it with: pip install 'astrocyte[openai]'"
+                "The 'openai' package is required for OpenAIProvider. Install it with: pip install 'astrocyte[openai]'"
             ) from e
 
         resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not resolved_key:
-            raise ValueError(
-                "OpenAI API key is required. Pass api_key= or set OPENAI_API_KEY."
-            )
+            raise ValueError("OpenAI API key is required. Pass api_key= or set OPENAI_API_KEY.")
 
         self._client = openai.AsyncOpenAI(
             api_key=resolved_key,
@@ -142,14 +139,18 @@ def _to_oai_message(msg: Message) -> dict:
         if part.type == "text" and part.text:
             parts.append({"type": "text", "text": _sanitize_text(part.text)})
         elif part.type == "image_url" and part.image_url:
-            parts.append({
-                "type": "image_url",
-                "image_url": {"url": part.image_url},
-            })
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": part.image_url},
+                }
+            )
         elif part.type == "image_base64" and part.image_base64:
-            parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{part.image_base64}"},
-            })
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{part.image_base64}"},
+                }
+            )
 
     return {"role": msg.role, "content": parts}

@@ -221,7 +221,9 @@ class LoComoBenchmark:
             recall_latencies.append(elapsed)
 
             # Check if answer appears in recall hits
-            answer_in_recall = any(text_overlap_score([q.answer], h.text) > ANSWER_OVERLAP_THRESHOLD for h in result.hits)
+            answer_in_recall = any(
+                text_overlap_score([q.answer], h.text) > ANSWER_OVERLAP_THRESHOLD for h in result.hits
+            )
 
             # Also try reflect
             reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)

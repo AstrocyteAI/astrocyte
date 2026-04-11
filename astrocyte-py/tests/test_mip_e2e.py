@@ -82,7 +82,11 @@ def _make_brain(tmp_path: Path) -> tuple[Astrocyte, InMemoryEngineProvider]:
     config.mip_config_path = str(mip_path)
     config.barriers.pii.mode = "disabled"
     config.barriers.validation.allowed_content_types = [
-        "text", "conversation", "document", "student_answer", "binary",
+        "text",
+        "conversation",
+        "document",
+        "student_answer",
+        "binary",
     ]
 
     brain = Astrocyte(config)
@@ -228,10 +232,12 @@ class TestMipIntentEscalation:
 
             async def health(self):
                 from astrocyte.types import HealthStatus
+
                 return HealthStatus(healthy=True)
 
             def capabilities(self):
                 from astrocyte.types import LLMCapabilities
+
                 return LLMCapabilities()
 
         brain, engine = _make_brain(tmp_path)

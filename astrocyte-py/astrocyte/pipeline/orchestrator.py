@@ -17,7 +17,7 @@ from astrocyte.pipeline.extraction import (
     prepare_retain_input,
     resolve_retain_chunking,
 )
-from astrocyte.pipeline.fusion import rrf_fusion
+from astrocyte.pipeline.fusion import memory_hits_as_scored, rrf_fusion
 from astrocyte.pipeline.reflect import synthesize
 from astrocyte.pipeline.reranking import basic_rerank
 from astrocyte.pipeline.retrieval import parallel_retrieve
@@ -69,9 +69,7 @@ class _TrackingLLMProvider:
         max_tokens: int = 1024,
         temperature: float = 0.0,
     ) -> Completion:
-        result = await self._inner.complete(
-            messages, model=model, max_tokens=max_tokens, temperature=temperature
-        )
+        result = await self._inner.complete(messages, model=model, max_tokens=max_tokens, temperature=temperature)
         if result.usage:
             self.tokens_used += result.usage.input_tokens + result.usage.output_tokens
         return result
@@ -172,11 +170,7 @@ class PipelineOrchestrator:
         embeddings = [embeddings[i] for i in keep_indices]
 
         # 3. Extract entities (profile can disable; requires graph store)
-        entities = (
-            await extract_entities(prepared.text, self.llm_provider)
-            if prepared.extract_entities
-            else []
-        )
+        entities = await extract_entities(prepared.text, self.llm_provider) if prepared.extract_entities else []
 
         # 4. Store vectors
         memory_ids: list[str] = []
@@ -271,8 +265,10 @@ class PipelineOrchestrator:
             filters=filters,
         )
 
-        # 4. RRF fusion
+        # 4. RRF fusion (local strategies + optional federated / manual external_context)
         ranked_lists = [results for results in strategy_results.values() if results]
+        if request.external_context:
+            ranked_lists.append(memory_hits_as_scored(request.external_context))
         fused = rrf_fusion(ranked_lists, k=self.rrf_k)
 
         # 5. Reranking
@@ -300,13 +296,19 @@ class PipelineOrchestrator:
         if request.max_tokens:
             hits, truncated = enforce_token_budget(hits, request.max_tokens)
 
+        ext_n = len(request.external_context) if request.external_context else 0
+        strategies_used = list(strategy_results.keys())
+        if ext_n:
+            strategies_used.append("proxy")
+        total_candidates = sum(len(r) for r in strategy_results.values()) + ext_n
+
         return RecallResult(
             hits=hits,
             total_available=len(fused),
             truncated=truncated,
             trace=RecallTrace(
-                strategies_used=list(strategy_results.keys()),
-                total_candidates=sum(len(r) for r in strategy_results.values()),
+                strategies_used=strategies_used,
+                total_candidates=total_candidates,
                 fusion_method="rrf",
             ),
         )

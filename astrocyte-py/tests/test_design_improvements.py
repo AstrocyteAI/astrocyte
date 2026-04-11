@@ -109,11 +109,13 @@ class TestConsolidation:
         near_dup = _normalized([1.0, 0.001, 0.0])  # cosine sim ~0.9999
         different = _normalized([0.0, 1.0, 0.0])
 
-        await vs.store_vectors([
-            _make_vector("v1", "bank-1", vec, "original"),
-            _make_vector("v2", "bank-1", near_dup, "near duplicate"),
-            _make_vector("v3", "bank-1", different, "different"),
-        ])
+        await vs.store_vectors(
+            [
+                _make_vector("v1", "bank-1", vec, "original"),
+                _make_vector("v2", "bank-1", near_dup, "near duplicate"),
+                _make_vector("v3", "bank-1", different, "different"),
+            ]
+        )
 
         result = await run_consolidation(vs, "bank-1", similarity_threshold=0.99)
 
@@ -127,11 +129,13 @@ class TestConsolidation:
 
     async def test_no_duplicates_removes_nothing(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            _make_vector("v1", "bank-1", _normalized([1.0, 0.0, 0.0])),
-            _make_vector("v2", "bank-1", _normalized([0.0, 1.0, 0.0])),
-            _make_vector("v3", "bank-1", _normalized([0.0, 0.0, 1.0])),
-        ])
+        await vs.store_vectors(
+            [
+                _make_vector("v1", "bank-1", _normalized([1.0, 0.0, 0.0])),
+                _make_vector("v2", "bank-1", _normalized([0.0, 1.0, 0.0])),
+                _make_vector("v3", "bank-1", _normalized([0.0, 0.0, 1.0])),
+            ]
+        )
 
         result = await run_consolidation(vs, "bank-1", similarity_threshold=0.95)
         assert result.duplicates_removed == 0
@@ -149,8 +153,10 @@ class TestConsolidation:
         class MinimalVectorStore:
             async def store_vectors(self, items):
                 return [i.id for i in items]
+
             async def search_similar(self, *a, **kw):
                 return []
+
             async def delete(self, ids, bank_id):
                 return 0
 
@@ -164,10 +170,12 @@ class TestConsolidation:
         v1 = _normalized([1.0, 0.5, 0.0])
         v2 = _normalized([1.0, 0.6, 0.0])
 
-        await vs.store_vectors([
-            _make_vector("v1", "bank-1", v1),
-            _make_vector("v2", "bank-1", v2),
-        ])
+        await vs.store_vectors(
+            [
+                _make_vector("v1", "bank-1", v1),
+                _make_vector("v2", "bank-1", v2),
+            ]
+        )
 
         # With very high threshold, they shouldn't be considered duplicates
         result = await run_consolidation(vs, "bank-1", similarity_threshold=0.9999)

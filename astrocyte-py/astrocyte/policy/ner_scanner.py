@@ -33,9 +33,7 @@ class NerPiiScanner:
 
             self._nlp = spacy.load(model)
         except ImportError:
-            raise ImportError(
-                "NER PII detection requires spaCy. Install with: pip install astrocyte[ner]"
-            ) from None
+            raise ImportError("NER PII detection requires spaCy. Install with: pip install astrocyte[ner]") from None
         except OSError:
             raise ImportError(
                 f"spaCy model '{model}' not found. Install with: python -m spacy download {model}"

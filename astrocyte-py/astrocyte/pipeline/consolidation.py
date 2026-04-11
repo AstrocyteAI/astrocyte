@@ -87,11 +87,7 @@ async def run_consolidation(
                 seen_embeddings.append((item.id, item.vector))
 
             # -- Stale archival check --
-            if (
-                not is_dup
-                and archive_unretrieved_after_days is not None
-                and item.metadata
-            ):
+            if not is_dup and archive_unretrieved_after_days is not None and item.metadata:
                 last_recalled = item.metadata.get("_last_recalled_at")
                 created_at = item.metadata.get("_created_at")
 

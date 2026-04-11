@@ -112,16 +112,12 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
                     actual = original_text[start:end]
                     if actual != matched_text and matched_text:
                         # LLM gave wrong offsets — re-locate
-                        start, end = _find_unused_occurrence(
-                            original_text, matched_text, used_offsets
-                        )
+                        start, end = _find_unused_occurrence(original_text, matched_text, used_offsets)
                         if start is None:
                             continue
             elif matched_text:
                 # No offsets provided — find unused occurrence in original
-                start, end = _find_unused_occurrence(
-                    original_text, matched_text, used_offsets
-                )
+                start, end = _find_unused_occurrence(original_text, matched_text, used_offsets)
                 if start is None:
                     continue
 
@@ -146,9 +142,7 @@ def _parse_llm_response(response: str, original_text: str) -> list[PiiMatch]:
         return []
 
 
-def _find_unused_occurrence(
-    text: str, needle: str, used: set[int]
-) -> tuple[int | None, int | None]:
+def _find_unused_occurrence(text: str, needle: str, used: set[int]) -> tuple[int | None, int | None]:
     """Find the first occurrence of needle in text that hasn't been used yet."""
     search_start = 0
     while True:

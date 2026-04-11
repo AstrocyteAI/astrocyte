@@ -195,7 +195,7 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
    - Health monitoring and error thresholds
    - File: new `astrocyte-py/astrocyte/ingest/registry.py`
 
-4. **Proxy query adapter** (for federated recall)
+4. **Proxy query adapter** (for federated recall) — **M4.1** (see below)
    - Forward recall queries to external APIs
    - Merge results with local recall hits
    - Configurable via `sources:` with `type: proxy`
@@ -204,15 +204,17 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 
 - [x] Webhook ingest validates HMAC (when `auth.type: hmac`), parses JSON body, resolves target bank, calls `brain.retain()` — library API: `astrocyte.ingest.handle_webhook_ingest` (HTTP server binding is M6 / app-specific)
 - [x] Source registry loads `type: webhook` entries from `sources:` and manages start/stop/health (`SourceRegistry`, `WebhookIngestSource`)
-- [ ] Proxy query adapter merges external recall with local recall — **M4.1 / federated recall** (see below), not v0.7.0
+- [x] Proxy query adapter merges external recall with local recall — **M4.1 / federated recall** (`astrocyte.recall.proxy`, RRF in `PipelineOrchestrator.recall`; optional `RecallRequest.external_context`)
 - [x] Source health available via `IngestSource.health_check()` → `HealthStatus` (wire to metrics in gateway)
 - [x] Ingest uses `brain.retain()` so policy (PII, validation, rate limits, quotas) applies on the same path as interactive retains
 
-### M4.1 (planned): Federated / proxy recall
+### M4.1 (implemented): Federated / proxy recall
 
-**Scope**: `sources:` entries with `type: proxy` (or dedicated recall-proxy config) that forward recall queries to external HTTP APIs and **merge** hits with local vector/graph recall using existing fusion/reranking. Depends on stable recall fusion semantics and optional caching.
+**Scope**: `sources:` entries with `type: proxy`, `url` (query template with `{query}`), and `target_bank` forward recall queries to external HTTP APIs (JSON `hits` / `results` arrays). Hits merge with local vector/graph recall via **RRF** in `PipelineOrchestrator.recall`; callers may also pass `RecallRequest.external_context`. Tier-2 engine-only recall merges proxy hits by score without double-counting `HybridEngineProvider`.
 
-**Relation to releases**: **v0.7.0** ships library webhook ingest only; proxy recall is the next slice on the roadmap (minor or patch after M5/M6 planning).
+**Implementation**: `astrocyte.recall.proxy` (`fetch_proxy_recall_hits`, `gather_proxy_hits_for_bank`, `merge_manual_and_proxy_hits`); config validation in `validate_astrocyte_config`; dependency **httpx** for outbound GET.
+
+**Relation to releases**: Shipped after **v0.7.0** (webhook ingest); see **CHANGELOG** `[Unreleased]` / next patch tag.
 
 **Thin HTTP binding (ahead of M6)**: optional `astrocyte[gateway]` provides `create_ingest_webhook_app` (Starlette ASGI) → `POST /v1/ingest/webhook/{source_id}` forwarding raw body/headers to `handle_webhook_ingest`. Full JWT, OpenAPI packaging, and Docker are **M6**.
 
@@ -361,11 +363,14 @@ graph LR
 - Content type routing on `RetainRequest`
 - Extraction profile resolution from config
 
-### v0.7.0 — External Data Sources (M4)
+### v0.7.0 — External Data Sources (M4, ingest)
 - `IngestSource` SPI (Protocol class)
 - Webhook receiver with HMAC validation
 - Source registry with health monitoring
-- Proxy query adapter for federated recall
+
+### v0.7.1 — Federated recall (M4.1)
+- Proxy recall: `sources:` with `type: proxy` + HTTP merge with local RRF (`astrocyte.recall.proxy`, `httpx`)
+- Optional manual federated hits via `RecallRequest.external_context`
 
 ### v0.8.0 — Production Storage Providers (M5, parallel track)
 - Graph store: Neo4j adapter (`astrocyte-graph-neo4j`)
@@ -403,7 +408,7 @@ graph LR
 | Gap | Description | Milestone | Version | Status |
 |-----|-------------|-----------|---------|--------|
 | Gap 1 | Identity & Authorization Protocol | M1 | v0.5.0 | Implemented in core (ADR-002 Phase 1); JWT/`tenant_id` enforcement = later milestones |
-| Gap 2 | External Data Sources | M4 | v0.7.0 | Designed (`architecture-brief.md`) |
+| Gap 2 | External Data Sources | M4 + M4.1 | v0.7.0 / v0.7.1 | M4 ingest shipped v0.7.0; M4.1 proxy recall next patch (see `astrocyte.recall.proxy`) |
 | Gap 3 | Deployment Models | M6 | v0.9.0 | Designed (ADR-001) |
 | Gap 4 | Config Schema Evolution | M2 | v0.5.0 | Implemented in core (ADR-003); ships with M1 in same tag |
 | Gap 5 | User-Scoped Memory | M1 | v0.5.0 | Implemented in core (`BankResolver`, ACL, optional adapter `context`; gateway UX TBD) |

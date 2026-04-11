@@ -262,9 +262,7 @@ class TestFFISafety:
             if dataclasses.is_dataclass(obj) and isinstance(obj, type):
                 hints = get_type_hints(obj)
                 for field_name, field_type in hints.items():
-                    assert not self._contains_any(field_type), (
-                        f"{name}.{field_name} uses Any: {field_type}"
-                    )
+                    assert not self._contains_any(field_type), f"{name}.{field_name} uses Any: {field_type}"
 
     def test_no_callable_in_dtos(self):
         """Ensure no DTO field uses Callable."""
@@ -273,6 +271,4 @@ class TestFFISafety:
             if dataclasses.is_dataclass(obj) and isinstance(obj, type):
                 hints = get_type_hints(obj)
                 for field_name, field_type in hints.items():
-                    assert not self._contains_callable(field_type), (
-                        f"{name}.{field_name} uses Callable: {field_type}"
-                    )
+                    assert not self._contains_callable(field_type), f"{name}.{field_name} uses Callable: {field_type}"

@@ -62,6 +62,7 @@ if TYPE_CHECKING:
 # Bank naming conventions
 # ---------------------------------------------------------------------------
 
+
 def session_bank_id(session_id: str) -> str:
     """Derive a bank_id from an SDK session ID."""
     return f"session-{session_id}"
@@ -81,6 +82,7 @@ def coordinator_bank_id(session_id: str) -> str:
 # Shared helpers — parse tags
 # ---------------------------------------------------------------------------
 
+
 def _parse_tags(raw: Any) -> list[str] | None:
     """Parse comma-separated tag string into a list."""
     if isinstance(raw, str) and raw:
@@ -97,6 +99,7 @@ def _format_sdk_response(data: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Handler logic — testable without SDK dependency
 # ---------------------------------------------------------------------------
+
 
 async def _handle_retain(
     brain: Astrocyte,
@@ -138,10 +141,7 @@ async def _handle_coordinator_recall(
         max_results=max_results,
         context=context,
     )
-    hits = [
-        {"text": h.text, "score": round(h.score, 4), "bank_id": h.bank_id}
-        for h in result.hits
-    ]
+    hits = [{"text": h.text, "score": round(h.score, 4), "bank_id": h.bank_id} for h in result.hits]
     return _format_sdk_response({"hits": hits, "total": result.total_available})
 
 
@@ -187,16 +187,14 @@ async def _handle_subagent_recall(
         max_results=max_results,
         context=context,
     )
-    hits = [
-        {"text": h.text, "score": round(h.score, 4), "bank_id": h.bank_id}
-        for h in result.hits
-    ]
+    hits = [{"text": h.text, "score": round(h.score, 4), "bank_id": h.bank_id} for h in result.hits]
     return _format_sdk_response({"hits": hits, "total": result.total_available})
 
 
 # ---------------------------------------------------------------------------
 # Single-agent: session-scoped memory server
 # ---------------------------------------------------------------------------
+
 
 def create_memory_server(
     brain: Astrocyte,
@@ -232,6 +230,7 @@ def create_memory_server(
 # Multi-agent: coordinator + sub-agent memory
 # ---------------------------------------------------------------------------
 
+
 def create_coordinator_server(
     brain: Astrocyte,
     *,
@@ -255,8 +254,7 @@ def create_coordinator_server(
 
     @tool(
         "memory_retain",
-        "Store a finding, decision, or coordination note into shared memory. "
-        "All sub-agents can read this.",
+        "Store a finding, decision, or coordination note into shared memory. All sub-agents can read this.",
         {"content": str, "tags": str},
     )
     async def memory_retain(args: dict[str, Any]) -> dict[str, Any]:
@@ -361,9 +359,7 @@ def create_subagent_definition(
     The sub-agent gets an MCP server that writes to its own bank
     and reads from both its bank and the coordinator bank.
     """
-    memory_server = create_subagent_memory_server(
-        brain, session_id=session_id, role=role, context=context
-    )
+    memory_server = create_subagent_memory_server(brain, session_id=session_id, role=role, context=context)
     server_name = f"astrocyte_memory_{role}"
 
     definition: dict[str, Any] = {

@@ -82,10 +82,7 @@ async def synthesize(
 
     system_prompt = _build_system_prompt(dispositions)
     memories_text = _format_memories(hits)
-    user_prompt = (
-        f"<memories>\n{memories_text}\n</memories>\n\n"
-        f"<query>\n{query}\n</query>"
-    )
+    user_prompt = f"<memories>\n{memories_text}\n</memories>\n\n<query>\n{query}\n</query>"
 
     completion = await llm_provider.complete(
         messages=[

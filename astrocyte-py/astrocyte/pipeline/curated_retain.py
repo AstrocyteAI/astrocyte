@@ -67,8 +67,7 @@ async def curate_retain(
     # Format existing memories for the prompt (only IDs and text, no raw interpolation)
     if existing_memories:
         existing_text = "\n".join(
-            f"- [{m.memory_id or 'unknown'}] (score={m.score:.2f}): {m.text[:200]}"
-            for m in existing_memories[:5]
+            f"- [{m.memory_id or 'unknown'}] (score={m.score:.2f}): {m.text[:200]}" for m in existing_memories[:5]
         )
     else:
         existing_text = "(no existing memories in this bank)"
@@ -102,9 +101,7 @@ async def curate_retain(
         )
 
 
-def _parse_curation_response(
-    response: str, original_content: str, valid_memory_ids: set[str]
-) -> CurationDecision:
+def _parse_curation_response(response: str, original_content: str, valid_memory_ids: set[str]) -> CurationDecision:
     """Parse the LLM's curation response JSON.
 
     Validates merge_target_id against known memory IDs.

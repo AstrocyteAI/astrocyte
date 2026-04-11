@@ -27,6 +27,7 @@ _skip_reason_key = "ANTHROPIC_API_KEY not set"
 
 try:
     import claude_agent_sdk  # noqa: F401
+
     _has_sdk = True
 except ImportError:
     _has_sdk = False
@@ -160,10 +161,7 @@ async def test_single_agent_memory() -> None:
 
         result_text = await _run_turn(
             client,
-            (
-                "Use the memory_recall tool to search for 'Astrocyte'. "
-                "Tell me what you found."
-            ),
+            ("Use the memory_recall tool to search for 'Astrocyte'. Tell me what you found."),
         )
         assert result_text, "Agent should have produced a result"
         assert "astrocyte" in result_text.lower() or "memory" in result_text.lower(), (

@@ -36,6 +36,7 @@ def _make_brain() -> tuple[Astrocyte, InMemoryEngineProvider]:
 # Bank naming
 # ---------------------------------------------------------------------------
 
+
 class TestBankNaming:
     def test_session_bank_id(self):
         assert session_bank_id("abc-123") == "session-abc-123"
@@ -68,6 +69,7 @@ class TestBankNaming:
 # Tag parsing
 # ---------------------------------------------------------------------------
 
+
 class TestParseTags:
     def test_comma_separated(self):
         assert _parse_tags("a, b, c") == ["a", "b", "c"]
@@ -88,6 +90,7 @@ class TestParseTags:
 # ---------------------------------------------------------------------------
 # Coordinator handlers
 # ---------------------------------------------------------------------------
+
 
 class TestCoordinatorRetain:
     async def test_stores_to_coordinator_bank(self):
@@ -122,9 +125,7 @@ class TestCoordinatorRecall:
 
         await brain.retain("coordinator note about Python", bank_id=coord_bank)
 
-        result = await _handle_coordinator_recall(
-            brain, sid, coord_bank, {"query": "Python"}
-        )
+        result = await _handle_coordinator_recall(brain, sid, coord_bank, {"query": "Python"})
 
         data = json.loads(result["content"][0]["text"])
         assert len(data["hits"]) >= 1
@@ -140,7 +141,9 @@ class TestCoordinatorRecall:
         await brain.retain("researcher finding about APIs", bank_id=researcher_bank)
 
         result = await _handle_coordinator_recall(
-            brain, sid, coord_bank,
+            brain,
+            sid,
+            coord_bank,
             {"query": "APIs", "include_agents": "researcher"},
         )
 
@@ -156,7 +159,9 @@ class TestCoordinatorRecall:
         await brain.retain("only coordinator", bank_id=coord_bank)
 
         result = await _handle_coordinator_recall(
-            brain, sid, coord_bank,
+            brain,
+            sid,
+            coord_bank,
             {"query": "coordinator", "include_agents": ""},
         )
 
@@ -174,7 +179,9 @@ class TestCoordinatorRecall:
         await brain.retain("analysis result", bank_id=a_bank)
 
         result = await _handle_coordinator_recall(
-            brain, sid, coord_bank,
+            brain,
+            sid,
+            coord_bank,
             {"query": "data result", "include_agents": "researcher, analyst"},
         )
 
@@ -191,9 +198,7 @@ class TestCoordinatorReflect:
 
         await brain.retain("Calvin prefers dark mode", bank_id=coord_bank)
 
-        result = await _handle_coordinator_reflect(
-            brain, sid, coord_bank, {"query": "What does Calvin prefer?"}
-        )
+        result = await _handle_coordinator_reflect(brain, sid, coord_bank, {"query": "What does Calvin prefer?"})
 
         # Reflect returns the answer as plain text
         answer = result["content"][0]["text"]
@@ -208,7 +213,9 @@ class TestCoordinatorReflect:
         await brain.retain("Python is the primary language", bank_id=r_bank)
 
         result = await _handle_coordinator_reflect(
-            brain, sid, coord_bank,
+            brain,
+            sid,
+            coord_bank,
             {"query": "What language?", "include_agents": "researcher"},
         )
 
@@ -219,6 +226,7 @@ class TestCoordinatorReflect:
 # ---------------------------------------------------------------------------
 # Sub-agent handlers
 # ---------------------------------------------------------------------------
+
 
 class TestSubagentRetain:
     async def test_stores_to_own_bank(self):
@@ -250,9 +258,7 @@ class TestSubagentRecall:
 
         await brain.retain("my own finding", bank_id=own_bank)
 
-        result = await _handle_subagent_recall(
-            brain, own_bank, coord_bank, {"query": "finding"}
-        )
+        result = await _handle_subagent_recall(brain, own_bank, coord_bank, {"query": "finding"})
 
         data = json.loads(result["content"][0]["text"])
         assert len(data["hits"]) >= 1
@@ -265,9 +271,7 @@ class TestSubagentRecall:
 
         await brain.retain("shared directive from coordinator", bank_id=coord_bank)
 
-        result = await _handle_subagent_recall(
-            brain, own_bank, coord_bank, {"query": "directive"}
-        )
+        result = await _handle_subagent_recall(brain, own_bank, coord_bank, {"query": "directive"})
 
         data = json.loads(result["content"][0]["text"])
         assert len(data["hits"]) >= 1
@@ -281,9 +285,7 @@ class TestSubagentRecall:
 
         await brain.retain("analyst secret", bank_id=other_bank)
 
-        result = await _handle_subagent_recall(
-            brain, own_bank, coord_bank, {"query": "analyst secret"}
-        )
+        result = await _handle_subagent_recall(brain, own_bank, coord_bank, {"query": "analyst secret"})
 
         data = json.loads(result["content"][0]["text"])
         bank_ids = {h["bank_id"] for h in data["hits"]}
@@ -293,6 +295,7 @@ class TestSubagentRecall:
 # ---------------------------------------------------------------------------
 # Cross-agent isolation
 # ---------------------------------------------------------------------------
+
 
 class TestCrossAgentIsolation:
     async def test_agents_cannot_see_each_others_banks(self):
@@ -307,17 +310,13 @@ class TestCrossAgentIsolation:
         await brain.retain("analyst secret", bank_id=a_bank)
 
         # Researcher can't see analyst
-        r_result = await _handle_subagent_recall(
-            brain, r_bank, coord_bank, {"query": "analyst secret"}
-        )
+        r_result = await _handle_subagent_recall(brain, r_bank, coord_bank, {"query": "analyst secret"})
         r_data = json.loads(r_result["content"][0]["text"])
         r_banks = {h["bank_id"] for h in r_data["hits"]}
         assert a_bank not in r_banks
 
         # Analyst can't see researcher
-        a_result = await _handle_subagent_recall(
-            brain, a_bank, coord_bank, {"query": "researcher secret"}
-        )
+        a_result = await _handle_subagent_recall(brain, a_bank, coord_bank, {"query": "researcher secret"})
         a_data = json.loads(a_result["content"][0]["text"])
         a_banks = {h["bank_id"] for h in a_data["hits"]}
         assert r_bank not in a_banks
@@ -334,7 +333,9 @@ class TestCrossAgentIsolation:
         await brain.retain("analyst conclusion", bank_id=a_bank)
 
         result = await _handle_coordinator_recall(
-            brain, sid, coord_bank,
+            brain,
+            sid,
+            coord_bank,
             {"query": "data conclusion", "include_agents": "researcher,analyst"},
         )
 
@@ -352,9 +353,7 @@ class TestCrossAgentIsolation:
 
         await brain.retain("session 1 secret", bank_id=bank_s1)
 
-        result = await _handle_subagent_recall(
-            brain, bank_s2, coord_s2, {"query": "session 1 secret"}
-        )
+        result = await _handle_subagent_recall(brain, bank_s2, coord_s2, {"query": "session 1 secret"})
 
         data = json.loads(result["content"][0]["text"])
         bank_ids = {h["bank_id"] for h in data["hits"]}

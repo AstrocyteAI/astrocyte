@@ -392,11 +392,7 @@ class PiiScanner:
                 override = self._type_overrides.get(match.pii_type)
                 action = override.get("action", self.action) if override else self.action
                 if action == "redact":
-                    replacement = (
-                        override.get("replacement", match.replacement)
-                        if override
-                        else match.replacement
-                    )
+                    replacement = override.get("replacement", match.replacement) if override else match.replacement
                     result = result[: match.start] + (replacement or "[REDACTED]") + result[match.end :]
                 # warn: leave in place
             return result, matches

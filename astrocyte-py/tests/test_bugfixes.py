@@ -111,13 +111,16 @@ def _write_config(tmp_path: Path, content: str) -> Path:
 class TestConfigMergeOrder:
     def test_user_config_overrides_compliance_and_profile(self, tmp_path: Path) -> None:
         """User config should win over both compliance profile and behavior profile."""
-        p = _write_config(tmp_path, """
+        p = _write_config(
+            tmp_path,
+            """
 profile: personal
 compliance_profile: gdpr
 barriers:
   pii:
     action: warn
-""")
+""",
+        )
         config = load_config(p)
         # User said "warn" — wins over GDPR's "redact" and personal's "redact"
         assert config.barriers.pii.action == "warn"
@@ -125,10 +128,13 @@ barriers:
     def test_behavior_profile_overrides_compliance(self, tmp_path: Path) -> None:
         """Behavior profile settings should override compliance profile defaults."""
         # personal profile sets empathy=4; GDPR sets access_control.default_policy=deny
-        p = _write_config(tmp_path, """
+        p = _write_config(
+            tmp_path,
+            """
 profile: personal
 compliance_profile: gdpr
-""")
+""",
+        )
         config = load_config(p)
         # Personal profile's empathy wins (behavior > compliance)
         assert config.defaults.empathy == 4
@@ -164,9 +170,11 @@ class TestLegalHoldBypassAuth:
         brain.set_engine_provider(engine)
 
         # Grant write+forget (but not admin) for setup
-        brain.set_access_grants([
-            AccessGrant(bank_id="held-bank", principal="agent:basic", permissions=["read", "write", "forget"]),
-        ])
+        brain.set_access_grants(
+            [
+                AccessGrant(bank_id="held-bank", principal="agent:basic", permissions=["read", "write", "forget"]),
+            ]
+        )
 
         ctx = AstrocyteContext(principal="agent:basic")
         await brain.retain("test data", bank_id="held-bank", context=ctx)
@@ -206,22 +214,28 @@ class TestLegalHoldBypassAuth:
 
 class TestConfigUnknownKeys:
     def test_unknown_keys_in_dlp_ignored(self, tmp_path: Path) -> None:
-        p = _write_config(tmp_path, """
+        p = _write_config(
+            tmp_path,
+            """
 dlp:
   scan_recall_output: true
   future_unknown_key: true
-""")
+""",
+        )
         config = load_config(p)
         assert config.dlp.scan_recall_output is True
 
     def test_unknown_keys_in_lifecycle_ignored(self, tmp_path: Path) -> None:
-        p = _write_config(tmp_path, """
+        p = _write_config(
+            tmp_path,
+            """
 lifecycle:
   enabled: true
   ttl:
     archive_after_days: 30
     some_future_field: 999
-""")
+""",
+        )
         config = load_config(p)
         assert config.lifecycle.ttl.archive_after_days == 30
 

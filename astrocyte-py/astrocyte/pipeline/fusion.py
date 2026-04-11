@@ -6,7 +6,10 @@ See docs/_design/built-in-pipeline.md section 3.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
+
+from astrocyte.types import MemoryHit
 
 
 @dataclass
@@ -107,3 +110,25 @@ def layer_weighted_rrf_fusion(
     # Re-sort by weighted score
     weighted.sort(key=lambda x: x.score, reverse=True)
     return weighted
+
+
+def memory_hits_as_scored(hits: list[MemoryHit]) -> list[ScoredItem]:
+    """Convert MemoryHit rows (e.g. federated / proxy recall) into ScoredItem for RRF."""
+    out: list[ScoredItem] = []
+    for h in hits:
+        hid = h.memory_id
+        if not hid:
+            digest = hashlib.sha256(h.text.encode()).hexdigest()[:24]
+            hid = f"ext-{digest}"
+        out.append(
+            ScoredItem(
+                id=hid,
+                text=h.text,
+                score=h.score,
+                fact_type=h.fact_type,
+                metadata=h.metadata,
+                tags=h.tags,
+                memory_layer=h.memory_layer,
+            )
+        )
+    return out

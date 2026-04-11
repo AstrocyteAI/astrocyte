@@ -144,7 +144,8 @@ class TestHandleRetain:
     async def test_stores_content(self):
         brain, engine = _make_brain()
         result_str = await handle_memory_tool(
-            brain, "memory_retain",
+            brain,
+            "memory_retain",
             {"content": "Calvin prefers dark mode"},
             bank_id="test-bank",
         )
@@ -158,7 +159,8 @@ class TestHandleRetain:
     async def test_stores_with_tags(self):
         brain, engine = _make_brain()
         await handle_memory_tool(
-            brain, "memory_retain",
+            brain,
+            "memory_retain",
             {"content": "tagged content", "tags": "pref,ui"},
             bank_id="test-bank",
         )
@@ -168,7 +170,8 @@ class TestHandleRetain:
     async def test_stores_without_tags(self):
         brain, _ = _make_brain()
         result_str = await handle_memory_tool(
-            brain, "memory_retain",
+            brain,
+            "memory_retain",
             {"content": "no tags"},
             bank_id="test-bank",
         )
@@ -187,7 +190,8 @@ class TestHandleRecall:
         await brain.retain("Python is my favorite language", bank_id="test-bank")
 
         result_str = await handle_memory_tool(
-            brain, "memory_recall",
+            brain,
+            "memory_recall",
             {"query": "favorite language"},
             bank_id="test-bank",
         )
@@ -198,7 +202,8 @@ class TestHandleRecall:
     async def test_recall_empty_bank(self):
         brain, _ = _make_brain()
         result_str = await handle_memory_tool(
-            brain, "memory_recall",
+            brain,
+            "memory_recall",
             {"query": "anything"},
             bank_id="empty-bank",
         )
@@ -212,7 +217,8 @@ class TestHandleRecall:
             await brain.retain(f"Fact number {i}", bank_id="test-bank")
 
         result_str = await handle_memory_tool(
-            brain, "memory_recall",
+            brain,
+            "memory_recall",
             {"query": "fact", "max_results": 2},
             bank_id="test-bank",
         )
@@ -223,7 +229,8 @@ class TestHandleRecall:
         brain, _ = _make_brain()
         # Default max_results should be 5
         result_str = await handle_memory_tool(
-            brain, "memory_recall",
+            brain,
+            "memory_recall",
             {"query": "anything"},
             bank_id="test-bank",
         )
@@ -242,7 +249,8 @@ class TestHandleReflect:
         await brain.retain("Calvin prefers dark mode", bank_id="test-bank")
 
         result_str = await handle_memory_tool(
-            brain, "memory_reflect",
+            brain,
+            "memory_reflect",
             {"query": "What does Calvin prefer?"},
             bank_id="test-bank",
         )
@@ -261,7 +269,8 @@ class TestHandleForget:
         retain_result = await brain.retain("to be deleted", bank_id="test-bank")
 
         result_str = await handle_memory_tool(
-            brain, "memory_forget",
+            brain,
+            "memory_forget",
             {"memory_ids": retain_result.memory_id},
             bank_id="test-bank",
         )
@@ -278,9 +287,7 @@ class TestHandleUnknownTool:
     async def test_raises_value_error(self):
         brain, _ = _make_brain()
         with pytest.raises(ValueError, match="Unknown memory tool"):
-            await handle_memory_tool(
-                brain, "unknown_tool", {}, bank_id="test-bank"
-            )
+            await handle_memory_tool(brain, "unknown_tool", {}, bank_id="test-bank")
 
 
 # ---------------------------------------------------------------------------
@@ -292,13 +299,15 @@ class TestBankIsolation:
     async def test_different_banks_isolated(self):
         brain, _ = _make_brain()
         await handle_memory_tool(
-            brain, "memory_retain",
+            brain,
+            "memory_retain",
             {"content": "bank A secret"},
             bank_id="bank-a",
         )
 
         result_str = await handle_memory_tool(
-            brain, "memory_recall",
+            brain,
+            "memory_recall",
             {"query": "bank A secret"},
             bank_id="bank-b",
         )
@@ -308,13 +317,15 @@ class TestBankIsolation:
     async def test_same_bank_accessible(self):
         brain, _ = _make_brain()
         await handle_memory_tool(
-            brain, "memory_retain",
+            brain,
+            "memory_retain",
             {"content": "shared fact about Python"},
             bank_id="shared",
         )
 
         result_str = await handle_memory_tool(
-            brain, "memory_recall",
+            brain,
+            "memory_recall",
             {"query": "Python"},
             bank_id="shared",
         )

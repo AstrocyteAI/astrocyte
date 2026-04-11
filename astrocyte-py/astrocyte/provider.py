@@ -432,7 +432,6 @@ def check_spi_version(provider: object, protocol_name: str) -> int:
     supported = _SUPPORTED_VERSIONS.get(protocol_name, {1})
     if version not in supported:
         raise ConfigError(
-            f"{protocol_name} SPI version {version} is not supported. "
-            f"Supported versions: {sorted(supported)}"
+            f"{protocol_name} SPI version {version} is not supported. Supported versions: {sorted(supported)}"
         )
     return version

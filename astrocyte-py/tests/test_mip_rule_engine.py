@@ -90,43 +90,55 @@ class TestEvaluateMatchSpec:
 
 class TestEvaluateMatchBlock:
     def test_all_conditions_match(self, input_data: RuleEngineInput) -> None:
-        block = MatchBlock(all_conditions=[
-            MatchSpec(field="content_type", operator="eq", value="student_answer"),
-            MatchSpec(field="metadata.student_id", operator="present"),
-        ])
+        block = MatchBlock(
+            all_conditions=[
+                MatchSpec(field="content_type", operator="eq", value="student_answer"),
+                MatchSpec(field="metadata.student_id", operator="present"),
+            ]
+        )
         assert evaluate_match_block(block, input_data) is True
 
     def test_all_conditions_one_fails(self, input_data: RuleEngineInput) -> None:
-        block = MatchBlock(all_conditions=[
-            MatchSpec(field="content_type", operator="eq", value="student_answer"),
-            MatchSpec(field="pii_detected", operator="eq", value=True),
-        ])
+        block = MatchBlock(
+            all_conditions=[
+                MatchSpec(field="content_type", operator="eq", value="student_answer"),
+                MatchSpec(field="pii_detected", operator="eq", value=True),
+            ]
+        )
         assert evaluate_match_block(block, input_data) is False
 
     def test_any_conditions_one_matches(self, input_data: RuleEngineInput) -> None:
-        block = MatchBlock(any_conditions=[
-            MatchSpec(field="content_type", operator="eq", value="wrong"),
-            MatchSpec(field="metadata.student_id", operator="present"),
-        ])
+        block = MatchBlock(
+            any_conditions=[
+                MatchSpec(field="content_type", operator="eq", value="wrong"),
+                MatchSpec(field="metadata.student_id", operator="present"),
+            ]
+        )
         assert evaluate_match_block(block, input_data) is True
 
     def test_any_conditions_none_match(self, input_data: RuleEngineInput) -> None:
-        block = MatchBlock(any_conditions=[
-            MatchSpec(field="content_type", operator="eq", value="wrong1"),
-            MatchSpec(field="content_type", operator="eq", value="wrong2"),
-        ])
+        block = MatchBlock(
+            any_conditions=[
+                MatchSpec(field="content_type", operator="eq", value="wrong1"),
+                MatchSpec(field="content_type", operator="eq", value="wrong2"),
+            ]
+        )
         assert evaluate_match_block(block, input_data) is False
 
     def test_none_conditions(self, input_data: RuleEngineInput) -> None:
-        block = MatchBlock(none_conditions=[
-            MatchSpec(field="pii_detected", operator="eq", value=True),
-        ])
+        block = MatchBlock(
+            none_conditions=[
+                MatchSpec(field="pii_detected", operator="eq", value=True),
+            ]
+        )
         assert evaluate_match_block(block, input_data) is True
 
     def test_none_conditions_one_matches(self, input_data: RuleEngineInput) -> None:
-        block = MatchBlock(none_conditions=[
-            MatchSpec(field="content_type", operator="eq", value="student_answer"),
-        ])
+        block = MatchBlock(
+            none_conditions=[
+                MatchSpec(field="content_type", operator="eq", value="student_answer"),
+            ]
+        )
         assert evaluate_match_block(block, input_data) is False
 
     def test_empty_all_matches_everything(self, input_data: RuleEngineInput) -> None:
@@ -141,7 +153,9 @@ class TestEvaluateRules:
             RoutingRule(
                 name="normal",
                 priority=10,
-                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="student_answer")]),
+                match=MatchBlock(
+                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="student_answer")]
+                ),
                 action=ActionSpec(bank="normal-bank"),
             ),
             RoutingRule(
@@ -183,7 +197,9 @@ class TestEvaluateRules:
             RoutingRule(
                 name="unrelated",
                 priority=10,
-                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="pipeline_event")]),
+                match=MatchBlock(
+                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="pipeline_event")]
+                ),
                 action=ActionSpec(bank="ops"),
             ),
         ]
@@ -201,7 +217,9 @@ class TestEvaluateRules:
             RoutingRule(
                 name="high-priority",
                 priority=5,
-                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="student_answer")]),
+                match=MatchBlock(
+                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="student_answer")]
+                ),
                 action=ActionSpec(bank="student"),
             ),
         ]

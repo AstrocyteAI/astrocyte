@@ -41,6 +41,16 @@ from astrocyte.provider import (
     OutboundTransportProvider,
     VectorStore,
 )
+from astrocyte.recall import (
+    PLACE_BANK,
+    PLACE_QUERY,
+    build_proxy_headers,
+    clear_oauth2_token_cache_for_tests,
+    fetch_proxy_recall_hits,
+    gather_proxy_hits_for_bank,
+    merge_external_into_recall_result,
+    merge_manual_and_proxy_hits,
+)
 from astrocyte.types import (
     AccessGrant,
     ActorIdentity,
@@ -106,6 +116,15 @@ __all__ = [
     "merged_extraction_profiles",
     "extraction_profile_for_source",
     "PreparedRetainInput",
+    # M4.1 federated recall
+    "PLACE_QUERY",
+    "PLACE_BANK",
+    "build_proxy_headers",
+    "clear_oauth2_token_cache_for_tests",
+    "fetch_proxy_recall_hits",
+    "gather_proxy_hits_for_bank",
+    "merge_manual_and_proxy_hits",
+    "merge_external_into_recall_result",
     # Errors
     "AstrocyteError",
     "ConfigError",

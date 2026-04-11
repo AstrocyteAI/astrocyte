@@ -69,9 +69,7 @@ def effective_permissions(
     actor_perms = _permissions_for_principal_on_bank(grants, bank_id, format_principal(actor))
     if context.on_behalf_of is None:
         return actor_perms
-    obo_perms = _permissions_for_principal_on_bank(
-        grants, bank_id, format_principal(context.on_behalf_of)
-    )
+    obo_perms = _permissions_for_principal_on_bank(grants, bank_id, format_principal(context.on_behalf_of))
     return actor_perms & obo_perms
 
 

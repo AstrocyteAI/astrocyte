@@ -308,10 +308,7 @@ class InMemoryEngineProvider:
             filtered = [m for m in filtered if m.fact_type in ft_set]
         if request.time_range:
             t_start, t_end = request.time_range
-            filtered = [
-                m for m in filtered
-                if m.occurred_at and t_start <= m.occurred_at <= t_end
-            ]
+            filtered = [m for m in filtered if m.occurred_at and t_start <= m.occurred_at <= t_end]
 
         # Wildcard query returns all memories (used by export)
         if request.query.strip() == "*":

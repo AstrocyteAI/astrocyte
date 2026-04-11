@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 
@@ -195,6 +195,9 @@ class SourceConfig:
     consumer_group: str | None = None
     url: str | None = None
     interval_seconds: int | None = None
+    # M4.1 proxy recall: GET (default) or POST JSON to ``url``
+    recall_method: str | None = None  # "GET" | "POST"
+    recall_body: Any | None = None  # POST JSON: dict/str with placeholders (see ``astrocyte.recall.proxy``)
 
 
 @dataclass
@@ -485,7 +488,9 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
             recall_max_tokens=h.get("recall_max_tokens"),
             reflect_max_tokens=h.get("reflect_max_tokens"),
             retain_max_content_bytes=h.get("retain_max_content_bytes"),
-            rate_limits=RateLimitConfig(**_filter_dataclass_fields(RateLimitConfig, {k: v for k, v in rl.items() if v is not None})),
+            rate_limits=RateLimitConfig(
+                **_filter_dataclass_fields(RateLimitConfig, {k: v for k, v in rl.items() if v is not None})
+            ),
             quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, {k: v for k, v in q.items() if v is not None})),
         )
 
@@ -509,10 +514,14 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         )
 
     if "observability" in data:
-        config.observability = ObservabilityConfig(**_filter_dataclass_fields(ObservabilityConfig, data["observability"]))
+        config.observability = ObservabilityConfig(
+            **_filter_dataclass_fields(ObservabilityConfig, data["observability"])
+        )
 
     if "access_control" in data:
-        config.access_control = AccessControlConfig(**_filter_dataclass_fields(AccessControlConfig, data["access_control"]))
+        config.access_control = AccessControlConfig(
+            **_filter_dataclass_fields(AccessControlConfig, data["access_control"])
+        )
 
     if "identity" in data:
         config.identity = IdentityConfig(**_filter_dataclass_fields(IdentityConfig, data["identity"]))
@@ -536,13 +545,19 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         config.recall_cache = RecallCacheConfig(**_filter_dataclass_fields(RecallCacheConfig, data["recall_cache"]))
 
     if "tiered_retrieval" in data:
-        config.tiered_retrieval = TieredRetrievalConfig(**_filter_dataclass_fields(TieredRetrievalConfig, data["tiered_retrieval"]))
+        config.tiered_retrieval = TieredRetrievalConfig(
+            **_filter_dataclass_fields(TieredRetrievalConfig, data["tiered_retrieval"])
+        )
 
     if "curated_retain" in data:
-        config.curated_retain = CuratedRetainConfig(**_filter_dataclass_fields(CuratedRetainConfig, data["curated_retain"]))
+        config.curated_retain = CuratedRetainConfig(
+            **_filter_dataclass_fields(CuratedRetainConfig, data["curated_retain"])
+        )
 
     if "curated_recall" in data:
-        config.curated_recall = CuratedRecallConfig(**_filter_dataclass_fields(CuratedRecallConfig, data["curated_recall"]))
+        config.curated_recall = CuratedRecallConfig(
+            **_filter_dataclass_fields(CuratedRecallConfig, data["curated_recall"])
+        )
 
     if "access_grants" in data and data["access_grants"]:
         grants: list[AccessGrant] = []
@@ -605,7 +620,9 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
                 bc.barriers = BarrierConfig(
                     pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, pii_data)),
                     validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, val_data)),
-                    metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, meta_data)),
+                    metadata=MetadataSanitizationConfig(
+                        **_filter_dataclass_fields(MetadataSanitizationConfig, meta_data)
+                    ),
                 )
             if "signal_quality" in bdata and isinstance(bdata["signal_quality"], dict):
                 sq = bdata["signal_quality"]
@@ -622,7 +639,9 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         profiles: dict[str, ExtractionProfileConfig] = {}
         for pname, pdata in data["extraction_profiles"].items():
             if isinstance(pdata, dict):
-                profiles[str(pname)] = ExtractionProfileConfig(**_filter_dataclass_fields(ExtractionProfileConfig, pdata))
+                profiles[str(pname)] = ExtractionProfileConfig(
+                    **_filter_dataclass_fields(ExtractionProfileConfig, pdata)
+                )
         config.extraction_profiles = profiles
 
     if "sources" in data and isinstance(data["sources"], dict):
@@ -679,9 +698,7 @@ def _resolve_agent_bank_ids(
         has_glob = any(c in p for c in "*?[")
         if has_glob:
             if not declared:
-                raise ConfigError(
-                    f"{label}: bank pattern {p!r} uses wildcards but no banks: section is declared."
-                )
+                raise ConfigError(f"{label}: bank pattern {p!r} uses wildcards but no banks: section is declared.")
             matches = sorted(bid for bid in declared if fnmatch.fnmatch(bid, p))
             if not matches:
                 raise ConfigError(f"{label}: bank pattern {p!r} matches no declared banks.")
@@ -702,6 +719,12 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
         for name, src in config.sources.items():
             if not (src.type or "").strip():
                 raise ConfigError(f"sources.{name}: type is required")
+            st = (src.type or "").strip().lower()
+            if st == "proxy":
+                if not (src.url or "").strip():
+                    raise ConfigError(f"sources.{name}: type proxy requires url")
+                if not (src.target_bank or "").strip():
+                    raise ConfigError(f"sources.{name}: type proxy requires target_bank")
             if src.extraction_profile:
                 if src.extraction_profile not in profiles:
                     raise ConfigError(
@@ -716,9 +739,7 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
 
     ident = config.identity
     if ident.resolver is not None and ident.resolver not in ("convention", "config", "custom"):
-        raise ConfigError(
-            f"identity.resolver must be 'convention', 'config', or 'custom', got {ident.resolver!r}"
-        )
+        raise ConfigError(f"identity.resolver must be 'convention', 'config', or 'custom', got {ident.resolver!r}")
 
 
 def _grants_from_agents(config: AstrocyteConfig) -> list[AccessGrant]:

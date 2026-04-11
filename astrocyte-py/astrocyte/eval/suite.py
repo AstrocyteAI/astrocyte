@@ -163,11 +163,18 @@ _ACCURACY_SUITE = EvalSuite(
         RetainCase(content="The API rate limit is 100 requests per minute per user", tags=["technical", "api"]),
         RetainCase(content="Calvin joined the company in January 2025 as a senior engineer", tags=["personal"]),
         # -- Contradicting / superseding facts (tests temporal update handling) --
-        RetainCase(content="The API rate limit was increased to 500 requests per minute per user", tags=["technical", "api"]),
+        RetainCase(
+            content="The API rate limit was increased to 500 requests per minute per user", tags=["technical", "api"]
+        ),
         RetainCase(content="Calvin was promoted to staff engineer in March 2025", tags=["personal"]),
         # -- Overlapping facts with different specificity --
-        RetainCase(content="We use PostgreSQL for the main application and Redis for caching and rate limiting", tags=["technical"]),
-        RetainCase(content="The Redis cluster runs 3 nodes with 64GB RAM each in production", tags=["technical", "infra"]),
+        RetainCase(
+            content="We use PostgreSQL for the main application and Redis for caching and rate limiting",
+            tags=["technical"],
+        ),
+        RetainCase(
+            content="The Redis cluster runs 3 nodes with 64GB RAM each in production", tags=["technical", "infra"]
+        ),
         # -- Dense multi-entity facts --
         RetainCase(
             content="The Q1 2025 incident was caused by a pgvector index rebuild that locked the memories table "
@@ -175,13 +182,20 @@ _ACCURACY_SUITE = EvalSuite(
             tags=["incident"],
         ),
         # -- Subtly related facts requiring disambiguation --
-        RetainCase(content="The team uses OpenAI text-embedding-3-small for vector embeddings", tags=["technical", "ai"]),
-        RetainCase(content="The LLM gateway routes completions through LiteLLM to OpenAI and Anthropic", tags=["technical", "ai"]),
+        RetainCase(
+            content="The team uses OpenAI text-embedding-3-small for vector embeddings", tags=["technical", "ai"]
+        ),
+        RetainCase(
+            content="The LLM gateway routes completions through LiteLLM to OpenAI and Anthropic",
+            tags=["technical", "ai"],
+        ),
         # -- Facts with numeric precision --
         RetainCase(content="Average recall latency in production is 23ms at p50 and 89ms at p95", tags=["performance"]),
         RetainCase(content="The vector index contains 2.4 million embeddings across 180 banks", tags=["scale"]),
         # -- Negation / absence facts --
-        RetainCase(content="We evaluated Pinecone but chose not to use it due to vendor lock-in concerns", tags=["decision"]),
+        RetainCase(
+            content="We evaluated Pinecone but chose not to use it due to vendor lock-in concerns", tags=["decision"]
+        ),
     ],
     recalls=[
         # -- Semantic paraphrase (very different wording) --

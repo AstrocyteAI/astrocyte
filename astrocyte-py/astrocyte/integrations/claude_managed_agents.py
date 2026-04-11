@@ -131,94 +131,100 @@ def memory_tool_definitions(
     """
     tools: list[dict[str, Any]] = []
 
-    tools.append({
-        "type": "custom",
-        "name": MEMORY_RETAIN,
-        "description": (
-            "Store content into long-term memory for future recall. "
-            "Use this to remember facts, preferences, decisions, or any information "
-            "that should persist across conversations. "
-            "Optionally pass comma-separated tags for categorization."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string",
-                    "description": "The text content to store in memory.",
-                },
-                "tags": {
-                    "type": "string",
-                    "description": "Optional comma-separated tags (e.g. 'preference,important').",
-                },
-            },
-            "required": ["content"],
-        },
-    })
-
-    tools.append({
-        "type": "custom",
-        "name": MEMORY_RECALL,
-        "description": (
-            "Search long-term memory for information relevant to a query. "
-            "Returns scored hits ranked by relevance."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query to find relevant memories.",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return (default 5).",
-                },
-            },
-            "required": ["query"],
-        },
-    })
-
-    if include_reflect:
-        tools.append({
+    tools.append(
+        {
             "type": "custom",
-            "name": MEMORY_REFLECT,
+            "name": MEMORY_RETAIN,
             "description": (
-                "Synthesize a comprehensive answer from long-term memory. "
-                "Use this instead of recall when you need a narrative answer "
-                "rather than raw search hits."
+                "Store content into long-term memory for future recall. "
+                "Use this to remember facts, preferences, decisions, or any information "
+                "that should persist across conversations. "
+                "Optionally pass comma-separated tags for categorization."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The text content to store in memory.",
+                    },
+                    "tags": {
+                        "type": "string",
+                        "description": "Optional comma-separated tags (e.g. 'preference,important').",
+                    },
+                },
+                "required": ["content"],
+            },
+        }
+    )
+
+    tools.append(
+        {
+            "type": "custom",
+            "name": MEMORY_RECALL,
+            "description": (
+                "Search long-term memory for information relevant to a query. Returns scored hits ranked by relevance."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The question to answer from memory.",
+                        "description": "The search query to find relevant memories.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default 5).",
                     },
                 },
                 "required": ["query"],
             },
-        })
+        }
+    )
+
+    if include_reflect:
+        tools.append(
+            {
+                "type": "custom",
+                "name": MEMORY_REFLECT,
+                "description": (
+                    "Synthesize a comprehensive answer from long-term memory. "
+                    "Use this instead of recall when you need a narrative answer "
+                    "rather than raw search hits."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The question to answer from memory.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            }
+        )
 
     if include_forget:
-        tools.append({
-            "type": "custom",
-            "name": MEMORY_FORGET,
-            "description": (
-                "Remove specific memories by their IDs. "
-                "Pass a comma-separated list of memory IDs to delete."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "memory_ids": {
-                        "type": "string",
-                        "description": "Comma-separated memory IDs to delete.",
+        tools.append(
+            {
+                "type": "custom",
+                "name": MEMORY_FORGET,
+                "description": (
+                    "Remove specific memories by their IDs. Pass a comma-separated list of memory IDs to delete."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "memory_ids": {
+                            "type": "string",
+                            "description": "Comma-separated memory IDs to delete.",
+                        },
                     },
+                    "required": ["memory_ids"],
                 },
-                "required": ["memory_ids"],
-            },
-        })
+            }
+        )
 
     return tools
 
@@ -268,23 +274,18 @@ async def handle_memory_tool(
     """
     if tool_name == MEMORY_RETAIN:
         tag_list = _parse_tags(tool_input.get("tags"))
-        result = await brain.retain(
-            tool_input["content"], bank_id=bank_id, tags=tag_list, context=context
+        result = await brain.retain(tool_input["content"], bank_id=bank_id, tags=tag_list, context=context)
+        return json.dumps(
+            {
+                "stored": result.stored,
+                "memory_id": result.memory_id,
+            }
         )
-        return json.dumps({
-            "stored": result.stored,
-            "memory_id": result.memory_id,
-        })
 
     elif tool_name == MEMORY_RECALL:
         max_results = tool_input.get("max_results", 5)
-        result = await brain.recall(
-            tool_input["query"], bank_id=bank_id, max_results=max_results, context=context
-        )
-        hits = [
-            {"text": h.text, "score": round(h.score, 4)}
-            for h in result.hits
-        ]
+        result = await brain.recall(tool_input["query"], bank_id=bank_id, max_results=max_results, context=context)
+        hits = [{"text": h.text, "score": round(h.score, 4)} for h in result.hits]
         return json.dumps({"hits": hits, "total": result.total_available})
 
     elif tool_name == MEMORY_REFLECT:
@@ -395,10 +396,7 @@ async def run_session_with_memory(
                     events_by_id[event.id] = event
 
                 elif event.type == "session.error":
-                    raise RuntimeError(
-                        "Managed Agents session error: "
-                        f"{_format_managed_session_error(event)}"
-                    )
+                    raise RuntimeError(f"Managed Agents session error: {_format_managed_session_error(event)}")
 
                 elif event.type == "session.status_idle":
                     stop = getattr(event, "stop_reason", None)
@@ -420,13 +418,9 @@ async def run_session_with_memory(
                                     context=context,
                                 )
                             elif non_memory_tool_handler is not None:
-                                result_text = await non_memory_tool_handler(
-                                    tool_event.name, tool_event.input
-                                )
+                                result_text = await non_memory_tool_handler(tool_event.name, tool_event.input)
                             else:
-                                result_text = json.dumps({
-                                    "error": f"No handler for tool: {tool_event.name}"
-                                })
+                                result_text = json.dumps({"error": f"No handler for tool: {tool_event.name}"})
 
                             client.beta.sessions.events.send(
                                 session_id,
@@ -434,9 +428,7 @@ async def run_session_with_memory(
                                     {
                                         "type": "user.custom_tool_result",
                                         "custom_tool_use_id": event_id,
-                                        "content": [
-                                            {"type": "text", "text": result_text}
-                                        ],
+                                        "content": [{"type": "text", "text": result_text}],
                                     },
                                 ],
                             )
@@ -446,9 +438,7 @@ async def run_session_with_memory(
 
                 elif event.type == "session.status_terminated":
                     error_msg = getattr(event, "error", None)
-                    raise RuntimeError(
-                        f"Session terminated: {error_msg}"
-                    )
+                    raise RuntimeError(f"Session terminated: {error_msg}")
 
         return "".join(agent_text_parts)
 

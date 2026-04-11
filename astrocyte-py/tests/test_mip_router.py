@@ -28,10 +28,12 @@ def student_rules() -> list[RoutingRule]:
         RoutingRule(
             name="student-answer",
             priority=10,
-            match=MatchBlock(all_conditions=[
-                MatchSpec(field="content_type", operator="eq", value="student_answer"),
-                MatchSpec(field="metadata.student_id", operator="present"),
-            ]),
+            match=MatchBlock(
+                all_conditions=[
+                    MatchSpec(field="content_type", operator="eq", value="student_answer"),
+                    MatchSpec(field="metadata.student_id", operator="present"),
+                ]
+            ),
             action=ActionSpec(bank="student-{metadata.student_id}", tags=["{metadata.topic}"]),
         ),
     ]

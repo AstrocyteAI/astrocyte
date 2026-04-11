@@ -22,6 +22,7 @@ _has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 try:
     import anthropic  # noqa: F401
+
     _has_sdk = True
 except ImportError:
     _has_sdk = False
@@ -120,10 +121,7 @@ async def test_retain_and_recall_via_managed_agent() -> None:
             brain,
             session_id=session.id,
             bank_id=bank_id,
-            prompt=(
-                "Use the memory_recall tool to search for 'Astrocyte'. "
-                "Tell me what you found."
-            ),
+            prompt=("Use the memory_recall tool to search for 'Astrocyte'. Tell me what you found."),
             timeout_seconds=120,
         )
 

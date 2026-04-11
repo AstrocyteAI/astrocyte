@@ -66,6 +66,23 @@ sources:
     extraction_profile: ticket
     target_bank: project_tickets
     principal: service:jira-integration
+
+  # M4.1 — federated recall (outbound HTTP merged with local RRF; no ingest)
+  remote_kb:
+    type: proxy
+    target_bank: shared_notes
+    url: https://search.example.com/v1/query          # GET: use {query} in URL
+    recall_method: POST                               # optional; default GET
+    recall_body:                                      # optional JSON for POST (omit for default {query, bank_id})
+      q: "__astrocyte.query__"                        # resolved to query string
+      bank: "__astrocyte.bank_id__"                   # resolved to bank_id
+      top_k: 8
+    auth:
+      type: bearer
+      token: ${REMOTE_SEARCH_TOKEN}
+      # or: type: api_key — header: X-API-Key, value: …
+      # or: type: oauth2_client_credentials — token_url, client_id, client_secret, optional scope (RFC 6749)
+      # or: headers: { X-Custom: "…" } merged after bearer / api_key / OAuth
 ```
 
 **Design decisions within `sources`**:
@@ -73,6 +90,7 @@ sources:
 - `principal` assigns an identity to the source for access control. The source can only write to banks where this principal has `write` grants.
 - `auth` uses `_env` suffixes for secrets, resolved via existing env var substitution (`${VAR_NAME}` pattern already in `config.py`).
 - `extraction_profile` references a profile name. Profile definitions are co-located in a new `extraction_profiles` section (below).
+- **`type: proxy`** (M4.1) is recall-only: `url`, `target_bank`, optional `recall_method` / `recall_body`, and `auth` for outbound calls. It does not use `extraction_profile` (nothing is ingested). Response JSON uses a `hits` or `results` array of `{ text, score?, memory_id?, … }`. With **`observability.prometheus_enabled`**, proxy calls emit `astrocyte_proxy_recall_total{source_id,status}` and `astrocyte_proxy_recall_duration_seconds{source_id}`.
 
 ### Section 2: `agents`
 

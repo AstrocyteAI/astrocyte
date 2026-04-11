@@ -85,8 +85,8 @@ def _build_user_message(input_data: RuleEngineInput) -> str:
 {input_data.content[:500]}
 </content>
 
-Content type: {input_data.content_type or 'text'}
-Source: {input_data.source or 'unknown'}
+Content type: {input_data.content_type or "text"}
+Source: {input_data.source or "unknown"}
 Tags: {tags_str}
 PII detected: {input_data.pii_detected}"""
 

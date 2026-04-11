@@ -33,4 +33,3 @@ class TestHmacSha256:
         raw = compute_hmac_sha256_hex(secret, body)
         assert normalize_signature_header(f"sha256={raw}") == raw
         assert verify_hmac_sha256(secret, body, f"sha256={raw}") is True
-
