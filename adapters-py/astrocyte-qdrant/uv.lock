@@ -92,7 +92,7 @@ requires-dist = [
     { name = "astrocyte", editable = "../../astrocyte-py" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "qdrant-client", specifier = ">=1.12" },
+    { name = "qdrant-client", specifier = ">=1.17,<2" },
 ]
 provides-extras = ["dev"]
 

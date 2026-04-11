@@ -122,15 +122,15 @@ class QdrantVectorStore:
             )
         await self._ensure_collection()
         flt = self._filters(bank_id, filters)
-        res = await self._client.search(
+        res = await self._client.query_points(
             collection_name=self._collection,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=flt,
             limit=limit,
             with_payload=True,
         )
         hits: list[VectorHit] = []
-        for sp in res:
+        for sp in res.points:
             pl = sp.payload or {}
             mid = str(pl.get(_MEMORY) or "")
             text = str(pl.get("text") or "")

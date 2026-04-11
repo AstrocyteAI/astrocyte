@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       qdrant:
-        image: qdrant/qdrant:v1.12.5
+        image: qdrant/qdrant:v1.17.0
         ports:
           - 6333:6333
       neo4j:
@@ -77,7 +77,7 @@ jobs:
           uv run pytest tests -v --override-ini="addopts="
 
       - name: astrocyte-neo4j
-        working-directory: adapters/astrocyte-neo4j
+        working-directory: adapters-py/astrocyte-neo4j
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="

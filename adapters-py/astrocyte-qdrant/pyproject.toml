@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
     "astrocyte",
-    "qdrant-client>=1.12",
+    "qdrant-client>=1.17,<2",
 ]
 
 [project.optional-dependencies]
