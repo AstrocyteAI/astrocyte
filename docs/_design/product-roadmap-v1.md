@@ -11,11 +11,13 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 | # | Milestone | Version | Gaps Addressed | Dependencies | Scope |
 |---|-----------|---------|---------------|--------------|-------|
 | M1 | Identity & Context | v0.5.0 | Gap 1, Gap 5 | None | Core |
-| M2 | Config Schema Evolution | v0.6.0 | Gap 4 | M1 | Core |
-| M3 | Extraction Pipeline | v0.7.0 | Gap 7 | M2 | Core |
-| M4 | External Data Sources | v0.8.0 | Gap 2 | M2, M3 | Core + Adapters |
-| M5 | Production Storage Providers | v0.9.0 | Gap 6 | None (parallel) | Adapters |
-| M6 | Standalone Gateway | v1.0.0-rc | Gap 3 | M1, M2 | New package |
+| M2 | Config Schema Evolution | v0.5.0 | Gap 4 | M1 (same release) | Core |
+| M3 | Extraction Pipeline | v0.6.0 | Gap 7 | M2 | Core |
+| M4 | External Data Sources | v0.7.0 | Gap 2 | M2, M3 | Core + Adapters |
+| M5 | Production Storage Providers | v0.8.0 | Gap 6 | None (parallel) | Adapters |
+| M6 | Standalone Gateway | v0.9.0 | Gap 3 | M1, M2 | New package |
+
+**Release pairing:** **M1 and M2 ship together in a single v0.5.0 tag** (identity + structured context first; config schema immediately after in the same minor). Later milestones renumber as above.
 
 ---
 
@@ -297,12 +299,12 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 
 ```mermaid
 graph LR
-    M1["M1: Identity & Context (v0.5.0)"] --> M2["M2: Config Schema (v0.6.0)"]
-    M2 --> M3["M3: Extraction Pipeline (v0.7.0)"]
-    M2 --> M6["M6: Standalone Gateway (v1.0.0-rc)"]
-    M3 --> M4["M4: External Data Sources (v0.8.0)"]
+    M1["M1: Identity & Context (v0.5.0)"] --> M2["M2: Config Schema (v0.5.0)"]
+    M2 --> M3["M3: Extraction Pipeline (v0.6.0)"]
+    M2 --> M6["M6: Standalone Gateway (v0.9.0)"]
+    M3 --> M4["M4: External Data Sources (v0.7.0)"]
     M1 --> M6
-    M5["M5: Storage Providers (v0.9.0)"] -.->|parallel| M1
+    M5["M5: Storage Providers (v0.8.0)"] -.->|parallel| M1
     M5 -.->|parallel| M2
     M5 -.->|parallel| M3
 
@@ -314,11 +316,11 @@ graph LR
     style M6 fill:#fce4ec
 ```
 
-**Critical path**: M1 → M2 → M3 → M4
+**Critical path**: M1 → M2 → M3 → M4 (M1 and M2 are one **v0.5.0** release; order is logical / doc sequencing)
 
 **Parallel track**: M5 (storage providers) can proceed independently
 
-**Gateway track**: M1 + M2 → M6 (can start after M2, parallel with M3/M4)
+**Gateway track**: v0.5.0 (M1+M2) → M6 (can start after M2, parallel with M3/M4)
 
 ---
 
@@ -336,36 +338,34 @@ graph LR
 - Claude Agent SDK + Claude Managed Agents integrations
 - LoCoMo + LongMemEval benchmark suite
 
-### v0.5.0 — Identity & Context (M1)
-- Structured `AstrocyteContext` with `ActorIdentity` (backwards-compatible, `principal: str` still works)
-- OBO delegation with permission intersection
-- Identity-driven bank resolution (`BankResolver`)
-- Phase 1 integration adapter migration (optional `context` parameter on all 19 adapters)
+### v0.5.0 — Identity & Context (M1) + Config Schema (M2)
+- **M1:** Structured `AstrocyteContext` with `ActorIdentity` (backwards-compatible, `principal: str` still works)
+- **M1:** OBO delegation with permission intersection
+- **M1:** Identity-driven bank resolution (`BankResolver`)
+- **M1:** Phase 1 integration adapter migration (optional `context` parameter on all 19 adapters)
+- **M2:** New optional config sections: `sources`, `agents`, `deployment`, extended `identity`, `extraction_profiles`
+- **M2:** Config validation for cross-references (source → extraction profile, agent → bank patterns)
+- **M2:** No breaking changes to existing `astrocyte.yml` files
 
-### v0.6.0 — Config Schema Evolution (M2)
-- New optional config sections: `sources`, `agents`, `deployment`, `identity`, `extraction_profiles`
-- Config validation for cross-references (source → extraction profile, agent → bank patterns)
-- No breaking changes to existing `astrocyte.yml` files
-
-### v0.7.0 — Extraction Pipeline (M3)
+### v0.6.0 — Extraction Pipeline (M3)
 - Inbound extraction pipeline: raw content → normalize → chunk → extract → retain
 - Dialogue chunking strategy (speaker-aware, turn-preserving)
 - Content type routing on `RetainRequest`
 - Extraction profile resolution from config
 
-### v0.8.0 — External Data Sources (M4)
+### v0.7.0 — External Data Sources (M4)
 - `IngestSource` SPI (Protocol class)
 - Webhook receiver with HMAC validation
 - Source registry with health monitoring
 - Proxy query adapter for federated recall
 
-### v0.9.0 — Production Storage Providers (M5, parallel track)
+### v0.8.0 — Production Storage Providers (M5, parallel track)
 - Graph store: Neo4j adapter (`astrocyte-graph-neo4j`)
 - Document store: Elasticsearch/OpenSearch adapter (`astrocyte-docstore-elasticsearch`)
 - Additional vector store: Qdrant adapter (`astrocyte-vector-qdrant`)
 - Hybrid recall validated end-to-end (vector + graph + document)
 
-### v1.0.0-rc — Standalone Gateway (M6)
+### v0.9.0 — Standalone Gateway (M6)
 - FastAPI-based standalone gateway (`astrocyte-gateway`)
 - REST API with JWT validation
 - Webhook ingest endpoint
@@ -395,9 +395,9 @@ graph LR
 | Gap | Description | Milestone | Version | Status |
 |-----|-------------|-----------|---------|--------|
 | Gap 1 | Identity & Authorization Protocol | M1 | v0.5.0 | Implemented in core (ADR-002 Phase 1); JWT/`tenant_id` enforcement = later milestones |
-| Gap 2 | External Data Sources | M4 | v0.8.0 | Designed (`architecture-brief.md`) |
-| Gap 3 | Deployment Models | M6 | v1.0.0-rc | Designed (ADR-001) |
-| Gap 4 | Config Schema Evolution | M2 | v0.6.0 | Designed (ADR-003) |
+| Gap 2 | External Data Sources | M4 | v0.7.0 | Designed (`architecture-brief.md`) |
+| Gap 3 | Deployment Models | M6 | v0.9.0 | Designed (ADR-001) |
+| Gap 4 | Config Schema Evolution | M2 | v0.5.0 | Implemented in core (ADR-003); ships with M1 in same tag |
 | Gap 5 | User-Scoped Memory | M1 | v0.5.0 | Implemented in core (`BankResolver`, ACL, optional adapter `context`; gateway UX TBD) |
-| Gap 6 | Production Storage Providers | M5 | v0.9.0 | SPI exists, needs implementations |
-| Gap 7 | Extraction Pipeline | M3 | v0.7.0 | Designed (`architecture-brief.md`) |
+| Gap 6 | Production Storage Providers | M5 | v0.8.0 | SPI exists, needs implementations |
+| Gap 7 | Extraction Pipeline | M3 | v0.6.0 | Designed (`architecture-brief.md`) |

@@ -83,7 +83,7 @@ effective_permissions(context, bank_id) =
 
 | Phase | Version | Change | Breaking? |
 |---|---|---|---|
-| 1 | v0.5.0 (M1) / targets v1.0.0 | Add optional `actor`, `on_behalf_of`, `tenant_id` to `AstrocyteContext`. `principal` remains the primary field. Internal code uses `actor` if present, falls back to parsing `principal`. OBO = permission **intersection** per bank in ACL. | No |
+| 1 | v0.5.0 (M1; same tag as M2 / ADR-003) / targets v1.0.0 | Add optional `actor`, `on_behalf_of`, `tenant_id` to `AstrocyteContext`. `principal` remains the primary field. Internal code uses `actor` if present, falls back to parsing `principal`. OBO = permission **intersection** per bank in ACL. | No |
 | 2 | v1.1.0 | Integrations updated to pass structured context. `principal` becomes computed from `actor` when `actor` is set. Deprecation warning emitted when `actor` is None but `principal` is set. | No |
 | 3 | v2.0.0 | `principal` field removed. `actor` becomes required. `AstrocyteContext(actor=...)` is the only constructor. | Yes |
 

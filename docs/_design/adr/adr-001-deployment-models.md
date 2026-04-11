@@ -50,7 +50,7 @@ The agent application installs `astrocyte` as a Python dependency and calls `bra
 - LLM/embedding API access
 - Python 3.11+
 
-### Model 2: Standalone Gateway -- v1.0.0 or Fast-Follow
+### Model 2: Standalone Gateway -- v0.9.0 (M6)
 
 A dedicated Astrocyte process exposes the 4 core operations (retain/recall/reflect/forget) as HTTP REST endpoints. Optionally proxies LLM API calls with automatic memory injection (similar to LiteLLM's architecture).
 

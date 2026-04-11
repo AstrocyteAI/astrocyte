@@ -349,7 +349,7 @@ Astrocyte uses **eventual consistency** for memory operations:
 
 ### 7. Identity and Authorization Architecture
 
-#### 7.1 Current State (post–M1 / v0.5.0)
+#### 7.1 Current State (post–M1–M2 / v0.5.0)
 
 **Gloss:** **OBO** means *on-behalf-of* (**delegated access**): one principal acts for another. The term is **standard in OAuth and IAM**; Astrocyte uses it for memory ACLs (grant intersection), not for a specific OAuth protocol implementation. See [ADR-002](./adr/adr-002-identity-model.md).
 
@@ -691,7 +691,7 @@ Source -> RawContent -> Normalizer -> NormalizedContent -> Chunker -> Chunk[] ->
 
 ### 5. Identity Model Evolution
 
-The identity model evolves from an opaque string to a structured context. Full rationale in ADR-002. **Phase 1 is implemented in the OSS Python core** (v0.5.0 / M1): types, ACL evaluation with OBO intersection, optional `identity` config (e.g. bank resolution), and optional `context` on all thin adapters.
+The identity model evolves from an opaque string to a structured context. Full rationale in ADR-002. **Phase 1 is implemented in the OSS Python core** (v0.5.0 / M1–M2): types, ACL evaluation with OBO intersection, optional `identity` config (e.g. bank resolution), optional ADR-003 config sections (`sources`, `agents`, `deployment`, `extraction_profiles`), and optional `context` on all thin adapters.
 
 **Migration path (three phases — version labels are product targets; see ADR-002 for detail):**
 

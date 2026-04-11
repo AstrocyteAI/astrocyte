@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 from dataclasses import dataclass, field
@@ -163,12 +164,80 @@ class AccessControlConfig:
 
 @dataclass
 class IdentityConfig:
-    """Identity-driven bank resolution and ACL helpers (M1 / v0.5.0)."""
+    """Identity-driven bank resolution and ACL helpers (M1–M2 / v0.5.0)."""
 
     auto_resolve_banks: bool = False
     user_bank_prefix: str = "user-"
     agent_bank_prefix: str = "agent-"
     service_bank_prefix: str = "service-"
+    resolver: Literal["convention", "config", "custom"] | None = None
+    obo_enabled: bool = False
+
+
+# ---------------------------------------------------------------------------
+# M2 — Config schema evolution (ADR-003, v0.5.0 with M1)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SourceConfig:
+    """External data source definition (ingestion wiring lands in M4)."""
+
+    type: str = ""
+    extraction_profile: str | None = None
+    target_bank: str | None = None
+    target_bank_template: str | None = None
+    principal: str | None = None
+    auth: dict[str, str | int | float | bool | None] | None = None
+    path: str | None = None
+    driver: str | None = None
+    topic: str | None = None
+    consumer_group: str | None = None
+    url: str | None = None
+    interval_seconds: int | None = None
+
+
+@dataclass
+class AgentRegistrationConfig:
+    """Registered agent with bank access and optional rate hints (ADR-003 / v0.5.0)."""
+
+    principal: str | None = None
+    banks: list[str] | None = None
+    allowed_banks: list[str] | None = None  # roadmap alias for banks; glob patterns allowed
+    default_bank: str | None = None
+    permissions: list[str] | None = None
+    max_retain_per_minute: int | None = None
+    max_recall_per_minute: int | None = None
+
+
+@dataclass
+class TlsConfig:
+    cert_path: str | None = None
+    key_path: str | None = None
+
+
+@dataclass
+class DeploymentConfig:
+    """Standalone gateway settings; ignored in library mode."""
+
+    mode: Literal["library", "standalone", "plugin"] = "library"
+    host: str | None = None
+    port: int | None = None
+    workers: int | None = None
+    cors_origins: list[str] | None = None
+    tls: TlsConfig | None = None
+
+
+@dataclass
+class ExtractionProfileConfig:
+    """Reusable extraction defaults for sources (pipeline implementation in M3)."""
+
+    content_type: str | None = None
+    chunking_strategy: str | None = None
+    entity_extraction: bool | str | None = None
+    metadata_mapping: dict[str, str] | None = None
+    tag_rules: list[dict[str, str | list[str]]] | None = None
+    chunk_size: int | None = None
 
 
 @dataclass
@@ -292,6 +361,12 @@ class AstrocyteConfig:
 
     # Top-level access grants (merged with banks.*.access by access_grants_for_astrocyte)
     access_grants: list[AccessGrant] | None = None
+
+    # ADR-003 (v0.5.0 with M1)
+    sources: dict[str, SourceConfig] | None = None
+    agents: dict[str, AgentRegistrationConfig] | None = None
+    deployment: DeploymentConfig | None = None
+    extraction_profiles: dict[str, ExtractionProfileConfig] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -542,11 +617,135 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
             banks[str(bid)] = bc
         config.banks = banks
 
+    if "extraction_profiles" in data and isinstance(data["extraction_profiles"], dict):
+        profiles: dict[str, ExtractionProfileConfig] = {}
+        for pname, pdata in data["extraction_profiles"].items():
+            if isinstance(pdata, dict):
+                profiles[str(pname)] = ExtractionProfileConfig(**_filter_dataclass_fields(ExtractionProfileConfig, pdata))
+        config.extraction_profiles = profiles
+
+    if "sources" in data and isinstance(data["sources"], dict):
+        sources: dict[str, SourceConfig] = {}
+        for sid, sdata in data["sources"].items():
+            if isinstance(sdata, dict):
+                sources[str(sid)] = SourceConfig(**_filter_dataclass_fields(SourceConfig, sdata))
+        config.sources = sources
+
+    if "agents" in data and isinstance(data["agents"], dict):
+        agents: dict[str, AgentRegistrationConfig] = {}
+        for aid, adata in data["agents"].items():
+            if not isinstance(adata, dict):
+                continue
+            row = dict(adata)
+            if row.get("banks") is None and row.get("allowed_banks") is not None:
+                row["banks"] = list(row["allowed_banks"])
+            agents[str(aid)] = AgentRegistrationConfig(**_filter_dataclass_fields(AgentRegistrationConfig, row))
+        config.agents = agents
+
+    if "deployment" in data and isinstance(data["deployment"], dict):
+        dep = data["deployment"]
+        tls: TlsConfig | None = None
+        if isinstance(dep.get("tls"), dict):
+            tls = TlsConfig(**_filter_dataclass_fields(TlsConfig, dep["tls"]))
+        dep_no_tls = {k: v for k, v in dep.items() if k != "tls"}
+        config.deployment = DeploymentConfig(
+            **_filter_dataclass_fields(DeploymentConfig, dep_no_tls),
+            tls=tls,
+        )
+
     return config
 
 
+def _agent_bank_list(ar: AgentRegistrationConfig) -> list[str]:
+    if ar.banks:
+        return list(ar.banks)
+    if ar.allowed_banks:
+        return list(ar.allowed_banks)
+    return []
+
+
+def _resolve_agent_bank_ids(
+    patterns: list[str],
+    declared: set[str] | None,
+    *,
+    label: str,
+) -> list[str]:
+    """Expand glob patterns against declared bank ids; validate literals when banks: is present."""
+    if not patterns:
+        return []
+    out: list[str] = []
+    for p in patterns:
+        has_glob = any(c in p for c in "*?[")
+        if has_glob:
+            if not declared:
+                raise ConfigError(
+                    f"{label}: bank pattern {p!r} uses wildcards but no banks: section is declared."
+                )
+            matches = sorted(bid for bid in declared if fnmatch.fnmatch(bid, p))
+            if not matches:
+                raise ConfigError(f"{label}: bank pattern {p!r} matches no declared banks.")
+            out.extend(matches)
+        elif declared is not None and p not in declared:
+            raise ConfigError(f"{label}: bank id {p!r} is not listed under banks:.")
+        else:
+            out.append(p)
+    return out
+
+
+def validate_astrocyte_config(config: AstrocyteConfig) -> None:
+    """Cross-field checks for ADR-003 sections (v0.5.0 with M1)."""
+    if config.sources:
+        for name, src in config.sources.items():
+            if not (src.type or "").strip():
+                raise ConfigError(f"sources.{name}: type is required")
+            if src.extraction_profile:
+                profiles = config.extraction_profiles or {}
+                if src.extraction_profile not in profiles:
+                    raise ConfigError(
+                        f"sources.{name}: extraction_profile {src.extraction_profile!r} not found under extraction_profiles"
+                    )
+
+    if config.agents:
+        declared = set(config.banks.keys()) if config.banks else None
+        for agent_id, ar in config.agents.items():
+            label = f"agents.{agent_id}"
+            _resolve_agent_bank_ids(_agent_bank_list(ar), declared, label=label)
+
+    ident = config.identity
+    if ident.resolver is not None and ident.resolver not in ("convention", "config", "custom"):
+        raise ConfigError(
+            f"identity.resolver must be 'convention', 'config', or 'custom', got {ident.resolver!r}"
+        )
+
+
+def _grants_from_agents(config: AstrocyteConfig) -> list[AccessGrant]:
+    if not config.agents:
+        return []
+    declared = set(config.banks.keys()) if config.banks else None
+    out: list[AccessGrant] = []
+    for agent_id, ar in config.agents.items():
+        principal = ar.principal or f"agent:{agent_id}"
+        perms = ar.permissions or ["read", "write"]
+        label = f"agents.{agent_id}"
+        for bid in _resolve_agent_bank_ids(_agent_bank_list(ar), declared, label=label):
+            out.append(AccessGrant(bank_id=bid, principal=principal, permissions=list(perms)))
+    return out
+
+
+def _dedupe_grants(grants: list[AccessGrant]) -> list[AccessGrant]:
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    out: list[AccessGrant] = []
+    for g in grants:
+        key = (g.bank_id, g.principal, tuple(sorted(g.permissions)))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(g)
+    return out
+
+
 def access_grants_for_astrocyte(config: AstrocyteConfig) -> list[AccessGrant]:
-    """Flatten ``access_grants`` and ``banks.*.access`` into one list for ``Astrocyte.set_access_grants``."""
+    """Flatten ``access_grants``, ``banks.*.access``, and ``agents:``-derived grants into one list for ``Astrocyte.set_access_grants``."""
     out: list[AccessGrant] = []
     if config.access_grants:
         out.extend(config.access_grants)
@@ -564,7 +763,8 @@ def access_grants_for_astrocyte(config: AstrocyteConfig) -> list[AccessGrant]:
                         permissions=[str(p) for p in row["permissions"]],
                     )
                 )
-    return out
+    out.extend(_grants_from_agents(config))
+    return _dedupe_grants(out)
 
 
 def load_config(path: str | Path) -> AstrocyteConfig:
@@ -601,4 +801,6 @@ def load_config(path: str | Path) -> AstrocyteConfig:
     # User config wins over everything
     merged = _deep_merge(base, raw)
 
-    return _dict_to_config(merged)
+    cfg = _dict_to_config(merged)
+    validate_astrocyte_config(cfg)
+    return cfg

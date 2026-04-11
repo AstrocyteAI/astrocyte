@@ -1,4 +1,4 @@
-"""M1 (v0.5.0) identity: ActorIdentity, OBO intersection, BankResolver, auto-resolve."""
+"""M1 (v0.5.0 with M2) identity: ActorIdentity, OBO intersection, BankResolver, auto-resolve."""
 
 import pytest
 

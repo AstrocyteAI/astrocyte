@@ -1,4 +1,4 @@
-"""Identity resolution, OBO permission intersection, and bank resolution (M1 / v0.5.0).
+"""Identity resolution, OBO permission intersection, and bank resolution (M1 / v0.5.0 with M2).
 
 See ``docs/_design/adr/adr-002-identity-model.md``.
 """

@@ -1,6 +1,7 @@
 # ADR-003: Config Schema Evolution
 
 - **Status**: Proposed
+- **Implementation target**: **v0.5.0**, same release tag as ADR-002 (M1); milestones M1 and M2 are compressed into one minor.
 - **Date**: 2026-04-11
 - **Decision Makers**: Platform team
 - **Context Area**: Application -- Configuration architecture
