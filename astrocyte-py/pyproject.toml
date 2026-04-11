@@ -51,6 +51,10 @@ eval = [
 openai = [
     "openai>=1.0",
 ]
+gateway = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -61,9 +65,11 @@ dev = [
     "pre-commit>=4.0",
     "fastmcp>=3.0",
     "deepeval>=2.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 all = [
-    "astrocyte[otel,prometheus,mcp,eval,openai]",
+    "astrocyte[otel,prometheus,mcp,eval,openai,gateway]",
 ]
 
 [project.scripts]

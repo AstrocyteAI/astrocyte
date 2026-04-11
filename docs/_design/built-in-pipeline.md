@@ -49,7 +49,7 @@ Details: chunking uses sentence, paragraph, dialogue, or fixed-size strategies; 
 
 ### M4 — Webhook ingest (library)
 
-HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook_ingest` with the matching `SourceConfig`. JSON body: `content` or `text`, optional `principal`, `content_type`, `metadata`. **HMAC** when `auth.type: hmac` (`secret`, optional `header`). **Bank**: `target_bank` or `target_bank_template` with `{principal}`. A bundled HTTP server is out of scope here (standalone gateway / M6); **proxy recall** remains a separate adapter.
+HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook_ingest` with the matching `SourceConfig`. JSON body: `content` or `text`, optional `principal`, `content_type`, `metadata`. **HMAC** when `auth.type: hmac` (`secret`, optional `header`). **Bank**: `target_bank` or `target_bank_template` with `{principal}`. Optional **`astrocyte[gateway]`**: `create_ingest_webhook_app` (Starlette ASGI) exposes `POST /v1/ingest/webhook/{source_id}`. Full gateway (JWT, OpenAPI, Docker) is M6; **proxy recall** remains a separate adapter.
 
 ### Multimodal content (optional)
 

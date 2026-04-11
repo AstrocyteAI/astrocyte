@@ -86,3 +86,82 @@ class TestHandleWebhookIngest:
         assert result.ok is False
         assert result.http_status == 400
         retain.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestWebhookAuthBranches:
+    async def test_auth_none_skips_hmac_and_retains(self):
+        cfg = SourceConfig(
+            type="webhook",
+            target_bank="b-open",
+            auth={"type": "none"},
+        )
+        body = b'{"content":"open ingress"}'
+        retain = AsyncMock(return_value=RetainResult(stored=True, memory_id="m2"))
+
+        result = await handle_webhook_ingest(
+            source_id="open",
+            source_config=cfg,
+            raw_body=body,
+            headers={},
+            retain=retain,
+        )
+
+        assert result.ok is True
+        assert result.http_status == 200
+        retain.assert_awaited_once()
+
+    async def test_unsupported_auth_returns_501(self):
+        cfg = SourceConfig(
+            type="webhook",
+            target_bank="b1",
+            auth={"type": "oauth"},
+        )
+        result = await handle_webhook_ingest(
+            source_id="x",
+            source_config=cfg,
+            raw_body=b'{"content":"c"}',
+            headers={},
+            retain=AsyncMock(),
+        )
+        assert result.ok is False
+        assert result.http_status == 501
+        assert "oauth" in (result.error or "")
+
+    async def test_hmac_missing_secret_returns_500(self):
+        cfg = SourceConfig(
+            type="webhook",
+            target_bank="b1",
+            auth={"type": "hmac", "secret": ""},
+        )
+        result = await handle_webhook_ingest(
+            source_id="x",
+            source_config=cfg,
+            raw_body=b'{"content":"c"}',
+            headers={"x-astrocyte-signature": "abc"},
+            retain=AsyncMock(),
+        )
+        assert result.http_status == 500
+        assert "secret" in (result.error or "").lower()
+
+    async def test_invalid_utf8_returns_400(self):
+        cfg = SourceConfig(type="webhook", target_bank="b1", auth={"type": "none"})
+        result = await handle_webhook_ingest(
+            source_id="x",
+            source_config=cfg,
+            raw_body=bytes([0xFF, 0xFE]),
+            headers={},
+            retain=AsyncMock(),
+        )
+        assert result.http_status == 400
+
+    async def test_json_array_body_returns_400(self):
+        cfg = SourceConfig(type="webhook", target_bank="b1", auth={"type": "none"})
+        result = await handle_webhook_ingest(
+            source_id="x",
+            source_config=cfg,
+            raw_body=b"[1,2]",
+            headers={},
+            retain=AsyncMock(),
+        )
+        assert result.http_status == 400

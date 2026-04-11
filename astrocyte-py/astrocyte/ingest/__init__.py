@@ -1,7 +1,8 @@
 """M4 — external data ingest (webhooks first; streams/polls later).
 
 Use :func:`astrocyte.ingest.webhook.handle_webhook_ingest` from an HTTP layer with the raw
-request body (needed for HMAC). See ``docs/_design/product-roadmap-v1.md`` (M4).
+request body (needed for HMAC). Optional ASGI helper: ``astrocyte.ingest.fastapi_app.create_ingest_webhook_app`` (install ``astrocyte[gateway]``; Starlette app, uvicorn-compatible).
+See ``docs/_design/product-roadmap-v1.md`` (M4).
 """
 
 from astrocyte.ingest.bank_resolve import resolve_ingest_bank_id

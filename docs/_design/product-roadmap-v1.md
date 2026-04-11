@@ -204,9 +204,17 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 
 - [x] Webhook ingest validates HMAC (when `auth.type: hmac`), parses JSON body, resolves target bank, calls `brain.retain()` — library API: `astrocyte.ingest.handle_webhook_ingest` (HTTP server binding is M6 / app-specific)
 - [x] Source registry loads `type: webhook` entries from `sources:` and manages start/stop/health (`SourceRegistry`, `WebhookIngestSource`)
-- [ ] Proxy query adapter merges external recall with local recall (deferred past core M4 library)
+- [ ] Proxy query adapter merges external recall with local recall — **M4.1 / federated recall** (see below), not v0.7.0
 - [x] Source health available via `IngestSource.health_check()` → `HealthStatus` (wire to metrics in gateway)
 - [x] Ingest uses `brain.retain()` so policy (PII, validation, rate limits, quotas) applies on the same path as interactive retains
+
+### M4.1 (planned): Federated / proxy recall
+
+**Scope**: `sources:` entries with `type: proxy` (or dedicated recall-proxy config) that forward recall queries to external HTTP APIs and **merge** hits with local vector/graph recall using existing fusion/reranking. Depends on stable recall fusion semantics and optional caching.
+
+**Relation to releases**: **v0.7.0** ships library webhook ingest only; proxy recall is the next slice on the roadmap (minor or patch after M5/M6 planning).
+
+**Thin HTTP binding (ahead of M6)**: optional `astrocyte[gateway]` provides `create_ingest_webhook_app` (Starlette ASGI) → `POST /v1/ingest/webhook/{source_id}` forwarding raw body/headers to `handle_webhook_ingest`. Full JWT, OpenAPI packaging, and Docker are **M6**.
 
 ### Deferred to post-v1.0.0
 
