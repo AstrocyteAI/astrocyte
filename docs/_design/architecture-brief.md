@@ -351,6 +351,8 @@ Astrocyte uses **eventual consistency** for memory operations:
 
 #### 7.1 Current State (post–M1 / v0.5.0)
 
+**Gloss:** **OBO** means *on-behalf-of* (**delegated access**): one principal acts for another. The term is **standard in OAuth and IAM**; Astrocyte uses it for memory ACLs (grant intersection), not for a specific OAuth protocol implementation. See [ADR-002](./adr/adr-002-identity-model.md).
+
 The **core** implements structured identity and OBO as in ADR-002:
 
 - `AstrocyteContext` includes optional **`actor`**, **`on_behalf_of`**, **`tenant_id`** (and optional **`claims`** on `ActorIdentity`); **`principal: str`** remains for backwards compatibility and logging.
@@ -754,7 +756,7 @@ Terms are scoped per bounded context. When the same word appears in multiple con
 |---|---|
 | **Actor** | The entity performing an operation. Has a type (user, agent, service), a unique ID, and optional claims from an external IdP. |
 | **Principal** | The string representation of an actor. Format: `{type}:{id}`. Legacy: used as the sole identity field. v1.0.0+: derived from `ActorIdentity`. |
-| **On-Behalf-Of (OBO)** | Delegation model where an agent acts on behalf of a user. The agent's permissions are intersected with the user's permissions. |
+| **On-Behalf-Of (OBO)** | *On-behalf-of (delegated) access*: one identity acts for another (e.g. agent for user). Wording is **standard in OAuth and enterprise identity**; here, the agent’s and user’s grants are **intersected** per bank. |
 | **Effective Permissions** | The computed permission set for an operation. When OBO is active: `agent_grants INTERSECT user_grants`. Without OBO: `actor_grants`. |
 | **Access Grant** | A permission assignment: a principal is granted specific permissions (read, write, forget, admin) on a specific bank. Additive -- no deny rules. |
 | **Bank Resolution** | The process of determining which banks an actor can access, given their effective permissions and the requested operation. |

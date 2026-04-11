@@ -7,6 +7,8 @@
 
 ## Context
 
+**Terminology — OBO:** *On-behalf-of* (**OBO**) means **delegated access**: one identity acts **for** another (e.g. an agent for an end user). The abbreviation is **widely used in OAuth and enterprise identity** (including "on-behalf-of" token flows). In this ADR, **OBO** refers to that **authorization pattern** (intersecting grants for actor and delegator), not to any one vendor’s OAuth API. For non-technical readers: read **OBO** as *on-behalf-of (delegated) access*.
+
 Astrocyte's current identity model is a single opaque string:
 
 ```python

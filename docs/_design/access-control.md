@@ -2,7 +2,7 @@
 
 Astrocyte enforces who can read, write, reflect, and administer each memory bank. The framework is the natural enforcement point - it sits between every caller and every provider.
 
-Structured identity (**`ActorIdentity`**, **on-behalf-of**, **tenant** fields on `AstrocyteContext`) and **on-behalf-of permission intersection** are specified in [ADR-002](./adr/adr-002-identity-model.md); this document focuses on principals, grants, and config.
+Structured identity (**`ActorIdentity`**, **on-behalf-of**, **tenant** fields on `AstrocyteContext`) and **on-behalf-of permission intersection** are specified in [ADR-002](./adr/adr-002-identity-model.md). **OBO** (*on-behalf-of / delegated access*) is **standard terminology in OAuth and IAM**; Astrocyte uses it for authorization semantics, not for a particular OAuth API. This document focuses on principals, grants, and config.
 
 This maps to **Principle 6 (Barrier maintenance)** - controlling what crosses boundaries, applied to identity and authorization, not just content validation.
 
