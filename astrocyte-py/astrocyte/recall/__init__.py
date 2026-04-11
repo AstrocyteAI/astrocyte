@@ -16,6 +16,7 @@ from astrocyte.recall.proxy import (
     fetch_proxy_recall_hits,
     gather_proxy_hits_for_bank,
     merge_manual_and_proxy_hits,
+    validate_proxy_recall_url,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "merge_manual_and_proxy_hits",
     "merge_external_into_recall_result",
     "post_oauth2_token_endpoint",
+    "validate_proxy_recall_url",
 ]

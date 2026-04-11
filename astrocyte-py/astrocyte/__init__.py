@@ -55,6 +55,7 @@ from astrocyte.recall import (
     merge_external_into_recall_result,
     merge_manual_and_proxy_hits,
     post_oauth2_token_endpoint,
+    validate_proxy_recall_url,
 )
 from astrocyte.types import (
     AccessGrant,
@@ -135,6 +136,7 @@ __all__ = [
     "merge_manual_and_proxy_hits",
     "merge_external_into_recall_result",
     "post_oauth2_token_endpoint",
+    "validate_proxy_recall_url",
     # Errors
     "AstrocyteError",
     "ConfigError",

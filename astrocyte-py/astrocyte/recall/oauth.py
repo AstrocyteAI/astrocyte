@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import logging
 import time
 from dataclasses import dataclass
@@ -12,6 +13,9 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Domain separation for in-memory cache keys only — not password verification (see ``hmac.new``).
+_OAUTH_REFRESH_CACHE_KEY_MATERIAL = b"astrocyte.recall.oauth.refresh_token.cache_key.v1"
 
 _TOKEN_CACHE: dict[str, _TokenState] = {}
 
@@ -40,8 +44,15 @@ def _refresh_cache_key(auth: dict[str, str | int | float | bool | None]) -> str:
     tid = str(auth.get("token_url") or "")
     cid = str(auth.get("client_id") or "")
     rt = str(auth.get("refresh_token") or "")
-    h = hashlib.sha256(rt.encode()).hexdigest()[:24] if rt else "noroot"
-    return f"{tid}|{cid}|{h}"
+    if not rt:
+        fp = "noroot"
+    else:
+        fp = hmac.new(
+            _OAUTH_REFRESH_CACHE_KEY_MATERIAL,
+            rt.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()[:24]
+    return f"{tid}|{cid}|{fp}"
 
 
 def _normalize_auth_method(raw: str | None) -> str:

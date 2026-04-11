@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -33,6 +34,45 @@ def _expand_proxy_url(template: str, query: str) -> str:
         return template.replace("{query}", quote(query, safe=""))
     sep = "&" if "?" in template else "?"
     return f"{template}{sep}q={quote(query, safe='')}"
+
+
+def _unsafe_literal_ip(host: str) -> bool:
+    """True if *host* parses as an IPv4/IPv6 address that must not be used for proxy recall."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return bool(
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def validate_proxy_recall_url(url: str) -> None:
+    """Reject URLs that enable SSRF (private/loopback/metadata-ranged IPs, non-HTTP(S), no host).
+
+    Call this on the **fully expanded** request URL (including encoded user ``query`` fragments).
+    Symbolic hostnames are not DNS-resolved here; operators must only configure trusted endpoints.
+    """
+    if not (url or "").strip():
+        raise ValueError("proxy recall URL is empty")
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"proxy recall URL scheme not allowed: {parsed.scheme!r}")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("proxy recall URL has no host")
+    h = host.lower().rstrip(".")
+    if h == "localhost" or h.endswith(".localhost"):
+        raise ValueError("proxy recall URL must not target localhost")
+    if _unsafe_literal_ip(h):
+        raise ValueError(
+            "proxy recall URL must not target loopback, private, link-local, or reserved addresses",
+        )
 
 
 def auth_with_oauth_cache_namespace(
@@ -208,14 +248,18 @@ async def fetch_proxy_recall_hits(
                 headers = await build_proxy_headers(
                     auth_with_oauth_cache_namespace(source.auth, source_id),
                 )
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                if method == "POST":
+                    request_url = _expand_proxy_url(base_url, query) if "{query}" in base_url else base_url
+                    body = _resolve_post_json(source, query, bank_id)
+                else:
+                    request_url = _expand_proxy_url(base_url, query)
+                    body = None
+                validate_proxy_recall_url(request_url)
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                     if method == "POST":
-                        url = _expand_proxy_url(base_url, query) if "{query}" in base_url else base_url
-                        body = _resolve_post_json(source, query, bank_id)
-                        r = await client.post(url, headers=headers, json=body)
+                        r = await client.post(request_url, headers=headers, json=body)
                     else:
-                        url = _expand_proxy_url(base_url, query)
-                        r = await client.get(url, headers=headers)
+                        r = await client.get(request_url, headers=headers)
                     r.raise_for_status()
                     data = r.json()
             except Exception:
