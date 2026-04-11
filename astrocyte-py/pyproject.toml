@@ -58,6 +58,7 @@ dev = [
     "pytest-timeout>=2.2",
     "pytest-cov>=6.0",
     "ruff>=0.4",
+    "pre-commit>=4.0",
     "fastmcp>=3.0",
     "deepeval>=2.0",
 ]

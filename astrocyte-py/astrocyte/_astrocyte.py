@@ -24,13 +24,13 @@ from astrocyte.errors import (
     ProviderUnavailable,
     RateLimited,
 )
+from astrocyte.identity import BankResolver, accessible_read_banks, context_principal_label, effective_permissions
 from astrocyte.lifecycle import LifecycleManager
 from astrocyte.mip.router import MipRouter
 from astrocyte.policy.barriers import ContentValidator, MetadataSanitizer, PiiScanner
 from astrocyte.policy.escalation import CircuitBreaker, DegradedModeHandler
 from astrocyte.policy.homeostasis import QuotaTracker, RateLimiter, enforce_token_budget
 from astrocyte.policy.observability import MetricsCollector, StructuredLogger, span, timed
-from astrocyte.identity import BankResolver, accessible_read_banks, context_principal_label, effective_permissions
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,

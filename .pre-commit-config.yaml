@@ -1,0 +1,12 @@
+# https://pre-commit.com
+# Install (from repo root, after `uv sync --extra dev` in astrocyte-py):
+#   uv run --project astrocyte-py pre-commit install
+#
+# Mirrors CI / publish: `uv run ruff check astrocyte/ tests/` in astrocyte-py/
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^astrocyte-py/(astrocyte|tests)/.*\.py$

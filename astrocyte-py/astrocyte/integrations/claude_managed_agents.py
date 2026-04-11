@@ -84,10 +84,10 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from astrocyte.types import AstrocyteContext
+
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
-
-from astrocyte.types import AstrocyteContext
 
 
 # ---------------------------------------------------------------------------

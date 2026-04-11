@@ -127,6 +127,29 @@ results = await evaluator.run_suite("basic", bank_id="eval-bank")
 print(f"Recall precision: {results.metrics.recall_precision:.2%}")
 ```
 
+## Development
+
+From [`astrocyte-py/`](.) with the dev extra:
+
+```bash
+uv sync --extra dev
+uv run ruff check astrocyte/ tests/
+uv run python -m pytest tests/ -x --tb=short
+```
+
+**Git hooks (Ruff via [pre-commit](https://pre-commit.com))** — reduces CI lint failures. From the **repository root** (parent of `astrocyte-py/`):
+
+```bash
+uv sync --extra dev --directory astrocyte-py
+uv run --project astrocyte-py pre-commit install
+```
+
+Hooks run automatically on `git commit`; run on all files anytime with:
+
+```bash
+uv run --project astrocyte-py pre-commit run --all-files
+```
+
 ## Documentation
 
 **[astrocyteai.github.io/astrocyte](https://astrocyteai.github.io/astrocyte/)**
