@@ -1,6 +1,23 @@
 """Built-in entry points for Tier 1 providers (see `pyproject.toml`)."""
 
+import pytest
+
 from astrocyte._discovery import resolve_provider
+
+
+def _editable_install_entry_points_available() -> bool:
+    """Entry points from ``pyproject.toml`` exist only after ``pip install -e .`` (or a normal install)."""
+    try:
+        resolve_provider("in_memory", "vector_stores")
+        return True
+    except LookupError:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _editable_install_entry_points_available(),
+    reason="Astrocyte entry points not registered (use `pip install -e ./astrocyte-py` from the repo root)",
+)
 
 
 def test_in_memory_vector_store_entry_point() -> None:
