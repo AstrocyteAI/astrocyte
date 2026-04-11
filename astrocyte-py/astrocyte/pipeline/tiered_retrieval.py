@@ -8,6 +8,7 @@ Sync decision logic, async execution — Rust migration candidate for the sync p
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from astrocyte.pipeline.recall_cache import RecallCache
@@ -16,6 +17,9 @@ from astrocyte.types import MemoryHit, RecallRequest, RecallResult, RecallTrace
 
 if TYPE_CHECKING:
     from astrocyte.pipeline.orchestrator import PipelineOrchestrator
+
+# Escalation target for tier 3+ (and tier 4 post-reformulation). Default: built-in pipeline recall.
+FullRecallFn = Callable[[RecallRequest], Awaitable[RecallResult]]
 
 
 class TieredRetriever:
@@ -35,12 +39,21 @@ class TieredRetriever:
         min_results: int = 3,
         min_score: float = 0.3,
         max_tier: int = 3,
+        *,
+        full_recall: FullRecallFn | None = None,
     ) -> None:
         self.pipeline = pipeline
         self.recall_cache = recall_cache
         self.min_results = min_results
         self.min_score = min_score
         self.max_tier = min(max_tier, 4)
+        # When None, tier 3+ uses ``pipeline.recall`` (pipeline-only tiering).
+        self._full_recall: FullRecallFn | None = full_recall
+
+    async def _invoke_full_recall(self, request: RecallRequest) -> RecallResult:
+        if self._full_recall is not None:
+            return await self._full_recall(request)
+        return await self.pipeline.recall(request)
 
     async def retrieve(self, request: RecallRequest) -> RecallResult:
         """Run tiered retrieval, escalating until sufficient results found."""
@@ -110,9 +123,9 @@ class TieredRetriever:
                         self.recall_cache.put(request.bank_id, query_vector, result)
                     return result
 
-        # ── Tier 3: Full multi-strategy (delegate to pipeline's standard recall) ──
+        # ── Tier 3: Full multi-strategy (pipeline recall or injected full recall, e.g. hybrid) ──
         if self.max_tier >= 3:
-            result = await self.pipeline.recall(request)
+            result = await self._invoke_full_recall(request)
             # Tag the trace
             if result.trace:
                 result.trace.tier_used = 3
@@ -141,7 +154,7 @@ class TieredRetriever:
                 detail_level=request.detail_level,
                 external_context=request.external_context,
             )
-            result = await self.pipeline.recall(reformulated_request)
+            result = await self._invoke_full_recall(reformulated_request)
             if result.trace:
                 result.trace.tier_used = 4
                 result.trace.cache_hit = False

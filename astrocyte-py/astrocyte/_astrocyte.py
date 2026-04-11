@@ -237,6 +237,7 @@ class Astrocyte:
         self._engine_provider = provider
         if hasattr(provider, "capabilities"):
             self._capabilities = provider.capabilities()
+        self._rebuild_tiered_retrieval()
 
     def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
@@ -251,6 +252,7 @@ class Astrocyte:
 
     def _rebuild_tiered_retrieval(self) -> None:
         """Construct :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` when enabled."""
+        from astrocyte.hybrid import HybridEngineProvider
         from astrocyte.pipeline.recall_cache import RecallCache
         from astrocyte.pipeline.tiered_retrieval import TieredRetriever
 
@@ -258,6 +260,18 @@ class Astrocyte:
         if not self._pipeline or not self._config.tiered_retrieval.enabled:
             return
         trc = self._config.tiered_retrieval
+        # Pipeline-only tiering: no engine. Hybrid tiering: engine must be HybridEngineProvider.
+        if self._engine_provider is not None and trc.full_recall != "hybrid":
+            return
+        full_recall_fn = None
+        if trc.full_recall == "hybrid":
+            if not isinstance(self._engine_provider, HybridEngineProvider):
+                logger.warning(
+                    "tiered_retrieval.full_recall=hybrid requires HybridEngineProvider; "
+                    "tiered retrieval disabled until a hybrid provider is set",
+                )
+                return
+            full_recall_fn = self._engine_provider.recall
         rcc = self._config.recall_cache
         cache: RecallCache | None = None
         if rcc.enabled:
@@ -272,6 +286,7 @@ class Astrocyte:
             min_results=trc.min_results,
             min_score=trc.min_score,
             max_tier=trc.max_tier,
+            full_recall=full_recall_fn,
         )
 
     def set_access_grants(self, grants: list[AccessGrant]) -> None:
@@ -583,9 +598,14 @@ class Astrocyte:
         - ``fact_types``, ``time_range``, ``include_sources``, ``layer_weights``, ``detail_level``:
           forwarded to :class:`~astrocyte.types.RecallRequest` when supported by the provider.
 
-        When ``tiered_retrieval.enabled`` is set in config and a pipeline is configured, recall uses
-        :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` (not when recall is served only
-        by a Tier-2 engine). Proxy HTTP metrics require ``observability.prometheus_enabled``.
+        When ``tiered_retrieval.enabled`` is set and a pipeline is configured, recall uses
+        :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` for cheap tiers. Tier 3+
+        uses the built-in pipeline by default (``tiered_retrieval.full_recall: pipeline``) when no
+        Tier-2 engine is set; with ``full_recall: hybrid`` and a
+        :class:`~astrocyte.hybrid.HybridEngineProvider`, tier 3+ calls hybrid merge (engine +
+        pipeline) while lower tiers still use the pipeline orchestrator. A plain Tier-2 engine
+        without tiered config still uses ``engine.recall`` only. Proxy HTTP metrics require
+        ``observability.prometheus_enabled``.
         """
         # Resolve bank(s)
         bank_ids = self._resolve_read_bank_ids(bank_id, banks, context)
@@ -1126,6 +1146,11 @@ class Astrocyte:
 
     async def _do_recall(self, request: RecallRequest) -> RecallResult:
         if self._engine_provider:
+            if (
+                self._tiered_retriever is not None
+                and self._config.tiered_retrieval.full_recall == "hybrid"
+            ):
+                return await self._tiered_retriever.retrieve(request)
             result = await self._engine_provider.recall(request)
             # Hybrid merges pipeline (which already fuses external_context in RRF); do not merge twice.
             from astrocyte.hybrid import HybridEngineProvider

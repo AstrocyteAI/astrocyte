@@ -110,6 +110,10 @@ class TieredRetrievalConfig:
     min_results: int = 3
     min_score: float = 0.3
     max_tier: int = 3  # 0-4
+    #: Which recall path runs at tier 3+ (and tier 4 after reformulation). ``pipeline`` = built-in
+    #: pipeline only (default). ``hybrid`` = :class:`~astrocyte.hybrid.HybridEngineProvider` merge
+    #: (engine + pipeline); requires a hybrid engine provider and ``tiered_retrieval.enabled``.
+    full_recall: Literal["pipeline", "hybrid"] = "pipeline"
 
 
 @dataclass
