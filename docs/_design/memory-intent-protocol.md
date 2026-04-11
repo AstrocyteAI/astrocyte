@@ -41,6 +41,8 @@ MIP is declared in `mip.yaml`, separate from `astrocyte.yaml` (which is infrastr
 | `astrocyte.yaml` | Platform / infra team | Backend swapped, new provider, compliance profile changes |
 | `mip.yaml` | Agent / domain team | New content types, new routing rules, domain model evolves |
 
+**Not RAG authority tiers:** MIP governs **where retains go** and **mechanical routing** — not *precedence among graph vs vector vs text stores at recall time* (truth / authority layers). For terminology separating **cost escalation** (`tiered_retrieval` in `astrocyte.yaml`) from **structured precedence** recall, see `built-in-pipeline.md` §9.4 and **`product-roadmap-v1.md` § M7** (**v0.8.0**, with **M5**).
+
 ### 3.1 Bank definitions
 
 What memory banks exist, who can access them, and which compliance profile applies.

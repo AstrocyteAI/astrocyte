@@ -1,6 +1,6 @@
 # Astrocyte v1.0.0 Roadmap
 
-This roadmap organizes the 7 identified architectural gaps into milestones, ordered by dependency and impact. Each milestone is a shippable increment — earlier milestones unblock later ones.
+This roadmap organizes **8** identified architectural gaps into milestones, ordered by dependency and impact. Each milestone is a shippable increment — earlier milestones unblock later ones.
 
 **Architecture references**: See `architecture-brief.md` (System Architecture, Domain Model, Application Architecture), ADR-001 (Deployment Models), ADR-002 (Identity Model), ADR-003 (Config Schema).
 
@@ -16,8 +16,11 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 | M4 | External Data Sources | v0.7.0 | Gap 2 | M2, M3 | Core + Adapters |
 | M5 | Production Storage Providers | v0.8.0 | Gap 6 | None (parallel) | Adapters |
 | M6 | Standalone Gateway | v0.9.0 | Gap 3 | M1, M2 | New package |
+| M7 | Structured recall authority | v0.8.0 | Gap 8 | M5 | Core |
 
 **Release pairing:** **M1 and M2 ship together in a single v0.5.0 tag** (identity + structured context first; config schema immediately after in the same minor). Later milestones renumber as above.
+
+**v0.8.0 ships two milestones:** **M5** (production storage adapters) and **M7** (structured recall authority). M7 depends on multi-store hybrid recall from M5; both land in the **same minor** tag. **v1.0.0** general availability **requires M1–M7** complete.
 
 ---
 
@@ -126,7 +129,7 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 
 ### Deliverables
 
-1. **Extraction pipeline** (inbound complement to retrieval pipeline)
+1. [x] **Extraction pipeline** (inbound complement to retrieval pipeline)
    ```
    Raw Content → Content Normalizer → Chunker → Entity Extractor → brain.retain()
    ```
@@ -135,20 +138,20 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
    - Applies extraction profile from config
    - File: new `astrocyte-py/astrocyte/pipeline/extraction.py`
 
-2. **Dialogue chunking strategy**
+2. [x] **Dialogue chunking strategy**
    - Detect turn boundaries (`Speaker: text` pattern)
    - Keep complete turns together
    - Group consecutive turns up to max_chunk_size
    - Fallback to sentence splitting for single oversized turns
    - File: extend `astrocyte-py/astrocyte/pipeline/chunking.py`
 
-3. **Content type routing**
+3. [x] **Content type routing**
    - `content_type` field on `RetainRequest`
    - Routes to appropriate chunking strategy
    - Extraction profile can override defaults
    - File: extend `astrocyte-py/astrocyte/pipeline/orchestrator.py`
 
-4. **Extraction profile resolution**
+4. [x] **Extraction profile resolution**
    - Load from config `extraction_profiles:` section
    - Source → profile mapping
    - Default profiles for common content types
@@ -261,6 +264,8 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 - [ ] Integration tests run against containerized instances in CI
 - [ ] README with quick-start for each adapter
 
+**Same release — v0.8.0:** This milestone shares the **v0.8.0** tag with **M7** (structured recall authority). Hybrid adapters and precedence config ship together; see **§ M7**.
+
 ---
 
 ## M6: Standalone Gateway
@@ -307,6 +312,30 @@ This roadmap organizes the 7 identified architectural gaps into milestones, orde
 
 ---
 
+## M7: Structured recall authority
+
+**Gap**: Structured **truth / authority precedence** across heterogeneous stores (Gap 8) — orthogonal to **`tiered_retrieval`** (cost / latency tiers) and to **MIP** (retain routing in `mip.yaml`).
+
+**Why with M5**: Precedence across **graph vs document vs vector** (and optional proxy tiers) requires **production** `GraphStore` / `DocumentStore` / `VectorStore` adapters and validated **hybrid recall** behavior. M7 layers **declarative authority** and **prompt- or code-enforced conflict policy** on top. **Release:** **v0.8.0**, **same tag as M5** (adapters + authority in one minor).
+
+**Product stance:** **Optional** in config (default off). The **default** Astrocyte recall path remains multi-strategy fusion (RRF, weights). Naming and docs must keep **cost tiers** (`tiered_retrieval`) and **truth tiers** (this milestone) distinct. See `built-in-pipeline.md` §9.4.
+
+### Deliverables
+
+1. **`astrocyte.yaml` schema** — optional section (e.g. `recall_authority:`) with declarative **authority tiers** (priority order, labels, backend binding per tier: graph / document / vector / proxy source), **strategy** (`parallel_all` vs `sequential_stop`), and **rules** (`rules_inline` or `rules_path`) for assembly into model context.
+2. **Runtime** — tiered retrieval per authority config; structured bundle for **reflect** and/or **recall** output; optional **code-side demotion** of lower-priority hits when higher tiers cover the same typed slot (entity / attribute / time scope).
+3. **Documentation** — ADR or ADR-003 extension; operator guide; cross-links from `innovations.md` §2.1 and `memory-intent-protocol.md`.
+4. **Tests** — unit and integration tests for precedence assembly and interaction with `tiered_retrieval` / hybrid / federated paths.
+
+### Acceptance Criteria
+
+- [ ] Disabled by default; enabling does not change behavior for existing configs without the new section
+- [ ] Clear separation from `tiered_retrieval` in code, config keys, and docs
+- [ ] At least one end-to-end path: multi-store recall → labeled sections + rules → synthesis or structured `RecallResult`
+- [ ] Performance and token-budget implications documented
+
+---
+
 ## Dependency Graph
 
 ```mermaid
@@ -319,6 +348,7 @@ graph LR
     M5["M5: Storage Providers (v0.8.0)"] -.->|parallel| M1
     M5 -.->|parallel| M2
     M5 -.->|parallel| M3
+    M5 --> M7["M7: Structured recall authority (v0.8.0)"]
 
     style M1 fill:#e1f5fe
     style M2 fill:#e1f5fe
@@ -326,6 +356,7 @@ graph LR
     style M4 fill:#fff3e0
     style M5 fill:#e8f5e9
     style M6 fill:#fce4ec
+    style M7 fill:#fff9c4
 ```
 
 **Critical path**: M1 → M2 → M3 → M4 (M1 and M2 are one **v0.5.0** release; order is logical / doc sequencing)
@@ -333,6 +364,8 @@ graph LR
 **Parallel track**: M5 (storage providers) can proceed independently
 
 **Gateway track**: v0.5.0 (M1+M2) → M6 (can start after M2, parallel with M3/M4)
+
+**Authority track**: **M5 → M7** (both ship **v0.8.0**)
 
 ---
 
@@ -374,11 +407,9 @@ graph LR
 - Proxy recall: `sources:` with `type: proxy` + HTTP merge with local RRF (`astrocyte.recall.proxy`, `httpx`)
 - Optional manual federated hits via `RecallRequest.external_context`
 
-### v0.8.0 — Production Storage Providers (M5, parallel track)
-- Graph store: Neo4j adapter (`astrocyte-graph-neo4j`)
-- Document store: Elasticsearch/OpenSearch adapter (`astrocyte-docstore-elasticsearch`)
-- Additional vector store: Qdrant adapter (`astrocyte-vector-qdrant`)
-- Hybrid recall validated end-to-end (vector + graph + document)
+### v0.8.0 — Production storage (M5) + structured recall authority (M7)
+- **M5 — adapters:** Graph store Neo4j (`astrocyte-graph-neo4j`); document store Elasticsearch/OpenSearch (`astrocyte-docstore-elasticsearch`); additional vector store Qdrant (`astrocyte-vector-qdrant`); hybrid recall validated end-to-end (vector + graph + document)
+- **M7 — precedence:** Optional `astrocyte.yaml` authority tiers (`recall_authority:`), labeled prompt assembly, optional code-side demotion; **not** the default recall path — full spec **§ M7**
 
 ### v0.9.0 — Standalone Gateway (M6)
 - FastAPI-based standalone gateway (`astrocyte-gateway`)
@@ -388,7 +419,7 @@ graph LR
 - SPI stability guarantee established
 
 ### v1.0.0 — General Availability
-- All 6 milestones complete
+- Milestones **M1–M7** complete (including structured recall authority — **§ M7**)
 - Complete documentation and migration guide (v0.4 → v1.0)
 - SPI stability guarantee (no breaking SPI changes in 1.x)
 - Phase 2 integration adapter migration (framework-native identity extraction)
@@ -416,3 +447,4 @@ graph LR
 | Gap 5 | User-Scoped Memory | M1 | v0.5.0 | Implemented in core (`BankResolver`, ACL, optional adapter `context`; gateway UX TBD) |
 | Gap 6 | Production Storage Providers | M5 | v0.8.0 | SPI exists, needs implementations |
 | Gap 7 | Extraction Pipeline | M3 | v0.6.0 | Designed (`architecture-brief.md`) |
+| Gap 8 | Structured recall authority (truth precedence vs cost-tiered retrieval) | M7 | v0.8.0 | Planned — see § M7; `built-in-pipeline.md` §9.4; ships **with M5** in **v0.8.0** |

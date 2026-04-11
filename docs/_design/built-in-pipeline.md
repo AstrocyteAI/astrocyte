@@ -260,7 +260,9 @@ Per-memory composite score combining recency (exponential decay), frequency (rec
 
 ### 9.4 Adaptive tiered retrieval (implemented)
 
-5-tier progressive escalation: cache → fuzzy → BM25 → full multi-strategy → agentic recall. Each tier is cheaper than the next. Stops when `min_results` with `min_score` are found. Module: `astrocyte/pipeline/tiered_retrieval.py`.
+5-tier **progressive escalation by cost and latency**: cache → fuzzy → BM25 → full multi-strategy → agentic recall. Each tier is cheaper than the next. Stops when `min_results` with `min_score` are found. Module: `astrocyte/pipeline/tiered_retrieval.py`. Config: `tiered_retrieval` in `astrocyte.yaml` (including optional `full_recall: hybrid` when using `HybridEngineProvider` — see core docstrings and `product-roadmap-v1.md`).
+
+**Terminology — cost tiers vs truth tiers:** “Tier” here means **how much work recall does**, not **which source is authoritative**. Do **not** confuse this with *precedence-in-the-prompt* RAG patterns (e.g. labeled Priority 1 / 2 / 3 blocks where graph facts override statistics and vectors). That style optimizes **structured precedence and conflict handling at generation time**; Astrocyte’s default story remains **algorithmic fusion** (e.g. RRF) and optional **layer weights**. **Declarative authority / prompt-section recall** is planned as **M7** (**v0.8.0**, same release as **M5** storage adapters), optional in `astrocyte.yaml`, **not** the default recall path — see **`product-roadmap-v1.md` § M7**.
 
 ### 9.5 LLM-curated retain (implemented)
 

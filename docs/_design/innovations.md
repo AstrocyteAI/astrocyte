@@ -2,7 +2,7 @@
 
 This document describes Astrocyte's innovation roadmap — capabilities inspired by ByteRover (agent-native curation, zero-infra, progressive retrieval) and Hindsight (biomimetic memory, multi-strategy retrieval, mental models). Each innovation is independently implementable, backward-compatible, and feature-gated.
 
-For the core architecture see `architecture-framework.md`. For the built-in pipeline see `built-in-pipeline.md`. For **C4 / deployment / domain model** detail and **v1 milestone sequencing** (M1–M6), see `architecture-brief.md` and `product-roadmap-v1.md`.
+For the core architecture see `architecture-framework.md`. For the built-in pipeline see `built-in-pipeline.md`. For **C4 / deployment / domain model** detail and **milestone sequencing** (M1–M7 for **v1.0.0** GA; **M5** + **M7** in **v0.8.0**), see `architecture-brief.md` and `product-roadmap-v1.md`.
 
 ---
 
@@ -133,6 +133,8 @@ Progressive recall escalation — cheaper tiers tried first, escalate only when 
 Escalation stops when `min_results` (default 3) with `min_score` (default 0.5) is satisfied. `max_tier` (default 3) caps escalation.
 
 **Type addition:** `tier_used: int | None` on `RecallTrace`.
+
+**Cost tiers vs truth precedence:** The tiers above are **budget and latency** stages (try cheap recall first). They are **not** “Priority 1 graph beats Priority 2 stats beats Priority 3 vectors” *authority* tiers. Patterns that merge multiple stores into **labeled prompt sections** with **explicit precedence rules** for the LM target a different problem (structured factual precedence). Astrocyte’s **default** remains algorithmic fusion (RRF, layer weights). **Declarative authority / prompt-section recall** is roadmap **M7** (**v0.8.0**, same release as **M5** adapters), optional in config — **not** the default — and stays **separate in naming and docs** from `tiered_retrieval`; see **`product-roadmap-v1.md` § M7** and **`built-in-pipeline.md`** §9.4.
 
 ### 2.2 LLM-Curated Retain (implemented)
 

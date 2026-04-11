@@ -117,6 +117,25 @@ class TieredRetrievalConfig:
 
 
 @dataclass
+class RecallAuthorityTierConfig:
+    """One precedence band for :class:`RecallAuthorityConfig` (matches ``metadata[\"authority_tier\"]``)."""
+
+    id: str = ""
+    priority: int = 1
+    label: str = ""
+
+
+@dataclass
+class RecallAuthorityConfig:
+    """Structured recall authority — labels fused hits for synthesis (M7)."""
+
+    enabled: bool = False
+    rules_inline: str | None = None
+    rules_path: str | None = None
+    tiers: list[RecallAuthorityTierConfig] = field(default_factory=list)
+
+
+@dataclass
 class CuratedRetainConfig:
     enabled: bool = False
     model: str | None = None
@@ -349,6 +368,7 @@ class AstrocyteConfig:
     # Phase 2 innovations
     recall_cache: RecallCacheConfig = field(default_factory=RecallCacheConfig)
     tiered_retrieval: TieredRetrievalConfig = field(default_factory=TieredRetrievalConfig)
+    recall_authority: RecallAuthorityConfig = field(default_factory=RecallAuthorityConfig)
     curated_retain: CuratedRetainConfig = field(default_factory=CuratedRetainConfig)
     curated_recall: CuratedRecallConfig = field(default_factory=CuratedRecallConfig)
 
@@ -553,6 +573,25 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
             **_filter_dataclass_fields(TieredRetrievalConfig, data["tiered_retrieval"])
         )
 
+    if "recall_authority" in data and isinstance(data["recall_authority"], dict):
+        ra = data["recall_authority"]
+        tiers_raw = ra.get("tiers") or []
+        tiers: list[RecallAuthorityTierConfig] = []
+        if isinstance(tiers_raw, list):
+            for row in tiers_raw:
+                if isinstance(row, dict):
+                    tiers.append(
+                        RecallAuthorityTierConfig(
+                            **_filter_dataclass_fields(RecallAuthorityTierConfig, row)
+                        )
+                    )
+        config.recall_authority = RecallAuthorityConfig(
+            enabled=bool(ra.get("enabled", False)),
+            rules_inline=ra.get("rules_inline"),
+            rules_path=ra.get("rules_path"),
+            tiers=tiers,
+        )
+
     if "curated_retain" in data:
         config.curated_retain = CuratedRetainConfig(
             **_filter_dataclass_fields(CuratedRetainConfig, data["curated_retain"])
@@ -744,6 +783,17 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
     ident = config.identity
     if ident.resolver is not None and ident.resolver not in ("convention", "config", "custom"):
         raise ConfigError(f"identity.resolver must be 'convention', 'config', or 'custom', got {ident.resolver!r}")
+
+    if config.recall_authority.enabled and config.recall_authority.tiers:
+        ra = config.recall_authority
+        ids: list[str] = []
+        for t in ra.tiers:
+            tid = (t.id or "").strip()
+            if not tid:
+                raise ConfigError("recall_authority.tiers: each tier must have a non-empty id")
+            ids.append(tid)
+        if len(ids) != len(set(ids)):
+            raise ConfigError("recall_authority.tiers: duplicate id")
 
 
 def _grants_from_agents(config: AstrocyteConfig) -> list[AccessGrant]:

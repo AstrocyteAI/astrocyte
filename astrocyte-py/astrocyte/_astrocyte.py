@@ -31,6 +31,7 @@ from astrocyte.policy.barriers import ContentValidator, MetadataSanitizer, PiiSc
 from astrocyte.policy.escalation import CircuitBreaker, DegradedModeHandler
 from astrocyte.policy.homeostasis import QuotaTracker, RateLimiter, enforce_token_budget
 from astrocyte.policy.observability import MetricsCollector, StructuredLogger, span, timed
+from astrocyte.recall.authority import apply_recall_authority
 from astrocyte.recall.merge_result import merge_external_into_recall_result
 from astrocyte.types import (
     AccessGrant,
@@ -224,9 +225,10 @@ class Astrocyte:
     @classmethod
     def from_config_dict(cls, data: dict[str, str | int | float | bool | None | dict | list]) -> "Astrocyte":
         """Create an Astrocyte instance from a config dictionary (for testing)."""
-        from astrocyte.config import _dict_to_config
+        from astrocyte.config import _dict_to_config, validate_astrocyte_config
 
         config = _dict_to_config(data)
+        validate_astrocyte_config(config)
         return cls(config)
 
     def set_engine_provider(self, provider: EngineProvider) -> None:
@@ -661,7 +663,7 @@ class Astrocyte:
                     )
                     if self._config.dlp.scan_recall_output:
                         result = self._scan_recall_output(result)
-                    return result
+                    return apply_recall_authority(result, self._config.recall_authority)
                 except ProviderUnavailable:
                     return self._degraded_handler.handle_recall(self._provider_name)
                 except Exception:
@@ -680,7 +682,7 @@ class Astrocyte:
             )
             if self._config.dlp.scan_recall_output:
                 result = self._scan_recall_output(result)
-            return result
+            return apply_recall_authority(result, self._config.recall_authority)
 
     async def reflect(
         self,

@@ -209,6 +209,8 @@ class RecallResult:
     total_available: int
     truncated: bool
     trace: RecallTrace | None = None
+    #: Optional labeled sections + rules for synthesis (M7 structured recall authority).
+    authority_context: str | None = None
 
 
 @dataclass
