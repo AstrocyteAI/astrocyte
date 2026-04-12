@@ -59,6 +59,15 @@ HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook
 
 **Declarative `sources:`** may use **`type: poll`** (alias **`api_poll`**) with **`driver: github`**. Drivers resolve via **`astrocyte.ingest_poll_drivers`**; **`astrocyte-ingestion-github`** registers **`github`** (Issues REST API, skips PRs). Install **`astrocyte[poll]`** (or that package alone). **`path`** is **`owner/repo`**; **`interval_seconds`** ≥ 10 (prefer 60+ in production); **`auth.token`** is a GitHub PAT or fine-grained token. **`SourceRegistry.from_sources_config`** still requires **`retain=...`**.
 
+**Gateway ops:** **`GET /health/ingest`** on **`astrocyte-gateway-py`** returns ingest-only readiness (per-source health). Set **`ASTROCYTE_LOG_FORMAT=json`** for structured ingest lines (supervisor start/stop, GitHub rate-limit warnings, stream failures) via **`astrocyte.ingest.logutil`**. Recipe: **[`docs/_how-to/poll-ingest-gateway.md`](../_how-to/poll-ingest-gateway.md)**.
+
+### Extraction profiles for issues vs transcripts
+
+- **Ticketing / GitHub issues** — text-heavy, single column: keep **`content_type: text`** (default) or set **`extraction_profile`** to **`builtin_text`** (sentence chunking). Override in **`extraction_profiles:`** if you need different **`chunk_size`** or **`fact_type`**.
+- **Conversation transcripts** (multi-turn dialogue) — use **`builtin_conversation`** ( **`content_type: conversation`**, **`chunking_strategy: dialogue`**) or a custom profile that sets the same fields.
+
+Built-in definitions ship in **`astrocyte/pipeline/extraction_builtin.yaml`** and merge with **`extraction_profiles:`** in config.
+
 ### Multimodal content (optional)
 
 When **`RetainRequest`** (or the public API) includes **image/audio** as `ContentPart` lists (see `multimodal-llm-spi.md`), the pipeline does **not** assume every stage consumes raw media:
@@ -78,6 +87,8 @@ Query analysis and reflect can pass **multimodal `Message`** lists to **`complet
 - **Programmatic `PipelineOrchestrator`**: `chunk_strategy`, `max_chunk_size`, `rrf_k`, `semantic_overfetch`, `extraction_profiles` — used when not overridden by `RetainRequest` / profile resolution.
 
 **Not a single YAML `pipeline:` block yet.** A future top-level `pipeline:` key may unify chunk/entity/embed knobs; until then the above fields and orchestrator constructor arguments are the real surface.
+
+**Multi-system recall (M4.1):** **`sources:`** with **`type: proxy`** federates HTTP recall into **`PipelineOrchestrator.recall`** (RRF merge with local hits). Use when the next retrieval bet is **combining** vector/graph/document stores with an external search or ticket API — see **`product-roadmap-v1.md`** (M4.1) and **`astrocyte.recall.proxy`**.
 
 **Roadmap sketch (not implemented as one nested `pipeline:` tree):**
 

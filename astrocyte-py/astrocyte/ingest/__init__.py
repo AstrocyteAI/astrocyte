@@ -1,4 +1,4 @@
-"""M4 — external data ingest (webhooks; Redis / Kafka stream consumers; polls later).
+"""M4 — external data ingest (webhooks; Redis / Kafka streams; GitHub poll).
 
 Use :func:`astrocyte.ingest.webhook.handle_webhook_ingest` from an HTTP layer with the raw
 request body (needed for HMAC). Optional ASGI helper: ``astrocyte.ingest.fastapi_app.create_ingest_webhook_app`` (install ``astrocyte[gateway]``; Starlette app, uvicorn-compatible).

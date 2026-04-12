@@ -25,7 +25,7 @@ from astrocyte.errors import (
 )
 from astrocyte.ingest.registry import SourceRegistry
 from astrocyte.ingest.runtime import retain_callable_for_astrocyte
-from astrocyte.ingest.supervisor import IngestSupervisor
+from astrocyte.ingest.supervisor import IngestSupervisor, merge_source_health
 from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.types import AstrocyteContext
 
@@ -174,6 +174,27 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
             ) from e
         return to_jsonable(status)
 
+    @app.get("/health/ingest")
+    async def health_ingest() -> dict[str, Any]:
+        """Ingest-only readiness: poll/stream/webhook source health (no auth; for ops probes).
+
+        See also ``GET /v1/admin/sources`` when ``ASTROCYTE_ADMIN_TOKEN`` is set for the same data
+        behind admin auth.
+        """
+        rows = await ingest_supervisor.health_snapshot()
+        if not rows:
+            return {
+                "status": "ok",
+                "aggregate": {"healthy": True, "message": "no ingest sources configured"},
+                "sources": [],
+            }
+        merged = merge_source_health(rows)
+        return {
+            "status": "ok" if merged.healthy else "degraded",
+            "aggregate": {"healthy": merged.healthy, "message": merged.message},
+            "sources": rows,
+        }
+
     @app.post("/v1/retain")
     async def retain(
         body: dict[str, Any],
@@ -321,7 +342,11 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         _admin: Annotated[None, Depends(require_admin_if_configured)],
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        """List configured ingest sources and best-effort health (via :class:`IngestSupervisor`)."""
+        """List configured ingest sources and best-effort health (via :class:`IngestSupervisor`).
+
+        Same per-source rows as **``GET /health/ingest``**, wrapped as ``{"sources": [...]}`` and
+        optionally protected by ``ASTROCYTE_ADMIN_TOKEN``.
+        """
         _ = ctx
         out = await ingest_supervisor.health_snapshot()
         return {"sources": out}

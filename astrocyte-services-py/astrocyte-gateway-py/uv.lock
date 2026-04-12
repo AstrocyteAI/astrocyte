@@ -52,6 +52,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "astrocyte-ingestion-github", marker = "extra == 'all'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
+    { name = "astrocyte-ingestion-github", marker = "extra == 'dev'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
+    { name = "astrocyte-ingestion-github", marker = "extra == 'poll'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-kafka", marker = "extra == 'all'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-kafka" },
     { name = "astrocyte-ingestion-kafka", marker = "extra == 'dev'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-kafka" },
     { name = "astrocyte-ingestion-kafka", marker = "extra == 'stream'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-kafka" },
@@ -88,7 +91,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'dev'", specifier = ">=0.30" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'gateway'", specifier = ">=0.30" },
 ]
-provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "prometheus", "stream"]
+provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "poll", "prometheus", "stream"]
 
 [[package]]
 name = "astrocyte-gateway-py"

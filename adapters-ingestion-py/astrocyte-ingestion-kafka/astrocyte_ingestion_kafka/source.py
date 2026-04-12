@@ -10,6 +10,7 @@ from typing import Any
 from astrocyte.config import SourceConfig
 from astrocyte.errors import IngestError
 from astrocyte.ingest.bank_resolve import resolve_ingest_bank_id
+from astrocyte.ingest.logutil import log_ingest_event
 from astrocyte.ingest.payload import parse_ingest_kafka_value
 from astrocyte.ingest.webhook import RetainCallable
 from astrocyte.types import AstrocyteContext, HealthStatus
@@ -135,6 +136,13 @@ class KafkaStreamIngestSource:
             raise
         except Exception as e:
             self._last_error = str(e)
+            log_ingest_event(
+                logger,
+                "ingest_stream_consumer_failed",
+                source_id=self._source_id,
+                transport="kafka",
+                error=str(e),
+            )
             logger.exception("kafka consumer loop failed for %s", self._source_id)
         finally:
             await consumer.stop()

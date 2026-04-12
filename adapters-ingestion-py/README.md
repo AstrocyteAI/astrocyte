@@ -18,6 +18,8 @@ Stream **`driver`** values are resolved via **`astrocyte.ingest_stream_drivers`*
 
 Package names follow **`astrocyte-ingestion-{transport}`** where possible.
 
+**Observability:** set **`ASTROCYTE_LOG_FORMAT=json`** (same as the gateway) for structured lines from **`astrocyte.ingest.logutil`** — supervisor lifecycle, GitHub rate-limit warnings, Redis/Kafka transport failures.
+
 ## CI
 
 **`.github/workflows/adapters-ingestion-ci.yml`** runs **`pytest`** for packages under this tree when it or their publish workflows change.

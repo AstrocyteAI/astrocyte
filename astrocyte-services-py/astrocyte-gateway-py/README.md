@@ -105,7 +105,7 @@ Then set `vector_store: pgvector` in YAML or `ASTROCYTE_VECTOR_STORE=pgvector`, 
 | `ASTROCYTE_MAX_REQUEST_BODY_BYTES` | If set to a positive integer, reject requests whose **`Content-Length`** exceeds it (**413**). Unset = no limit (dev default). |
 | `ASTROCYTE_CORS_ORIGINS` | Comma-separated allowed origins for **browser** `fetch` (e.g. `https://app.example.com`). Unset = CORS middleware not added (same-origin / server-to-server only). |
 | `ASTROCYTE_ADMIN_TOKEN` | If set, **`GET /v1/admin/*`** requires header **`X-Admin-Token`** with the same value (use behind TLS; rotate like any secret). Unset = admin routes behave like other API routes (auth mode only). |
-| `ASTROCYTE_LOG_FORMAT` | Set to **`json`** for JSON lines on loggers `astrocyte_gateway` / `astrocyte_gateway.access` (aligns with §3.6 observability in production docs). |
+| `ASTROCYTE_LOG_FORMAT` | Set to **`json`** for JSON lines on loggers `astrocyte_gateway` / `astrocyte_gateway.access` (aligns with §3.6 observability in production docs). Ingest packages also emit structured lines (**`astrocyte.ingest.logutil`**: supervisor lifecycle, GitHub rate limits, stream errors) when this is set. |
 | `ASTROCYTE_LOG_LEVEL` | Default **`INFO`** when JSON logging is enabled. |
 | `ASTROCYTE_OTEL_ENABLED` | Set to **`1`** / **`true`** to load optional **`[otel]`** extras and export traces (set **`OTEL_EXPORTER_OTLP_ENDPOINT`**, **`OTEL_SERVICE_NAME`**, etc. per OpenTelemetry). |
 
@@ -133,6 +133,7 @@ In **`dev`** mode, send optional header **`X-Astrocyte-Principal`** (for example
 |--------|------|-------------|
 | `GET` | `/live` | - (process up; no DB check) |
 | `GET` | `/health` | - (includes vector store / DB) |
+| `GET` | `/health/ingest` | - (ingest sources only: poll/stream/webhook health snapshot; **`status`** **`ok`** / **`degraded`**) |
 | `POST` | `/v1/retain` | `content`, `bank_id`; optional `metadata`, `tags` |
 | `POST` | `/v1/recall` | `query`; `bank_id` or `banks`; optional `max_results`, `max_tokens`, `tags` |
 | `POST` | `/v1/reflect` | `query`, `bank_id`; optional `max_tokens`, `include_sources` |
@@ -146,6 +147,8 @@ OpenAPI docs: `/docs` when the HTTP service is running.
 **Observability:** Every response includes **`X-Request-ID`** (or echoes the client’s **`X-Request-ID`**). One access line per request is logged (JSON when **`ASTROCYTE_LOG_FORMAT=json`**). Optional OpenTelemetry: **`uv sync --extra otel`**, **`ASTROCYTE_OTEL_ENABLED=1`**, and standard **`OTEL_*`** variables — see **`production-grade-http-service.md`** §3.6.
 
 **Example configs** (Tier 1, MIP, webhook) are grouped under **[`examples/`](./examples/)** — each scenario has its **own subfolder** with an **`astrocyte.yaml`** (or MIP-only `mip.yaml`). Set **`ASTROCYTE_CONFIG_PATH`** to that file (absolute path, or run the gateway with cwd inside that folder).
+
+**Poll ingest (GitHub Issues):** install **`astrocyte[poll]`** (or **`astrocyte-ingestion-github`**) and follow **[`docs/_how-to/poll-ingest-gateway.md`](../../docs/_how-to/poll-ingest-gateway.md)**.
 
 **Tests:** from **`astrocyte-services-py/astrocyte-gateway-py/`**, run **`uv sync --extra dev --extra pgvector`** then **`uv run python -m pytest`** (use `python -m pytest` so the project venv is used). Integration against Postgres is in **`tests/test_integration_pgvector_http.py`** and runs in CI when **`DATABASE_URL`** is set and migrations have been applied (**`ASTROCYTE_GATEWAY_E2E_MIGRATED=1`** after `migrate.sh`).
 

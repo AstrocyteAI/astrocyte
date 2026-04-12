@@ -10,6 +10,7 @@ from typing import Any
 from astrocyte.config import SourceConfig
 from astrocyte.errors import IngestError
 from astrocyte.ingest.bank_resolve import resolve_ingest_bank_id
+from astrocyte.ingest.logutil import log_ingest_event
 from astrocyte.ingest.payload import parse_ingest_stream_fields
 from astrocyte.ingest.webhook import RetainCallable
 from astrocyte.types import AstrocyteContext, HealthStatus
@@ -131,6 +132,13 @@ class RedisStreamIngestSource:
             await self._ensure_group(r, stream, group)
         except Exception as e:
             self._last_error = str(e)
+            log_ingest_event(
+                logger,
+                "ingest_stream_xgroup_failed",
+                source_id=self._source_id,
+                transport="redis",
+                error=str(e),
+            )
             logger.exception("redis stream xgroup_create failed for %s", self._source_id)
             return
 
@@ -141,6 +149,13 @@ class RedisStreamIngestSource:
                 raise
             except Exception as e:
                 self._last_error = str(e)
+                log_ingest_event(
+                    logger,
+                    "ingest_stream_read_failed",
+                    source_id=self._source_id,
+                    transport="redis",
+                    error=str(e),
+                )
                 logger.exception("redis stream xreadgroup failed for %s", self._source_id)
                 await asyncio.sleep(1.0)
                 continue

@@ -18,6 +18,7 @@ import signal
 import sys
 from typing import Any
 
+from astrocyte.ingest.logutil import log_ingest_event
 from astrocyte.ingest.registry import SourceRegistry
 from astrocyte.types import HealthStatus
 
@@ -48,8 +49,15 @@ class IngestSupervisor:
     async def start(self) -> None:
         if self._started:
             return
+        sources = self._registry.all_sources()
         await self._registry.start_all()
         self._started = True
+        log_ingest_event(
+            logger,
+            "ingest_supervisor_started",
+            source_count=len(sources),
+            source_ids=[s.source_id for s in sources],
+        )
 
     async def stop(self) -> None:
         if not self._started:
@@ -60,10 +68,16 @@ class IngestSupervisor:
             else:
                 await self._registry.stop_all()
         except TimeoutError:
+            log_ingest_event(
+                logger,
+                "ingest_supervisor_stop_timeout",
+                timeout_s=self._stop_timeout_s,
+            )
             logger.warning("ingest supervisor: stop_all exceeded timeout %.1fs", self._stop_timeout_s)
             raise
         finally:
             self._started = False
+            log_ingest_event(logger, "ingest_supervisor_stopped")
 
     async def health_snapshot(self) -> list[dict[str, Any]]:
         """Best-effort health for every registered source (admin / metrics)."""

@@ -87,10 +87,11 @@ Track completion in your issue tracker or PRs as needed.
 - [ ] **Health endpoints:**
   - [ ] **Liveness:** process up without hitting backends (reference **`astrocyte-gateway-py`:** `GET /live` or `GET /health/live`).
   - [ ] **Readiness:** dependencies reachable (reference: `GET /health` runs **`Astrocyte.health()`** → vector store check; with **pgvector** that implies PostgreSQL connectivity). Use a **bounded** server-side timeout for deep checks so load balancers do not hang; expect **503** if dependencies fail or exceed the timeout.
+  - [ ] **Ingest-only (optional):** when using **`sources:`** poll/stream/webhook, **`GET /health/ingest`** aggregates **`IngestSource.health_check()`** per source (**`ok`** / **`degraded`**). Does not replace **`GET /health`** for Tier 1 stores.
 
 ### 3.6 Observability
 
-- [ ] **Structured logs:** JSON logs with **request_id**, **principal** (hashed or opaque id if sensitive), **bank_id**, **route**, **latency**, **status**; **PII redaction** policy. (Reference **`astrocyte-gateway-py`:** set **`ASTROCYTE_LOG_FORMAT=json`** for JSON access lines with **`request_id`**, **`method`**, **`path`**, **`status_code`**, **`duration_ms`**; **`X-Request-ID`** on every response.)
+- [ ] **Structured logs:** JSON logs with **request_id**, **principal** (hashed or opaque id if sensitive), **bank_id**, **route**, **latency**, **status**; **PII redaction** policy. (Reference **`astrocyte-gateway-py`:** set **`ASTROCYTE_LOG_FORMAT=json`** for JSON access lines with **`request_id`**, **`method`**, **`path`**, **`status_code`**, **`duration_ms`**; **`X-Request-ID`** on every response.) With the same env, **`astrocyte.ingest`** packages emit JSON lines for ingest lifecycle and transport errors (**`astrocyte.ingest.logutil`**).
 - [ ] **Metrics:** RED (rate, errors, duration) per route; saturation (CPU, memory, queue depth); dependency health.
 - [ ] **Tracing:** **OpenTelemetry** traces across HTTP and outbound calls (LLM, stores); optional `astrocyte` OTel extras (`astrocyte-py` optional dependencies).
 - [ ] **Dashboards and alerts:** SLO-based alerts (burn rate) on error rate and latency.

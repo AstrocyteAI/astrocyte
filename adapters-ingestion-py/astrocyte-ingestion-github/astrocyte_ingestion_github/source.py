@@ -12,6 +12,7 @@ import httpx
 from astrocyte.config import SourceConfig
 from astrocyte.errors import IngestError
 from astrocyte.ingest.bank_resolve import resolve_ingest_bank_id
+from astrocyte.ingest.logutil import log_ingest_event
 from astrocyte.ingest.webhook import RetainCallable
 from astrocyte.types import AstrocyteContext, HealthStatus
 
@@ -135,6 +136,12 @@ class GithubPollIngestSource:
                 raise
             except Exception as e:
                 self._last_error = str(e)
+                log_ingest_event(
+                    logger,
+                    "github_poll_cycle_failed",
+                    source_id=self._source_id,
+                    error=str(e),
+                )
                 logger.exception("github poll failed for %s", self._source_id)
             # interruptible sleep
             try:
@@ -156,7 +163,31 @@ class GithubPollIngestSource:
             params["since"] = self._since
 
         r = await self._client.get(f"/repos/{owner}/{repo}/issues", params=params)
-        r.raise_for_status()
+        rem_raw = r.headers.get("x-ratelimit-remaining") or r.headers.get("X-RateLimit-Remaining")
+        if rem_raw is not None:
+            try:
+                rem = int(rem_raw)
+                if rem < 20:
+                    log_ingest_event(
+                        logger,
+                        "github_poll_rate_limit_low",
+                        source_id=self._source_id,
+                        remaining=rem,
+                        reset=r.headers.get("x-ratelimit-reset") or r.headers.get("X-RateLimit-Reset"),
+                    )
+            except ValueError:
+                pass
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            log_ingest_event(
+                logger,
+                "github_poll_http_error",
+                source_id=self._source_id,
+                status_code=e.response.status_code,
+                url=str(e.request.url),
+            )
+            raise
         issues = r.json()
         if not isinstance(issues, list):
             raise IngestError("GitHub issues response must be a JSON array")

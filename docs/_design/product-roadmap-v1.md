@@ -212,7 +212,7 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 - [x] Webhook ingest validates HMAC (when `auth.type: hmac`), parses JSON body, resolves target bank, calls `brain.retain()` — library API: `astrocyte.ingest.handle_webhook_ingest` (HTTP server binding is M6 / app-specific)
 - [x] Source registry loads `type: webhook` entries from `sources:` and manages start/stop/health (`SourceRegistry`, `WebhookIngestSource`)
 - [x] Proxy query adapter merges external recall with local recall — **M4.1 / federated recall** (`astrocyte.recall.proxy`, RRF in `PipelineOrchestrator.recall`; optional `RecallRequest.external_context`)
-- [x] Source health available via `IngestSource.health_check()` → `HealthStatus` (wire to metrics in gateway)
+- [x] Source health available via `IngestSource.health_check()` → `HealthStatus` (surfaced on **`GET /health/ingest`** and **`GET /v1/admin/sources`** in **`astrocyte-gateway-py`**; structured ingest logs via `astrocyte.ingest.logutil` when `ASTROCYTE_LOG_FORMAT=json`)
 - [x] Ingest uses `brain.retain()` so policy (PII, validation, rate limits, quotas) applies on the same path as interactive retains
 
 ### M4.1 (implemented): Federated / proxy recall
@@ -227,11 +227,16 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 **Thin HTTP binding (library)**: optional `astrocyte[gateway]` provides `create_ingest_webhook_app` (Starlette ASGI) → `POST /v1/ingest/webhook/{source_id}` forwarding raw body/headers to `handle_webhook_ingest`. **Standalone** JWT/OIDC, OpenAPI, Docker/Helm, and ops packaging are **`astrocyte-gateway-py`** (§ M6 — shipped in-repo).
 
-### Deferred to v0.8.x connector track (see § Release Strategy)
+### v0.8.x connector track — shipped in-repo (incremental)
 
-- Event stream subscription (Kafka, Redis Streams, NATS) — async consumer + worker process
-- API poll scheduler — background task infrastructure
-- These pair naturally with a **long-running gateway / worker** deployment (same ops model as § M6) and are **in scope from v0.8.0 toward v1.0.0** on **v0.8.x** tags — not deferred to post-GA only.
+- **Event streams:** **`astrocyte-ingestion-kafka`**, **`astrocyte-ingestion-redis`** — `type: stream` with **`ingest_stream_drivers`**; gateway lifespan starts **`IngestSupervisor`**.
+- **API poll:** **`astrocyte-ingestion-github`** — `type: poll` / **`api_poll`** with **`driver: github`**; same supervisor model.
+- Further connectors (NATS, additional poll targets, gateway plugins) remain on the **v0.8.x** cadence per § Release Strategy — not deferred to post-GA only.
+
+### Deferred / remaining (see § Release Strategy)
+
+- NATS and other stream backends as needed
+- Additional **poll** drivers (beyond GitHub) and gateway **plugin** integrations (Kong, APISIX, …) as product priorities dictate
 
 ---
 
@@ -459,8 +464,7 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 
 **Scope:** Implemented **from the v0.8.0 baseline** toward **v1.0.0**. You can describe this as the **“v0.9-era”** feature wave (streams, poll, gateway plugins) in planning docs; **git tags** stay **v0.8.1**, **v0.8.2**, … — **no v0.9.0 tag** — see § Release numbering.
 
-- Event stream connectors (Kafka, Redis Streams, NATS, …)
-- API poll scheduler and long-running ingest workers
+- Additional event stream / poll connectors (beyond Kafka, Redis, GitHub) and NATS where needed
 - Gateway **plugin** mode and integration kits (**Kong**, **APISIX**, **Azure API Management**, other API gateways / service meshes as needed)
 - Hardening: CORS, body limits, admin auth, rate limits at the edge (as product requires)
 
@@ -476,7 +480,7 @@ SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this tra
 ### v1.1.0+ (post-GA)
 - Additional storage adapters (Pinecone, Weaviate, Memgraph)
 - Multi-region / global deployment patterns
-- Tavus CVI integration (bidirectional)
+- Tavus CVI integration (bidirectional) — HTTP client package **`astrocyte-integration-tavus`** (`adapters-integration-py/`); full bidirectional + e2e deferred
 - Phase 3 identity migration (context required, principal-only deprecated)
 
 ---
@@ -486,7 +490,7 @@ SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this tra
 | Gap | Description | Milestone | Version | Status |
 |-----|-------------|-----------|---------|--------|
 | Gap 1 | Identity & Authorization Protocol | M1 | v0.5.0 | Implemented in core (ADR-002 Phase 1); JWT/`tenant_id` enforcement = later milestones |
-| Gap 2 | External Data Sources | M4 + M4.1 | v0.7.0 / v0.7.1 | Shipped: webhook ingest, source registry, proxy federated recall (`astrocyte.recall.proxy`) |
+| Gap 2 | External Data Sources | M4 + M4.1 | v0.7.0 / v0.7.1 | Shipped: webhook ingest, source registry, stream + poll adapters (`adapters-ingestion-py/`), proxy federated recall (`astrocyte.recall.proxy`) |
 | Gap 3 | Deployment Models | M6 | v0.8.0 | **Shipped in-repo:** `astrocyte-gateway-py`, Docker/Compose/Helm, CI, GHCR (ADR-001 standalone path). **v0.8.x** tags per § Release numbering (no separate v0.9.0 tag). |
 | Gap 4 | Config Schema Evolution | M2 | v0.5.0 | Implemented in core (ADR-003); ships with M1 in same tag |
 | Gap 5 | User-Scoped Memory | M1 | v0.5.0 | Implemented in core (`BankResolver`, ACL, optional adapter `context`); HTTP UX via **`astrocyte-gateway-py`** auth + config |
