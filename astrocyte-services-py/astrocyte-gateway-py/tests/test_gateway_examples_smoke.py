@@ -22,9 +22,8 @@ pytestmark = pytest.mark.skipif(
 
 
 def _reload_app_module() -> None:
-    import astrocyte_gateway.app as app_mod
-
-    importlib.reload(app_mod)
+    mod = importlib.import_module("astrocyte_gateway.app")
+    importlib.reload(mod)
 
 
 def test_matrix_example_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,9 +39,9 @@ def test_matrix_example_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
             pytest.skip("tier1-pgvector example requires DATABASE_URL (pgvector CI job)")
 
     _reload_app_module()
-    from astrocyte_gateway.app import create_app
+    app_mod = importlib.import_module("astrocyte_gateway.app")
 
-    client = TestClient(create_app())
+    client = TestClient(app_mod.create_app())
 
     live = client.get("/live")
     assert live.status_code == 200

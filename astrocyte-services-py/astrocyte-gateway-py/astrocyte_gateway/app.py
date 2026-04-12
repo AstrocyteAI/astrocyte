@@ -68,6 +68,7 @@ def _configure_gateway_middleware(app: FastAPI) -> None:
             if mb > 0:
                 app.add_middleware(_MaxBodySizeMiddleware, max_bytes=mb)
         except ValueError:
+            # Invalid env: ignore and leave the default (no explicit body-size cap here).
             pass
 
     cors = os.environ.get("ASTROCYTE_CORS_ORIGINS", "").strip()

@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
-    "astrocyte==0.1.0",
+    "astrocyte>=0.7.0,<0.8",
     "cryptography>=42",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",

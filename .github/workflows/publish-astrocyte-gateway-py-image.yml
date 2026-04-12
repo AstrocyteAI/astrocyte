@@ -1,11 +1,13 @@
 # Build + test gate, then push the astrocyte-gateway-py image to GHCR (version tag).
 # Gateway test gate lives in `gateway-publish-test-gate.yml` (shared with `ci.yml`).
+#
+# Invoked by `release.yml` after PyPI publishes (`publish.yml` → `publish-astrocyte-pgvector.yml`).
+# Image uses `Dockerfile.release` (astrocyte + astrocyte-pgvector from PyPI at this tag’s version).
 name: Publish astrocyte-gateway-py image to GHCR
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -73,7 +75,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: astrocyte-services-py/astrocyte-gateway-py/Dockerfile
+          file: astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release
           push: true
           tags: |
             ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py:${{ steps.meta.outputs.tag }}
@@ -83,6 +85,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
           build-args: |
+            ASTROCYTE_VERSION=${{ steps.meta.outputs.version }}
             SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.meta.outputs.version }}
 
       - name: Attest image (SLSA provenance → GHCR)

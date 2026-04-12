@@ -78,6 +78,7 @@ def parse_ingest_kafka_value(value: bytes | None) -> tuple[str, str | None, str,
         data = json.loads(s)
         if isinstance(data, dict):
             return parse_ingest_json_object(data)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except json.JSONDecodeError:
+        # Value is not JSON; treat the decoded string as plain text (see return below).
         pass
     return s, None, "text", None

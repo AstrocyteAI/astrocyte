@@ -15,7 +15,7 @@
 
 1. Ensure **`main`** is green (including gateway matrix + pgvector jobs).
 2. Tag from the repo root, e.g. `git tag v0.2.0 && git push origin v0.2.0`.
-3. Open **Actions → Publish astrocyte-gateway-py image to GHCR** and confirm the run succeeds (tests, then build + push).
+3. Open **Actions → Release** ([`release.yml`](../../.github/workflows/release.yml)) and confirm the run succeeds: PyPI **`astrocyte`** → **`astrocyte-pgvector`**, then gateway image build + push.
 4. In **Packages** (org or repo), open **`astrocyte-gateway-py`**, set **visibility** (public for OSS pulls without auth), and verify tags **`v0.2.0`** and **`latest`**.
 
 ## Smoke-pull

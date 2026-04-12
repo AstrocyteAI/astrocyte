@@ -1,9 +1,13 @@
 # Shared test gate for astrocyte-gateway-py: services checks, example matrix, Postgres + pgvector.
-# Called from `ci.yml` and `publish-astrocyte-gateway-py-image.yml` — change once, both stay aligned.
+# Called from `ci.yml`, `publish-astrocyte-gateway-py-image.yml`, and `release.yml` — change once, all stay aligned.
 name: gateway publish test gate
 
 on:
   workflow_call:
+
+# Least privilege for checkout + local tests (no registry push or PR writes).
+permissions:
+  contents: read
 
 env:
   PYTHON_VERSION: "3.12"

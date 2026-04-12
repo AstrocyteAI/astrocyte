@@ -11,6 +11,10 @@ on:
       - "astrocyte-services-py/**"
       - ".github/workflows/ci.yml"
       - ".github/workflows/gateway-publish-test-gate.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/publish.yml"
+      - ".github/workflows/publish-astrocyte-pgvector.yml"
+      - ".github/workflows/publish-astrocyte-gateway-py-image.yml"
       - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
       - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
   pull_request:
@@ -22,6 +26,10 @@ on:
       - "astrocyte-services-py/**"
       - ".github/workflows/ci.yml"
       - ".github/workflows/gateway-publish-test-gate.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/publish.yml"
+      - ".github/workflows/publish-astrocyte-pgvector.yml"
+      - ".github/workflows/publish-astrocyte-gateway-py-image.yml"
       - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
       - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
   workflow_dispatch:
@@ -90,7 +98,7 @@ jobs:
           name: coverage
           path: astrocyte-py/coverage-out/
 
-  # astrocyte-gateway-py: shared with `publish-astrocyte-gateway-py-image.yml` (see `gateway-publish-test-gate.yml`).
+  # astrocyte-gateway-py: shared with `release.yml` / `publish-astrocyte-gateway-py-image.yml` (see `gateway-publish-test-gate.yml`).
   gateway-publish-test-gate:
     uses: ./.github/workflows/gateway-publish-test-gate.yml
 

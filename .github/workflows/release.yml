@@ -1,0 +1,26 @@
+# Single entrypoint for version tags: PyPI publishes in order, then the gateway image.
+# Trusted Publishing still runs inside the per-project workflow files (publish.yml, etc.).
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish-astrocyte:
+    uses: ./.github/workflows/publish.yml
+    secrets: inherit
+
+  publish-pgvector:
+    needs: publish-astrocyte
+    uses: ./.github/workflows/publish-astrocyte-pgvector.yml
+    secrets: inherit
+
+  publish-gateway-image:
+    needs: publish-pgvector
+    uses: ./.github/workflows/publish-astrocyte-gateway-py-image.yml
+    secrets: inherit

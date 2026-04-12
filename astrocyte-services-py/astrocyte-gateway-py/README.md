@@ -127,14 +127,25 @@ Defaults expose **API** on **8080** and **Postgres** on **5433**; override with 
 
 From the **repository root** (`astrocyte/`):
 
+**Local / CI-from-source** (`Dockerfile` — vendors `astrocyte-py` + `astrocyte-pgvector` from this checkout):
+
 ```bash
 docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile -t astrocyte-gateway-py .
 docker run --rm -p 8080:8080 astrocyte-gateway-py
 ```
 
+**Release / PyPI-pinned** (`Dockerfile.release` — `pip install astrocyte==X astrocyte-pgvector==X` from PyPI, then this package from the tree; use the same **PEP 440** version as your git tag without `v`):
+
+```bash
+docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release \
+  --build-arg ASTROCYTE_VERSION=0.7.7 \
+  --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.7.7 \
+  -t astrocyte-gateway-py:0.7.7 .
+```
+
 Then `GET http://localhost:8080/health`.
 
-**GHCR (releases):** Pushing a version tag `v*` runs [`.github/workflows/publish-astrocyte-gateway-py-image.yml`](../../.github/workflows/publish-astrocyte-gateway-py-image.yml) — it re-runs the same library + gateway tests as CI, then builds and pushes **`ghcr.io/<owner>/<repo>/astrocyte-gateway-py:<tag>`** and **`:latest`**, and **attests** the image (SLSA provenance via GitHub). Pull with `docker pull ghcr.io/OWNER/REPO/astrocyte-gateway-py:v1.2.3` (replace `OWNER/REPO`; the image may default to **private** until you change package visibility under **Packages** in the org/repo). Branch protection: **[`BRANCH-PROTECTION.md`](./BRANCH-PROTECTION.md)**; release checklist: **[`RELEASE.md`](./RELEASE.md)**.
+**GHCR (releases):** Pushing a version tag `v*` runs [`.github/workflows/release.yml`](../../.github/workflows/release.yml), which publishes **`astrocyte`** → **`astrocyte-pgvector`** to PyPI in order, then runs [`.github/workflows/publish-astrocyte-gateway-py-image.yml`](../../.github/workflows/publish-astrocyte-gateway-py-image.yml) to build with **`Dockerfile.release`** and push **`ghcr.io/<owner>/<repo>/astrocyte-gateway-py:<tag>`** and **`:latest`**, with **attestations**. Pull with `docker pull ghcr.io/OWNER/REPO/astrocyte-gateway-py:v1.2.3`. Branch protection: **[`BRANCH-PROTECTION.md`](./BRANCH-PROTECTION.md)**; release checklist: **[`RELEASE.md`](./RELEASE.md)**.
 
 ### Helm
 

@@ -3,10 +3,10 @@
 # Integration tests must pass before build/publish (same stack as ci.yml pgvector-integration).
 name: Publish astrocyte-pgvector to PyPI
 
+# Invoked by `release.yml` after `publish.yml`. Manual runs: Actions → this workflow → Run workflow.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+  workflow_dispatch:
 
 permissions:
   id-token: write

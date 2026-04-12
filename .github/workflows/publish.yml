@@ -1,9 +1,9 @@
 name: Publish to PyPI
 
+# Invoked by `release.yml` on version tags. Manual runs: Actions → this workflow → Run workflow.
 on:
-  push:
-    tags:
-      - "v*"  # Triggers on version tags: v0.1.0, v1.0.0, etc.
+  workflow_call:
+  workflow_dispatch:
 
 permissions:
   id-token: write   # Required for Trusted Publishing (OIDC) + attestations

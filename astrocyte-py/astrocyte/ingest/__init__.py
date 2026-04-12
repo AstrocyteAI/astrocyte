@@ -42,11 +42,11 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+# RedisStreamIngestSource / KafkaStreamIngestSource are lazy via __getattr__ (optional extras);
+# omitting them from __all__ avoids static export checks; use `import RedisStreamIngestSource` etc.
 __all__ = [
     "IngestSource",
     "WebhookIngestSource",
-    "RedisStreamIngestSource",
-    "KafkaStreamIngestSource",
     "SourceRegistry",
     "handle_webhook_ingest",
     "WebhookIngestResult",
