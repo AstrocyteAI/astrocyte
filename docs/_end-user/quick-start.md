@@ -1,6 +1,6 @@
 # Quick Start
 
-Get **Astrocyte** running locally: core library in Python, then an optional **Postgres + pgvector** stack with the **reference REST** API (`astrocyte-rest`).
+Get **Astrocyte** running locally: core library in Python, then an optional **Postgres + pgvector** stack with the **reference REST** API (`astrocyte-gateway`).
 
 ## Prerequisites
 
@@ -116,7 +116,7 @@ Mechanical rules resolve deterministically with zero LLM cost. When no rule matc
 
 ## 3. Reference REST server (Docker, recommended)
 
-The **`astrocyte-services-py/`** tree hosts Compose and **`astrocyte-rest`**. The optional **`astrocyte-pgvector`** package (PostgreSQL + pgvector) lives under **`adapters-py/`** and is pulled in via the **`[pgvector]`** extra on **`astrocyte-rest`** when you use that stack.
+The **`astrocyte-services-py/`** tree hosts Compose and **`astrocyte-gateway`**. The optional **`astrocyte-pgvector`** package (PostgreSQL + pgvector) lives under **`adapters-py/`** and is pulled in via the **`[pgvector]`** extra on **`astrocyte-gateway`** when you use that stack.
 
 ### Fastest path
 
@@ -146,7 +146,7 @@ For SQL-owned schema and ANN indexes, use the runbook script and overlays docume
 ./astrocyte-services-py/scripts/runbook-up.sh
 ```
 
-Details, troubleshooting, and environment split (**`ASTROCYTES_REST_DATABASE_URL`** vs migrate DSN) are in **[`astrocyte-services-py/README.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-services-py/README.md)** on GitHub.
+Details, troubleshooting, and environment split (**`ASTROCYTE_REST_DATABASE_URL`** vs migrate DSN) are in **[`astrocyte-services-py/README.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-services-py/README.md)** on GitHub.
 
 ## 4. Next steps
 

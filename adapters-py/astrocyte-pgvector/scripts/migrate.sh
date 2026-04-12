@@ -19,9 +19,9 @@ if [ -n "${1:-}" ]; then
   export DATABASE_URL="$1"
 fi
 
-CONN="${DATABASE_URL:-${ASTROCYTES_PG_DSN:-}}"
+CONN="${DATABASE_URL:-${ASTROCYTE_PG_DSN:-}}"
 if [ -z "${CONN}" ]; then
-  echo "error: set DATABASE_URL or ASTROCYTES_PG_DSN, or pass a URI as the first argument" >&2
+  echo "error: set DATABASE_URL or ASTROCYTE_PG_DSN, or pass a URI as the first argument" >&2
   exit 1
 fi
 

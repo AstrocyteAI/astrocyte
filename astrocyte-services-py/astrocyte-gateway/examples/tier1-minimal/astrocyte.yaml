@@ -1,0 +1,14 @@
+# Minimal Tier 1 config — matches gateway defaults (in-memory, mock LLM).
+provider_tier: storage
+vector_store: in_memory
+llm_provider: mock
+
+barriers:
+  pii:
+    mode: disabled
+
+escalation:
+  degraded_mode: error
+
+access_control:
+  enabled: false

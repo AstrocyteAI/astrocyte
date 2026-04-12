@@ -888,5 +888,9 @@ def load_config(path: str | Path) -> AstrocyteConfig:
     merged = _deep_merge(base, raw)
 
     cfg = _dict_to_config(merged)
+    if cfg.mip_config_path:
+        mip = Path(cfg.mip_config_path)
+        if not mip.is_absolute():
+            cfg.mip_config_path = str((config_path.parent / mip).resolve())
     validate_astrocyte_config(cfg)
     return cfg

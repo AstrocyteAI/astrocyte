@@ -210,6 +210,11 @@ class Astrocyte:
         # Tiered retrieval (optional; wired when ``tiered_retrieval.enabled`` and pipeline is set)
         self._tiered_retriever: TieredRetriever | None = None
 
+    @property
+    def config(self) -> AstrocyteConfig:
+        """Loaded :class:`~astrocyte.config.AstrocyteConfig` (read-only for callers)."""
+        return self._config
+
     async def __aenter__(self) -> "Astrocyte":
         return self
 

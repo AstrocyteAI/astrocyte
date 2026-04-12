@@ -1,0 +1,23 @@
+# Tier 1 minimal + webhook ingest source `demo` (POST JSON with content/text).
+# HMAC optional — set secret for production; `none` for local testing only.
+provider_tier: storage
+vector_store: in_memory
+llm_provider: mock
+
+sources:
+  demo:
+    type: webhook
+    extraction_profile: builtin_text
+    target_bank: webhook-demo
+    auth:
+      type: none
+
+barriers:
+  pii:
+    mode: disabled
+
+escalation:
+  degraded_mode: error
+
+access_control:
+  enabled: false

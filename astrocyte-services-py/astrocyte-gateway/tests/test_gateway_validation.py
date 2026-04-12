@@ -8,12 +8,12 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(autouse=True)
 def _dev_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ASTROCYTES_AUTH_MODE", "dev")
-    monkeypatch.delenv("ASTROCYTES_CONFIG_PATH", raising=False)
+    monkeypatch.setenv("ASTROCYTE_AUTH_MODE", "dev")
+    monkeypatch.delenv("ASTROCYTE_CONFIG_PATH", raising=False)
 
 
 def _client() -> TestClient:
-    from astrocyte_rest.app import create_app
+    from astrocyte_gateway.app import create_app
 
     return TestClient(create_app())
 

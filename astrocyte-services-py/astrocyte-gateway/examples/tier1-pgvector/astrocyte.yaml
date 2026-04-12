@@ -1,0 +1,19 @@
+# Tier 1 + pgvector — set DATABASE_URL or ASTROCYTE_PG_DSN in the environment.
+# For migration-owned DDL (HNSW, etc.), use astrocyte-services-py runbook + config.runbook.example.yaml instead.
+provider_tier: storage
+vector_store: pgvector
+llm_provider: mock
+
+vector_store_config:
+  embedding_dimensions: 128
+  bootstrap_schema: true
+
+barriers:
+  pii:
+    mode: disabled
+
+escalation:
+  degraded_mode: error
+
+access_control:
+  enabled: false

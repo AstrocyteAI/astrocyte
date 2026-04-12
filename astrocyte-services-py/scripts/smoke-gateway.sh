@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Smoke test: live + retain + recall against a running astrocyte-rest (e.g. after `make runbook`).
+# Smoke test: live + retain + recall against a running astrocyte-gateway (e.g. after `make runbook`).
 set -euo pipefail
 
-: "${ASTROCYTES_HTTP_PUBLISH_PORT:=8080}"
-BASE_URL="${ASTROCYTES_SMOKE_BASE_URL:-http://127.0.0.1:${ASTROCYTES_HTTP_PUBLISH_PORT}}"
-PRINCIPAL="${ASTROCYTES_SMOKE_PRINCIPAL:-agent:smoke}"
-BANK_ID="${ASTROCYTES_SMOKE_BANK_ID:-smoke-bank}"
+: "${ASTROCYTE_HTTP_PUBLISH_PORT:=8080}"
+BASE_URL="${ASTROCYTE_SMOKE_BASE_URL:-http://127.0.0.1:${ASTROCYTE_HTTP_PUBLISH_PORT}}"
+PRINCIPAL="${ASTROCYTE_SMOKE_PRINCIPAL:-agent:smoke}"
+BANK_ID="${ASTROCYTE_SMOKE_BANK_ID:-smoke-bank}"
 
 echo "GET ${BASE_URL}/live"
 curl -fsS --max-time 10 "${BASE_URL}/live"
@@ -25,4 +25,4 @@ curl -fsS --max-time 60 -X POST "${BASE_URL}/v1/recall" \
   -d "{\"query\":\"smoke\",\"bank_id\":\"${BANK_ID}\",\"max_results\":5}"
 
 echo
-echo "smoke-rest: ok"
+echo "smoke-gateway: ok"

@@ -78,7 +78,7 @@ Even with strong **compute** isolation, **unrestricted outbound HTTP** from the 
 | **`docs/_plugins/outbound-transport.md`** | Enterprise **HTTP/TLS/proxy** and credential gateways for **framework** outbound calls. |
 | **`docs/_end-user/production-grade-http-service.md`** | **Backend for Frontend (BFF)** AuthN binding, **no trusting** client-only principal, network and **API** hardening. |
 | **`astrocyte-py/` / `astrocyte-rs/`** (future) | Config schema (e.g. environment/sandbox dimensions), validation helpers, optional **context** types on `Astrocyte` calls. |
-| **`astrocyte-services-py/astrocyte-rest/`** (future) | Middleware: reject or map **sandbox** headers only when **signed** or **server-side** scoped; document **trusted** vs **untrusted** headers. |
+| **`astrocyte-services-py/astrocyte-gateway/`** (future) | Middleware: reject or map **sandbox** headers only when **signed** or **server-side** scoped; document **trusted** vs **untrusted** headers. |
 | **CI / security tests** | **AuthZ** matrix tests (sandbox A cannot read bank B); contract tests on mapping config. |
 
 Keeping **design** in `docs/_design/` and **operational checklists** in `_end-user/` avoids duplicating the threat model in every plugin page while still giving implementers a single **spec** to cite.

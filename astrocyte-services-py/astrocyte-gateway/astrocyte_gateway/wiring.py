@@ -32,7 +32,7 @@ def _instantiate(cls: type[T], kwargs: dict[str, Any], label: str) -> T:
 def resolve_vector_store(config: AstrocyteConfig) -> VectorStore:
     name = (
         config.vector_store
-        or os.environ.get("ASTROCYTES_VECTOR_STORE")
+        or os.environ.get("ASTROCYTE_VECTOR_STORE")
         or "in_memory"
     )
     try:
@@ -46,7 +46,7 @@ def resolve_vector_store(config: AstrocyteConfig) -> VectorStore:
 
 
 def resolve_llm_provider(config: AstrocyteConfig) -> LLMProvider:
-    name = config.llm_provider or os.environ.get("ASTROCYTES_LLM_PROVIDER") or "mock"
+    name = config.llm_provider or os.environ.get("ASTROCYTE_LLM_PROVIDER") or "mock"
     try:
         cls = resolve_provider(name, "llm_providers")
     except LookupError as e:
@@ -58,7 +58,7 @@ def resolve_llm_provider(config: AstrocyteConfig) -> LLMProvider:
 
 
 def resolve_graph_store(config: AstrocyteConfig) -> GraphStore | None:
-    name = config.graph_store or os.environ.get("ASTROCYTES_GRAPH_STORE")
+    name = config.graph_store or os.environ.get("ASTROCYTE_GRAPH_STORE")
     if not name:
         return None
     try:
@@ -69,7 +69,7 @@ def resolve_graph_store(config: AstrocyteConfig) -> GraphStore | None:
 
 
 def resolve_document_store(config: AstrocyteConfig) -> DocumentStore | None:
-    name = config.document_store or os.environ.get("ASTROCYTES_DOCUMENT_STORE")
+    name = config.document_store or os.environ.get("ASTROCYTE_DOCUMENT_STORE")
     if not name:
         return None
     try:

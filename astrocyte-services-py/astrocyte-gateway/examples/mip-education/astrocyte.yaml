@@ -1,0 +1,16 @@
+# Tier 1 in-memory + illustrative MIP policy in mip.yaml (education-style banks/rules).
+provider_tier: storage
+vector_store: in_memory
+llm_provider: mock
+
+mip_config_path: ./mip.yaml
+
+barriers:
+  pii:
+    mode: disabled
+
+escalation:
+  degraded_mode: error
+
+access_control:
+  enabled: false

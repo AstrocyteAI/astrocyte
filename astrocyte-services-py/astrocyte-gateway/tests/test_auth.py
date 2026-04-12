@@ -9,12 +9,12 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(autouse=True)
 def _no_astrocyte_config_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ASTROCYTES_CONFIG_PATH", raising=False)
+    monkeypatch.delenv("ASTROCYTE_CONFIG_PATH", raising=False)
 
 
 def test_dev_mode_uses_x_astrocyte_principal(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ASTROCYTES_AUTH_MODE", "dev")
-    from astrocyte_rest.app import create_app
+    monkeypatch.setenv("ASTROCYTE_AUTH_MODE", "dev")
+    from astrocyte_gateway.app import create_app
 
     client = TestClient(create_app())
     r = client.post(
@@ -28,9 +28,9 @@ def test_dev_mode_uses_x_astrocyte_principal(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_api_key_rejects_bad_key(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ASTROCYTES_AUTH_MODE", "api_key")
-    monkeypatch.setenv("ASTROCYTES_API_KEY", "secret")
-    from astrocyte_rest.app import create_app
+    monkeypatch.setenv("ASTROCYTE_AUTH_MODE", "api_key")
+    monkeypatch.setenv("ASTROCYTE_API_KEY", "secret")
+    from astrocyte_gateway.app import create_app
 
     client = TestClient(create_app())
     r = client.post(
@@ -42,9 +42,9 @@ def test_api_key_rejects_bad_key(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_api_key_accepts_valid_key_and_principal(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ASTROCYTES_AUTH_MODE", "api_key")
-    monkeypatch.setenv("ASTROCYTES_API_KEY", "good")
-    from astrocyte_rest.app import create_app
+    monkeypatch.setenv("ASTROCYTE_AUTH_MODE", "api_key")
+    monkeypatch.setenv("ASTROCYTE_API_KEY", "good")
+    from astrocyte_gateway.app import create_app
 
     client = TestClient(create_app())
     r = client.post(
@@ -56,15 +56,15 @@ def test_api_key_accepts_valid_key_and_principal(monkeypatch: pytest.MonkeyPatch
 
 
 def test_jwt_principal_from_sub(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ASTROCYTES_AUTH_MODE", "jwt_hs256")
+    monkeypatch.setenv("ASTROCYTE_AUTH_MODE", "jwt_hs256")
     secret = "unit-test-secret-at-least-32-bytes-long"
-    monkeypatch.setenv("ASTROCYTES_JWT_SECRET", secret)
+    monkeypatch.setenv("ASTROCYTE_JWT_SECRET", secret)
     token = jwt.encode(
         {"sub": "agent:jwt-user"},
         secret,
         algorithm="HS256",
     )
-    from astrocyte_rest.app import create_app
+    from astrocyte_gateway.app import create_app
 
     client = TestClient(create_app())
     r = client.post(

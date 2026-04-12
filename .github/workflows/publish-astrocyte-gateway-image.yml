@@ -1,0 +1,90 @@
+# Build + test gate, then push the astrocyte-gateway image to GHCR (version tag).
+# Gateway test gate lives in `gateway-publish-test-gate.yml` (shared with `ci.yml`).
+name: Publish astrocyte-gateway image to GHCR
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  test-astrocyte-py:
+    name: astrocyte-py (Python ${{ env.PYTHON_VERSION }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Test astrocyte-py
+        working-directory: astrocyte-py
+        run: uv sync --extra dev && uv run python -m pytest
+
+  gateway-publish-test-gate:
+    uses: ./.github/workflows/gateway-publish-test-gate.yml
+
+  build-and-push:
+    name: Build and push image
+    needs:
+      - test-astrocyte-py
+      - gateway-publish-test-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Version from tag (for Docker build-args)
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: astrocyte-services-py/astrocyte-gateway/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/astrocyte-gateway:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ github.repository }}/astrocyte-gateway:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+          build-args: |
+            SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.meta.outputs.version }}
+
+      - name: Attest image (SLSA provenance → GHCR)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/astrocyte-gateway
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

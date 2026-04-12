@@ -1,0 +1,24 @@
+replicaCount: 1
+
+image:
+  repository: astrocyte-gateway
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources: {}
+
+# Pod env (non-secret). For DATABASE_URL use extraEnvFrom or secrets below.
+env: []
+#  - name: ASTROCYTE_CONFIG_PATH
+#    value: /config/astrocyte.yaml
+
+extraEnvFrom: []
+#  - secretRef:
+#      name: astrocyte-gateway-secrets
+
+# Optional: mount a ConfigMap with astrocyte.yaml
+configMapName: ""

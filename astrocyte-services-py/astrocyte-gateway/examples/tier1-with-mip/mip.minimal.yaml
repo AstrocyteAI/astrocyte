@@ -1,0 +1,16 @@
+# Minimal MIP — banks + one deterministic routing rule.
+version: "1.0"
+
+banks:
+  - id: default
+    description: General-purpose bank
+    access: ["*"]
+
+rules:
+  - name: route-default
+    priority: 10
+    match:
+      all: []
+    action:
+      bank: default
+      tags: [gateway-demo]

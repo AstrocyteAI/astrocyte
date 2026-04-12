@@ -58,19 +58,19 @@ After migrations are applied, set **`bootstrap_schema: false`** in `vector_store
 
 | Constructor / YAML `vector_store_config` | Meaning |
 |--------------------------------------------|---------|
-| `dsn` | PostgreSQL connection URI (or set `DATABASE_URL` / `ASTROCYTES_PG_DSN`) |
+| `dsn` | PostgreSQL connection URI (or set `DATABASE_URL` / `ASTROCYTE_PG_DSN`) |
 | `table_name` | Table name (default `astrocyte_vectors`; alphanumeric + underscore only) |
 | `embedding_dimensions` | Fixed `vector(N)` width; must match your embedding model and the **`vector(N)`** in SQL migrations (default **128**) |
 | `bootstrap_schema` | If **`true`** (default), create extension / table / btree index on first use (dev-friendly; no HNSW). If **`false`**, assume **`migrate.sh`** already applied [`migrations/`](migrations/) (production). |
 
-## How this fits `astrocyte_rest`
+## How this fits `astrocyte_gateway`
 
 1. **`astrocyte-py`** defines the **`VectorStore`** protocol and discovers adapters by **entry point** (`astrocyte.vector_stores`).
 2. **`astrocyte-pgvector`** registers **`pgvector` → `PgVectorStore`**. Installing this package makes the name **`pgvector`** available to **`resolve_provider()`**.
-3. **`astrocyte_rest/wiring.py`** calls **`resolve_vector_store(config)`**, which loads the class from the entry point and passes **`vector_store_config`** from YAML (or env-only defaults).
-4. **`astrocyte_rest/brain.py`** builds **`Astrocyte`** + **`PipelineOrchestrator`** with that store and your chosen **`llm_provider`** (still **`mock`** unless you configure a real LLM).
+3. **`astrocyte_gateway/wiring.py`** calls **`resolve_vector_store(config)`**, which loads the class from the entry point and passes **`vector_store_config`** from YAML (or env-only defaults).
+4. **`astrocyte_gateway/brain.py`** builds **`Astrocyte`** + **`PipelineOrchestrator`** with that store and your chosen **`llm_provider`** (still **`mock`** unless you configure a real LLM).
 
-Example **`ASTROCYTES_CONFIG_PATH`** snippet:
+Example **`ASTROCYTE_CONFIG_PATH`** snippet:
 
 ```yaml
 provider_tier: storage
@@ -85,20 +85,20 @@ vector_store_config:
 Then run the REST service (from repo layout):
 
 ```bash
-export ASTROCYTES_CONFIG_PATH=/path/to/that.yaml
-cd astrocyte-services-py/astrocyte-rest && uv run astrocyte-rest
+export ASTROCYTE_CONFIG_PATH=/path/to/that.yaml
+cd astrocyte-services-py/astrocyte-gateway && uv run astrocyte-gateway
 ```
 
 Or set only env (no YAML file):
 
 ```bash
-export ASTROCYTES_VECTOR_STORE=pgvector
+export ASTROCYTE_VECTOR_STORE=pgvector
 export DATABASE_URL=postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte
 # embedding_dimensions default 128 — override via YAML if you add a file
-cd astrocyte-services-py/astrocyte-rest && uv sync --extra pgvector
+cd astrocyte-services-py/astrocyte-gateway && uv sync --extra pgvector
 ```
 
-**Note:** `vector_store_config` for dimensions is only merged from YAML today; for env-only mode, add a small YAML or extend `brain.py` to pass `ASTROCYTES_EMBEDDING_DIMENSIONS` (future improvement).
+**Note:** `vector_store_config` for dimensions is only merged from YAML today; for env-only mode, add a small YAML or extend `brain.py` to pass `ASTROCYTE_EMBEDDING_DIMENSIONS` (future improvement).
 
 ## Production notes
 

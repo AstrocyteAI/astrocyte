@@ -4,16 +4,16 @@ Optional Python packages beside the core [`astrocyte-py`](../astrocyte-py/) libr
 
 | Package | Role |
 |---------|------|
-| [`astrocyte-rest/`](astrocyte-rest/README.md) | Reference **REST** HTTP server. **CLI:** `astrocyte-rest`. **Python module:** `astrocyte_rest`. Optional **`[pgvector]`** extra installs [`astrocyte-pgvector`](../adapters-py/astrocyte-pgvector/README.md) for durable vectors. |
+| [`astrocyte-gateway/`](astrocyte-gateway/README.md) | Standalone **HTTP gateway** (`astrocyte.yaml` + optional `mip.yaml`). **CLI:** `astrocyte-gateway`. **Python module:** `astrocyte_gateway`. Optional **`[pgvector]`** extra installs [`astrocyte-pgvector`](../adapters-py/astrocyte-pgvector/README.md) for durable vectors. |
 | [`adapters-py/astrocyte-pgvector/`](../adapters-py/astrocyte-pgvector/README.md) | **`pgvector`** [`VectorStore`](../docs/_plugins/provider-spi.md) for PostgreSQL + [pgvector](https://github.com/pgvector/pgvector). **Schema:** SQL under [`migrations/`](../adapters-py/astrocyte-pgvector/migrations/) + [`migrate.sh`](../adapters-py/astrocyte-pgvector/scripts/migrate.sh) (`psql`, no Python migrator). |
 
-**Docker:** [`docker-compose.yml`](docker-compose.yml) in this directory runs **Postgres (pgvector) + `astrocyte-rest`**. Copy **[`.env.example`](.env.example)** to `.env` to override Postgres credentials, ports, and REST settings. Run from here: `docker compose up --build`, or from the repo root: `docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build`. Details: [`astrocyte-rest/README.md`](astrocyte-rest/README.md).
+**Docker:** [`docker-compose.yml`](docker-compose.yml) in this directory runs **Postgres (pgvector) + `astrocyte-gateway`**. Copy **[`.env.example`](.env.example)** to `.env` to override Postgres credentials, ports, and REST settings. Run from here: `docker compose up --build`, or from the repo root: `docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build`. Details: [`astrocyte-gateway/README.md`](astrocyte-gateway/README.md).
 
 ---
 
 ## Runbook
 
-Use this for a **production-shaped** local or demo deploy: SQL migrations (including **HNSW**), then **`astrocyte-rest`** with **`bootstrap_schema: false`** ([`config.runbook.example.yaml`](config.runbook.example.yaml)).
+Use this for a **production-shaped** local or demo deploy: SQL migrations (including **HNSW**), then **`astrocyte-gateway`** with **`bootstrap_schema: false`** ([`config.runbook.example.yaml`](config.runbook.example.yaml)).
 
 ### One command
 
@@ -35,17 +35,17 @@ If the password cannot be used in a constructed URL, set **`MIGRATE_DATABASE_URL
 
 ### Verify
 
-- **HTTP:** `GET http://127.0.0.1:${ASTROCYTES_HTTP_PUBLISH_PORT:-8080}/health` (default **8080**).
+- **HTTP:** `GET http://127.0.0.1:${ASTROCYTE_HTTP_PUBLISH_PORT:-8080}/health` (default **8080**).
 - **OpenAPI:** `http://127.0.0.1:8080/docs` (adjust port if overridden).
 
 ### Debugging
 
 - **`/live` vs `/health`:** `GET /live` only checks the process; `GET /health` also checks the vector store (PostgreSQL). If `/live` works but `/health` fails, inspect the API and DB (see below).
 - **Response body:** `curl -sS http://127.0.0.1:8080/health` (omit `curl -f`) so a non-2xx response still prints JSON `detail`.
-- **Logs:** `docker compose logs astrocyte-rest` (add `-f` to follow).
-- **Effective `DATABASE_URL` in the container:** `docker compose exec astrocyte-rest printenv DATABASE_URL` — must use hostname **`postgres`**, not `127.0.0.1`, for Compose networking.
-- **Resolved Compose config:** `docker compose -f docker-compose.yml -f docker-compose.runbook.yml config` (check `environment` for `astrocyte-rest`).
-- **Postgres from the API container:** `docker compose exec postgres psql -U astrocyte -d astrocyte -c 'SELECT 1'` (adjust user/db to match `.env`), or run a short `asyncio` + `psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"])` snippet inside `astrocyte-rest` to mirror what the app uses.
+- **Logs:** `docker compose logs astrocyte-gateway` (add `-f` to follow).
+- **Effective `DATABASE_URL` in the container:** `docker compose exec astrocyte-gateway printenv DATABASE_URL` — must use hostname **`postgres`**, not `127.0.0.1`, for Compose networking.
+- **Resolved Compose config:** `docker compose -f docker-compose.yml -f docker-compose.runbook.yml config` (check `environment` for `astrocyte-gateway`).
+- **Postgres from the API container:** `docker compose exec postgres psql -U astrocyte -d astrocyte -c 'SELECT 1'` (adjust user/db to match `.env`), or run a short `asyncio` + `psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"])` snippet inside `astrocyte-gateway` to mirror what the app uses.
 
 ### Manual steps (same as the script)
 

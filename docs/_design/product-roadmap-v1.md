@@ -15,12 +15,16 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 | M3 | Extraction Pipeline | v0.6.0 | Gap 7 | M2 | Core |
 | M4 | External Data Sources | v0.7.0 | Gap 2 | M2, M3 | Core + Adapters |
 | M5 | Production Storage Providers | v0.8.0 | Gap 6 | None (parallel) | Adapters |
-| M6 | Standalone Gateway | v0.9.0 | Gap 3 | M1, M2 | New package |
+| M6 | Standalone Gateway | v0.8.0 | Gap 3 | M1, M2 | Shipped in-repo (`astrocyte-gateway`); **v0.8.x** tags (see § Release numbering) |
 | M7 | Structured recall authority | v0.8.0 | Gap 8 | M5 | Core |
 
 **Release pairing:** **M1 and M2 ship together in a single v0.5.0 tag** (identity + structured context first; config schema immediately after in the same minor). Later milestones renumber as above.
 
-**v0.8.0 ships two milestones:** **M5** (production storage adapters) and **M7** (structured recall authority). M7 depends on multi-store hybrid recall from M5; both land in the **same minor** tag. **v1.0.0** general availability **requires M1–M7** complete.
+**v0.8.0 ships three milestones:** **M5** (production storage adapters), **M6** (standalone gateway — deployment models / Gap 3), and **M7** (structured recall authority). M7 depends on multi-store hybrid recall from M5; **M6** is logically last but ships on the **same v0.8.x line** as M5/M7. **v1.0.0** general availability **requires M1–M7** complete.
+
+**Release numbering (project policy):** Prefer **v0.8.x** git tags for this era (storage + authority + standalone gateway). The team **does not plan a separate v0.9.0 semver tag** for marketing; use **v0.8.1**, **v0.8.2**, … for follow-on work (streams, poll, gateway plugins) until **v1.0.0** GA, unless semver policy changes.
+
+**v0.7.4** closes out pre-**v0.8** standalone gateway and repository packaging (image workflows, Helm, CI gates, docs alignment) before **v0.8.0** milestone work.
 
 ---
 
@@ -57,7 +61,7 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 - [x] OBO: `context.effective_permissions(bank_id)` returns intersection
 - [x] Bank resolver maps identity to bank_id with configurable rules
 - [x] All existing tests pass without modification (`tests/test_identity_m1.py`, `tests/test_types.py`, etc.)
-- [x] ADR-002 implementation validated (library surface; gateway JWT mapping remains M6)
+- [x] ADR-002 implementation validated (library surface; HTTP JWT/OIDC mapping lives in **`astrocyte-gateway`** — § M6)
 
 ---
 
@@ -221,13 +225,13 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 **Relation to releases**: Shipped after **v0.7.0** (webhook ingest); see **CHANGELOG** `[Unreleased]` / next patch tag.
 
-**Thin HTTP binding (ahead of M6)**: optional `astrocyte[gateway]` provides `create_ingest_webhook_app` (Starlette ASGI) → `POST /v1/ingest/webhook/{source_id}` forwarding raw body/headers to `handle_webhook_ingest`. Full JWT, OpenAPI packaging, and Docker are **M6**.
+**Thin HTTP binding (library)**: optional `astrocyte[gateway]` provides `create_ingest_webhook_app` (Starlette ASGI) → `POST /v1/ingest/webhook/{source_id}` forwarding raw body/headers to `handle_webhook_ingest`. **Standalone** JWT/OIDC, OpenAPI, Docker/Helm, and ops packaging are **`astrocyte-gateway`** (§ M6 — shipped in-repo).
 
-### Deferred to post-v1.0.0
+### Deferred to v0.8.x connector track (see § Release Strategy)
 
-- Event stream subscription (Kafka, Redis Streams, NATS) — needs async consumer framework
-- API poll scheduler — needs background task infrastructure
-- These require the standalone gateway (M6) for natural deployment
+- Event stream subscription (Kafka, Redis Streams, NATS) — async consumer + worker process
+- API poll scheduler — background task infrastructure
+- These pair naturally with a **long-running gateway / worker** deployment (same ops model as § M6) and are **in scope from v0.8.0 toward v1.0.0** on **v0.8.x** tags — not deferred to post-GA only.
 
 ---
 
@@ -263,13 +267,15 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 - [x] Integration tests run against containerized instances in CI (`.github/workflows/adapters-ci.yml`; pgvector also covered from root `ci.yml`)
 - [x] README with quick-start — `adapters-py/README.md` plus per-adapter READMEs
 
-**Same release — v0.8.0:** This milestone shares the **v0.8.0** tag with **M7** (structured recall authority). Hybrid adapters and precedence config ship together; see **§ M7**.
+**Same release — v0.8.0:** This milestone shares the **v0.8.0** line with **M6** (standalone gateway) and **M7** (structured recall authority). Hybrid adapters, gateway, and precedence config ship on the same minor family; see **§ M6** and **§ M7**.
 
 ---
 
 ## M6: Standalone Gateway
 
 **Gap**: Deployment Models (Gap 3)
+
+**Implementation status (as of 2026-04-12):** The standalone gateway is **shipped in this repository** under **`astrocyte-services-py/astrocyte-gateway/`** — FastAPI routes, auth modes, webhook ingest, health/admin, multi-stage **Dockerfile**, **Compose** + runbook, **Helm** chart, **example configs**, CI gates, **GHCR** publish with attestations, and observability hooks (request IDs, JSON access logs, optional OpenTelemetry extra). Release **tagging** follows the **v0.8.x** policy above (not a separate **v0.9.0** tag for gateway-only).
 
 **Why last**: Requires M1 (identity) and M2 (deployment config). The gateway is a thin HTTP adapter over the same `Astrocyte` core — all intelligence stays in the library.
 
@@ -297,17 +303,18 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 ### Acceptance Criteria
 
-- [ ] Gateway exposes full core API via REST
-- [ ] JWT validation maps to structured `AstrocyteContext`
-- [ ] Webhook ingest works end-to-end through gateway
-- [ ] Docker compose brings up a working system with one command
-- [ ] Performance: < 10ms gateway overhead on top of core operation latency
-- [ ] ADR-001 implementation validated
+- [x] Gateway exposes the **Tier 1** core memory API via REST (`/v1/retain`, `/recall`, `/reflect`, `/forget`; OpenAPI at `/docs`). *(Tier 2 engine HTTP surface remains library-first / product-specific.)*
+- [x] AuthN maps to structured **`AstrocyteContext`**: **`api_key`**, **`jwt`/`jwt_hs256`**, **`jwt_oidc`** (JWKS, RS256) with **`ActorIdentity`** / claims — see `astrocyte-gateway` README and ADR-002.
+- [x] Webhook ingest works end-to-end through the gateway (`/v1/ingest/webhook/{source_id}`; CI + tests).
+- [x] Docker Compose + runbook bring up a working stack (`astrocyte-services-py/`; see services README).
+- [ ] **Performance:** < 10ms gateway-only overhead vs core latency — **not benchmarked in-repo**; treat as a follow-up measurement / load test, not a blocker for “M6 shipped.”
+- [x] **ADR-001:** Standalone gateway deployment path is **documented and implemented** (package, container, Helm, ops docs). Full organizational “validated” sign-off stays a **release / operator** checklist outside this file.
 
-### Deferred to v1.1+
+### Deferred (post–core gateway; scheduled from v0.8.x onward)
 
-- Gateway plugin mode (Kong, APISIX) — each gateway requires separate SDK work
-- gRPC transport — wait for demand signal
+Gateway **plugin** integration (Kong, APISIX, Azure API Management, and similar), **event stream** connectors, and **poll** schedulers are **in scope from the v0.8.0 baseline toward v1.0.0**, shipped incrementally on **v0.8.x** tags per § Release numbering — see **§ v0.8.x — Connector & gateway integration track** and **§ Stability: SPI, adapters, and config files**.
+
+- gRPC transport — wait for demand signal (may remain post–v1.0.0)
 
 ---
 
@@ -315,7 +322,7 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 **Gap**: Structured **truth / authority precedence** across heterogeneous stores (Gap 8) — orthogonal to **`tiered_retrieval`** (cost / latency tiers) and to **MIP** (retain routing in `mip.yaml`).
 
-**Why with M5**: Precedence across **graph vs document vs vector** (and optional proxy tiers) requires **production** `GraphStore` / `DocumentStore` / `VectorStore` adapters and validated **hybrid recall** behavior. M7 layers **declarative authority** and **prompt- or code-enforced conflict policy** on top. **Release:** **v0.8.0**, **same tag as M5** (adapters + authority in one minor).
+**Why with M5**: Precedence across **graph vs document vs vector** (and optional proxy tiers) requires **production** `GraphStore` / `DocumentStore` / `VectorStore` adapters and validated **hybrid recall** behavior. M7 layers **declarative authority** and **prompt- or code-enforced conflict policy** on top. **Release:** **v0.8.0**, **same line as M5 and M6** (adapters + gateway + authority on one minor family).
 
 **Product stance:** **Optional** in config (default off). The **default** Astrocyte recall path remains multi-strategy fusion (RRF, weights). Naming and docs must keep **cost tiers** (`tiered_retrieval`) and **truth tiers** (this milestone) distinct. See `built-in-pipeline.md` §9.4.
 
@@ -341,7 +348,7 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 graph LR
     M1["M1: Identity & Context (v0.5.0)"] --> M2["M2: Config Schema (v0.5.0)"]
     M2 --> M3["M3: Extraction Pipeline (v0.6.0)"]
-    M2 --> M6["M6: Standalone Gateway (v0.9.0)"]
+    M2 --> M6["M6: Standalone Gateway (v0.8.0)"]
     M3 --> M4["M4: External Data Sources (v0.7.0)"]
     M1 --> M6
     M5["M5: Storage Providers (v0.8.0)"] -.->|parallel| M1
@@ -362,9 +369,38 @@ graph LR
 
 **Parallel track**: M5 (storage providers) can proceed independently
 
-**Gateway track**: v0.5.0 (M1+M2) → M6 (can start after M2, parallel with M3/M4)
+**Gateway track**: v0.5.0 (M1+M2) → M6 (can start after M2, parallel with M3/M4). **M6** ships on the **v0.8.0** line **with M5/M7** (see § Milestone Overview).
 
 **Authority track**: **M5 → M7** (both ship **v0.8.0**)
+
+---
+
+## Stability: SPI, adapters, and config files
+
+This section is the **single place** for stability expectations ahead of **v1.0.0**. It applies to the **v0.8.x** connector/plugin track and to GA.
+
+### Core SPIs (library)
+
+Protocols and abstract surfaces that third-party code implements or calls — including **`VectorStore`**, **`GraphStore`**, **`DocumentStore`**, **`IngestSource`**, integration adapter hooks, and pipeline entrypoints documented as public API.
+
+- **Through v1.0.0:** Prefer **additive** changes (new optional fields, new methods with defaults). **Breaking** changes require a **documented deprecation** in release notes and, where applicable, an ADR; after **v1.0.0**, **1.x** keeps SPIs **backwards-compatible** except in a **major** semver bump.
+- **Tier distinction:** **Tier 1** memory API and documented SPIs are stability-guaranteed; **Tier 2** engine-only or experimental surfaces stay explicitly labeled in code/docs until promoted.
+
+### Adapter packages (`adapters-py/`, PyPI `astrocyte-*`)
+
+- Adapters **implement** core SPIs; they release on their **own PyPI versions** but declare a **supported `astrocyte` core range** in each package README.
+- A **breaking SPI change** in core triggers coordinated **minor/major** adapter releases; CI (e.g. `adapters-ci.yml`) is the enforcement backstop.
+
+### `astrocyte.yaml` / `astrocyte.yml` (declarative config)
+
+- **Schema evolution is additive-first:** new sections and keys ship as **optional** with defaults that preserve behavior for existing files.
+- **Renames/removals** of supported keys go through **deprecation** (warn → major) as described in ADR-003; validation errors should name the migration path.
+- Cross-references (`sources` → `extraction_profiles`, `recall_authority`, etc.) stay validated so invalid configs fail at load time.
+
+### `mip.yaml` (Memory Intent Protocol)
+
+- **Routing contracts** (intents, bank patterns, tool routing) are **stable for integrators** in the same sense as config: **additive** evolution; breaking changes require version bump of the MIP **schema or file format** if we introduce a version field, or deprecation of prior behavior.
+- **Orthogonality:** MIP controls **where** retain/recall routes; **`tiered_retrieval`**, **`recall_authority`**, and hybrid fusion are separate knobs — docs must not overload names (see **§ M7** and `built-in-pipeline.md`).
 
 ---
 
@@ -406,28 +442,30 @@ graph LR
 - Proxy recall: `sources:` with `type: proxy` + HTTP merge with local RRF (`astrocyte.recall.proxy`, `httpx`)
 - Optional manual federated hits via `RecallRequest.external_context`
 
-### v0.8.0 — Production storage (M5) + structured recall authority (M7)
+### v0.8.0 — Production storage (M5) + standalone gateway (M6) + structured recall authority (M7)
 - **M5 — adapters:** Neo4j (`astrocyte-neo4j`), Elasticsearch (`astrocyte-elasticsearch`), Qdrant (`astrocyte-qdrant`), PostgreSQL/pgvector (`astrocyte-pgvector`) — packages under `adapters-py/`; hybrid recall validated end-to-end (vector + graph + document)
+- **M6 — gateway:** FastAPI **`astrocyte-gateway`** (implemented in repo): Tier 1 REST, JWT/OIDC → `AstrocyteContext`, webhook ingest, health/admin, Docker/Compose/Helm, GHCR — **§ M6**
 - **M7 — precedence:** Optional `astrocyte.yaml` `recall_authority:` (ADR-004); labeled `authority_context` for recall/reflect; **not** the default recall path — full spec **§ M7**
 
-### v0.9.0 — Standalone Gateway (M6)
-- FastAPI-based standalone gateway (`astrocyte-gateway`)
-- REST API with JWT validation
-- Webhook ingest endpoint
-- Docker packaging (Dockerfile + docker-compose with pgvector)
-- SPI stability guarantee established
+### v0.8.x — Connector & gateway integration track (toward v1.0.0)
+
+**Scope:** Implemented **from the v0.8.0 baseline** toward **v1.0.0**. You can describe this as the **“v0.9-era”** feature wave (streams, poll, gateway plugins) in planning docs; **git tags** stay **v0.8.1**, **v0.8.2**, … — **no v0.9.0 tag** — see § Release numbering.
+
+- Event stream connectors (Kafka, Redis Streams, NATS, …)
+- API poll scheduler and long-running ingest workers
+- Gateway **plugin** mode and integration kits (**Kong**, **APISIX**, **Azure API Management**, other API gateways / service meshes as needed)
+- Hardening: CORS, body limits, admin auth, rate limits at the edge (as product requires)
+
+SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this track — **§ Stability: SPI, adapters, and config files**.
 
 ### v1.0.0 — General Availability
-- Milestones **M1–M7** complete (including structured recall authority — **§ M7**)
-- Complete documentation and migration guide (v0.4 → v1.0)
-- SPI stability guarantee (no breaking SPI changes in 1.x)
+- Milestones **M1–M7** complete (storage, gateway, structured recall authority — **§ M5–M7**)
+- Documentation complete for operators and integrators; **no v0.4 → v1.0 migration guide required** while there are no active external production users (revisit if adoption grows)
+- **SPI and config stability** per **§ Stability** (1.x avoids breaking changes to documented SPIs and config contracts)
 - Phase 2 integration adapter migration (framework-native identity extraction)
-- Benchmark validation across all storage backends
+- Benchmark validation across storage backends as appropriate
 
 ### v1.1.0+ (post-GA)
-- Event stream connectors (Kafka, Redis Streams, NATS)
-- API poll scheduler
-- Gateway plugin mode (Kong, APISIX)
 - Additional storage adapters (Pinecone, Weaviate, Memgraph)
 - Multi-region / global deployment patterns
 - Tavus CVI integration (bidirectional)
@@ -441,9 +479,9 @@ graph LR
 |-----|-------------|-----------|---------|--------|
 | Gap 1 | Identity & Authorization Protocol | M1 | v0.5.0 | Implemented in core (ADR-002 Phase 1); JWT/`tenant_id` enforcement = later milestones |
 | Gap 2 | External Data Sources | M4 + M4.1 | v0.7.0 / v0.7.1 | Shipped: webhook ingest, source registry, proxy federated recall (`astrocyte.recall.proxy`) |
-| Gap 3 | Deployment Models | M6 | v0.9.0 | Designed (ADR-001); **next major milestone** — standalone gateway + Docker |
+| Gap 3 | Deployment Models | M6 | v0.8.0 | **Shipped in-repo:** `astrocyte-gateway`, Docker/Compose/Helm, CI, GHCR (ADR-001 standalone path). **v0.8.x** tags per § Release numbering (no separate v0.9.0 tag). |
 | Gap 4 | Config Schema Evolution | M2 | v0.5.0 | Implemented in core (ADR-003); ships with M1 in same tag |
-| Gap 5 | User-Scoped Memory | M1 | v0.5.0 | Implemented in core (`BankResolver`, ACL, optional adapter `context`; gateway UX TBD) |
+| Gap 5 | User-Scoped Memory | M1 | v0.5.0 | Implemented in core (`BankResolver`, ACL, optional adapter `context`); HTTP UX via **`astrocyte-gateway`** auth + config |
 | Gap 6 | Production Storage Providers | M5 | v0.8.0 | Implemented: `adapters-py/` packages + CI + publish workflows |
 | Gap 7 | Extraction Pipeline | M3 | v0.6.0 | Implemented (`pipeline/extraction`, chunking, profiles) |
 | Gap 8 | Structured recall authority (truth precedence vs cost-tiered retrieval) | M7 | v0.8.0 | Implemented (`recall_authority`, `astrocyte.recall.authority`, ADR-004) |
@@ -452,8 +490,17 @@ graph LR
 
 ## Next milestone focus (toward v1.0.0)
 
-**M4 and M4.1 are complete in the library** (ingest, proxy recall, optional `astrocyte[gateway]` thin HTTP). Remaining deferred items (streams, poll) still depend on **M6**.
+**M6 (standalone gateway) is implemented in the repository** — see § M6. **Tagging** follows **v0.8.x** (not a standalone v0.9.0 release for gateway-only).
 
-**Recommended next vertical: M6 — Standalone gateway** (FastAPI/JWT/OpenAPI/Docker) — the main blocker for “drop-in production HTTP” and IdP-mapped identity. It builds on M1–M2 and reuses the same core; see § M6 acceptance criteria.
+**Primary engineering line — v0.8.x through v1.0.0**
 
-Polish work (documentation, samples, operator runbooks) can proceed in parallel; feature gaps for v1.0.0 after M6 are mainly **gateway completeness** and **SPI / migration guide** for the v1.0.0 tag.
+- **Streams, poll connectors, and gateway plugins** (Kong, APISIX, Azure API Management, others): implement on **v0.8.x** cadence per **§ v0.8.x — Connector & gateway integration track**.
+- **SPI, adapter, `astrocyte.yaml`, and `mip.yaml` stability:** follow **§ Stability**; encode deprecations before breaking changes.
+- Optional **gateway overhead benchmark** (M6 perf criterion) and **OpenAPI contract** tests for `/v1` if you want CI guarantees.
+
+**v1.0.0 GA**
+
+- **No v0.4 → v1.0 migration guide** required until there are active external users (see **§ v1.0.0**).
+- **Phase 2** integration adapters (framework-native identity) as in release strategy.
+
+**After GA (v1.1+):** additional backends, multi-region patterns, Phase 3 identity — see **§ v1.1.0+**; **gRPC** may remain optional longer.

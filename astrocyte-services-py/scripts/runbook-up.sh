@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot runbook: Postgres → SQL migrations (psql) → astrocyte-rest with runbook config.
+# One-shot runbook: Postgres → SQL migrations (psql) → astrocyte-gateway with runbook config.
 # Run from astrocyte-services-py/:  ./scripts/runbook-up.sh
 # Or from repo root:  ./astrocyte-services-py/scripts/runbook-up.sh
 #
@@ -61,4 +61,4 @@ echo "Applying SQL migrations..."
 echo "Starting full stack (runbook config)..."
 docker compose -f docker-compose.yml -f docker-compose.runbook.yml up --build -d
 
-echo "Done. Health: http://127.0.0.1:${ASTROCYTES_HTTP_PUBLISH_PORT:-8080}/health"
+echo "Done. Health: http://127.0.0.1:${ASTROCYTE_HTTP_PUBLISH_PORT:-8080}/health"

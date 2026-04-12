@@ -1,10 +1,10 @@
-# REST service + PostgreSQL (pgvector). Run from this directory:
+# Gateway + PostgreSQL (pgvector). Run from this directory:
 #   cp .env.example .env   # optional: override secrets and ports
 #   docker compose up --build
 # Or from repo root:
 #   docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build
 #
-# Postgres is reachable on host port POSTGRES_PUBLISH_PORT (default 5433). The API is on ASTROCYTES_HTTP_PUBLISH_PORT (default 8080).
+# Postgres is reachable on host port POSTGRES_PUBLISH_PORT (default 5433). The API is on ASTROCYTE_HTTP_PUBLISH_PORT (default 8080).
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -20,19 +20,20 @@ services:
       timeout: 5s
       retries: 5
 
-  astrocyte-rest:
+  astrocyte-gateway:
     build:
       context: ..
-      dockerfile: astrocyte-services-py/astrocyte-rest/Dockerfile
+      dockerfile: astrocyte-services-py/astrocyte-gateway/Dockerfile
     ports:
-      - "${ASTROCYTES_HTTP_PUBLISH_PORT:-8080}:${ASTROCYTES_PORT:-8080}"
+      - "${ASTROCYTE_HTTP_PUBLISH_PORT:-8080}:${ASTROCYTE_PORT:-8080}"
     environment:
-      ASTROCYTES_VECTOR_STORE: ${ASTROCYTES_VECTOR_STORE:-pgvector}
+      ASTROCYTE_VECTOR_STORE: ${ASTROCYTE_VECTOR_STORE:-pgvector}
       # In-cluster DSN only: hostname must be `postgres`. Do not reuse host-side DATABASE_URL
       # (e.g. 127.0.0.1:5433) here — Compose would pass it into this container and health checks hang.
-      DATABASE_URL: ${ASTROCYTES_REST_DATABASE_URL:-postgresql://${POSTGRES_USER:-astrocyte}:${POSTGRES_PASSWORD:-astrocyte}@postgres:5432/${POSTGRES_DB:-astrocyte}}
-      ASTROCYTES_HOST: ${ASTROCYTES_HOST:-0.0.0.0}
-      ASTROCYTES_PORT: ${ASTROCYTES_PORT:-8080}
+      # Prefer ASTROCYTE_GATEWAY_DATABASE_URL; ASTROCYTE_REST_DATABASE_URL kept for existing .env files.
+      DATABASE_URL: ${ASTROCYTE_GATEWAY_DATABASE_URL:-${ASTROCYTE_REST_DATABASE_URL:-postgresql://${POSTGRES_USER:-astrocyte}:${POSTGRES_PASSWORD:-astrocyte}@postgres:5432/${POSTGRES_DB:-astrocyte}}}
+      ASTROCYTE_HOST: ${ASTROCYTE_HOST:-0.0.0.0}
+      ASTROCYTE_PORT: ${ASTROCYTE_PORT:-8080}
     depends_on:
       postgres:
         condition: service_healthy

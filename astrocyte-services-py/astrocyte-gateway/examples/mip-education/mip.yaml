@@ -1,0 +1,30 @@
+# Illustrative MIP — multiple banks and rules (edit for your product).
+# Reference from astrocyte.yaml with: mip_config_path: ./mip.yaml
+version: "1.0"
+
+banks:
+  - id: course-{course_id}
+    description: Per-course memory
+    access: [agent:tutor, user:student]
+  - id: platform-ops
+    description: Operational / support notes
+    access: [agent:support]
+
+rules:
+  - name: course-content
+    priority: 5
+    match:
+      all:
+        - content_type: lesson
+        - metadata.course_id: present
+    action:
+      bank: "course-{metadata.course_id}"
+      tags: [education, "{metadata.module}"]
+
+  - name: fallback-ops
+    priority: 100
+    match:
+      all: []
+    action:
+      bank: platform-ops
+      tags: [unclassified]

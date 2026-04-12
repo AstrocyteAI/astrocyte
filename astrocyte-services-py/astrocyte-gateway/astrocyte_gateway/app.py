@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import secrets
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
+from astrocyte.config import SourceConfig
 from astrocyte.errors import (
     AccessDenied,
     CapabilityNotSupported,
@@ -16,24 +21,88 @@ from astrocyte.errors import (
     ProviderUnavailable,
     RateLimited,
 )
+from astrocyte.ingest.registry import SourceRegistry
+from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.types import AstrocyteContext
 
-from astrocyte_rest.auth import get_astrocyte_context
-from astrocyte_rest.brain import build_astrocyte
-from astrocyte_rest.serialization import to_jsonable
+from astrocyte_gateway.auth import get_astrocyte_context
+from astrocyte_gateway.brain import build_astrocyte
+from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
+from astrocyte_gateway.serialization import to_jsonable
 
 # Bounds /health latency when the vector store (e.g. pgvector) cannot connect.
 _HEALTH_TIMEOUT_S = 8.0
 
 
+class _MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app: Any, max_bytes: int) -> None:
+        super().__init__(app)
+        self._max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        cl = request.headers.get("content-length")
+        if cl:
+            try:
+                n = int(cl)
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Invalid Content-Length"},
+                )
+            if n > self._max_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large"},
+                )
+        return await call_next(request)
+
+
+def _configure_gateway_middleware(app: FastAPI) -> None:
+    max_raw = os.environ.get("ASTROCYTE_MAX_REQUEST_BODY_BYTES", "").strip()
+    if max_raw:
+        try:
+            mb = int(max_raw)
+            if mb > 0:
+                app.add_middleware(_MaxBodySizeMiddleware, max_bytes=mb)
+        except ValueError:
+            pass
+
+    cors = os.environ.get("ASTROCYTE_CORS_ORIGINS", "").strip()
+    if cors:
+        origins = [o.strip() for o in cors.split(",") if o.strip()]
+        if origins:
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=origins,
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+
+    # Outermost: request ID + structured access log (see observability.py).
+    app.add_middleware(AccessContextMiddleware)
+
+
+def require_admin_if_configured(request: Request) -> None:
+    """When ``ASTROCYTE_ADMIN_TOKEN`` is set, require matching ``X-Admin-Token`` header."""
+    expected = os.environ.get("ASTROCYTE_ADMIN_TOKEN", "").strip()
+    if not expected:
+        return
+    got = (request.headers.get("x-admin-token") or "").strip()
+    if not got or len(got) != len(expected) or not secrets.compare_digest(got, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token")
+
+
 def create_app() -> FastAPI:
     brain = build_astrocyte()
+    ingest_registry = SourceRegistry.from_sources_config(brain.config.sources)
 
     app = FastAPI(
-        title="Astrocyte reference server",
-        description="REST API over astrocyte-py (Tier 1 in-memory pipeline by default).",
+        title="Astrocyte gateway",
+        description="HTTP API over astrocyte-py (Tier 1 pipeline; configure with astrocyte.yaml / optional mip.yaml).",
         version="0.1.0",
     )
+    _configure_gateway_middleware(app)
 
     @app.exception_handler(AccessDenied)
     async def _access_denied(_request: Request, exc: AccessDenied) -> JSONResponse:
@@ -190,4 +259,72 @@ def create_app() -> FastAPI:
         )
         return to_jsonable(result)
 
+    @app.post("/v1/ingest/webhook/{source_id}")
+    async def ingest_webhook(
+        source_id: str,
+        request: Request,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> Response:
+        """Inbound webhook (M4): HMAC or none — see ``sources:`` in config."""
+        sources = brain.config.sources or {}
+        cfg = sources.get(source_id)
+        if cfg is None:
+            raise HTTPException(status_code=404, detail="unknown source")
+        if not isinstance(cfg, SourceConfig):
+            raise HTTPException(status_code=500, detail="invalid source config")
+
+        raw = await request.body()
+        headers = {k: v for k, v in request.headers.items()}
+        principal: str | None = ctx.principal if ctx is not None else None
+
+        result = await handle_webhook_ingest(
+            source_id=source_id,
+            source_config=cfg,
+            raw_body=raw,
+            headers=headers,
+            retain=brain.retain,
+            principal=principal,
+        )
+
+        payload: dict[str, Any] = {"ok": result.ok, "error": result.error}
+        if result.retain_result is not None:
+            rr = result.retain_result
+            payload["stored"] = rr.stored
+            payload["memory_id"] = rr.memory_id
+            payload["deduplicated"] = getattr(rr, "deduplicated", False)
+            if rr.error:
+                payload["retain_error"] = rr.error
+        return JSONResponse(content=payload, status_code=result.http_status)
+
+    @app.get("/v1/admin/sources")
+    async def admin_sources(
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """List configured ingest sources and best-effort health."""
+        _ = ctx
+        out: list[dict[str, Any]] = []
+        for src in ingest_registry.all_sources():
+            row: dict[str, Any] = {"id": src.source_id, "type": src.source_type}
+            try:
+                hs = await src.health_check()
+                row["healthy"] = hs.healthy
+                row["message"] = hs.message
+            except Exception as e:  # noqa: BLE001 — admin surface
+                row["healthy"] = False
+                row["message"] = str(e)
+            out.append(row)
+        return {"sources": out}
+
+    @app.get("/v1/admin/banks")
+    async def admin_banks(
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Configured bank ids from ``banks:`` (empty if none)."""
+        _ = ctx
+        banks = brain.config.banks or {}
+        return {"banks": list(banks.keys())}
+
+    maybe_instrument_otel(app)
     return app

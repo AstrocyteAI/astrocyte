@@ -13,7 +13,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 | Folder | Role |
 |---|---|
 | **`astrocyte-py/`** | **Python** Astrocyte service; PyPI package name **`astrocyte`**; ecosystem integrations (LangChain, MCP, …). |
-| **[`astrocyte-services-py/`](../astrocyte-services-py/README.md)** | Optional **REST** ([`astrocyte-rest`](../astrocyte-services-py/astrocyte-rest/README.md)); not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocyte-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocyte-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTES_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md) and [Production-grade reference server §4](./_end-user/production-grade-http-service.md). |
+| **[`astrocyte-services-py/`](../astrocyte-services-py/README.md)** | Optional **REST** ([`astrocyte-gateway`](../astrocyte-services-py/astrocyte-gateway/README.md)); not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocyte-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocyte-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTE_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md) and [Production-grade reference server §4](./_end-user/production-grade-http-service.md). |
 | **[`adapters-py/`](../adapters-py/README.md)** | Optional **Tier 1** store adapters, including **[`astrocyte-pgvector`](../adapters-py/astrocyte-pgvector/README.md)** (PostgreSQL + pgvector), Qdrant, Neo4j, Elasticsearch. |
 | **`astrocyte-rs/`** | **Rust** Astrocyte service; native crate; same framework contract as Python (see `implementation-language-strategy.md`). |
 
@@ -28,7 +28,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 | # | Title | Topic |
 |---|-------|--------|
 | 1 | [Quick Start](./_end-user/quick-start.md) | Install core library; Docker Compose + reference REST |
-| 2 | [Production-grade HTTP service](./_end-user/production-grade-http-service.md) | Production HTTP checklist; `astrocyte-rest`; Compose; ops **§4.5** |
+| 2 | [Production-grade HTTP service](./_end-user/production-grade-http-service.md) | Production HTTP checklist; `astrocyte-gateway`; Compose; ops **§4.5** |
 
 ---
 

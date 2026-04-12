@@ -1,0 +1,16 @@
+# Tier 1 in-memory + MIP (`mip.minimal.yaml` beside this file).
+provider_tier: storage
+vector_store: in_memory
+llm_provider: mock
+
+mip_config_path: ./mip.minimal.yaml
+
+barriers:
+  pii:
+    mode: disabled
+
+escalation:
+  degraded_mode: error
+
+access_control:
+  enabled: false
