@@ -55,6 +55,18 @@ async def test_post_token_endpoint_uses_basic_auth_and_strips_body_secrets() -> 
 
 
 @pytest.mark.asyncio
+async def test_fetch_oauth2_refresh_requires_oauth_cache_id() -> None:
+    auth = {
+        "token_url": "https://id.example.com/token",
+        "client_id": "c",
+        "client_secret": "s",
+        "refresh_token": "rt",
+    }
+    with pytest.raises(ValueError, match="_oauth_cache_id"):
+        await fetch_oauth2_refresh_access_token(auth)
+
+
+@pytest.mark.asyncio
 async def test_refresh_token_rotation_updates_stored_refresh() -> None:
     auth = {
         "token_url": "https://id.example.com/token",

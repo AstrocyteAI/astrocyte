@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import logging
 import time
 from dataclasses import dataclass
@@ -12,9 +11,6 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
-
-# Domain separation for in-memory cache keys only — keyed fingerprint, not password verification.
-_OAUTH_REFRESH_CACHE_KEY_MATERIAL = b"astrocyte.recall.oauth.refresh_token.cache_key.v1"
 
 _TOKEN_CACHE: dict[str, _TokenState] = {}
 
@@ -37,22 +33,19 @@ def _client_credentials_cache_key(auth: dict[str, str | int | float | bool | Non
 
 
 def _refresh_cache_key(auth: dict[str, str | int | float | bool | None]) -> str:
+    """Partition key for refresh-token cache entries.
+
+    Requires ``_oauth_cache_id`` (proxy recall sets this via :func:`auth_with_oauth_cache_namespace`)
+    so we never hash ``refresh_token`` for keying — avoids collisions across sources and satisfies
+    static analysis that treats bearer secrets like password material.
+    """
     ns = auth.get("_oauth_cache_id")
     if ns is not None and str(ns).strip():
         return f"rt|{ns}"
-    tid = str(auth.get("token_url") or "")
-    cid = str(auth.get("client_id") or "")
-    rt = str(auth.get("refresh_token") or "")
-    if not rt:
-        fp = "noroot"
-    else:
-        # Keyed BLAKE2 (not a password KDF): stable short id for cache dict keys without storing RTs.
-        fp = hashlib.blake2b(
-            rt.encode("utf-8"),
-            key=_OAUTH_REFRESH_CACHE_KEY_MATERIAL,
-            digest_size=12,
-        ).hexdigest()
-    return f"{tid}|{cid}|{fp}"
+    raise ValueError(
+        "oauth2 refresh requires _oauth_cache_id for in-memory token caching; "
+        "use auth_with_oauth_cache_namespace(auth, unique_id) or set _oauth_cache_id on auth.",
+    )
 
 
 def _normalize_auth_method(raw: str | None) -> str:
@@ -156,6 +149,9 @@ async def fetch_oauth2_refresh_access_token(
 
     Caches the access token. If the issuer returns a new ``refresh_token``, it replaces the stored
     one for this cache entry (**rotation**) so subsequent refreshes use the latest secret.
+
+    ``auth`` must include ``_oauth_cache_id`` (see :func:`auth_with_oauth_cache_namespace`) so the
+    cache is partitioned without deriving keys from ``refresh_token``.
     """
     token_url = str(auth.get("token_url") or "").strip()
     client_id = str(auth.get("client_id") or "").strip()
