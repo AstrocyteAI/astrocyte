@@ -20,12 +20,15 @@ Maps:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
 from astrocyte.types import AstrocyteContext
+
+logger = logging.getLogger("astrocyte.integrations.crewai")
 
 
 class AstrocyteCrewMemory:
@@ -76,13 +79,15 @@ class AstrocyteCrewMemory:
         if agent_id:
             meta["agent_id"] = agent_id
 
-        await self.brain.retain(
+        result = await self.brain.retain(
             content,
             bank_id=bank,
             tags=tags or ["crewai"],
             metadata=meta,
             context=self._context,
         )
+        if not result.stored:
+            logger.warning("CrewAI save failed for bank %s: %s", bank, result.error)
 
     async def search(
         self,

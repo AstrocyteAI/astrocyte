@@ -91,39 +91,60 @@ class RateLimiter:
 # ---------------------------------------------------------------------------
 
 
-def count_tokens(text: str) -> int:
-    """Approximate token count using a hybrid heuristic.
+# ---------------------------------------------------------------------------
+# Token counting — tiktoken if available, heuristic fallback
+# ---------------------------------------------------------------------------
 
-    Strategy:
-    - Uses character-to-token ratio (~4 chars/token for English prose)
-      combined with word count as a cross-check.
-    - For CJK-heavy text (detected by character class), uses ~1.5 chars/token.
-    - Takes the max of both estimates for safety (overcount > undercount).
+_tiktoken_encoder: object | None = None
+_tiktoken_checked = False
 
-    Phase 2 (Rust): tiktoken-compatible BPE tokenizer.
-    """
-    if not text:
-        return 1
 
+def _get_tiktoken_encoder() -> object | None:
+    """Lazily load tiktoken encoder (cl100k_base). Returns None if not installed."""
+    global _tiktoken_encoder, _tiktoken_checked
+    if _tiktoken_checked:
+        return _tiktoken_encoder
+    _tiktoken_checked = True
+    try:
+        import tiktoken  # type: ignore[import-untyped]
+
+        _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
+    except (ImportError, Exception):
+        _tiktoken_encoder = None
+    return _tiktoken_encoder
+
+
+def _heuristic_token_count(text: str) -> int:
+    """Hybrid heuristic: character-based + word-based, CJK-aware."""
     char_count = len(text)
     word_count = len(text.split())
 
-    # Detect CJK content: count characters in CJK Unified Ideographs ranges
+    # Detect CJK content
     cjk_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or '\u3040' <= c <= '\u30ff' or '\uac00' <= c <= '\ud7af')
     cjk_ratio = cjk_chars / max(char_count, 1)
 
     if cjk_ratio > 0.3:
-        # CJK text: ~1.5 characters per token
         char_estimate = int(char_count / 1.5)
     else:
-        # Latin/mixed text: ~4 characters per token
         char_estimate = int(char_count / 4)
 
-    # Word-based estimate: ~1.33 tokens per whitespace-delimited word
     word_estimate = int(word_count * 1.33)
-
-    # Take the higher estimate — overcount is safer than undercount for budgets
     return max(1, max(char_estimate, word_estimate))
+
+
+def count_tokens(text: str) -> int:
+    """Count tokens. Uses tiktoken (cl100k_base) if installed, otherwise a heuristic.
+
+    Install ``tiktoken`` for accurate counts: ``pip install tiktoken``.
+    """
+    if not text:
+        return 1
+
+    enc = _get_tiktoken_encoder()
+    if enc is not None:
+        return len(enc.encode(text))  # type: ignore[union-attr]
+
+    return _heuristic_token_count(text)
 
 
 def enforce_token_budget(hits: list[MemoryHit], max_tokens: int) -> tuple[list[MemoryHit], bool]:

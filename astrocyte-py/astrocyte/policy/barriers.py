@@ -26,7 +26,7 @@ logger = logging.getLogger("astrocyte.pii")
 
 _PII_PATTERNS: dict[str, tuple[re.Pattern[str], str]] = {
     "email": (
-        re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}"),
+        re.compile(r"\b[a-zA-Z0-9](?:[a-zA-Z0-9._%+\-]*[a-zA-Z0-9])?@[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}\b"),
         "[EMAIL_REDACTED]",
     ),
     "phone": (

@@ -11,6 +11,10 @@ from dataclasses import dataclass
 
 from astrocyte.types import MemoryHit
 
+#: Default RRF smoothing constant. Higher values give more weight to lower-ranked items.
+#: Standard value from the original RRF paper (Cormack et al., 2009).
+DEFAULT_RRF_K = 60
+
 
 @dataclass
 class ScoredItem:
@@ -27,7 +31,7 @@ class ScoredItem:
 
 def rrf_fusion(
     ranked_lists: list[list[ScoredItem]],
-    k: int = 60,
+    k: int = DEFAULT_RRF_K,
 ) -> list[ScoredItem]:
     """Reciprocal Rank Fusion across multiple ranked result lists.
 

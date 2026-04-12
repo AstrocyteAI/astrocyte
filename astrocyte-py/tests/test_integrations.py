@@ -5,8 +5,11 @@ All tests use in-memory providers. No framework dependencies required.
 
 import json
 
+import pytest
+
 from astrocyte._astrocyte import Astrocyte
 from astrocyte.config import AstrocyteConfig
+from astrocyte.errors import ConfigError
 from astrocyte.integrations.crewai import AstrocyteCrewMemory
 from astrocyte.integrations.langgraph import AstrocyteMemory
 from astrocyte.integrations.openai_agents import astrocyte_tool_definitions
@@ -305,3 +308,90 @@ class TestOpenAIToolsIntegration:
         names = {t["function"]["name"] for t in tools}
         assert "memory_forget" in names
         assert "memory_forget" in handlers
+
+
+# ---------------------------------------------------------------------------
+# Error-case tests
+# ---------------------------------------------------------------------------
+
+
+class TestIntegrationErrorCases:
+    """Error handling across integrations: retain failure, empty recall, invalid bank_id."""
+
+    async def test_langgraph_search_empty_bank(self):
+        brain, _ = _make_brain()
+        memory = AstrocyteMemory(brain, bank_id="empty-bank")
+        results = await memory.search("anything at all")
+        assert results == []
+
+    async def test_langgraph_invalid_bank_id(self):
+        brain, _ = _make_brain()
+        # Use thread_to_bank to route to an invalid bank_id
+        memory = AstrocyteMemory(
+            brain,
+            bank_id="valid-bank",
+            thread_to_bank={"bad-thread": "!!!invalid!!!"},
+        )
+        with pytest.raises(ConfigError, match="Invalid bank_id"):
+            await memory.save_context(
+                inputs={"q": "test"},
+                outputs={"a": "result"},
+                thread_id="bad-thread",
+            )
+
+    async def test_crewai_search_empty_bank(self):
+        brain, _ = _make_brain()
+        memory = AstrocyteCrewMemory(brain, bank_id="empty-bank")
+        results = await memory.search("anything")
+        assert results == []
+
+    async def test_crewai_invalid_bank_id(self):
+        brain, _ = _make_brain()
+        memory = AstrocyteCrewMemory(
+            brain,
+            bank_id="valid-bank",
+            agent_banks={"bad-agent": "../traversal"},
+        )
+        with pytest.raises(ConfigError, match="Invalid bank_id"):
+            await memory.save("test", agent_id="bad-agent")
+
+    async def test_pydantic_ai_retain_failure_reports_error(self):
+        """Pydantic AI retain tool reports errors in return string."""
+        brain, _ = _make_brain()
+        # Set a very small max content size to force failure
+        brain._config.homeostasis.retain_max_content_bytes = 1
+        tools = astrocyte_tools(brain, bank_id="b1")
+        retain_fn = next(t["function"] for t in tools if t["name"] == "memory_retain")
+        result = await retain_fn("This content is too long to store")
+        assert "Failed" in result
+
+    async def test_pydantic_ai_recall_no_results(self):
+        brain, _ = _make_brain()
+        tools = astrocyte_tools(brain, bank_id="empty-bank")
+        recall_fn = next(t["function"] for t in tools if t["name"] == "memory_recall")
+        result = await recall_fn("nonexistent topic")
+        assert "No relevant memories" in result
+
+    async def test_openai_retain_failure_returns_error_json(self):
+        """OpenAI tools retain handler returns error in JSON."""
+        brain, _ = _make_brain()
+        brain._config.homeostasis.retain_max_content_bytes = 1
+        _, handlers = astrocyte_tool_definitions(brain, bank_id="b1")
+        result_json = await handlers["memory_retain"](content="Too long content")
+        result = json.loads(result_json)
+        assert result["stored"] is False
+        assert result["error"] is not None
+
+    async def test_openai_recall_empty(self):
+        brain, _ = _make_brain()
+        _, handlers = astrocyte_tool_definitions(brain, bank_id="empty-bank")
+        result_json = await handlers["memory_recall"](query="nothing here")
+        result = json.loads(result_json)
+        assert result["hits"] == []
+
+    async def test_openai_forget_nonexistent(self):
+        brain, _ = _make_brain()
+        _, handlers = astrocyte_tool_definitions(brain, bank_id="b1", include_forget=True)
+        result_json = await handlers["memory_forget"](memory_ids=["nonexistent-id"])
+        result = json.loads(result_json)
+        assert result["deleted_count"] == 0

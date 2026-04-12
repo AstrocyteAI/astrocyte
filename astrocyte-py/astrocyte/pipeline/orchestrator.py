@@ -9,7 +9,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from astrocyte.config import ExtractionProfileConfig, RecallAuthorityConfig
-from astrocyte.pipeline.chunking import chunk_text
+from astrocyte.pipeline.chunking import DEFAULT_CHUNK_SIZE, chunk_text
 from astrocyte.pipeline.embedding import generate_embeddings
 from astrocyte.pipeline.entity_extraction import extract_entities
 from astrocyte.pipeline.extraction import (
@@ -17,7 +17,7 @@ from astrocyte.pipeline.extraction import (
     prepare_retain_input,
     resolve_retain_chunking,
 )
-from astrocyte.pipeline.fusion import memory_hits_as_scored, rrf_fusion
+from astrocyte.pipeline.fusion import DEFAULT_RRF_K, memory_hits_as_scored, rrf_fusion
 from astrocyte.pipeline.reflect import synthesize
 from astrocyte.pipeline.reranking import basic_rerank
 from astrocyte.pipeline.retrieval import parallel_retrieve
@@ -105,8 +105,8 @@ class PipelineOrchestrator:
         graph_store: GraphStore | None = None,
         document_store: DocumentStore | None = None,
         chunk_strategy: str = "sentence",
-        max_chunk_size: int = 512,
-        rrf_k: int = 60,
+        max_chunk_size: int = DEFAULT_CHUNK_SIZE,
+        rrf_k: int = DEFAULT_RRF_K,
         semantic_overfetch: int = 5,
         extraction_profiles: dict[str, ExtractionProfileConfig] | None = None,
     ) -> None:

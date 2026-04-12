@@ -48,6 +48,10 @@ class VectorItem:
     occurred_at: datetime | None = None
     memory_layer: str | None = None  # "fact", "observation", "model" — memory hierarchy
 
+    def __post_init__(self) -> None:
+        if not self.text:
+            raise ValueError("VectorItem.text must be non-empty")
+
 
 @dataclass
 class VectorFilters:
@@ -68,6 +72,10 @@ class VectorHit:
     fact_type: str | None = None
     occurred_at: datetime | None = None
     memory_layer: str | None = None  # "fact", "observation", "model"
+
+    def __post_init__(self) -> None:
+        if self.score < 0.0:
+            raise ValueError(f"VectorHit.score must be >= 0.0, got {self.score}")
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +229,12 @@ class Dispositions:
     literalism: int = 3  # 1 (flexible) to 5 (rigid)
     empathy: int = 3  # 1 (detached) to 5 (empathetic)
 
+    def __post_init__(self) -> None:
+        for field_name in ("skepticism", "literalism", "empathy"):
+            val = getattr(self, field_name)
+            if not (1 <= val <= 5):
+                raise ValueError(f"Dispositions.{field_name} must be 1–5, got {val}")
+
 
 @dataclass
 class ReflectRequest:
@@ -365,11 +379,19 @@ class MultiBankStrategy:
 # ---------------------------------------------------------------------------
 
 
+_VALID_PERMISSIONS = {"read", "write", "forget", "admin", "*"}
+
+
 @dataclass
 class AccessGrant:
     bank_id: str  # or "*"
     principal: str  # or "*"
     permissions: list[str]  # ["read", "write", "forget", "admin"]
+
+    def __post_init__(self) -> None:
+        invalid = set(self.permissions) - _VALID_PERMISSIONS
+        if invalid:
+            raise ValueError(f"AccessGrant.permissions contains invalid values: {invalid}")
 
 
 @dataclass

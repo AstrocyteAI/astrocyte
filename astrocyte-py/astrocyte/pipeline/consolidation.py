@@ -25,44 +25,55 @@ logger = logging.getLogger("astrocyte.pipeline")
 
 
 class _VectorBuckets:
-    """Simple quantization-based bucketing for near-duplicate detection.
+    """Multi-band quantization bucketing for near-duplicate detection.
 
-    Reduces pairwise comparisons from O(n²) to O(n × bucket_size) by
-    grouping vectors into buckets based on their top-k dimensions.
-    Only vectors in the same bucket are compared via cosine similarity.
+    Uses multiple offset hash bands to reduce false negatives. A vector is
+    checked against candidates from ALL bands it maps to (union), but only
+    stored once per band. This gives O(n × avg_bucket_size) instead of O(n²).
     """
 
-    def __init__(self, num_bands: int = 8) -> None:
-        self._num_bands = num_bands
-        # bucket_key -> list of (id, vector)
-        self._buckets: dict[tuple[int, ...], list[tuple[str, list[float]]]] = defaultdict(list)
+    _NUM_HASH_BANDS = 3  # Number of independent hash bands
 
-    def _bucket_key(self, vector: list[float]) -> tuple[int, ...]:
-        """Quantize vector into a coarse bucket key."""
+    def __init__(self, num_dims_per_band: int = 8) -> None:
+        self._num_dims = num_dims_per_band
+        # band_index -> bucket_key -> list of (id, vector)
+        self._bands: list[dict[tuple[int, ...], list[tuple[str, list[float]]]]] = [
+            defaultdict(list) for _ in range(self._NUM_HASH_BANDS)
+        ]
+
+    def _bucket_key(self, vector: list[float], band: int) -> tuple[int, ...]:
+        """Quantize vector into a coarse bucket key for the given band."""
         if not vector:
             return ()
-        # Pick evenly-spaced dimensions and quantize to {-1, 0, 1}
         dims = len(vector)
-        step = max(1, dims // self._num_bands)
+        # Each band uses a different offset to sample different dimensions
+        offset = (band * dims) // (self._NUM_HASH_BANDS * 2)
+        step = max(1, dims // self._num_dims)
         return tuple(
-            (1 if vector[i] > 0.1 else (-1 if vector[i] < -0.1 else 0))
-            for i in range(0, min(dims, step * self._num_bands), step)
+            (1 if vector[(offset + i) % dims] > 0.1 else (-1 if vector[(offset + i) % dims] < -0.1 else 0))
+            for i in range(0, min(dims, step * self._num_dims), step)
         )
 
     def find_similar(self, vector: list[float], threshold: float) -> bool:
-        """Check if any stored vector is similar above threshold."""
-        key = self._bucket_key(vector)
-        for _, seen_vec in self._buckets.get(key, []):
-            try:
-                if cosine_similarity(vector, seen_vec) >= threshold:
-                    return True
-            except ValueError:
-                continue
+        """Check if any stored vector is similar above threshold (any band)."""
+        checked: set[str] = set()
+        for band_idx, band in enumerate(self._bands):
+            key = self._bucket_key(vector, band_idx)
+            for item_id, seen_vec in band.get(key, []):
+                if item_id in checked:
+                    continue
+                checked.add(item_id)
+                try:
+                    if cosine_similarity(vector, seen_vec) >= threshold:
+                        return True
+                except ValueError:
+                    continue
         return False
 
     def add(self, item_id: str, vector: list[float]) -> None:
-        key = self._bucket_key(vector)
-        self._buckets[key].append((item_id, vector))
+        for band_idx, band in enumerate(self._bands):
+            key = self._bucket_key(vector, band_idx)
+            band[key].append((item_id, vector))
 
 
 @dataclass

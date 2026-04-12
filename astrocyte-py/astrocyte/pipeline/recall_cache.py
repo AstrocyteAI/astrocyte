@@ -16,6 +16,12 @@ from dataclasses import dataclass
 from astrocyte.policy.signal_quality import cosine_similarity
 from astrocyte.types import RecallResult
 
+#: Default maximum cache entries across all banks.
+DEFAULT_CACHE_MAX_ENTRIES = 256
+
+#: Default cache TTL in seconds.
+DEFAULT_CACHE_TTL_SECONDS = 300.0
+
 
 @dataclass
 class _CacheEntry:
@@ -40,8 +46,8 @@ class RecallCache:
     def __init__(
         self,
         similarity_threshold: float = 0.95,
-        max_entries: int = 256,
-        ttl_seconds: float = 300.0,
+        max_entries: int = DEFAULT_CACHE_MAX_ENTRIES,
+        ttl_seconds: float = DEFAULT_CACHE_TTL_SECONDS,
     ) -> None:
         self.similarity_threshold = similarity_threshold
         self.max_entries = max_entries

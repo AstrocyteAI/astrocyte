@@ -20,6 +20,7 @@ Maps:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 
 from astrocyte.integrations._sync_utils import _run_async_from_sync
 from astrocyte.types import AstrocyteContext
+
+logger = logging.getLogger("astrocyte.integrations.langgraph")
 
 
 class AstrocyteMemory:
@@ -91,13 +94,15 @@ class AstrocyteMemory:
             return
 
         content = "\n".join(parts)
-        await self.brain.retain(
+        result = await self.brain.retain(
             content,
             bank_id=bank,
             tags=tags or ["langgraph"],
             metadata={"source": "langgraph", "thread_id": thread_id or ""},
             context=self._context,
         )
+        if not result.stored:
+            logger.warning("LangGraph save_context failed for bank %s: %s", bank, result.error)
 
     async def search(
         self,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -162,6 +163,7 @@ class Astrocyte:
             max_size_bytes=config.barriers.metadata.max_metadata_size_bytes,
         )
         self._quota_tracker = QuotaTracker()
+        self._rate_quota_lock = threading.Lock()
 
         # Rate limiters (per operation)
         self._rate_limiters: dict[str, RateLimiter] = {}
@@ -196,8 +198,6 @@ class Astrocyte:
 
         # Hooks — typed as HookHandler (not Any)
         # Lock protects against concurrent register_hook + _fire_hooks
-        import threading
-
         self._hooks: dict[str, list[HookHandler]] = {}
         self._hooks_lock = threading.Lock()
 
@@ -433,13 +433,14 @@ class Astrocyte:
             limiter.check_and_record(bank_id, operation)
 
     def _check_rate_and_quota(self, bank_id: str, operation: str) -> None:
-        """Atomically check rate limit and quota together.
+        """Atomically check rate limit and quota under a shared lock.
 
         Prevents TOCTOU: without this, a concurrent request could pass between
         separate rate limit and quota checks.
         """
-        self._check_rate_limit(bank_id, operation)
-        self._check_quota(bank_id, operation)
+        with self._rate_quota_lock:
+            self._check_rate_limit(bank_id, operation)
+            self._check_quota(bank_id, operation)
 
     # ---------------------------------------------------------------------------
     # Public API
@@ -1039,6 +1040,11 @@ class Astrocyte:
                     break
         else:
             # Fallback for engine-only or stores without list_vectors
+            logger.warning(
+                "Lifecycle scan using query='*' fallback for bank %s — "
+                "results may be incomplete. Use a pipeline with list_vectors support for full coverage.",
+                bank_id,
+            )
             result = await self._do_recall(RecallRequest(query="*", bank_id=bank_id, max_results=10000))
             for hit in result.hits:
                 created_at = hit.metadata.get("_created_at") if hit.metadata else None

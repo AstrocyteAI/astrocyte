@@ -8,12 +8,18 @@ from __future__ import annotations
 
 import re
 
+#: Default maximum characters per chunk.
+DEFAULT_CHUNK_SIZE = 512
+
+#: Default character overlap between consecutive chunks.
+DEFAULT_CHUNK_OVERLAP = 50
+
 
 def chunk_text(
     text: str,
     strategy: str = "sentence",
-    max_chunk_size: int = 512,
-    overlap: int = 50,
+    max_chunk_size: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[str]:
     """Split text into chunks using the specified strategy.
 
