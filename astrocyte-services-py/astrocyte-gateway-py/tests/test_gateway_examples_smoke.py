@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import types
 from pathlib import Path
 
 import pytest
@@ -21,9 +22,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _reload_app_module() -> None:
+def _reload_app_module() -> types.ModuleType:
     mod = importlib.import_module("astrocyte_gateway.app")
-    importlib.reload(mod)
+    return importlib.reload(mod)
 
 
 def test_matrix_example_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -31,15 +32,14 @@ def test_matrix_example_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     base = EXAMPLES / name / "astrocyte.yaml"
     assert base.is_file(), f"missing {base}"
 
-    migrated = os.environ.get("ASTROCYTE_GATEWAY_E2E_MIGRATED", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-
     if name == "tier1-pgvector":
         if not os.environ.get("DATABASE_URL"):
             pytest.skip("tier1-pgvector example requires DATABASE_URL (pgvector CI job)")
+        migrated = os.environ.get("ASTROCYTE_GATEWAY_E2E_MIGRATED", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         # After migrate.sh, schema is owned by SQL migrations — avoid in-app DDL (bootstrap) which
         # can contend with migrated objects and stall. Local dev without MIGRATED still uses the
         # checked-in example (bootstrap_schema: true).
@@ -58,8 +58,7 @@ def test_matrix_example_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     monkeypatch.setenv("ASTROCYTE_CONFIG_PATH", str(cfg))
     monkeypatch.setenv("ASTROCYTE_AUTH_MODE", "dev")
 
-    _reload_app_module()
-    app_mod = importlib.import_module("astrocyte_gateway.app")
+    app_mod = _reload_app_module()
 
     with TestClient(app_mod.create_app()) as client:
         live = client.get("/live")

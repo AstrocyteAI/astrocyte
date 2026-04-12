@@ -52,8 +52,8 @@ async def test_brain_recall_merges_configured_proxy_hits():
     brain = Astrocyte(cfg)
     brain.set_pipeline(pipeline)
 
-    # Pin DNS so the test does not depend on resolving example.com (CI/sandbox/offline safe).
-    pinned_public = ipaddress.ip_address("93.184.216.34")
+    # Pin DNS to a deterministic RFC 5737 TEST-NET IP (documentation-only; no real DNS coupling).
+    pinned_public = ipaddress.ip_address("203.0.113.10")
     with (
         patch(
             "astrocyte.recall.proxy._sync_dns_validate_and_first_public_ip",
@@ -77,4 +77,14 @@ async def test_brain_recall_merges_configured_proxy_hits():
 
     texts = {h.text for h in result.hits}
     assert "from remote API" in texts
+    assert "local vector memory" in texts
     instance.request.assert_called_once()
+    args, kwargs = instance.request.call_args
+    assert args[0] == "GET"
+    assert "203.0.113.10" in args[1]
+    params = kwargs.get("params")
+    assert params is not None
+    assert dict(params).get("q") == "find stuff"
+    hdrs = kwargs.get("headers") or {}
+    assert isinstance(hdrs, dict)
+    assert hdrs.get("Host") == "example.com"

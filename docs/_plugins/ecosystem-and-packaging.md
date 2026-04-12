@@ -198,7 +198,7 @@ Naming: **`astrocyte-access-policy-{name}`**. These are **not** memory providers
 
 ## 3. Plugin discovery via entry points
 
-Providers register using Python's standard entry point mechanism (`importlib.metadata`). **Six** groups are resolved today by `astrocyte-py` discovery: `vector_stores`, `graph_stores`, `document_stores`, `engine_providers`, `llm_providers`, `outbound_transports`. **Two** additional groups are specified for ecosystem packages and **core discovery / YAML wiring is not guaranteed yet**: `astrocyte.access_policies` (§3.6) and `astrocyte.memory_export_sinks` (§3.5). Treat both like transport—entry points and config shapes are stable in docs before core loaders catch up (see §3.9).
+Providers register using Python's standard entry point mechanism (`importlib.metadata`). **Six** groups are resolved today by `astrocyte-py` discovery: `astrocyte.vector_stores`, `astrocyte.graph_stores`, `astrocyte.document_stores`, `astrocyte.engine_providers`, `astrocyte.llm_providers`, `astrocyte.outbound_transports`. **Two** additional groups are specified for ecosystem packages and **core discovery / YAML wiring is not guaranteed yet**: `astrocyte.access_policies` (§3.6) and `astrocyte.memory_export_sinks` (§3.5). Treat both like transport—entry points and config shapes are stable in docs before core loaders catch up (see §3.9).
 
 ### 3.1 Tier 1: Retrieval providers
 
@@ -261,7 +261,12 @@ onecli = "astrocyte_transport_onecli:OneCLIOutboundTransport"
 iceberg = "astrocyte_sink_iceberg:IcebergMemorySink"
 ```
 
-**Today:** the **`MemoryExportSink`** protocol and event taxonomy are specified in `memory-export-sink.md` and `provider-spi.md` §5. Core may **not** yet load `memory_export_sinks:` from YAML; until it does, use **`event-hooks.md`** webhooks to an ingestor that honors the same event shape, or embed sinks in application code after `Astrocyte` bootstrap.
+**Today:** the **`MemoryExportSink`** protocol and event taxonomy are specified in `memory-export-sink.md` and `provider-spi.md` §5. Core does **not yet** load `memory_export_sinks:` from YAML.
+
+**Temporary options (supported now):**
+
+1. Use **`event-hooks.md`** webhooks to an ingestor that honors the same event shape.
+2. Embed sink wiring in application code immediately after `Astrocyte` bootstrap.
 
 ### 3.6 Access policy providers (optional, spec)
 

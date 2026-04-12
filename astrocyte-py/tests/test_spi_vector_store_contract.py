@@ -51,7 +51,7 @@ async def test_roundtrip_store_search_delete_list(store: InMemoryVectorStore) ->
     assert ids == ["v1"]
 
     hits = await store.search_similar(q, bid, limit=5)
-    assert len(hits) >= 1
+    assert len(hits) == 1
     assert hits[0].id == "v1"
 
     n = await store.delete(["v1"], bid)
@@ -93,3 +93,43 @@ async def test_search_respects_tag_filter(store: InMemoryVectorStore) -> None:
     hits = await store.search_similar(q, "b", limit=10, filters=fl)
     assert len(hits) == 1
     assert hits[0].id == "x1"
+
+
+@pytest.mark.asyncio
+async def test_roundtrip_single_element_vector(store: InMemoryVectorStore) -> None:
+    bid = "bank-single"
+    q = _vec(1)
+    item = VectorItem(id="s1", bank_id=bid, vector=q, text="single")
+    ids = await store.store_vectors([item])
+    assert ids == ["s1"]
+
+    hits = await store.search_similar(q, bid, limit=5)
+    assert len(hits) == 1
+    assert hits[0].id == "s1"
+
+
+@pytest.mark.asyncio
+async def test_empty_vector_roundtrip(store: InMemoryVectorStore) -> None:
+    """Empty query/stored vectors yield zero cosine similarity but remain searchable."""
+    bid = "bank-empty"
+    q: list[float] = []
+    item = VectorItem(id="e1", bank_id=bid, vector=q, text="empty")
+    ids = await store.store_vectors([item])
+    assert ids == ["e1"]
+
+    hits = await store.search_similar(q, bid, limit=5)
+    assert len(hits) == 1
+    assert hits[0].id == "e1"
+
+
+@pytest.mark.asyncio
+async def test_roundtrip_large_vector(store: InMemoryVectorStore) -> None:
+    bid = "bank-large"
+    q = _vec(4096)
+    item = VectorItem(id="l1", bank_id=bid, vector=q, text="large")
+    ids = await store.store_vectors([item])
+    assert ids == ["l1"]
+
+    hits = await store.search_similar(q, bid, limit=5)
+    assert len(hits) == 1
+    assert hits[0].id == "l1"
