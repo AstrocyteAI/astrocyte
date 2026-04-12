@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -76,6 +77,18 @@ def _normalize_multi_bank_strategy(
     if strategy in ("cascade", "parallel", "first_match"):
         return MultiBankStrategy(mode=strategy)
     raise ConfigError(f"Unknown multi-bank strategy: {strategy!r}")
+
+
+_BANK_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:@\-]{0,254}$")
+
+
+def _validate_bank_id(bank_id: str) -> None:
+    """Validate bank_id format: 1–255 chars, alphanumeric start, safe characters only."""
+    if not bank_id or not _BANK_ID_RE.match(bank_id):
+        raise ConfigError(
+            f"Invalid bank_id {bank_id!r}: must be 1–255 characters, "
+            "start with alphanumeric, and contain only [a-zA-Z0-9._:@-]"
+        )
 
 
 def _bank_visit_order(bank_ids: list[str], cascade_order: list[str] | None) -> list[str]:
@@ -387,6 +400,8 @@ class Astrocyte:
             )
         if not bank_ids:
             raise ConfigError("Either bank_id or banks must be provided")
+        for bid in bank_ids:
+            _validate_bank_id(bid)
         return bank_ids
 
     def _check_access(self, bank_id: str, permission: str, context: AstrocyteContext | None) -> None:
@@ -437,6 +452,7 @@ class Astrocyte:
         ``extraction_profile`` (name under YAML ``extraction_profiles:``), and other
         pipeline fields (``occurred_at``, ``source``, …).
         """
+        _validate_bank_id(bank_id)
         with span("astrocyte.retain", {"astrocyte.bank_id": bank_id}):
             # Input size validation — reject oversized content before pipeline processing
             max_content_bytes = self._config.homeostasis.retain_max_content_bytes
@@ -834,6 +850,7 @@ class Astrocyte:
 
         Use ``scope="all"`` to delete everything in a bank (requires admin).
         """
+        _validate_bank_id(bank_id)
         with span("astrocyte.forget", {"astrocyte.bank_id": bank_id}):
             # scope="all" requires admin permission
             if scope == "all":

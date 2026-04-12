@@ -26,10 +26,14 @@ async def generate_embeddings(
     try:
         return await llm_provider.embed(texts, model=model)
     except NotImplementedError:
-        logger.error(
+        import warnings
+
+        msg = (
             "Embedding provider does not support embed() — falling back to pseudo-embeddings. "
-            "Retrieval quality will be severely degraded. Configure a real embedding provider for production use."
+            "Semantic search will NOT work correctly. Configure a real embedding provider for production use."
         )
+        logger.error(msg)
+        warnings.warn(msg, UserWarning, stacklevel=2)
         return [_pseudo_embedding(text) for text in texts]
 
 

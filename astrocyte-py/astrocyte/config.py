@@ -477,8 +477,11 @@ def _load_profile(profile_name: str) -> dict:
     if not profile_path.exists():
         raise ConfigError(f"Profile not found: {profile_path}")
 
-    with open(profile_path) as f:
-        return yaml.safe_load(f) or {}
+    try:
+        with open(profile_path) as f:
+            return yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Invalid YAML in {profile_path}: {exc}") from exc
 
 
 _COMPLIANCE_PROFILES_DIR = _PROFILES_DIR / "compliance"
@@ -494,8 +497,11 @@ def _load_compliance_profile(name: str) -> dict:
     if not profile_path.exists():
         raise ConfigError(f"Compliance profile not found: {profile_path}")
 
-    with open(profile_path) as f:
-        return yaml.safe_load(f) or {}
+    try:
+        with open(profile_path) as f:
+            return yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Invalid YAML in {profile_path}: {exc}") from exc
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -943,8 +949,11 @@ def load_config(path: str | Path) -> AstrocyteConfig:
     if not config_path.exists():
         raise ConfigError(f"Config file not found: {config_path}")
 
-    with open(config_path) as f:
-        raw = yaml.safe_load(f) or {}
+    try:
+        with open(config_path) as f:
+            raw = yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Invalid YAML in {config_path}: {exc}") from exc
 
     # Substitute environment variables
     raw = _substitute_env_recursive(raw)

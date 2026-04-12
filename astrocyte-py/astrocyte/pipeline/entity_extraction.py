@@ -68,7 +68,15 @@ def _parse_entities(response: str) -> list[Entity]:
             text = text[start:close].strip()
 
         entities_data = json.loads(text)
+        # Handle common LLM wrapper formats: {"entities": [...]}, {"results": [...]}
+        if isinstance(entities_data, dict):
+            for key in ("entities", "results", "items", "data"):
+                if key in entities_data and isinstance(entities_data[key], list):
+                    logger.info("Entity extraction: unwrapped JSON from %r key", key)
+                    entities_data = entities_data[key]
+                    break
         if not isinstance(entities_data, list):
+            logger.warning("Entity extraction returned non-list JSON: %s", type(entities_data).__name__)
             return []
 
         entities: list[Entity] = []
@@ -85,4 +93,5 @@ def _parse_entities(response: str) -> list[Entity]:
             )
         return entities
     except (json.JSONDecodeError, ValueError):
+        logger.warning("Entity extraction: failed to parse LLM response as JSON", exc_info=True)
         return []
