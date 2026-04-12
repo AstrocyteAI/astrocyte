@@ -27,6 +27,10 @@ Fused recall (semantic + graph + keyword) returns a single ranked list. Downstre
 - **Phase 1 (current)**: One fused `RecallResult`; authority only **formats** and labels hits already present.
 - **Future**: Per-tier retrieval or multi-query recall can populate tiers without changing the formatter contract, as long as hits carry `authority_tier`.
 
+### Token budget
+
+`authority_context` adds **prompt tokens** (tier labels, rules text, and per-hit lines). Size scales with hit count and label verbosity. Combine with **`homeostasis`** limits, **`reflect_max_tokens`**, and recall **`detail_level`** so synthesis stays within budget; there is no separate automatic truncation of the authority block today.
+
 ## Related
 
 - `docs/_design/built-in-pipeline.md` — retrieval strategies.
