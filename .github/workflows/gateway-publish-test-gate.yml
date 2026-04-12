@@ -115,6 +115,7 @@ jobs:
         working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
+          ASTROCYTE_GATEWAY_E2E_MIGRATED: "1"
           GATEWAY_EXAMPLE_MATRIX: tier1-pgvector
         run: |
           uv sync --extra dev --extra pgvector
