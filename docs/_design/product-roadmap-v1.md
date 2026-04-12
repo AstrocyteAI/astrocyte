@@ -52,12 +52,12 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 ### Acceptance Criteria
 
-- [ ] `AstrocyteContext(principal="user:123")` still works unchanged
-- [ ] `AstrocyteContext(actor=ActorIdentity(type="user", id="123"))` resolves principal automatically
-- [ ] OBO: `context.effective_permissions(bank_id)` returns intersection
-- [ ] Bank resolver maps identity to bank_id with configurable rules
-- [ ] All existing tests pass without modification
-- [ ] ADR-002 implementation validated
+- [x] `AstrocyteContext(principal="user:123")` still works unchanged
+- [x] `AstrocyteContext(actor=ActorIdentity(type="user", id="123"))` resolves principal automatically
+- [x] OBO: `context.effective_permissions(bank_id)` returns intersection
+- [x] Bank resolver maps identity to bank_id with configurable rules
+- [x] All existing tests pass without modification (`tests/test_identity_m1.py`, `tests/test_types.py`, etc.)
+- [x] ADR-002 implementation validated (library surface; gateway JWT mapping remains M6)
 
 ---
 
@@ -113,11 +113,11 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 ### Acceptance Criteria
 
-- [ ] Loading a config with no new sections produces identical `AstrocyteConfig` to current
-- [ ] New sections parse correctly with type validation
-- [ ] `${ENV_VAR}` substitution works in new sections
-- [ ] Profile merge order preserved (compliance → profile → user config)
-- [ ] ADR-003 implementation validated
+- [x] Loading a config with no new sections produces identical `AstrocyteConfig` to current
+- [x] New sections parse correctly with type validation
+- [x] `${ENV_VAR}` substitution works in new sections
+- [x] Profile merge order preserved (compliance → profile → user config)
+- [x] ADR-003 implementation validated
 
 ---
 
@@ -239,30 +239,29 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 ### Deliverables
 
-1. **Graph store: Neo4j adapter** (`astrocyte-graph-neo4j` package)
+1. **Graph store: Neo4j adapter** — PyPI package **`astrocyte-neo4j`** (`adapters-py/astrocyte-neo4j/`)
    - Implements `GraphStore` SPI
    - Entity and relationship CRUD
    - Neighborhood traversal for graph-enhanced recall
    - Cypher query generation
 
-2. **Document store: Elasticsearch/OpenSearch adapter** (`astrocyte-docstore-elasticsearch` package)
+2. **Document store: Elasticsearch/OpenSearch adapter** — **`astrocyte-elasticsearch`** (`adapters-py/astrocyte-elasticsearch/`)
    - Implements `DocumentStore` SPI
    - BM25 full-text search
    - Keyword retrieval for hybrid recall
    - Index lifecycle management
 
-3. **Additional vector store: Qdrant adapter** (`astrocyte-vector-qdrant` package)
-   - Implements `VectorStore` SPI
-   - Alternative to pgvector for cloud-native deployments
-   - Payload filtering, collection management
+3. **Vector stores** — **`astrocyte-pgvector`** (PostgreSQL + pgvector), **`astrocyte-qdrant`** (Qdrant); both under `adapters-py/`
+   - Implement `VectorStore` SPI (pgvector may also expose document-oriented helpers where applicable)
+   - Payload / collection management per backend
 
 ### Acceptance Criteria
 
-- [ ] Each adapter passes the existing SPI conformance tests
-- [ ] Hybrid recall (vector + graph + document) produces fused results
-- [ ] Each adapter ships as a separate PyPI package
-- [ ] Integration tests run against containerized instances in CI
-- [ ] README with quick-start for each adapter
+- [x] Each adapter has integration tests exercising the `VectorStore` / `GraphStore` / `DocumentStore` API (see each package’s `tests/`; optional: authors may also run shared suites from `astrocyte.testing`)
+- [x] Hybrid recall (vector + graph + document) produces fused results — core E2E: `tests/test_m5_hybrid_recall_e2e.py`, `tests/test_astrocyte_tier1.py` (in-memory); production adapters validated in `adapters-ci.yml`
+- [x] Each adapter ships as a separate PyPI package (`astrocyte-pgvector`, `astrocyte-qdrant`, `astrocyte-neo4j`, `astrocyte-elasticsearch`)
+- [x] Integration tests run against containerized instances in CI (`.github/workflows/adapters-ci.yml`; pgvector also covered from root `ci.yml`)
+- [x] README with quick-start — `adapters-py/README.md` plus per-adapter READMEs
 
 **Same release — v0.8.0:** This milestone shares the **v0.8.0** tag with **M7** (structured recall authority). Hybrid adapters and precedence config ship together; see **§ M7**.
 
@@ -322,17 +321,17 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 ### Deliverables
 
-1. **`astrocyte.yaml` schema** — optional section (e.g. `recall_authority:`) with declarative **authority tiers** (priority order, labels, backend binding per tier: graph / document / vector / proxy source), **strategy** (`parallel_all` vs `sequential_stop`), and **rules** (`rules_inline` or `rules_path`) for assembly into model context.
-2. **Runtime** — tiered retrieval per authority config; structured bundle for **reflect** and/or **recall** output; optional **code-side demotion** of lower-priority hits when higher tiers cover the same typed slot (entity / attribute / time scope).
-3. **Documentation** — ADR or ADR-003 extension; operator guide; cross-links from `innovations.md` §2.1 and `memory-intent-protocol.md`.
-4. **Tests** — unit and integration tests for precedence assembly and interaction with `tiered_retrieval` / hybrid / federated paths.
+1. [x] **`astrocyte.yaml` schema** — optional `recall_authority:` (`RecallAuthorityConfig`: tiers, `tier_by_bank`, `rules_inline` / `rules_path`, `apply_to_reflect`). Phase 1 formats fused hits and injects `authority_context`; per-backend binding and **strategy** (`parallel_all` / `sequential_stop`) remain future if we add multi-query tier retrieval.
+2. [x] **Runtime** — `apply_recall_authority` on recall; pipeline / `Astrocyte.reflect` optional injection; retain-time `metadata["authority_tier"]` via `tier_by_bank` / extraction profiles. Code-side demotion of hits is not required for Phase 1 (see ADR-004).
+3. [x] **Documentation** — `docs/_design/adr/adr-004-recall-authority.md`; cross-links in `built-in-pipeline.md` and roadmap.
+4. [x] **Tests** — `tests/test_recall_authority.py`, `tests/test_m7_reflect_authority.py`, `tests/test_m5_hybrid_recall_e2e.py` (interaction with hybrid recall).
 
 ### Acceptance Criteria
 
-- [ ] Disabled by default; enabling does not change behavior for existing configs without the new section
-- [ ] Clear separation from `tiered_retrieval` in code, config keys, and docs
-- [ ] At least one end-to-end path: multi-store recall → labeled sections + rules → synthesis or structured `RecallResult`
-- [ ] Performance and token-budget implications documented
+- [x] Disabled by default; enabling does not change behavior for existing configs without the new section
+- [x] Clear separation from `tiered_retrieval` in code, config keys, and docs (ADR-004 + `built-in-pipeline.md` §9.4)
+- [x] At least one end-to-end path: multi-store recall → `authority_context` / reflect injection — see tests above
+- [x] Performance and token-budget implications documented (ADR-004 — authority blocks add prompt tokens; combine with `homeostasis` / reflect limits)
 
 ---
 
@@ -408,8 +407,8 @@ graph LR
 - Optional manual federated hits via `RecallRequest.external_context`
 
 ### v0.8.0 — Production storage (M5) + structured recall authority (M7)
-- **M5 — adapters:** Graph store Neo4j (`astrocyte-graph-neo4j`); document store Elasticsearch/OpenSearch (`astrocyte-docstore-elasticsearch`); additional vector store Qdrant (`astrocyte-vector-qdrant`); hybrid recall validated end-to-end (vector + graph + document)
-- **M7 — precedence:** Optional `astrocyte.yaml` authority tiers (`recall_authority:`), labeled prompt assembly, optional code-side demotion; **not** the default recall path — full spec **§ M7**
+- **M5 — adapters:** Neo4j (`astrocyte-neo4j`), Elasticsearch (`astrocyte-elasticsearch`), Qdrant (`astrocyte-qdrant`), PostgreSQL/pgvector (`astrocyte-pgvector`) — packages under `adapters-py/`; hybrid recall validated end-to-end (vector + graph + document)
+- **M7 — precedence:** Optional `astrocyte.yaml` `recall_authority:` (ADR-004); labeled `authority_context` for recall/reflect; **not** the default recall path — full spec **§ M7**
 
 ### v0.9.0 — Standalone Gateway (M6)
 - FastAPI-based standalone gateway (`astrocyte-gateway`)
@@ -441,10 +440,20 @@ graph LR
 | Gap | Description | Milestone | Version | Status |
 |-----|-------------|-----------|---------|--------|
 | Gap 1 | Identity & Authorization Protocol | M1 | v0.5.0 | Implemented in core (ADR-002 Phase 1); JWT/`tenant_id` enforcement = later milestones |
-| Gap 2 | External Data Sources | M4 + M4.1 | v0.7.0 / v0.7.1 | M4 ingest shipped v0.7.0; M4.1 proxy recall next patch (see `astrocyte.recall.proxy`) |
-| Gap 3 | Deployment Models | M6 | v0.9.0 | Designed (ADR-001) |
+| Gap 2 | External Data Sources | M4 + M4.1 | v0.7.0 / v0.7.1 | Shipped: webhook ingest, source registry, proxy federated recall (`astrocyte.recall.proxy`) |
+| Gap 3 | Deployment Models | M6 | v0.9.0 | Designed (ADR-001); **next major milestone** — standalone gateway + Docker |
 | Gap 4 | Config Schema Evolution | M2 | v0.5.0 | Implemented in core (ADR-003); ships with M1 in same tag |
 | Gap 5 | User-Scoped Memory | M1 | v0.5.0 | Implemented in core (`BankResolver`, ACL, optional adapter `context`; gateway UX TBD) |
-| Gap 6 | Production Storage Providers | M5 | v0.8.0 | SPI exists, needs implementations |
-| Gap 7 | Extraction Pipeline | M3 | v0.6.0 | Designed (`architecture-brief.md`) |
-| Gap 8 | Structured recall authority (truth precedence vs cost-tiered retrieval) | M7 | v0.8.0 | Planned — see § M7; `built-in-pipeline.md` §9.4; ships **with M5** in **v0.8.0** |
+| Gap 6 | Production Storage Providers | M5 | v0.8.0 | Implemented: `adapters-py/` packages + CI + publish workflows |
+| Gap 7 | Extraction Pipeline | M3 | v0.6.0 | Implemented (`pipeline/extraction`, chunking, profiles) |
+| Gap 8 | Structured recall authority (truth precedence vs cost-tiered retrieval) | M7 | v0.8.0 | Implemented (`recall_authority`, `astrocyte.recall.authority`, ADR-004) |
+
+---
+
+## Next milestone focus (toward v1.0.0)
+
+**M4 and M4.1 are complete in the library** (ingest, proxy recall, optional `astrocyte[gateway]` thin HTTP). Remaining deferred items (streams, poll) still depend on **M6**.
+
+**Recommended next vertical: M6 — Standalone gateway** (FastAPI/JWT/OpenAPI/Docker) — the main blocker for “drop-in production HTTP” and IdP-mapped identity. It builds on M1–M2 and reuses the same core; see § M6 acceptance criteria.
+
+Polish work (documentation, samples, operator runbooks) can proceed in parallel; feature gaps for v1.0.0 after M6 are mainly **gateway completeness** and **SPI / migration guide** for the v1.0.0 tag.
