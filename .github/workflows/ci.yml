@@ -18,6 +18,7 @@ on:
       - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
       - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
       - ".github/workflows/publish-astrocyte-ingestion-github.yml"
+      - ".github/workflows/publish-astrocyte-integration-tavus.yml"
   pull_request:
     paths:
       - "astrocyte-py/**"
@@ -34,6 +35,7 @@ on:
       - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
       - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
       - ".github/workflows/publish-astrocyte-ingestion-github.yml"
+      - ".github/workflows/publish-astrocyte-integration-tavus.yml"
   workflow_dispatch:
 
 permissions:
@@ -103,6 +105,26 @@ jobs:
   # astrocyte-gateway-py: shared with `release.yml` / `publish-astrocyte-gateway-py-image.yml` (see `gateway-publish-test-gate.yml`).
   gateway-publish-test-gate:
     uses: ./.github/workflows/gateway-publish-test-gate.yml
+
+  adapters-integration-tavus:
+    name: astrocyte-integration-tavus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: pytest (astrocyte-integration-tavus)
+        working-directory: adapters-integration-py/astrocyte-integration-tavus
+        run: |
+          uv sync --extra dev
+          uv run pytest tests -v --override-ini="addopts="
 
   # End-to-end: Claude Agent SDK + Astrocyte memory (real API calls).
   # Manual only (workflow_dispatch) — not run on push/PR. Not required for CI gate.
@@ -191,7 +213,7 @@ jobs:
   # Single green gate for branch protection (optional — pin this job instead of each matrix leg).
   ci:
     name: CI
-    needs: [astrocyte-py, gateway-publish-test-gate]
+    needs: [astrocyte-py, gateway-publish-test-gate, adapters-integration-tavus]
     runs-on: ubuntu-latest
     steps:
       - run: echo "All checks passed"
