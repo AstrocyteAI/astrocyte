@@ -521,10 +521,29 @@ def _filter_dataclass_fields(cls: type, data: dict) -> dict:
     return {k: v for k, v in data.items() if k in valid}
 
 
+_SENSITIVE_FIELD_PATTERNS = frozenset({
+    "api_key", "secret", "token", "password", "dsn", "connection_string",
+    "credentials", "auth", "jwks_url", "issuer", "audience",
+})
+
+
+def _is_sensitive_field(ref: str) -> bool:
+    """Return True if an unresolved env-var reference is in a security-sensitive field."""
+    # ref format: "path.to.field: ${VAR}" — extract field name before the colon
+    field_path = ref.split(":")[0].strip().lower()
+    return any(pat in field_path for pat in _SENSITIVE_FIELD_PATTERNS)
+
+
+def _safe_sub_dict(data: dict, key: str) -> dict:
+    """Safely extract a nested dict from *data*, defaulting to ``{}``."""
+    val = data.get(key)
+    return val if isinstance(val, dict) else {}
+
+
 def _parse_homeostasis(data: dict) -> HomeostasisConfig:
     """Parse a homeostasis config block (used at top-level and per-bank)."""
-    rl = data.get("rate_limits", {}) if isinstance(data.get("rate_limits"), dict) else {}
-    q = data.get("quotas", {}) if isinstance(data.get("quotas"), dict) else {}
+    rl = _safe_sub_dict(data, "rate_limits")
+    q = _safe_sub_dict(data, "quotas")
     return HomeostasisConfig(
         recall_max_tokens=data.get("recall_max_tokens"),
         reflect_max_tokens=data.get("reflect_max_tokens"),
@@ -538,23 +557,18 @@ def _parse_homeostasis(data: dict) -> HomeostasisConfig:
 
 def _parse_barriers(data: dict) -> BarrierConfig:
     """Parse a barriers config block (used at top-level and per-bank)."""
-    pii_data = data.get("pii", {}) if isinstance(data.get("pii"), dict) else {}
-    val_data = data.get("validation", {}) if isinstance(data.get("validation"), dict) else {}
-    meta_data = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
     return BarrierConfig(
-        pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, pii_data)),
-        validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, val_data)),
-        metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, meta_data)),
+        pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, _safe_sub_dict(data, "pii"))),
+        validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, _safe_sub_dict(data, "validation"))),
+        metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, _safe_sub_dict(data, "metadata"))),
     )
 
 
 def _parse_signal_quality(data: dict) -> SignalQualityConfig:
     """Parse a signal_quality config block (used at top-level and per-bank)."""
-    dedup_data = data.get("dedup", {}) if isinstance(data.get("dedup"), dict) else {}
-    noisy_data = data.get("noisy_bank", {}) if isinstance(data.get("noisy_bank"), dict) else {}
     return SignalQualityConfig(
-        dedup=DedupConfig(**_filter_dataclass_fields(DedupConfig, dedup_data)),
-        noisy_bank=NoisyBankConfig(**_filter_dataclass_fields(NoisyBankConfig, noisy_data)),
+        dedup=DedupConfig(**_filter_dataclass_fields(DedupConfig, _safe_sub_dict(data, "dedup"))),
+        noisy_bank=NoisyBankConfig(**_filter_dataclass_fields(NoisyBankConfig, _safe_sub_dict(data, "noisy_bank"))),
     )
 
 
@@ -943,12 +957,18 @@ def load_config(path: str | Path) -> AstrocyteConfig:
     # Substitute environment variables
     raw = _substitute_env_recursive(raw)
 
-    # Warn about unresolved env vars — these likely indicate missing secrets
+    # Check for unresolved env vars — fail on sensitive fields, warn on others
     unresolved = _find_unresolved_env_vars(raw)
     if unresolved:
         import logging
 
         _cfg_logger = logging.getLogger("astrocyte.config")
+        sensitive = [r for r in unresolved if _is_sensitive_field(r)]
+        if sensitive:
+            raise ConfigError(
+                "Unresolved environment variables in sensitive config fields: "
+                + "; ".join(sensitive)
+            )
         for ref in unresolved:
             _cfg_logger.warning("Unresolved environment variable in config: %s", ref)
 

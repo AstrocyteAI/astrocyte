@@ -458,7 +458,7 @@ class Astrocyte:
         extraction_profile: str | None = None,
         occurred_at: datetime | None = None,
         source: str | None = None,
-        **kwargs: Any,
+        pii_detected: bool = False,
     ) -> RetainResult:
         """Store content into memory.
 
@@ -467,6 +467,7 @@ class Astrocyte:
             extraction_profile: Name under YAML ``extraction_profiles:``.
             occurred_at: When the content originally occurred.
             source: Origin identifier for the content.
+            pii_detected: Whether PII was already detected upstream.
         """
         _validate_bank_id(bank_id)
         with span("astrocyte.retain", {"astrocyte.bank_id": bank_id}):
@@ -492,7 +493,7 @@ class Astrocyte:
                     content_type=content_type,
                     metadata=metadata,
                     tags=tags,
-                    pii_detected=bool(kwargs.get("pii_detected")),
+                    pii_detected=pii_detected,
                     source=source,
                 )
                 routing = await self._mip_router.route(mip_input)
@@ -635,10 +636,9 @@ class Astrocyte:
         include_sources: bool,
         layer_weights: dict[str, float] | None,
         detail_level: str | None,
-        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Bundle explicit recall params into a kwargs dict for internal helpers."""
-        d: dict[str, Any] = {
+        return {
             "external_context": external_context,
             "fact_types": fact_types,
             "time_range": time_range,
@@ -646,9 +646,6 @@ class Astrocyte:
             "layer_weights": layer_weights,
             "detail_level": detail_level,
         }
-        if extra:
-            d.update(extra)
-        return d
 
     async def recall(
         self,
@@ -667,7 +664,6 @@ class Astrocyte:
         include_sources: bool = False,
         layer_weights: dict[str, float] | None = None,
         detail_level: str | None = None,
-        **kwargs: Any,
     ) -> RecallResult:
         """Retrieve relevant memories for a query.
 
@@ -702,7 +698,7 @@ class Astrocyte:
             # Build kwargs dict from explicit params for internal helpers
             _rk = self._recall_kwargs_dict(
                 external_context, fact_types, time_range,
-                include_sources, layer_weights, detail_level, kwargs,
+                include_sources, layer_weights, detail_level,
             )
 
             # Single bank — direct
@@ -774,14 +770,15 @@ class Astrocyte:
         banks: list[str] | None = None,
         strategy: Literal["cascade", "parallel", "first_match"] | MultiBankStrategy | None = None,
         max_tokens: int | None = None,
+        tags: list[str] | None = None,
         context: AstrocyteContext | None = None,
         include_sources: bool = True,
         dispositions: Any | None = None,
-        **kwargs: Any,
     ) -> ReflectResult:
         """Synthesize an answer from memory.
 
         Args:
+            tags: Filter recall by tags during reflect.
             include_sources: Include source memories in the result.
             dispositions: Emotional/tonal dispositions for synthesis.
 
@@ -826,13 +823,16 @@ class Astrocyte:
             else:
                 strat = _normalize_multi_bank_strategy(strategy)
                 with timed() as t:
+                    _rk = self._recall_kwargs_dict(
+                        None, None, None, include_sources, None, None,
+                    )
                     recall_result = await self._multi_bank_recall(
                         query,
                         bank_ids,
                         max_results=20,  # Larger set for synthesis context
                         max_tokens=None,  # Budget applied after synthesis
-                        tags=kwargs.get("tags"),
-                        kwargs=kwargs,
+                        tags=tags,
+                        kwargs=_rk,
                         strategy=strat,
                     )
                     auth_ctx: str | None = None
@@ -896,7 +896,6 @@ class Astrocyte:
         compliance: bool = False,
         reason: str | None = None,
         before_date: datetime | None = None,
-        **kwargs: Any,
     ) -> ForgetResult:
         """Remove memories.
 
