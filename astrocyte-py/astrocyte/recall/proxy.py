@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
 import logging
+import socket
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote, urlparse
+from urllib.parse import ParseResult, quote, urlparse, urlunparse
 
 import httpx
 
@@ -36,12 +38,8 @@ def _expand_proxy_url(template: str, query: str) -> str:
     return f"{template}{sep}q={quote(query, safe='')}"
 
 
-def _unsafe_literal_ip(host: str) -> bool:
-    """True if *host* parses as an IPv4/IPv6 address that must not be used for proxy recall."""
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
+def _forbidden_proxy_target_ip_obj(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True if this address must not be used for outbound proxy recall (SSRF mitigation)."""
     return bool(
         ip.is_private
         or ip.is_loopback
@@ -52,11 +50,20 @@ def _unsafe_literal_ip(host: str) -> bool:
     )
 
 
+def _unsafe_literal_ip(host: str) -> bool:
+    """True if *host* parses as an IPv4/IPv6 address that must not be used for proxy recall."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return _forbidden_proxy_target_ip_obj(ip)
+
+
 def validate_proxy_recall_url(url: str) -> None:
     """Reject URLs that enable SSRF (private/loopback/metadata-ranged IPs, non-HTTP(S), no host).
 
     Call this on the **fully expanded** request URL (including encoded user ``query`` fragments).
-    Symbolic hostnames are not DNS-resolved here; operators must only configure trusted endpoints.
+    Hostnames still require :func:`validate_proxy_recall_dns` before HTTP (rebinding-safe check).
     """
     if not (url or "").strip():
         raise ValueError("proxy recall URL is empty")
@@ -73,6 +80,79 @@ def validate_proxy_recall_url(url: str) -> None:
         raise ValueError(
             "proxy recall URL must not target loopback, private, link-local, or reserved addresses",
         )
+
+
+def _sync_dns_validate_and_first_public_ip(
+    host: str,
+    port: int,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Resolve *host*, reject if any address is forbidden, return the first (OS order) for pinning."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise ValueError(f"proxy recall DNS resolution failed for {host!r}: {e}") from e
+    if not infos:
+        raise ValueError(f"proxy recall DNS returned no addresses for {host!r}")
+    picked: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    for _fam, _socktype, _proto, _canon, sockaddr in infos:
+        addr_s = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(addr_s)
+        except ValueError:
+            continue
+        if _forbidden_proxy_target_ip_obj(ip):
+            raise ValueError(
+                "proxy recall DNS resolved to a forbidden address "
+                f"({addr_s!r} for host {host!r})",
+            )
+        picked.append(ip)
+    if not picked:
+        raise ValueError(f"proxy recall DNS returned no usable addresses for {host!r}")
+    return picked[0]
+
+
+def _is_literal_ip_host(host: str) -> bool:
+    """True if *host* is an IPv4/IPv6 literal (no DNS name)."""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def _proxy_recall_host_header_value(original_hostname: str, port: int, scheme: str) -> str:
+    """``Host`` header for the original server name (include port when not default)."""
+    sch = (scheme or "").lower()
+    default = 443 if sch == "https" else 80
+    h = original_hostname.lower().rstrip(".")
+    if port != default:
+        return f"{h}:{port}"
+    return h
+
+
+def _rebuild_request_url_pinned_to_ip(
+    parsed: ParseResult,
+    *,
+    pinned: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    port: int,
+) -> str:
+    """Replace authority with pinned IP so the TCP/TLS layer cannot re-resolve differently."""
+    if isinstance(pinned, ipaddress.IPv6Address):
+        hostpart = f"[{pinned.compressed}]"
+    else:
+        hostpart = str(pinned)
+    sch = (parsed.scheme or "").lower()
+    default = 443 if sch == "https" else 80
+    if port != default:
+        netloc = f"{hostpart}:{port}"
+    else:
+        netloc = hostpart
+    return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+
+
+async def validate_proxy_recall_dns(host: str, port: int) -> None:
+    """Async-safe DNS check: resolve *host* in a worker thread, then validate all addresses."""
+    await asyncio.to_thread(_sync_dns_validate_and_first_public_ip, host, port)
 
 
 def auth_with_oauth_cache_namespace(
@@ -255,11 +335,51 @@ async def fetch_proxy_recall_hits(
                     request_url = _expand_proxy_url(base_url, query)
                     body = None
                 validate_proxy_recall_url(request_url)
+                parsed_req = urlparse(request_url)
+                req_host = parsed_req.hostname
+                if not req_host:
+                    raise ValueError("proxy recall URL has no host")
+                req_port = parsed_req.port or (443 if parsed_req.scheme == "https" else 80)
+                sch = (parsed_req.scheme or "").lower()
+
+                pinned = await asyncio.to_thread(
+                    _sync_dns_validate_and_first_public_ip,
+                    req_host,
+                    req_port,
+                )
+
+                if _is_literal_ip_host(req_host):
+                    effective_url = request_url
+                    out_headers = headers
+                    req_extensions: dict[str, Any] | None = None
+                else:
+                    effective_url = _rebuild_request_url_pinned_to_ip(
+                        parsed_req,
+                        pinned=pinned,
+                        port=req_port,
+                    )
+                    out_headers = {
+                        **headers,
+                        "Host": _proxy_recall_host_header_value(req_host, req_port, sch),
+                    }
+                    req_extensions = {"sni_hostname": req_host} if sch == "https" else None
+
                 async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                     if method == "POST":
-                        r = await client.post(request_url, headers=headers, json=body)
+                        r = await client.request(
+                            "POST",
+                            effective_url,
+                            headers=out_headers,
+                            json=body,
+                            extensions=req_extensions,
+                        )
                     else:
-                        r = await client.get(request_url, headers=headers)
+                        r = await client.request(
+                            "GET",
+                            effective_url,
+                            headers=out_headers,
+                            extensions=req_extensions,
+                        )
                     r.raise_for_status()
                     data = r.json()
             except Exception:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -49,16 +50,20 @@ async def test_proxy_recall_records_metrics_on_error():
     m = MagicMock(spec=MetricsCollector)
     m.enabled = True
     cfg = SourceConfig(type="proxy", target_bank="b1", url="http://bad.test/h?q={query}")
+    fake_gai = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 80)),
+    ]
 
-    with patch("astrocyte.recall.proxy.httpx.AsyncClient") as client_cls:
-        instance = AsyncMock()
-        instance.get = AsyncMock(side_effect=OSError("network"))
-        instance.__aenter__ = AsyncMock(return_value=instance)
-        instance.__aexit__ = AsyncMock(return_value=None)
-        client_cls.return_value = instance
+    with patch("astrocyte.recall.proxy.socket.getaddrinfo", return_value=fake_gai):
+        with patch("astrocyte.recall.proxy.httpx.AsyncClient") as client_cls:
+            instance = AsyncMock()
+            instance.request = AsyncMock(side_effect=OSError("network"))
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=None)
+            client_cls.return_value = instance
 
-        with pytest.raises(OSError):
-            await fetch_proxy_recall_hits("s1", cfg, query="q", bank_id="b1", metrics=m)
+            with pytest.raises(OSError):
+                await fetch_proxy_recall_hits("s1", cfg, query="q", bank_id="b1", metrics=m)
 
     m.inc_counter.assert_called()
     args = m.inc_counter.call_args_list[-1][0]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -201,12 +202,16 @@ async def test_fetch_proxy_recall_injects_oauth_cache_namespace_for_source() -> 
             "client_secret": "s",
         },
     )
+    fake_gai = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443)),
+    ]
     with (
         patch(
             "astrocyte.recall.proxy.build_proxy_headers",
             new_callable=AsyncMock,
             return_value={"Authorization": "Bearer t"},
         ) as bh,
+        patch("astrocyte.recall.proxy.socket.getaddrinfo", return_value=fake_gai),
         patch("astrocyte.recall.proxy.httpx.AsyncClient") as client_cls,
     ):
         instance = AsyncMock()
@@ -214,7 +219,7 @@ async def test_fetch_proxy_recall_injects_oauth_cache_namespace_for_source() -> 
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
         resp.json = MagicMock(return_value={"hits": []})
-        instance.get = AsyncMock(return_value=resp)
+        instance.request = AsyncMock(return_value=resp)
         instance.__aenter__ = AsyncMock(return_value=instance)
         instance.__aexit__ = AsyncMock(return_value=None)
         client_cls.return_value = instance

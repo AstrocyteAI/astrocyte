@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,19 +19,23 @@ async def test_fetch_proxy_parses_hits_json():
         url="https://example.com/r?q={query}",
     )
     payload = {"hits": [{"text": "remote fact", "score": 0.88, "memory_id": "r1"}]}
+    fake_gai = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443)),
+    ]
 
-    with patch("astrocyte.recall.proxy.httpx.AsyncClient") as client_cls:
-        instance = AsyncMock()
-        resp = AsyncMock()
-        resp.status_code = 200
-        resp.raise_for_status = lambda: None
-        resp.json = lambda: payload
-        instance.get = AsyncMock(return_value=resp)
-        instance.__aenter__ = AsyncMock(return_value=instance)
-        instance.__aexit__ = AsyncMock(return_value=None)
-        client_cls.return_value = instance
+    with patch("astrocyte.recall.proxy.socket.getaddrinfo", return_value=fake_gai):
+        with patch("astrocyte.recall.proxy.httpx.AsyncClient") as client_cls:
+            instance = AsyncMock()
+            resp = AsyncMock()
+            resp.status_code = 200
+            resp.raise_for_status = lambda: None
+            resp.json = lambda: payload
+            instance.request = AsyncMock(return_value=resp)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=None)
+            client_cls.return_value = instance
 
-        hits = await fetch_proxy_recall_hits("src1", cfg, query="hello", bank_id="b1")
+            hits = await fetch_proxy_recall_hits("src1", cfg, query="hello", bank_id="b1")
 
     assert len(hits) == 1
     assert hits[0].text == "remote fact"
