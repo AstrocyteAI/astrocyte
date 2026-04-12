@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test: live + retain + recall against a running astrocyte-gateway (e.g. after `make runbook`).
+# Smoke test: live + retain + recall against a running astrocyte-gateway-py (e.g. after `make runbook`).
 set -euo pipefail
 
 : "${ASTROCYTE_HTTP_PUBLISH_PORT:=8080}"

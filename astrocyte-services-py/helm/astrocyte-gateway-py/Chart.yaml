@@ -1,5 +1,5 @@
 apiVersion: v2
-name: astrocyte-gateway
+name: astrocyte-gateway-py
 description: HTTP gateway for Astrocyte (FastAPI)
 type: application
 version: 0.1.0

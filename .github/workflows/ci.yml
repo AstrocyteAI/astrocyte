@@ -90,7 +90,7 @@ jobs:
           name: coverage
           path: astrocyte-py/coverage-out/
 
-  # astrocyte-gateway: shared with `publish-astrocyte-gateway-image.yml` (see `gateway-publish-test-gate.yml`).
+  # astrocyte-gateway-py: shared with `publish-astrocyte-gateway-py-image.yml` (see `gateway-publish-test-gate.yml`).
   gateway-publish-test-gate:
     uses: ./.github/workflows/gateway-publish-test-gate.yml
 

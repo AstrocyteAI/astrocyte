@@ -86,7 +86,7 @@ Then run the REST service (from repo layout):
 
 ```bash
 export ASTROCYTE_CONFIG_PATH=/path/to/that.yaml
-cd astrocyte-services-py/astrocyte-gateway && uv run astrocyte-gateway
+cd astrocyte-services-py/astrocyte-gateway-py && uv run astrocyte-gateway-py
 ```
 
 Or set only env (no YAML file):
@@ -95,7 +95,7 @@ Or set only env (no YAML file):
 export ASTROCYTE_VECTOR_STORE=pgvector
 export DATABASE_URL=postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte
 # embedding_dimensions default 128 — override via YAML if you add a file
-cd astrocyte-services-py/astrocyte-gateway && uv sync --extra pgvector
+cd astrocyte-services-py/astrocyte-gateway-py && uv sync --extra pgvector
 ```
 
 **Note:** `vector_store_config` for dimensions is only merged from YAML today; for env-only mode, add a small YAML or extend `brain.py` to pass `ASTROCYTE_EMBEDDING_DIMENSIONS` (future improvement).

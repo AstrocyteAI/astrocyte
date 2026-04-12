@@ -1,5 +1,5 @@
-# Shared test gate for astrocyte-gateway: services checks, example matrix, Postgres + pgvector.
-# Called from `ci.yml` and `publish-astrocyte-gateway-image.yml` — change once, both stay aligned.
+# Shared test gate for astrocyte-gateway-py: services checks, example matrix, Postgres + pgvector.
+# Called from `ci.yml` and `publish-astrocyte-gateway-py-image.yml` — change once, both stay aligned.
 name: gateway publish test gate
 
 on:
@@ -10,7 +10,7 @@ env:
 
 jobs:
   services-ci:
-    name: Services CI (compose, shell, astrocyte-gateway)
+    name: Services CI (compose, shell, astrocyte-gateway-py)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -49,7 +49,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Smoke test example config
-        working-directory: astrocyte-services-py/astrocyte-gateway
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           GATEWAY_EXAMPLE_MATRIX: ${{ matrix.example }}
         run: |
@@ -99,7 +99,7 @@ jobs:
         run: uv sync --extra dev && uv run python -m pytest
 
       - name: Gateway E2E (HTTP + pgvector, migrated schema)
-        working-directory: astrocyte-services-py/astrocyte-gateway
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
           ASTROCYTE_GATEWAY_E2E_MIGRATED: "1"
@@ -108,7 +108,7 @@ jobs:
           uv run python -m pytest tests/test_integration_pgvector_http.py -v --tb=short
 
       - name: Gateway example smoke (tier1-pgvector)
-        working-directory: astrocyte-services-py/astrocyte-gateway
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
           GATEWAY_EXAMPLE_MATRIX: tier1-pgvector

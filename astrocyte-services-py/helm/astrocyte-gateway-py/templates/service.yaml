@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "astrocyte-gateway.fullname" . }}
+  name: {{ include "astrocyte-gateway-py.fullname" . }}
   labels:
-    {{- include "astrocyte-gateway.labels" . | nindent 4 }}
+    {{- include "astrocyte-gateway-py.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   selector:
-    {{- include "astrocyte-gateway.selectorLabels" . | nindent 4 }}
+    {{- include "astrocyte-gateway-py.selectorLabels" . | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.service.port }}

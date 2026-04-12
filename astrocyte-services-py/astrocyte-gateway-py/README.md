@@ -8,15 +8,15 @@ Optional **standalone HTTP** service for [`astrocyte-py`](../../astrocyte-py/): 
 
 ### Quick start (official image from GHCR)
 
-After a **`v*`** tag, CI publishes **`ghcr.io/<github-owner>/<repo>/astrocyte-gateway:<tag>`** and **`:latest`** (see **[`RELEASE.md`](./RELEASE.md)**). Example:
+After a **`v*`** tag, CI publishes **`ghcr.io/<github-owner>/<repo>/astrocyte-gateway-py:<tag>`** and **`:latest`** (see **[`RELEASE.md`](./RELEASE.md)**). Example:
 
 ```bash
-docker pull ghcr.io/astrocyteai/astrocyte/astrocyte-gateway:latest
+docker pull ghcr.io/astrocyteai/astrocyte/astrocyte-gateway-py:latest
 docker run --rm -p 8080:8080 \
   -e ASTROCYTE_HOST=0.0.0.0 \
   -e ASTROCYTE_CONFIG_PATH=/config/astrocyte.yaml \
   -v /abs/path/to/examples/tier1-minimal/astrocyte.yaml:/config/astrocyte.yaml:ro \
-  ghcr.io/astrocyteai/astrocyte/astrocyte-gateway:latest
+  ghcr.io/astrocyteai/astrocyte/astrocyte-gateway-py:latest
 ```
 
 Replace **`astrocyteai/astrocyte`** with your GitHub **`owner/repo`**. For **pgvector**, add **`DATABASE_URL`** (and use a config that sets `vector_store: pgvector`). Copy **[`examples/`](./examples/)** as a starting point.
@@ -27,17 +27,17 @@ Install `astrocyte` first, then this package:
 
 ```bash
 cd /path/to/astrocyte/astrocyte-py && pip install -e .
-cd /path/to/astrocyte/astrocyte-services-py/astrocyte-gateway && pip install -e .
-ASTROCYTE_HOST=0.0.0.0 ASTROCYTE_PORT=8080 astrocyte-gateway
+cd /path/to/astrocyte/astrocyte-services-py/astrocyte-gateway-py && pip install -e .
+ASTROCYTE_HOST=0.0.0.0 ASTROCYTE_PORT=8080 astrocyte-gateway-py
 ```
 
 Or:
 
 ```bash
-uv run --directory astrocyte-services-py/astrocyte-gateway astrocyte-gateway
+uv run --directory astrocyte-services-py/astrocyte-gateway-py astrocyte-gateway-py
 ```
 
-**uv:** `pyproject.toml` pins **`[tool.uv.sources]`** so `astrocyte` resolves from **`../../astrocyte-py`** (editable). Run `uv sync` from **`astrocyte-services-py/astrocyte-gateway/`**. Plain **`pip`** users should `pip install -e ../../astrocyte-py` first, then install this package.
+**uv:** `pyproject.toml` pins **`[tool.uv.sources]`** so `astrocyte` resolves from **`../../astrocyte-py`** (editable). Run `uv sync` from **`astrocyte-services-py/astrocyte-gateway-py/`**. Plain **`pip`** users should `pip install -e ../../astrocyte-py` first, then install this package.
 
 **PostgreSQL (pgvector):** Install the optional adapter (`uv sync --extra pgvector`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts **Postgres + this service** together. For Postgres only on the host, see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md).
 
@@ -106,7 +106,7 @@ OpenAPI docs: `/docs` when the HTTP service is running.
 
 **Example configs** (Tier 1, MIP, webhook) are grouped under **[`examples/`](./examples/)** — each scenario has its **own subfolder** with an **`astrocyte.yaml`** (or MIP-only `mip.yaml`). Set **`ASTROCYTE_CONFIG_PATH`** to that file (absolute path, or run the gateway with cwd inside that folder).
 
-**Tests:** from **`astrocyte-services-py/astrocyte-gateway/`**, run **`uv sync --extra dev --extra pgvector`** then **`uv run python -m pytest`** (use `python -m pytest` so the project venv is used). Integration against Postgres is in **`tests/test_integration_pgvector_http.py`** and runs in CI when **`DATABASE_URL`** is set and migrations have been applied (**`ASTROCYTE_GATEWAY_E2E_MIGRATED=1`** after `migrate.sh`).
+**Tests:** from **`astrocyte-services-py/astrocyte-gateway-py/`**, run **`uv sync --extra dev --extra pgvector`** then **`uv run python -m pytest`** (use `python -m pytest` so the project venv is used). Integration against Postgres is in **`tests/test_integration_pgvector_http.py`** and runs in CI when **`DATABASE_URL`** is set and migrations have been applied (**`ASTROCYTE_GATEWAY_E2E_MIGRATED=1`** after `migrate.sh`).
 
 ## Docker
 
@@ -128,14 +128,14 @@ Defaults expose **API** on **8080** and **Postgres** on **5433**; override with 
 From the **repository root** (`astrocyte/`):
 
 ```bash
-docker build -f astrocyte-services-py/astrocyte-gateway/Dockerfile -t astrocyte-gateway .
-docker run --rm -p 8080:8080 astrocyte-gateway
+docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile -t astrocyte-gateway-py .
+docker run --rm -p 8080:8080 astrocyte-gateway-py
 ```
 
 Then `GET http://localhost:8080/health`.
 
-**GHCR (releases):** Pushing a version tag `v*` runs [`.github/workflows/publish-astrocyte-gateway-image.yml`](../../.github/workflows/publish-astrocyte-gateway-image.yml) — it re-runs the same library + gateway tests as CI, then builds and pushes **`ghcr.io/<owner>/<repo>/astrocyte-gateway:<tag>`** and **`:latest`**, and **attests** the image (SLSA provenance via GitHub). Pull with `docker pull ghcr.io/OWNER/REPO/astrocyte-gateway:v1.2.3` (replace `OWNER/REPO`; the image may default to **private** until you change package visibility under **Packages** in the org/repo). Branch protection: **[`BRANCH-PROTECTION.md`](./BRANCH-PROTECTION.md)**; release checklist: **[`RELEASE.md`](./RELEASE.md)**.
+**GHCR (releases):** Pushing a version tag `v*` runs [`.github/workflows/publish-astrocyte-gateway-py-image.yml`](../../.github/workflows/publish-astrocyte-gateway-py-image.yml) — it re-runs the same library + gateway tests as CI, then builds and pushes **`ghcr.io/<owner>/<repo>/astrocyte-gateway-py:<tag>`** and **`:latest`**, and **attests** the image (SLSA provenance via GitHub). Pull with `docker pull ghcr.io/OWNER/REPO/astrocyte-gateway-py:v1.2.3` (replace `OWNER/REPO`; the image may default to **private** until you change package visibility under **Packages** in the org/repo). Branch protection: **[`BRANCH-PROTECTION.md`](./BRANCH-PROTECTION.md)**; release checklist: **[`RELEASE.md`](./RELEASE.md)**.
 
 ### Helm
 
-A minimal chart lives at **[`../helm/astrocyte-gateway/`](../helm/astrocyte-gateway/)**. Build/push an image, set **`image.repository`** / **`image.tag`**, and inject **`DATABASE_URL`** (and optional **`ASTROCYTE_CONFIG_PATH`**) via **`env`** or **`extraEnvFrom`** (for example a Secret). With a ConfigMap volume for YAML, set **`configMapName`** and add **`ASTROCYTE_CONFIG_PATH=/config/astrocyte.yaml`** to **`env`**.
+A minimal chart lives at **[`../helm/astrocyte-gateway-py/`](../helm/astrocyte-gateway-py/)**. Build/push an image, set **`image.repository`** / **`image.tag`**, and inject **`DATABASE_URL`** (and optional **`ASTROCYTE_CONFIG_PATH`**) via **`env`** or **`extraEnvFrom`** (for example a Secret). With a ConfigMap volume for YAML, set **`configMapName`** and add **`ASTROCYTE_CONFIG_PATH=/config/astrocyte.yaml`** to **`env`**.

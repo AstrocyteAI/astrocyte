@@ -20,10 +20,10 @@ services:
       timeout: 5s
       retries: 5
 
-  astrocyte-gateway:
+  astrocyte-gateway-py:
     build:
       context: ..
-      dockerfile: astrocyte-services-py/astrocyte-gateway/Dockerfile
+      dockerfile: astrocyte-services-py/astrocyte-gateway-py/Dockerfile
     ports:
       - "${ASTROCYTE_HTTP_PUBLISH_PORT:-8080}:${ASTROCYTE_PORT:-8080}"
     environment:

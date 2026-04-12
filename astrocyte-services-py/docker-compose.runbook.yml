@@ -1,10 +1,10 @@
-# Optional override: mount runbook config (bootstrap_schema: false) into astrocyte-gateway.
+# Optional override: mount runbook config (bootstrap_schema: false) into astrocyte-gateway-py.
 # Use after applying SQL migrations. Does not change the default `docker-compose.yml` quick path.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.runbook.yml up --build
 #
 services:
-  astrocyte-gateway:
+  astrocyte-gateway-py:
     volumes:
       - ./config.runbook.example.yaml:/etc/astrocyte/config.yaml:ro
     environment:

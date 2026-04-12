@@ -4,7 +4,7 @@ Each **scenario** lives in its **own directory** with a small, predictable entry
 
 ```bash
 export ASTROCYTE_CONFIG_PATH="$(pwd)/astrocyte.yaml"   # run from inside the chosen example directory
-astrocyte-gateway
+astrocyte-gateway-py
 ```
 
 Or use an absolute path, e.g. `…/examples/tier1-minimal/astrocyte.yaml`.

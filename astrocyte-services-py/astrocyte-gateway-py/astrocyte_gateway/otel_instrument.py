@@ -15,7 +15,7 @@ def instrument_app(app: Any) -> None:
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-    service_name = os.environ.get("OTEL_SERVICE_NAME", "astrocyte-gateway")
+    service_name = os.environ.get("OTEL_SERVICE_NAME", "astrocyte-gateway-py")
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))

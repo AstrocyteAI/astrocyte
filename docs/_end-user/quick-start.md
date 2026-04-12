@@ -1,6 +1,6 @@
 # Quick Start
 
-Get **Astrocyte** running locally: core library in Python, then an optional **Postgres + pgvector** stack with the **reference REST** API (`astrocyte-gateway`).
+Get **Astrocyte** running locally: core library in Python, then an optional **Postgres + pgvector** stack with the **reference REST** API (`astrocyte-gateway-py`).
 
 ## Prerequisites
 
@@ -116,7 +116,7 @@ Mechanical rules resolve deterministically with zero LLM cost. When no rule matc
 
 ## 3. Reference REST server (Docker, recommended)
 
-The **`astrocyte-services-py/`** tree hosts Compose and **`astrocyte-gateway`**. The optional **`astrocyte-pgvector`** package (PostgreSQL + pgvector) lives under **`adapters-storage-py/`** and is pulled in via the **`[pgvector]`** extra on **`astrocyte-gateway`** when you use that stack.
+The **`astrocyte-services-py/`** tree hosts Compose and **`astrocyte-gateway-py`**. The optional **`astrocyte-pgvector`** package (PostgreSQL + pgvector) lives under **`adapters-storage-py/`** and is pulled in via the **`[pgvector]`** extra on **`astrocyte-gateway-py`** when you use that stack.
 
 ### Fastest path
 

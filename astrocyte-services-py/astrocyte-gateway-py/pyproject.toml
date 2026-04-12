@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "astrocyte-gateway"
+name = "astrocyte-gateway-py"
 version = "0.1.0"
 description = "Standalone HTTP gateway for Astrocyte (FastAPI over astrocyte-py); configure via astrocyte.yaml and optional mip.yaml"
 readme = "README.md"
@@ -36,7 +36,7 @@ astrocyte = { path = "../../astrocyte-py", editable = true }
 astrocyte-pgvector = { path = "../../adapters-storage-py/astrocyte-pgvector", editable = true }
 
 [project.scripts]
-astrocyte-gateway = "astrocyte_gateway.main:main"
+astrocyte-gateway-py = "astrocyte_gateway.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["astrocyte_gateway"]

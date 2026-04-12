@@ -113,5 +113,5 @@ def maybe_instrument_otel(app: Any) -> None:
     except ImportError:
         logging.getLogger(__name__).warning(
             "ASTROCYTE_OTEL_ENABLED set but OpenTelemetry packages missing; "
-            "install: uv sync --extra otel (astrocyte-gateway[otel])"
+            "install: uv sync --extra otel (astrocyte-gateway-py[otel])"
         )

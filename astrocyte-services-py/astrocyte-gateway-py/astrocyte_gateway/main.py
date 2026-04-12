@@ -1,4 +1,4 @@
-"""CLI entry: `astrocyte-gateway` or `python -m astrocyte_gateway`."""
+"""CLI entry: `astrocyte-gateway-py` or `python -m astrocyte_gateway`."""
 
 from __future__ import annotations
 

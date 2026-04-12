@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: astrocyte-gateway
+  repository: astrocyte-gateway-py
   pullPolicy: IfNotPresent
   tag: "latest"
 
@@ -18,7 +18,7 @@ env: []
 
 extraEnvFrom: []
 #  - secretRef:
-#      name: astrocyte-gateway-secrets
+#      name: astrocyte-gateway-py-secrets
 
 # Optional: mount a ConfigMap with astrocyte.yaml
 configMapName: ""

@@ -1,6 +1,6 @@
-# Build + test gate, then push the astrocyte-gateway image to GHCR (version tag).
+# Build + test gate, then push the astrocyte-gateway-py image to GHCR (version tag).
 # Gateway test gate lives in `gateway-publish-test-gate.yml` (shared with `ci.yml`).
-name: Publish astrocyte-gateway image to GHCR
+name: Publish astrocyte-gateway-py image to GHCR
 
 on:
   push:
@@ -71,11 +71,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: astrocyte-services-py/astrocyte-gateway/Dockerfile
+          file: astrocyte-services-py/astrocyte-gateway-py/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/astrocyte-gateway:${{ steps.meta.outputs.tag }}
-            ghcr.io/${{ github.repository }}/astrocyte-gateway:latest
+            ghcr.io/${{ toLower(github.repository) }}/astrocyte-gateway-py:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ toLower(github.repository) }}/astrocyte-gateway-py:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -86,6 +86,6 @@ jobs:
       - name: Attest image (SLSA provenance → GHCR)
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ghcr.io/${{ github.repository }}/astrocyte-gateway
+          subject-name: ghcr.io/${{ toLower(github.repository) }}/astrocyte-gateway-py
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true

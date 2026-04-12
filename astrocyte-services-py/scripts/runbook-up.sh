@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot runbook: Postgres → SQL migrations (psql) → astrocyte-gateway with runbook config.
+# One-shot runbook: Postgres → SQL migrations (psql) → astrocyte-gateway-py with runbook config.
 # Run from astrocyte-services-py/:  ./scripts/runbook-up.sh
 # Or from repo root:  ./astrocyte-services-py/scripts/runbook-up.sh
 #

@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "astrocyte-gateway.fullname" . }}
+  name: {{ include "astrocyte-gateway-py.fullname" . }}
   labels:
-    {{- include "astrocyte-gateway.labels" . | nindent 4 }}
+    {{- include "astrocyte-gateway-py.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "astrocyte-gateway.selectorLabels" . | nindent 6 }}
+      {{- include "astrocyte-gateway-py.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "astrocyte-gateway.selectorLabels" . | nindent 8 }}
+        {{- include "astrocyte-gateway-py.selectorLabels" . | nindent 8 }}
     spec:
       containers:
         - name: gateway

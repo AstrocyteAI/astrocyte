@@ -13,7 +13,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 | Folder | Role |
 |---|---|
 | **`astrocyte-py/`** | **Python** Astrocyte service; PyPI package name **`astrocyte`**; ecosystem integrations (LangChain, MCP, …). |
-| **[`astrocyte-services-py/`](../astrocyte-services-py/README.md)** | Optional **REST** ([`astrocyte-gateway`](../astrocyte-services-py/astrocyte-gateway/README.md)); not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocyte-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocyte-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTE_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md) and [Production-grade reference server §4](./_end-user/production-grade-http-service.md). |
+| **[`astrocyte-services-py/`](../astrocyte-services-py/README.md)** | Optional **REST** ([`astrocyte-gateway-py`](../astrocyte-services-py/astrocyte-gateway-py/README.md)); not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocyte-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocyte-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTE_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md) and [Production-grade reference server §4](./_end-user/production-grade-http-service.md). |
 | **[`adapters-storage-py/`](../adapters-storage-py/README.md)** | Optional **Tier 1** **storage** adapters (`VectorStore` / `GraphStore` / `DocumentStore`), including **[`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md)** (PostgreSQL + pgvector), Qdrant, Neo4j, Elasticsearch. |
 | **[`adapters-ingestion-py/`](../adapters-ingestion-py/README.md)** | Optional **ingest transport** packages (**`astrocyte-ingestion-kafka`**, **`astrocyte-ingestion-redis`**, …). |
 | **[`adapters-integration-py/`](../adapters-integration-py/README.md)** | Reserved for **vendor / product** integrations (outbound and bidirectional); empty until packages land. |
@@ -30,7 +30,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 | # | Title | Topic |
 |---|-------|--------|
 | 1 | [Quick Start](./_end-user/quick-start.md) | Install core library; Docker Compose + reference REST |
-| 2 | [Production-grade HTTP service](./_end-user/production-grade-http-service.md) | Production HTTP checklist; `astrocyte-gateway`; Compose; ops **§4.5** |
+| 2 | [Production-grade HTTP service](./_end-user/production-grade-http-service.md) | Production HTTP checklist; `astrocyte-gateway-py`; Compose; ops **§4.5** |
 
 ---
 

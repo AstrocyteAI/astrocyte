@@ -27,7 +27,7 @@ help:
 	@echo "  make health           GET /health — includes vector store / DB check"
 	@echo "  make migrate          Run adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh (needs Postgres on host port)"
 	@echo "  make clean            down and remove volumes (wipes Postgres data)"
-	@echo "  make ci-checks        CI: pytest (astrocyte-py + astrocyte-gateway), bash -n runbook-up.sh, compose config"
+	@echo "  make ci-checks        CI: pytest (astrocyte-py + astrocyte-gateway-py), bash -n runbook-up.sh, compose config"
 	@echo "  make smoke-gateway    curl retain/recall against running gateway (see scripts/smoke-gateway.sh)"
 	@echo ""
 
@@ -85,7 +85,7 @@ ci-pytest:
 	@cd "$(ASTRO_ROOT)/astrocyte-py" && uv sync --extra dev && uv run python -m pytest
 
 ci-gateway-tests:
-	@cd astrocyte-gateway && uv sync --extra dev --extra pgvector && uv run python -m pytest
+	@cd astrocyte-gateway-py && uv sync --extra dev --extra pgvector && uv run python -m pytest
 
 ci: ci-checks
 

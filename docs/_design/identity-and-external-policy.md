@@ -155,8 +155,8 @@ This section names **which folders** own **AuthZ wiring** in [`astrocyte-py`](..
 |----------------|----------|
 | **`AccessGrant`**, **`Astrocyte.set_access_grants()`**, **`_check_access()`** | **`astrocyte-py`** — core types and enforcement (`astrocyte/types.py`, `astrocyte/_astrocyte.py`). |
 | **Parsing grants from YAML** (e.g. top-level `access_grants`, or consolidating `banks.*.access` from `access-control.md` §2.1 into a flat list) | **`astrocyte-py`** — extend **`AstrocyteConfig`** / **`load_config`** / `_dict_to_config` in `astrocyte/config.py` so config loading produces a **`list[AccessGrant]`** (or a helper that builds it from config). |
-| **Calling `set_access_grants()` at process startup** | **`astrocyte-services-py/astrocyte-gateway`** — **`astrocyte_gateway/brain.py`** (`build_astrocyte()`): after **`Astrocyte(config)`** and **`set_pipeline(...)`**, apply grants from the loaded config. |
-| **Trusted `principal` on each HTTP request** (production) | **`astrocyte-gateway`** — FastAPI dependencies / middleware: map verified JWT, API key, mTLS identity to **`AstrocyteContext`**, not an unauthenticated client header alone. |
+| **Calling `set_access_grants()` at process startup** | **`astrocyte-services-py/astrocyte-gateway-py`** — **`astrocyte_gateway/brain.py`** (`build_astrocyte()`): after **`Astrocyte(config)`** and **`set_pipeline(...)`**, apply grants from the loaded config. |
+| **Trusted `principal` on each HTTP request** (production) | **`astrocyte-gateway-py`** — FastAPI dependencies / middleware: map verified JWT, API key, mTLS identity to **`AstrocyteContext`**, not an unauthenticated client header alone. |
 
 **Not here:** [`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/) — it implements **VectorStore** only; it does not participate in access grants.
 
@@ -166,13 +166,13 @@ This section names **which folders** own **AuthZ wiring** in [`astrocyte-py`](..
 |----------------|----------|
 | **Protocol and enforcement hook** (e.g. call PDP from the same place as grant checks) | **`astrocyte-py`** — define **`AccessPolicyProvider`**, integrate with **`Astrocyte`** (e.g. alongside `_check_access`). *As of this writing the SPI may be documented ahead of full implementation; align code with this doc when landing it.* |
 | **Vendor-specific client** (OPA REST, Cerbos SDK, Casbin `Enforcer`, etc.) | **Separate optional packages** — e.g. **`astrocyte-access-policy-opa`**, **`astrocyte-access-policy-cerbos`** (see §5). Keeps **`astrocyte`** free of third-party PDP SDKs. |
-| **Instantiate adapter + attach to `Astrocyte`** | **`astrocyte-services-py/astrocyte-gateway`** — **`brain.py`** (or equivalent factory): resolve provider via config entry point / env, same pattern as **`vector_store`** in **`astrocyte_gateway/wiring.py`**. |
+| **Instantiate adapter + attach to `Astrocyte`** | **`astrocyte-services-py/astrocyte-gateway-py`** — **`brain.py`** (or equivalent factory): resolve provider via config entry point / env, same pattern as **`vector_store`** in **`astrocyte_gateway/wiring.py`**. |
 
 **Not here:** **`astrocyte-pgvector`** — unchanged; storage adapters are not AuthZ layers.
 
 ### 8.3 Summary table
 
-| Approach | `astrocyte-py` | `astrocyte-gateway` | Optional `astrocyte-access-policy-*` |
+| Approach | `astrocyte-py` | `astrocyte-gateway-py` | Optional `astrocyte-access-policy-*` |
 |----------|-----------------|-------------------|----------------------------------------|
 | **Grants** | Config model + load → `AccessGrant` list; `set_access_grants` API | Call `set_access_grants` at startup; later, AuthN → principal | — |
 | **External PDP** | SPI + `Astrocyte` integration | Wire provider at startup | OPA / Cerbos / Casbin / … adapters |

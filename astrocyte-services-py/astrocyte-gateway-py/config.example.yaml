@@ -1,6 +1,6 @@
-# Example Astrocyte config for `astrocyte-gateway` (Tier 1 / storage).
+# Example Astrocyte config for `astrocyte-gateway-py` (Tier 1 / storage).
 # Optional: mip_config_path: /path/to/mip.yaml
-# Use: ASTROCYTE_CONFIG_PATH=/path/to/this/file astrocyte-gateway
+# Use: ASTROCYTE_CONFIG_PATH=/path/to/this/file astrocyte-gateway-py
 #
 # Provider names resolve via Python entry points (see `astrocyte-py` pyproject.toml)
 # or as `package.module:ClassName` for custom classes.

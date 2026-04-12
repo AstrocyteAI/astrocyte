@@ -336,13 +336,13 @@ discover_entry_points("engine_providers")
 # → {"mystique": <class MystiqueProvider>, ...}
 ```
 
-### 3.9 Reference `astrocyte-gateway` vs embedding Astrocyte
+### 3.9 Reference `astrocyte-gateway-py` vs embedding Astrocyte
 
 **Plugins and config:** Contributors ship packages with `pyproject.toml` entry points (§3.1–3.4 plus §3.5–3.6 when implemented). §3.7 shows how deployers reference those plugins in YAML (short name or `module:Class`). Discovery helpers live in `astrocyte._discovery`.
 
 **Important:** `Astrocyte.from_config(path)` loads **`AstrocyteConfig` only** — it does not instantiate vector stores, LLMs, or Tier‑2 engines. Bootstrap code must call `resolve_provider`, construct providers with `provider_config`, and attach them via `set_pipeline` and/or `set_engine_provider`. The reference HTTP app (`astrocyte-services-py`) implements **Tier 1** wiring from YAML; **Tier‑2 / engine wiring from the same config** there is optional work — see `wiring.py` / `brain.py` for what is enabled today.
 
-**HTTP extensions (auth, extra routers):** there are **no** published `astrocyte.rest.*` entry point groups yet. Identity is handled **in-process** (env-driven auth modes in the REST package). For custom auth or routes, embed `astrocyte` in your own FastAPI/ASGI app today; a narrow plugin surface for `astrocyte-gateway` (e.g. optional router and auth factory entry points) is planned so third parties do not have to fork the reference app.
+**HTTP extensions (auth, extra routers):** there are **no** published `astrocyte.rest.*` entry point groups yet. Identity is handled **in-process** (env-driven auth modes in the REST package). For custom auth or routes, embed `astrocyte` in your own FastAPI/ASGI app today; a narrow plugin surface for `astrocyte-gateway-py` (e.g. optional router and auth factory entry points) is planned so third parties do not have to fork the reference app.
 
 ---
 
