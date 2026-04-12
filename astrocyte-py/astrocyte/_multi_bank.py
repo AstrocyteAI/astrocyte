@@ -6,8 +6,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import Any
 
+from astrocyte._recall_params import RecallParams
 from astrocyte.errors import ConfigError
 from astrocyte.policy.homeostasis import enforce_token_budget
 from astrocyte.policy.observability import MetricsCollector
@@ -23,7 +23,7 @@ logger = logging.getLogger("astrocyte")
 # Type aliases for the callbacks injected from Astrocyte
 RecallFn = Callable[[RecallRequest], Awaitable[RecallResult]]
 MakeRequestFn = Callable[
-    [str, str, int, int | None, list[str] | None, dict[str, Any]],
+    [str, str, int, int | None, list[str] | None, RecallParams],
     Awaitable[RecallRequest],
 ]
 
@@ -94,16 +94,16 @@ class MultiBankOrchestrator:
         max_results: int,
         max_tokens: int | None,
         tags: list[str] | None,
-        kwargs: dict[str, Any],
+        params: RecallParams,
         strategy: MultiBankStrategy,
     ) -> RecallResult:
         """Multi-bank recall — strategy dispatch."""
         if strategy.mode == "parallel":
-            return await self._parallel(query, bank_ids, max_results, max_tokens, tags, kwargs, strategy)
+            return await self._parallel(query, bank_ids, max_results, max_tokens, tags, params, strategy)
         if strategy.mode == "cascade":
-            return await self._cascade(query, bank_ids, max_results, max_tokens, tags, kwargs, strategy)
+            return await self._cascade(query, bank_ids, max_results, max_tokens, tags, params, strategy)
         if strategy.mode == "first_match":
-            return await self._first_match(query, bank_ids, max_results, max_tokens, tags, kwargs, strategy)
+            return await self._first_match(query, bank_ids, max_results, max_tokens, tags, params, strategy)
         raise ConfigError(f"Unknown multi-bank mode: {strategy.mode!r}")
 
     async def _parallel(
@@ -113,12 +113,12 @@ class MultiBankOrchestrator:
         max_results: int,
         max_tokens: int | None,
         tags: list[str] | None,
-        kwargs: dict[str, Any],
+        params: RecallParams,
         strategy: MultiBankStrategy,
     ) -> RecallResult:
         reqs: list[RecallRequest] = []
         for bid in bank_ids:
-            reqs.append(await self._make_request(query, bid, max_results, None, tags, kwargs))
+            reqs.append(await self._make_request(query, bid, max_results, None, tags, params))
         tasks = [self._do_recall(r) for r in reqs]
 
         try:
@@ -170,7 +170,7 @@ class MultiBankOrchestrator:
         max_results: int,
         max_tokens: int | None,
         tags: list[str] | None,
-        kwargs: dict[str, Any],
+        params: RecallParams,
         strategy: MultiBankStrategy,
     ) -> RecallResult:
         order = _bank_visit_order(bank_ids, strategy.cascade_order)
@@ -179,7 +179,7 @@ class MultiBankOrchestrator:
 
         for bid in order:
             result = await self._do_recall(
-                await self._make_request(query, bid, max_results, None, tags, kwargs),
+                await self._make_request(query, bid, max_results, None, tags, params),
             )
             total_available += result.total_available
             accumulated.extend(_tag_hits_with_bank(result.hits, bid))
@@ -204,14 +204,14 @@ class MultiBankOrchestrator:
         max_results: int,
         max_tokens: int | None,
         tags: list[str] | None,
-        kwargs: dict[str, Any],
+        params: RecallParams,
         strategy: MultiBankStrategy,
     ) -> RecallResult:
         order = _bank_visit_order(bank_ids, strategy.cascade_order)
         total_available = 0
         for bid in order:
             result = await self._do_recall(
-                await self._make_request(query, bid, max_results, None, tags, kwargs),
+                await self._make_request(query, bid, max_results, None, tags, params),
             )
             total_available += result.total_available
             if result.hits:
