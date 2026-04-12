@@ -312,7 +312,7 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 - [x] AuthN maps to structured **`AstrocyteContext`**: **`api_key`**, **`jwt`/`jwt_hs256`**, **`jwt_oidc`** (JWKS, RS256) with **`ActorIdentity`** / claims — see `astrocyte-gateway-py` README and ADR-002.
 - [x] Webhook ingest works end-to-end through the gateway (`/v1/ingest/webhook/{source_id}`; CI + tests).
 - [x] Docker Compose + runbook bring up a working stack (`astrocyte-services-py/`; see services README).
-- [ ] **Performance:** < 10ms gateway-only overhead vs core latency — **not benchmarked in-repo**; treat as a follow-up measurement / load test, not a blocker for “M6 shipped.”
+- [ ] **Performance:** < 10ms gateway-only overhead vs core latency — a benchmark harness exists in-repo (`astrocyte-services-py/astrocyte-gateway-py/scripts/bench_gateway_overhead.py`) and a manual GitHub Actions workflow can run it, but the **< 10 ms** threshold is **not** enforced as a release gate because results are environment-dependent.
 - [x] **ADR-001:** Standalone gateway deployment path is **documented and implemented** (package, container, Helm, ops docs). Full organizational “validated” sign-off stays a **release / operator** checklist outside this file.
 
 ### Deferred (post–core gateway; scheduled from v0.8.x onward)
@@ -505,7 +505,7 @@ SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this tra
 
 - **Streams, poll connectors, and gateway plugins** (Kong, APISIX, Azure API Management, others): implement on **v0.8.x** cadence per **§ v0.8.x — Connector & gateway integration track**.
 - **SPI, adapter, `astrocyte.yaml`, and `mip.yaml` stability:** follow **§ Stability**; encode deprecations before breaking changes.
-- Optional **gateway overhead benchmark** (M6 perf criterion) and **OpenAPI contract** tests for `/v1` if you want CI guarantees.
+- **Gateway quality gates:** benchmark tooling and OpenAPI contract tests already exist in-repo; decide whether to promote them from optional/manual checks to required CI or environment-specific SLO gates.
 
 **v1.0.0 GA**
 
