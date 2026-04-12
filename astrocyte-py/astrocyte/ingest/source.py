@@ -13,16 +13,21 @@ class IngestSource(Protocol):
     """Inbound data source (webhook, stream, poll — M4+)."""
 
     @property
-    def source_id(self) -> str: ...
+    def source_id(self) -> str:
+        pass
 
     @property
-    def source_type(self) -> str: ...
+    def source_type(self) -> str:
+        pass
 
-    async def start(self) -> None: ...
+    async def start(self) -> None:
+        pass
 
-    async def stop(self) -> None: ...
+    async def stop(self) -> None:
+        pass
 
-    async def health_check(self) -> HealthStatus: ...
+    async def health_check(self) -> HealthStatus:
+        pass
 
 
 class WebhookIngestSource:

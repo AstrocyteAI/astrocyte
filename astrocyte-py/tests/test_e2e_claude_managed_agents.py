@@ -134,11 +134,11 @@ async def test_retain_and_recall_via_managed_agent() -> None:
         try:
             client.beta.environments.delete(environment.id)
         except Exception:
-            pass
+            pass  # Best-effort teardown; resource may already be gone
         try:
             client.beta.agents.delete(agent.id)
         except Exception:
-            pass
+            pass  # Best-effort teardown; resource may already be gone
 
 
 # ---------------------------------------------------------------------------

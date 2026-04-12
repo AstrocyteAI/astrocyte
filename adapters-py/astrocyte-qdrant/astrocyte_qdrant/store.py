@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from typing import ClassVar
 
@@ -28,7 +29,7 @@ def _point_uuid(memory_id: str, bank_id: str) -> str:
 
 def _score_to_unit(raw: float) -> float:
     """Qdrant cosine similarity scores are typically in [0, 1]; clamp defensively."""
-    if raw != raw:  # NaN
+    if math.isnan(raw):
         return 0.0
     return max(0.0, min(1.0, float(raw)))
 

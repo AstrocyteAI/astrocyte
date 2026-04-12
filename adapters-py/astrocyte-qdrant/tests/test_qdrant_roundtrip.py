@@ -19,7 +19,7 @@ async def _cleanup(store: QdrantVectorStore, name: str) -> None:
     try:
         await store._client.delete_collection(collection_name=name)  # noqa: SLF001
     except Exception:
-        pass
+        pass  # Collection may not exist; ignore for test cleanup
 
 
 @pytest.mark.asyncio

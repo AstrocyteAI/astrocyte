@@ -72,7 +72,8 @@ async def test_bank_isolation_on_delete(store: InMemoryVectorStore) -> None:
             VectorItem(id="b", bank_id="b2", vector=q, text="y"),
         ]
     )
-    assert await store.delete(["a"], "b2") == 0
+    deleted_wrong_bank = await store.delete(["a"], "b2")
+    assert deleted_wrong_bank == 0
     h1 = await store.search_similar(q, "b1", limit=5)
     assert len(h1) == 1
     h2 = await store.search_similar(q, "b2", limit=5)
