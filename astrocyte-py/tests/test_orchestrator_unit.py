@@ -84,18 +84,24 @@ class TestRetainDedup:
         """When multi-chunk content has some duplicate chunks, non-duplicates still stored."""
         vs = InMemoryVectorStore()
         llm = MockLLMProvider()
-        orch = PipelineOrchestrator(vs, llm, max_chunk_size=30)
+        orch = PipelineOrchestrator(vs, llm)
 
-        # First retain — short enough to be one chunk
-        await orch.retain(RetainRequest(content="The sky is blue", bank_id="b1"))
+        # First retain
+        await orch.retain(RetainRequest(content="The sky is blue and the grass is green", bank_id="b1"))
+        first_docs = await vs.list_vectors("b1")
+        first_count = len(first_docs)
+        assert first_count >= 1
 
-        # Second retain — two chunks, one similar to first, one new
+        # Second retain — includes same content plus new content
         r2 = await orch.retain(RetainRequest(
-            content="The sky is blue. Quantum computing uses qubits for computation.",
+            content="Quantum computing uses qubits for parallel computation",
             bank_id="b1",
         ))
-        # Should store at least the new chunk
+        # New distinct content should be stored
         assert r2.stored is True
+        all_docs = await vs.list_vectors("b1")
+        assert len(all_docs) > first_count
+        assert any("Quantum" in doc.text for doc in all_docs)
 
     @pytest.mark.asyncio
     async def test_dedup_is_per_bank(self):

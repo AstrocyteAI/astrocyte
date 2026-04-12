@@ -83,9 +83,17 @@ class TestMetrics:
         with pytest.raises(ValueError, match="between 0 and 100"):
             percentile([1.0, 2.0, 3.0], 150)
 
+    def test_percentile_bounds_over_100_float(self):
+        with pytest.raises(ValueError, match="between 0 and 100"):
+            percentile([1.0, 2.0, 3.0], 100.1)
+
     def test_percentile_bounds_negative(self):
         with pytest.raises(ValueError, match="between 0 and 100"):
             percentile([1.0, 2.0, 3.0], -10)
+
+    def test_percentile_bounds_negative_float(self):
+        with pytest.raises(ValueError, match="between 0 and 100"):
+            percentile([1.0, 2.0, 3.0], -0.1)
 
     def test_percentile_boundary_zero(self):
         assert percentile([1.0, 5.0, 10.0], 0) == 1.0

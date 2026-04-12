@@ -34,6 +34,12 @@ def _auth_mode() -> str:
     return os.environ.get("ASTROCYTE_AUTH_MODE", "dev").strip().lower()
 
 
+@lru_cache(maxsize=4)
+def _jwks_client(jwks_url: str) -> PyJWKClient:
+    """Return cached JWKS client for the given URL."""
+    return PyJWKClient(jwks_url)
+
+
 def _decode_oidc_rs256(token: str) -> dict[str, Any]:
     """Decode RS256 access token using JWKS (OIDC-style)."""
     jwks_url = os.environ.get("ASTROCYTE_OIDC_JWKS_URL", "").strip()
@@ -47,7 +53,7 @@ def _decode_oidc_rs256(token: str) -> dict[str, Any]:
             detail="ASTROCYTE_OIDC_ISSUER and ASTROCYTE_OIDC_AUDIENCE are required for jwt_oidc",
         )
     try:
-        jwks_client = PyJWKClient(jwks_url)
+        jwks_client = _jwks_client(jwks_url)
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         return jwt.decode(
             token,
@@ -74,14 +80,21 @@ def _context_from_oidc_payload(payload: dict[str, Any]) -> AstrocyteContext:
     )
     tid = payload.get("tid") or payload.get("tenant_id")
     tenant_id = str(tid).strip() if tid is not None and str(tid).strip() else None
+    # Standard JWT claims already consumed above or irrelevant to actor identity.
+    _excluded_claims = {
+        "sub", "iss", "aud", "exp", "nbf", "iat", "jti",
+        "tid", "tenant_id", "astrocyte_actor_type", "astrocyte_principal",
+    }
     claims: dict[str, str] = {}
     for k, v in payload.items():
+        if k in _excluded_claims:
+            continue
         if isinstance(v, (str, int, float, bool)):
             claims[k] = str(v)
         elif isinstance(v, (list, dict)):
             claims[k] = json.dumps(v)
         elif v is not None:
-            _logger.debug("Dropping non-serialisable claim %s of type %s", k, type(v).__name__)
+            _logger.debug("Dropping non-serializable claim %s of type %s", k, type(v).__name__)
     actor = ActorIdentity(type=actor_type, id=sub, claims=claims or None)
     principal = str(payload.get("astrocyte_principal") or f"{actor_type}:{sub}")
     return AstrocyteContext(principal=principal, actor=actor, tenant_id=tenant_id)
@@ -102,7 +115,9 @@ def resolve_astrocyte_identity(
 
     if mode == "api_key":
         expected = os.environ.get("ASTROCYTE_API_KEY", "")
-        if not expected or not hmac.compare_digest(x_api_key or "", expected):
+        if not expected:
+            raise HTTPException(status_code=500, detail="ASTROCYTE_API_KEY is not set")
+        if not hmac.compare_digest(x_api_key or "", expected):
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
         if not x_astrocyte_principal:
             raise HTTPException(

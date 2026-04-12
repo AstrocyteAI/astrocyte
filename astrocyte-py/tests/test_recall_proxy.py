@@ -357,3 +357,12 @@ class TestHeaderInjection:
         auth = {"type": "api_key", "header": "X-Key\r\nEvil: injected", "value": "secret"}
         with pytest.raises(ValueError, match="Invalid header name"):
             await build_proxy_headers(auth)
+
+    @pytest.mark.asyncio
+    async def test_api_key_header_value_rejects_crlf(self):
+        """API key header values with CRLF must be rejected."""
+        from astrocyte.recall.proxy import build_proxy_headers
+
+        auth = {"type": "api_key", "header": "X-Key", "value": "secret\r\nInjected: yes"}
+        with pytest.raises(ValueError, match="CRLF"):
+            await build_proxy_headers(auth)
