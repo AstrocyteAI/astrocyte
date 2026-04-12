@@ -1,0 +1,136 @@
+# One workflow file per PyPI project — required for Trusted Publishing OIDC subject matching.
+# Integration tests must pass before build/publish (same stack as adapters-ci.yml elasticsearch leg).
+name: Publish astrocyte-elasticsearch to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
+
+jobs:
+  test:
+    name: Integration tests (Elasticsearch)
+    runs-on: ubuntu-latest
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -s http://localhost:9200 >/dev/null || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      ASTROCYTE_ELASTICSEARCH_URL: http://localhost:9200
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run pytest (astrocyte-elasticsearch)
+        working-directory: adapters-py/astrocyte-elasticsearch
+        run: |
+          uv sync --extra dev
+          uv run pytest tests -v --override-ini="addopts="
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Extract version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pin version in pyproject.toml
+        working-directory: adapters-py/astrocyte-elasticsearch
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+
+      - name: Build package
+        working-directory: adapters-py/astrocyte-elasticsearch
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.ver.outputs.version }}
+        run: uv build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-elasticsearch
+          path: adapters-py/astrocyte-elasticsearch/dist/
+
+  attest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-elasticsearch
+          path: dist/
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/astrocyte_elasticsearch-*"
+
+  publish:
+    needs: attest
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-elasticsearch
+          path: dist/
+
+      - name: Check if version already exists on PyPI
+        id: check
+        env:
+          REF_VERSION: ${{ github.ref_name }}
+        run: |
+          V="${REF_VERSION#v}"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/astrocyte-elasticsearch/$V/json")
+          if [ "$STATUS" = "200" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to PyPI
+        if: steps.check.outputs.skip != 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+          attestations: false

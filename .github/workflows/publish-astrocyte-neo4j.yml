@@ -1,0 +1,144 @@
+# One workflow file per PyPI project — required for Trusted Publishing OIDC subject matching.
+# Integration tests must pass before build/publish (same stack as adapters-ci.yml neo4j leg).
+name: Publish astrocyte-neo4j to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
+
+jobs:
+  test:
+    name: Integration tests (Neo4j)
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: neo4j/testpass
+        ports:
+          - 7687:7687
+          - 7474:7474
+    env:
+      ASTROCYTE_NEO4J_URI: bolt://localhost:7687
+      ASTROCYTE_NEO4J_USER: neo4j
+      ASTROCYTE_NEO4J_PASSWORD: testpass
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Wait for Neo4j Bolt
+        run: |
+          for _ in $(seq 1 45); do
+            if timeout 1 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/7687' 2>/dev/null; then
+              echo "neo4j bolt up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "neo4j bolt not reachable"
+          exit 1
+
+      - name: Run pytest (astrocyte-neo4j)
+        working-directory: adapters-py/astrocyte-neo4j
+        run: |
+          uv sync --extra dev
+          uv run pytest tests -v --override-ini="addopts="
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Extract version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pin version in pyproject.toml
+        working-directory: adapters-py/astrocyte-neo4j
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+
+      - name: Build package
+        working-directory: adapters-py/astrocyte-neo4j
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.ver.outputs.version }}
+        run: uv build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-neo4j
+          path: adapters-py/astrocyte-neo4j/dist/
+
+  attest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-neo4j
+          path: dist/
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/astrocyte_neo4j-*"
+
+  publish:
+    needs: attest
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-neo4j
+          path: dist/
+
+      - name: Check if version already exists on PyPI
+        id: check
+        env:
+          REF_VERSION: ${{ github.ref_name }}
+        run: |
+          V="${REF_VERSION#v}"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/astrocyte-neo4j/$V/json")
+          if [ "$STATUS" = "200" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to PyPI
+        if: steps.check.outputs.skip != 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+          attestations: false
