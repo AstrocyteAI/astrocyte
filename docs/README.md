@@ -13,7 +13,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 | Folder | Role |
 |---|---|
 | **`astrocyte-py/`** | **Python** Astrocyte service; PyPI package name **`astrocyte`**; ecosystem integrations (LangChain, MCP, …). |
-| **[`astrocyte-services-py/`](../astrocyte-services-py/README.md)** | Optional **REST** ([`astrocyte-gateway-py`](../astrocyte-services-py/astrocyte-gateway-py/README.md)); not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocyte-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocyte-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTE_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md) and [Production-grade reference server §4](./_end-user/production-grade-http-service.md). |
+| **[`astrocyte-services-py/`](../astrocyte-services-py/README.md)** | Optional **REST** ([`astrocyte-gateway-py`](../astrocyte-services-py/astrocyte-gateway-py/README.md)); not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocyte-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocyte-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTE_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md) and [Production-grade HTTP service §4](./_end-user/production-grade-http-service.md). |
 | **[`adapters-storage-py/`](../adapters-storage-py/README.md)** | Optional **Tier 1** **storage** adapters (`VectorStore` / `GraphStore` / `DocumentStore`), including **[`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md)** (PostgreSQL + pgvector), Qdrant, Neo4j, Elasticsearch. |
 | **[`adapters-ingestion-py/`](../adapters-ingestion-py/README.md)** | Optional **ingest transport** packages (**`astrocyte-ingestion-kafka`**, **`astrocyte-ingestion-redis`**, …). |
 | **[`adapters-integration-py/`](../adapters-integration-py/README.md)** | Reserved for **vendor / product** integrations (outbound and bidirectional); empty until packages land. |
@@ -21,7 +21,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 
 **Source layout:** Spec markdown lives in **`docs/_design/`**, **`docs/_plugins/`**, and **`docs/_end-user/`** (underscore-prefixed authoring folders). Tutorials stay under **`docs/_tutorials/`**. **`scripts/sync-docs.mjs`** mirrors them into `src/content/docs/{design,plugins,end-user,tutorials}/` (gitignored) so published URLs stay **`/design/…`**, **`/plugins/…`**, etc. **`pnpm dev`** and **`pnpm build`** run **`sync-docs`** first (`predev` / `prebuild`); if you edit `_design/` / `_plugins/` / `_end-user/` / `_tutorials/` directly, run **`node scripts/sync-docs.mjs`** (or restart dev) so the site picks up changes. Cross-references in prose often use backticked filenames like `` `architecture-framework.md` `` as stable identifiers.
 
-**Authored hubs (non-numbered):** [Quick Start](./_end-user/quick-start.md), [Poll ingest (gateway)](./_end-user/poll-ingest-gateway.md), [100 Agents in 100 Days](./_tutorials/100-agents-in-100-days.md).
+**Authored hubs (non-numbered):** [Quick Start](./_end-user/quick-start.md), [Poll ingest with the standalone gateway](./_end-user/poll-ingest-gateway.md), [100 Agents in 100 Days](./_tutorials/100-agents-in-100-days.md).
 
 ---
 
@@ -31,7 +31,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 |---|-------|--------|
 | 1 | [Quick Start](./_end-user/quick-start.md) | Install core library; Docker Compose + reference REST |
 | 2 | [Production-grade HTTP service](./_end-user/production-grade-http-service.md) | Production HTTP checklist; `astrocyte-gateway-py`; Compose; ops **§4.5** |
-| 3 | [Poll ingest (gateway)](./_end-user/poll-ingest-gateway.md) | GitHub poll + `GET /health/ingest`; extras **`astrocyte[poll]`** |
+| 3 | [Poll ingest with the standalone gateway](./_end-user/poll-ingest-gateway.md) | GitHub poll + `GET /health/ingest`; extras **`astrocyte[poll]`** |
 
 ---
 
@@ -130,7 +130,7 @@ Numbers below refer to **§3 Design** bands (single index **1–24**) and **§2 
 - **Declarative memory routing:** Design **18** (*MIP*), **17** (*MCP server*), **13** (*policy layer*).
 - **Integrations (network, identity, UI):** Plugins **3**, Design **7**, **12**, Plugins **4**.
 - **Production HTTP / Backend for Frontend (BFF) hosting Astrocyte:** End user **2**; Design **3**, **7**, **8**, **13**, **20**, **10**, **9**; Plugins **3**.
-- **Poll ingest (GitHub) with `astrocyte-gateway-py`:** End user **3**; Design **15** (*built-in pipeline*, M4 poll).
+- **Poll ingest (GitHub) with `astrocyte-gateway-py`:** End user **3** (*Poll ingest with the standalone gateway*); Design **15** (*built-in pipeline*, M4 poll).
 
 ---
 

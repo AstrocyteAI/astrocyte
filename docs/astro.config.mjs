@@ -15,8 +15,8 @@ const topicItems = {
   endUser: [
     { label: "Introduction", link: "/introduction/" },
     { label: "Quick Start", link: "/end-user/quick-start/" },
-    { label: "Production-grade reference server", link: "/end-user/production-grade-http-service/" },
-    { label: "Poll ingest (gateway)", link: "/end-user/poll-ingest-gateway/" },
+    { label: "Production-grade HTTP service", link: "/end-user/production-grade-http-service/" },
+    { label: "Poll ingest with the standalone gateway", link: "/end-user/poll-ingest-gateway/" },
   ],
   plugins: [
     { label: "Provider SPI", link: "/plugins/provider-spi/" },

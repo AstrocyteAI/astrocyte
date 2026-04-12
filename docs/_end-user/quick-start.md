@@ -151,6 +151,6 @@ Details, troubleshooting, and environment split (**`ASTROCYTE_REST_DATABASE_URL`
 ## 4. Next steps
 
 - **Agent + memory patterns/tutorials:** [100 Agents in 100 Days](/tutorials/100-agents-in-100-days/).
-- **Operate and harden HTTP:** [Production-grade reference server](/end-user/production-grade-http-service/) (security, auth, grants, observability).
+- **Operate and harden HTTP:** [Production-grade HTTP service](/end-user/production-grade-http-service/) (security, auth, grants, observability).
 - **Implement a provider or transport:** [Plugin developer docs](/plugins/provider-spi/) (SPI, entry points, packaging).
 - **Understand the design:** start with [Neuroscience & vocabulary](/design/neuroscience-astrocyte/) and [Architecture](/design/architecture-framework/).
