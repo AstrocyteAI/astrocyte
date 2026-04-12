@@ -652,7 +652,7 @@ class Astrocyte:
 
         max_tokens = max_tokens or self._config.homeostasis.recall_max_tokens
 
-        with span("astrocyte.recall", {"astrocyte.bank_id": ",".join(bank_ids)}):
+        with span("astrocyte.recall", {"astrocyte.bank_count": len(bank_ids), "astrocyte.bank_id": bank_ids[0] if len(bank_ids) == 1 else f"{bank_ids[0]}+{len(bank_ids)-1}"}):
             # Access control for all banks
             for bid in bank_ids:
                 self._check_access(bid, "read", context)
@@ -744,7 +744,7 @@ class Astrocyte:
         max_tokens = max_tokens or self._config.homeostasis.reflect_max_tokens
         primary_bank = bank_ids[0]
 
-        with span("astrocyte.reflect", {"astrocyte.bank_id": ",".join(bank_ids)}):
+        with span("astrocyte.reflect", {"astrocyte.bank_count": len(bank_ids), "astrocyte.bank_id": bank_ids[0] if len(bank_ids) == 1 else f"{bank_ids[0]}+{len(bank_ids)-1}"}):
             # Access control for all banks
             for bid in bank_ids:
                 self._check_access(bid, "read", context)

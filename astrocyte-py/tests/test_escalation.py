@@ -1,6 +1,6 @@
 """Tests for policy/escalation.py — circuit breaker, degraded mode."""
 
-import time
+from unittest.mock import patch
 
 import pytest
 
@@ -30,36 +30,42 @@ class TestCircuitBreaker:
             cb.check("test-provider")
 
     def test_transitions_to_half_open(self):
-        cb = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=0.01)
+        cb = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=10)
         cb.record_failure()
         assert cb.state == "open"
-        time.sleep(0.02)
-        assert cb.state == "half_open"
+        # Advance monotonic clock past recovery timeout
+        with patch("astrocyte.policy.escalation.time") as mock_time:
+            mock_time.monotonic.return_value = cb._state.last_failure_time + 11
+            assert cb.state == "half_open"
 
     def test_half_open_allows_limited_calls(self):
-        cb = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=0.01, half_open_max_calls=2)
+        cb = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=10, half_open_max_calls=2)
         cb.record_failure()
-        time.sleep(0.02)
-        assert cb.state == "half_open"
-        cb.check("provider")  # First call OK
-        cb.check("provider")  # Second call OK
-        assert cb.is_open() is True  # Third would be blocked
+        with patch("astrocyte.policy.escalation.time") as mock_time:
+            mock_time.monotonic.return_value = cb._state.last_failure_time + 11
+            assert cb.state == "half_open"
+            cb.check("provider")  # First call OK
+            cb.check("provider")  # Second call OK
+            assert cb.is_open() is True  # Third would be blocked
 
     def test_success_closes_from_half_open(self):
-        cb = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=0.01)
+        cb = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=10)
         cb.record_failure()
-        time.sleep(0.02)
-        assert cb.state == "half_open"
-        cb.record_success()
-        assert cb.state == "closed"
+        with patch("astrocyte.policy.escalation.time") as mock_time:
+            mock_time.monotonic.return_value = cb._state.last_failure_time + 11
+            assert cb.state == "half_open"
+            cb.record_success()
+            assert cb.state == "closed"
 
     def test_failure_in_half_open_reopens(self):
-        cb = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=0.01)
+        cb = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=10)
         cb.record_failure()
-        time.sleep(0.02)
-        assert cb.state == "half_open"
-        cb.record_failure()
-        assert cb.state == "open"
+        with patch("astrocyte.policy.escalation.time") as mock_time:
+            mock_time.monotonic.return_value = cb._state.last_failure_time + 11
+            assert cb.state == "half_open"
+            mock_time.monotonic.return_value = cb._state.last_failure_time + 12
+            cb.record_failure()
+            assert cb.state == "open"
 
     def test_reset(self):
         cb = CircuitBreaker(failure_threshold=1)

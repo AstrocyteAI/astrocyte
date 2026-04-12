@@ -97,6 +97,12 @@ def resolve_astrocyte_identity(
         decode_kwargs: dict = {"algorithms": ["HS256"]}
         if aud:
             decode_kwargs["audience"] = aud
+        else:
+            import logging
+            logging.getLogger("astrocyte.gateway").warning(
+                "ASTROCYTE_JWT_AUDIENCE is not set — tokens will be accepted without audience validation. "
+                "Set this variable to prevent cross-service token reuse."
+            )
         try:
             payload = jwt.decode(token, secret, **decode_kwargs)
         except PyJWTError as e:
