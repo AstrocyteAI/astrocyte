@@ -58,7 +58,7 @@ def _context_from_oidc_payload(payload: dict[str, Any]) -> AstrocyteContext:
     tid = payload.get("tid") or payload.get("tenant_id")
     tenant_id = str(tid).strip() if tid is not None and str(tid).strip() else None
     claims = {k: str(v) for k, v in payload.items() if isinstance(v, (str, int, float, bool))}
-    actor = ActorIdentity(type=actor_type, id=sub, claims=claims if claims else None)
+    actor = ActorIdentity(type=actor_type, id=sub, claims=claims or None)
     principal = str(payload.get("astrocyte_principal") or f"{actor_type}:{sub}")
     return AstrocyteContext(principal=principal, actor=actor, tenant_id=tenant_id)
 

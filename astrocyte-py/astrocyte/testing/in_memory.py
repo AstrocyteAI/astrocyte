@@ -397,9 +397,19 @@ class InMemoryEngineProvider:
 
 
 class MockLLMProvider:
-    """Mock LLM provider that returns deterministic responses for testing."""
+    """Mock LLM provider with bag-of-words embeddings and extractive synthesis.
+
+    Embeddings use term-frequency vectors over a shared vocabulary, so
+    semantically related texts have high cosine similarity — enabling
+    meaningful vector retrieval without an API key.
+
+    Synthesis extracts the most relevant memory text from the prompt context
+    rather than returning a static string.
+    """
 
     SPI_VERSION: ClassVar[int] = 1
+
+    _embed_dim: ClassVar[int] = 128
 
     def __init__(self, default_response: str = "Mock LLM response") -> None:
         self._default_response = default_response
@@ -422,13 +432,21 @@ class MockLLMProvider:
             if m.role == "user" and isinstance(m.content, str):
                 self.last_user_message = m.content
                 break
-        # Check if entity extraction prompt (may be in system or user message)
         all_text = " ".join(m.content for m in messages if isinstance(m.content, str))
+        # Entity extraction prompt
         if "extract named entities" in all_text.lower():
             return Completion(
                 text='[{"name": "Test Entity", "entity_type": "OTHER", "aliases": []}]',
                 model=model or "mock",
                 usage=TokenUsage(input_tokens=10, output_tokens=20),
+            )
+        # Memory synthesis prompt — extract most relevant memory text
+        if "<memories>" in all_text and "<query>" in all_text:
+            answer = _extractive_synthesize(all_text)
+            return Completion(
+                text=answer,
+                model=model or "mock",
+                usage=TokenUsage(input_tokens=50, output_tokens=30),
             )
         return Completion(
             text=self._default_response,
@@ -437,19 +455,101 @@ class MockLLMProvider:
         )
 
     async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
-        """Generate deterministic pseudo-embeddings for testing."""
-        import hashlib
+        """Generate bag-of-words embeddings with real semantic signal.
 
-        result = []
-        for text in texts:
-            h = hashlib.sha256(text.encode()).digest()
-            raw = [float(b) / 255.0 for b in h]
-            while len(raw) < 128:
-                h = hashlib.sha256(h).digest()
-                raw.extend(float(b) / 255.0 for b in h)
-            raw = raw[:128]
-            norm = math.sqrt(sum(x * x for x in raw))
-            if norm > 0:
-                raw = [x / norm for x in raw]
-            result.append(raw)
-        return result
+        Uses term-frequency vectors over a shared vocabulary. Texts that share
+        words have high cosine similarity, enabling meaningful retrieval.
+        """
+        return [self._bow_embed(text) for text in texts]
+
+    def _bow_embed(self, text: str) -> list[float]:
+        """Build a term-frequency vector using the hashing trick.
+
+        Each word maps to a bucket via ``hash(word) % dim`` and increments
+        that dimension. All components are non-negative, guaranteeing
+        non-negative cosine similarities between any two vectors — required
+        because ``VectorHit.score`` enforces ``>= 0.0``.
+        """
+        import hashlib
+        from string import punctuation
+
+        dim = self._embed_dim
+        vec = [0.0] * dim
+        tokens = [t.strip(punctuation).lower() for t in text.split() if t.strip(punctuation)]
+
+        for token in tokens:
+            if not token:
+                continue
+            h = int(hashlib.md5(token.encode()).hexdigest(), 16)
+            bucket = h % dim
+            vec[bucket] += 1.0
+
+        # L2 normalize
+        norm = math.sqrt(sum(x * x for x in vec))
+        if norm > 0:
+            vec = [x / norm for x in vec]
+        return vec
+
+
+def _normalize_terms(text: str) -> set[str]:
+    """Lowercase, strip punctuation, drop short words."""
+    from string import punctuation
+
+    return {t.strip(punctuation).lower() for t in text.split() if len(t.strip(punctuation)) > 2}
+
+
+def _extractive_synthesize(prompt_text: str) -> str:
+    """Extract the most query-relevant memory from the synthesis prompt.
+
+    Parses ``<memories>`` and ``<query>`` blocks from the reflect prompt,
+    scores each memory by word overlap with the query, and returns
+    the top memories concatenated. This gives the mock provider
+    meaningful reflect answers without a real LLM.
+    """
+    import re
+
+    # Extract query
+    query_match = re.search(r"<query>\s*(.*?)\s*</query>", prompt_text, re.DOTALL)
+    if not query_match:
+        return "No query found."
+    query = query_match.group(1).strip()
+    query_terms = _normalize_terms(query)
+
+    # Extract individual memories
+    memories_match = re.search(r"<memories>\s*(.*?)\s*</memories>", prompt_text, re.DOTALL)
+    if not memories_match:
+        return "No memories found."
+
+    # Group continuation lines with their [Memory N] header.
+    # Lines starting with [Memory N] start a new block; other lines
+    # are appended to the current block.
+    raw_lines = memories_match.group(1).strip().split("\n")
+    blocks: list[str] = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        if re.match(r"^\[Memory \d+\]", line):
+            # Strip [Memory N] prefix for cleaner output
+            text = re.sub(r"^\[Memory \d+\](\s*\([^)]*\))?(\s*\[[^\]]*\])?\s*:\s*", "", line)
+            blocks.append(text)
+        elif blocks:
+            blocks[-1] += " " + line
+        else:
+            blocks.append(line)
+
+    # Score each memory block by query term overlap
+    scored: list[tuple[float, str]] = []
+    for text in blocks:
+        block_terms = _normalize_terms(text)
+        overlap = len(query_terms & block_terms)
+        if overlap > 0:
+            scored.append((overlap, text))
+
+    if not scored:
+        return "I don't have relevant information to answer this question."
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    # Return top 3 most relevant memories
+    top = [text for _, text in scored[:3]]
+    return " ".join(top)

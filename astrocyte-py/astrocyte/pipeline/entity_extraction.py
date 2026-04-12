@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("astrocyte.pipeline")
 
+_JSON_FENCE_TAG = "json"
+
 _EXTRACTION_SYSTEM_PROMPT = """Extract named entities from user-provided text.
 Return a JSON array of objects with keys: "name", "entity_type", "aliases".
 entity_type must be one of: PERSON, ORG, LOCATION, PRODUCT, EVENT, CONCEPT, OTHER.
@@ -63,8 +65,8 @@ def _parse_entities(response: str) -> list[Entity]:
             if start > len(text):
                 logger.warning("Malformed markdown code block in entity response")
                 return []
-            if start + 4 <= len(text) and text[start:start + 4].lower() == "json":
-                start += 4
+            if start + len(_JSON_FENCE_TAG) <= len(text) and text[start:start + len(_JSON_FENCE_TAG)].lower() == _JSON_FENCE_TAG:
+                start += len(_JSON_FENCE_TAG)
             close = text.find("```", start)
             if close < 0:
                 logger.warning("Malformed markdown code block in entity response")

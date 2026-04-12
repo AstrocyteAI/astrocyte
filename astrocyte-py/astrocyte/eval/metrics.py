@@ -75,3 +75,38 @@ def text_overlap_score(expected_keywords: list[str], actual_text: str) -> float:
     actual_lower = str(actual_text).lower()
     found = sum(1 for kw in expected_keywords if str(kw).lower() in actual_lower)
     return found / len(expected_keywords)
+
+
+# Stop words excluded from word overlap scoring
+_STOP_WORDS = frozenset(
+    "a an the is are was were be been being have has had do does did "
+    "will would shall should may might can could of in on at to for "
+    "with by from and or but not no nor so yet both either neither "
+    "this that these those it its he she they them his her their "
+    "who what which when where how i me my we our you your".split()
+)
+
+
+def word_overlap_score(expected_answer: str, actual_text: str) -> float:
+    """Score by fraction of content words from expected that appear in actual.
+
+    More robust than substring matching — handles paraphrasing and word
+    reordering. Stop words are excluded so only content words are checked.
+
+    Returns 0.0–1.0.
+    """
+    from string import punctuation
+
+    def _content_words(text: str) -> list[str]:
+        return [
+            w.strip(punctuation).lower()
+            for w in text.split()
+            if w.strip(punctuation).lower() not in _STOP_WORDS and len(w.strip(punctuation)) > 1
+        ]
+
+    expected_words = _content_words(expected_answer)
+    if not expected_words:
+        return 1.0
+    actual_words = set(_content_words(actual_text))
+    found = sum(1 for w in expected_words if w in actual_words)
+    return found / len(expected_words)
