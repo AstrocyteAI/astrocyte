@@ -9,20 +9,20 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
+from astrocyte.policy.observability import StructuredLogger
 from astrocyte.types import HookEvent
 
 # Hook handler type — FFI-safe: takes a HookEvent, returns an awaitable or None.
 HookHandler = Callable[[HookEvent], Awaitable[None] | None]
 
-logger = logging.getLogger("astrocyte")
-
 
 class HookManager:
     """Thread-safe event hook registration and dispatch."""
 
-    def __init__(self) -> None:
+    def __init__(self, logger: StructuredLogger) -> None:
         self._hooks: dict[str, list[HookHandler]] = {}
         self._lock = threading.Lock()
+        self._logger = logger
 
     def register(self, event_type: str, handler: HookHandler) -> None:
         """Register an event hook handler."""
@@ -55,9 +55,9 @@ class HookManager:
                 if asyncio.iscoroutine(result) or asyncio.isfuture(result):
                     await result
             except Exception:
-                logger.warning(
-                    "Hook handler failed for event %s (bank=%s)",
-                    event_type,
-                    bank_id,
-                    exc_info=True,
+                self._logger.log(
+                    "astrocyte.hook.error",
+                    bank_id=bank_id,
+                    data={"event_type": event_type},
+                    level=logging.WARNING,
                 )

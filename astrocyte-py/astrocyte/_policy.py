@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 import threading
 from typing import TYPE_CHECKING
 
+from astrocyte._validation import validate_bank_id
 from astrocyte.config import AstrocyteConfig
-from astrocyte.errors import AccessDenied, ConfigError, ProviderUnavailable, RateLimited
+from astrocyte.errors import AccessDenied, ConfigError, RateLimited
 from astrocyte.identity import (
     BankResolver,
     accessible_read_banks,
@@ -17,7 +17,6 @@ from astrocyte.identity import (
 from astrocyte.policy.barriers import ContentValidator, MetadataSanitizer, PiiScanner
 from astrocyte.policy.escalation import CircuitBreaker, DegradedModeHandler
 from astrocyte.policy.homeostasis import QuotaTracker, RateLimiter
-from astrocyte.policy.observability import MetricsCollector
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
@@ -28,9 +27,6 @@ from astrocyte.types import (
 
 if TYPE_CHECKING:
     from astrocyte.types import Metadata
-
-logger = logging.getLogger("astrocyte")
-
 
 class PolicyEnforcer:
     """Centralizes all policy enforcement: access control, rate limiting,
@@ -141,8 +137,6 @@ class PolicyEnforcer:
         context: AstrocyteContext | None,
     ) -> list[str]:
         """Resolve bank list for recall/reflect; optional identity-driven auto-resolve."""
-        from astrocyte._astrocyte import _validate_bank_id
-
         bank_ids = banks or ([bank_id] if bank_id else [])
         if not bank_ids and self._config.identity.auto_resolve_banks and context is not None:
             known = list((self._config.banks or {}).keys())
@@ -155,7 +149,7 @@ class PolicyEnforcer:
         if not bank_ids:
             raise ConfigError("Either bank_id or banks must be provided")
         for bid in bank_ids:
-            _validate_bank_id(bid)
+            validate_bank_id(bid)
         return bank_ids
 
     # -- Rate limiting + quota --
