@@ -39,6 +39,22 @@ uv run --directory astrocyte-services-py/astrocyte-gateway-py astrocyte-gateway-
 
 **uv:** `pyproject.toml` pins **`[tool.uv.sources]`** so `astrocyte` resolves from **`../../astrocyte-py`** (editable). Run `uv sync` from **`astrocyte-services-py/astrocyte-gateway-py/`**. Plain **`pip`** users should `pip install -e ../../astrocyte-py` first, then install this package.
 
+### Gateway overhead benchmark (local)
+
+Measures **in-process** ASGI overhead for `POST /v1/recall` vs calling `brain.recall` directly on the **same** `Astrocyte` instance (`httpx.ASGITransport`, no TCP). Uses default in-memory + mock providers unless you set `ASTROCYTE_CONFIG_PATH`. Requires **`httpx`** (`uv sync --extra dev`).
+
+```bash
+cd astrocyte-services-py/astrocyte-gateway-py
+uv sync --extra dev
+uv run python scripts/bench_gateway_overhead.py
+# Machine-readable output:
+uv run python scripts/bench_gateway_overhead.py --json
+# Fewer iterations (faster smoke):
+uv run python scripts/bench_gateway_overhead.py --warmup 20 --iterations 200
+```
+
+On GitHub: **Actions → Benchmark gateway overhead → Run workflow** (manual dispatch; prints JSON to the job summary).
+
 **PostgreSQL (pgvector):** Install the optional adapter (`uv sync --extra pgvector`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts **Postgres + this service** together. For Postgres only on the host, see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md).
 
 Then set `vector_store: pgvector` in YAML or `ASTROCYTE_VECTOR_STORE=pgvector`, and pass a DSN via `vector_store_config.dsn` or `DATABASE_URL` / `ASTROCYTE_PG_DSN`.

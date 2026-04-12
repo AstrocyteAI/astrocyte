@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from astrocyte import Astrocyte
 from astrocyte.config import SourceConfig
 from astrocyte.errors import (
     AccessDenied,
@@ -97,8 +98,10 @@ def require_admin_if_configured(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token")
 
 
-def create_app() -> FastAPI:
-    brain = build_astrocyte()
+def create_app(brain: Astrocyte | None = None) -> FastAPI:
+    """Build the FastAPI app. Pass a pre-built ``brain`` for tests and overhead benchmarks."""
+    if brain is None:
+        brain = build_astrocyte()
     ingest_registry = SourceRegistry.from_sources_config(
         brain.config.sources,
         retain=retain_callable_for_astrocyte(brain),
