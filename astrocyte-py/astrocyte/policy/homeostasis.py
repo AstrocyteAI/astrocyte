@@ -95,23 +95,25 @@ class RateLimiter:
 # Token counting — tiktoken if available, heuristic fallback
 # ---------------------------------------------------------------------------
 
-_tiktoken_encoder: object | None = None
-_tiktoken_checked = False
+class _TiktokenCache:
+    """Lazy singleton for optional tiktoken encoder."""
 
+    encoder: object | None = None
+    checked: bool = False
 
-def _get_tiktoken_encoder() -> object | None:
-    """Lazily load tiktoken encoder (cl100k_base). Returns None if not installed."""
-    global _tiktoken_encoder, _tiktoken_checked
-    if _tiktoken_checked:
-        return _tiktoken_encoder
-    _tiktoken_checked = True
-    try:
-        import tiktoken  # type: ignore[import-untyped]
+    @classmethod
+    def get(cls) -> object | None:
+        """Return tiktoken encoder (cl100k_base), or None if not installed."""
+        if cls.checked:
+            return cls.encoder
+        cls.checked = True
+        try:
+            import tiktoken  # type: ignore[import-untyped]
 
-        _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
-    except (ImportError, Exception):
-        _tiktoken_encoder = None
-    return _tiktoken_encoder
+            cls.encoder = tiktoken.get_encoding("cl100k_base")
+        except (ImportError, Exception):
+            cls.encoder = None
+        return cls.encoder
 
 
 def _heuristic_token_count(text: str) -> int:
@@ -140,7 +142,7 @@ def count_tokens(text: str) -> int:
     if not text:
         return 1
 
-    enc = _get_tiktoken_encoder()
+    enc = _TiktokenCache.get()
     if enc is not None:
         return len(enc.encode(text))  # type: ignore[union-attr]
 

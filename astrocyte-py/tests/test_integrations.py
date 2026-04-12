@@ -17,10 +17,15 @@ from astrocyte.integrations.pydantic_ai import astrocyte_tools
 from astrocyte.testing.in_memory import InMemoryEngineProvider
 
 
-def _make_brain() -> tuple[Astrocyte, InMemoryEngineProvider]:
+def _make_brain(
+    *,
+    retain_max_content_bytes: int | None = None,
+) -> tuple[Astrocyte, InMemoryEngineProvider]:
     config = AstrocyteConfig()
     config.provider = "test"
     config.barriers.pii.mode = "disabled"
+    if retain_max_content_bytes is not None:
+        config.homeostasis.retain_max_content_bytes = retain_max_content_bytes
     brain = Astrocyte(config)
     engine = InMemoryEngineProvider()
     brain.set_engine_provider(engine)
@@ -357,9 +362,7 @@ class TestIntegrationErrorCases:
 
     async def test_pydantic_ai_retain_failure_reports_error(self):
         """Pydantic AI retain tool reports errors in return string."""
-        brain, _ = _make_brain()
-        # Set a very small max content size to force failure
-        brain._config.homeostasis.retain_max_content_bytes = 1
+        brain, _ = _make_brain(retain_max_content_bytes=1)
         tools = astrocyte_tools(brain, bank_id="b1")
         retain_fn = next(t["function"] for t in tools if t["name"] == "memory_retain")
         result = await retain_fn("This content is too long to store")
@@ -374,8 +377,7 @@ class TestIntegrationErrorCases:
 
     async def test_openai_retain_failure_returns_error_json(self):
         """OpenAI tools retain handler returns error in JSON."""
-        brain, _ = _make_brain()
-        brain._config.homeostasis.retain_max_content_bytes = 1
+        brain, _ = _make_brain(retain_max_content_bytes=1)
         _, handlers = astrocyte_tool_definitions(brain, bank_id="b1")
         result_json = await handlers["memory_retain"](content="Too long content")
         result = json.loads(result_json)
