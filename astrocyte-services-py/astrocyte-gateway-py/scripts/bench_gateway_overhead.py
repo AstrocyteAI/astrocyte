@@ -169,6 +169,7 @@ async def _run_tcp(*, warmup: int, iterations: int) -> dict[str, Any]:
                     if r.status_code == 200:
                         break
                 except httpx.HTTPError:
+                    # Server not accepting yet (connection refused, reset); retry until ready.
                     pass
                 time.sleep(0.02)
             else:

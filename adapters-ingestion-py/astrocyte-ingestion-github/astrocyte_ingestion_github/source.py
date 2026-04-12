@@ -44,6 +44,14 @@ def _owner_repo(cfg: SourceConfig) -> tuple[str, str]:
     return owner.strip(), repo.strip()
 
 
+def _int_header(raw: object) -> int | None:
+    """Parse GitHub numeric response headers; invalid values become ``None``."""
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        return None
+
+
 class GithubPollIngestSource:
     """Poll ``GET /repos/{owner}/{repo}/issues`` and retain new/updated issues (not pull requests)."""
 
@@ -165,18 +173,15 @@ class GithubPollIngestSource:
         r = await self._client.get(f"/repos/{owner}/{repo}/issues", params=params)
         rem_raw = r.headers.get("x-ratelimit-remaining") or r.headers.get("X-RateLimit-Remaining")
         if rem_raw is not None:
-            try:
-                rem = int(rem_raw)
-                if rem < 20:
-                    log_ingest_event(
-                        logger,
-                        "github_poll_rate_limit_low",
-                        source_id=self._source_id,
-                        remaining=rem,
-                        reset=r.headers.get("x-ratelimit-reset") or r.headers.get("X-RateLimit-Reset"),
-                    )
-            except ValueError:
-                pass
+            rem = _int_header(rem_raw)
+            if rem is not None and rem < 20:
+                log_ingest_event(
+                    logger,
+                    "github_poll_rate_limit_low",
+                    source_id=self._source_id,
+                    remaining=rem,
+                    reset=r.headers.get("x-ratelimit-reset") or r.headers.get("X-RateLimit-Reset"),
+                )
         try:
             r.raise_for_status()
         except httpx.HTTPStatusError as e:
