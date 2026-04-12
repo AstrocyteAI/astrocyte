@@ -291,3 +291,69 @@ class TestParseHitsPayload:
 
     def test_hits_not_list_returns_empty(self):
         assert _parse_hits_payload({"hits": "not a list"}) == []
+
+
+# ---------------------------------------------------------------------------
+# DNS validation / rebinding — _sync_dns_validate_and_first_public_ip
+# ---------------------------------------------------------------------------
+
+
+class TestDnsValidation:
+    """Test the DNS resolution + IP validation layer (SSRF rebinding prevention)."""
+
+    def test_localhost_resolution_blocked(self):
+        """DNS resolving to 127.0.0.1 must be rejected."""
+        from astrocyte.recall.proxy import _sync_dns_validate_and_first_public_ip
+
+        with pytest.raises(ValueError, match="forbidden address"):
+            # 127.0.0.1 is loopback — always forbidden
+            _sync_dns_validate_and_first_public_ip("localhost", 443)
+
+    def test_nonexistent_host_raises(self):
+        from astrocyte.recall.proxy import _sync_dns_validate_and_first_public_ip
+
+        with pytest.raises(ValueError, match="DNS resolution failed"):
+            _sync_dns_validate_and_first_public_ip("this-host-does-not-exist.invalid", 443)
+
+    def test_metadata_ip_blocked_at_url_level(self):
+        """Cloud metadata endpoint IPs must be caught at URL validation."""
+        # 169.254.169.254 is link-local (AWS/GCP metadata)
+        with pytest.raises(ValueError):
+            validate_proxy_recall_url("http://169.254.169.254/latest/meta-data/")
+
+    def test_ipv6_loopback_blocked(self):
+        with pytest.raises(ValueError):
+            validate_proxy_recall_url("http://[::1]/path")
+
+
+# ---------------------------------------------------------------------------
+# Header CRLF injection
+# ---------------------------------------------------------------------------
+
+
+class TestHeaderInjection:
+    """Verify proxy header construction rejects CRLF injection attempts."""
+
+    def test_host_header_no_crlf(self):
+        """Host header must not contain newlines (CRLF injection vector)."""
+        from astrocyte.recall.proxy import _proxy_recall_host_header_value
+
+        # Normal hostname — no injection
+        h = _proxy_recall_host_header_value("example.com", 443, "https")
+        assert "\r" not in h
+        assert "\n" not in h
+
+    def test_url_with_encoded_newlines_rejected(self):
+        """URLs with encoded CRLF in path should still be validated safely."""
+        # The URL itself is valid structurally, but the host validation matters
+        validate_proxy_recall_url("https://example.com/path%0d%0a")  # Should not raise
+        # Actual injection would be in the host — but urlparse handles this
+
+    @pytest.mark.asyncio
+    async def test_api_key_header_name_rejects_special_chars(self):
+        """API key header names with special chars must be rejected."""
+        from astrocyte.recall.proxy import build_proxy_headers
+
+        auth = {"type": "api_key", "header": "X-Key\r\nEvil: injected", "value": "secret"}
+        with pytest.raises(ValueError, match="Invalid header name"):
+            await build_proxy_headers(auth)

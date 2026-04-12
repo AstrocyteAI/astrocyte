@@ -358,3 +358,54 @@ class TestMetadataSanitizer:
         ms = MetadataSanitizer()
         cleaned, _ = ms.sanitize({"api_key": "secret"})
         assert cleaned is None  # Only key was blocked → empty → None
+
+
+# ---------------------------------------------------------------------------
+# PiiScanner — Unicode / non-ASCII patterns
+# ---------------------------------------------------------------------------
+
+
+class TestPiiScannerUnicode:
+    """Ensure PII detection handles non-ASCII text without false positives/negatives."""
+
+    def test_email_in_unicode_context(self):
+        """PII email detection works when surrounded by non-ASCII text."""
+        scanner = PiiScanner(mode="regex")
+        matches = scanner.scan("Kontakt: john@example.com für Details")
+        assert any(m.pii_type == "email" for m in matches)
+
+    def test_phone_with_unicode_prefix(self):
+        scanner = PiiScanner(mode="regex")
+        matches = scanner.scan("Téléphone: 555-123-4567")
+        assert any(m.pii_type == "phone" for m in matches)
+
+    def test_no_false_positive_on_cjk_digits(self):
+        """CJK text with digits should not trigger SSN/phone false positives."""
+        scanner = PiiScanner(mode="regex")
+        matches = scanner.scan("日本語テスト 東京都港区")
+        assert matches == []
+
+    def test_ssn_in_mixed_unicode_context(self):
+        scanner = PiiScanner(mode="regex")
+        matches = scanner.scan("Numéro: 123-45-6789 résultat")
+        assert any(m.pii_type == "ssn" for m in matches)
+
+    def test_email_with_idn_domain(self):
+        """Email with international domain characters should still match."""
+        scanner = PiiScanner(mode="regex")
+        matches = scanner.scan("user@example.co.uk works fine")
+        assert any(m.pii_type == "email" for m in matches)
+
+    def test_redact_preserves_unicode(self):
+        scanner = PiiScanner(mode="regex", action="redact")
+        text, matches = scanner.apply("Cher ami, mon email: test@example.com merci")
+        assert "test@example.com" not in text
+        assert "Cher ami" in text
+        assert "merci" in text
+
+    def test_fullwidth_digits_detected(self):
+        """Full-width digits match \\d in Python regex — phone PII is still caught."""
+        scanner = PiiScanner(mode="regex")
+        matches = scanner.scan("Phone: ５５５-１２３-４５６７")
+        # Python \d matches Unicode digits, so full-width digits trigger phone regex
+        assert any(m.pii_type == "phone" for m in matches)

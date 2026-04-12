@@ -56,6 +56,8 @@ def percentile(values: list[float], p: float) -> float:
     """Compute the p-th percentile (0–100) of a list of values."""
     if not values:
         return 0.0
+    if not (0.0 <= p <= 100.0):
+        raise ValueError(f"Percentile must be between 0 and 100, got {p}")
     sorted_vals = sorted(values)
     k = (len(sorted_vals) - 1) * (p / 100.0)
     f = math.floor(k)
