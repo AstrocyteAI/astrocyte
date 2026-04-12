@@ -13,28 +13,27 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from astrocyte._hooks import HookHandler, HookManager
 from astrocyte._multi_bank import MultiBankOrchestrator
+from astrocyte._output_scanner import OutputScanner
 from astrocyte._policy import PolicyEnforcer
+from astrocyte._provider_dispatch import ProviderDispatcher
+from astrocyte._recall_params import RecallParams
 from astrocyte._validation import validate_bank_id
 from astrocyte.analytics import BankMetricsCollector, compute_bank_health, counters_to_quality_point
 from astrocyte.config import AstrocyteConfig, load_config
 from astrocyte.errors import (
     AccessDenied,
-    CapabilityNotSupported,
     ConfigError,
     ProviderUnavailable,
 )
 from astrocyte.identity import context_principal_label
 from astrocyte.lifecycle import LifecycleManager
 from astrocyte.mip.router import MipRouter
-from astrocyte.policy.barriers import PiiScanner
 from astrocyte.policy.observability import MetricsCollector, StructuredLogger, span, timed
 from astrocyte.recall.authority import apply_recall_authority
-from astrocyte.recall.merge_result import merge_external_into_recall_result
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
     BankHealth,
-    EngineCapabilities,
     ForgetRequest,
     ForgetResult,
     HealthStatus,
@@ -53,7 +52,6 @@ from astrocyte.types import (
 
 if TYPE_CHECKING:
     from astrocyte.pipeline.orchestrator import PipelineOrchestrator
-    from astrocyte.pipeline.tiered_retrieval import TieredRetriever
     from astrocyte.provider import EngineProvider
 
 logger = logging.getLogger("astrocyte")
@@ -70,9 +68,6 @@ def _normalize_multi_bank_strategy(
         return MultiBankStrategy(mode=strategy)
     raise ConfigError(f"Unknown multi-bank strategy: {strategy!r}")
 
-
-# Re-export for backwards compatibility (tests import _validate_bank_id from here)
-_validate_bank_id = validate_bank_id
 
 
 class Astrocyte:
@@ -91,14 +86,11 @@ class Astrocyte:
         # Extracted subsystems
         self._policy = PolicyEnforcer(config)
         self._hook_manager = HookManager(self._logger)
+        self._output_scanner = OutputScanner(config, self._logger)
+        self._dispatcher = ProviderDispatcher(config)
 
         # Metrics
         self._metrics = MetricsCollector(enabled=config.observability.prometheus_enabled)
-
-        # DLP output scanner (always regex, independent of input PII config)
-        self._dlp_scanner: PiiScanner | None = None
-        if config.dlp.scan_recall_output or config.dlp.scan_reflect_output:
-            self._dlp_scanner = PiiScanner(mode="regex", action=config.dlp.output_pii_action)
 
         # Lifecycle
         self._lifecycle = LifecycleManager(config.lifecycle)
@@ -114,12 +106,9 @@ class Astrocyte:
         # Analytics
         self._analytics = BankMetricsCollector()
 
-        # Provider state — typed as protocols (not Any)
+        # Provider state (managed by dispatcher, exposed for wiring)
         self._engine_provider: EngineProvider | None = None
         self._pipeline: PipelineOrchestrator | None = None
-        self._capabilities: EngineCapabilities | None = None
-        # Tiered retrieval (optional; wired when ``tiered_retrieval.enabled`` and pipeline is set)
-        self._tiered_retriever: TieredRetriever | None = None
 
         # Multi-bank orchestrator (wired lazily after provider is set)
         self._multi_bank: MultiBankOrchestrator | None = None
@@ -156,14 +145,16 @@ class Astrocyte:
 
         check_spi_version(provider, "EngineProvider")
         self._engine_provider = provider
+        self._dispatcher.engine_provider = provider
         if hasattr(provider, "capabilities"):
-            self._capabilities = provider.capabilities()
+            self._dispatcher.capabilities = provider.capabilities()
         self._rebuild_tiered_retrieval()
         self._rebuild_multi_bank()
 
     def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
         self._pipeline = pipeline
+        self._dispatcher.pipeline = pipeline
         from astrocyte.pipeline.extraction import merged_extraction_profiles
 
         pipeline.extraction_profiles = merged_extraction_profiles(self._config)
@@ -180,11 +171,10 @@ class Astrocyte:
         from astrocyte.pipeline.recall_cache import RecallCache
         from astrocyte.pipeline.tiered_retrieval import TieredRetriever
 
-        self._tiered_retriever = None
+        self._dispatcher.tiered_retriever = None
         if not self._pipeline or not self._config.tiered_retrieval.enabled:
             return
         trc = self._config.tiered_retrieval
-        # Pipeline-only tiering: no engine. Hybrid tiering: engine must be HybridEngineProvider.
         if self._engine_provider is not None and trc.full_recall != "hybrid":
             return
         full_recall_fn = None
@@ -204,7 +194,7 @@ class Astrocyte:
                 max_entries=rcc.max_entries,
                 ttl_seconds=rcc.ttl_seconds,
             )
-        self._tiered_retriever = TieredRetriever(
+        self._dispatcher.tiered_retriever = TieredRetriever(
             self._pipeline,
             recall_cache=cache,
             min_results=trc.min_results,
@@ -216,11 +206,11 @@ class Astrocyte:
     def _rebuild_multi_bank(self) -> None:
         """Rebuild MultiBankOrchestrator when provider changes."""
         self._multi_bank = MultiBankOrchestrator(
-            do_recall=self._do_recall,
+            do_recall=self._dispatcher.recall,
             make_request=self._make_recall_request,
             circuit_breaker_record_failure=self._policy.record_failure,
             metrics=self._metrics,
-            provider_name=self._provider_name,
+            provider_name=self._dispatcher.provider_name,
         )
 
     def set_access_grants(self, grants: list[AccessGrant]) -> None:
@@ -346,7 +336,7 @@ class Astrocyte:
             try:
                 self._policy.check_circuit(self._provider_name)
                 with timed() as t:
-                    result = await self._do_retain(request)
+                    result = await self._dispatcher.retain(request)
                 self._policy.record_success()
                 self._policy.record_quota(bank_id, "retain")
                 self._metrics.inc_counter(
@@ -390,7 +380,7 @@ class Astrocyte:
         max_results: int,
         max_tokens: int | None,
         tags: list[str] | None,
-        kwargs: dict[str, Any],
+        params: RecallParams,
     ) -> RecallRequest:
         from astrocyte.recall.proxy import merge_manual_and_proxy_hits
 
@@ -398,7 +388,7 @@ class Astrocyte:
             self._config,
             query=query,
             bank_id=bank_id,
-            manual=kwargs.get("external_context"),
+            manual=params.external_context,
             metrics=self._metrics,
         )
         return RecallRequest(
@@ -407,32 +397,13 @@ class Astrocyte:
             max_results=max_results,
             max_tokens=max_tokens,
             tags=tags,
-            fact_types=kwargs.get("fact_types"),
-            time_range=kwargs.get("time_range"),
-            include_sources=bool(kwargs.get("include_sources", False)),
-            layer_weights=kwargs.get("layer_weights"),
-            detail_level=kwargs.get("detail_level"),
+            fact_types=params.fact_types,
+            time_range=params.time_range,
+            include_sources=params.include_sources,
+            layer_weights=params.layer_weights,
+            detail_level=params.detail_level,
             external_context=ext,
         )
-
-    def _recall_kwargs_dict(
-        self,
-        external_context: list[MemoryHit] | None,
-        fact_types: list[str] | None,
-        time_range: tuple[datetime, datetime] | None,
-        include_sources: bool,
-        layer_weights: dict[str, float] | None,
-        detail_level: str | None,
-    ) -> dict[str, Any]:
-        """Bundle explicit recall params into a kwargs dict for internal helpers."""
-        return {
-            "external_context": external_context,
-            "fact_types": fact_types,
-            "time_range": time_range,
-            "include_sources": include_sources,
-            "layer_weights": layer_weights,
-            "detail_level": detail_level,
-        }
 
     async def recall(
         self,
@@ -482,10 +453,14 @@ class Astrocyte:
             for bid in bank_ids:
                 self._policy.check_rate_and_quota(bid, "recall")
 
-            # Build kwargs dict from explicit params for internal helpers
-            _rk = self._recall_kwargs_dict(
-                external_context, fact_types, time_range,
-                include_sources, layer_weights, detail_level,
+            # Build typed params for internal helpers
+            _rp = RecallParams(
+                external_context=external_context,
+                fact_types=fact_types,
+                time_range=time_range,
+                include_sources=include_sources,
+                layer_weights=layer_weights,
+                detail_level=detail_level,
             )
 
             # Single bank — direct
@@ -496,12 +471,12 @@ class Astrocyte:
                     max_results,
                     max_tokens,
                     tags,
-                    _rk,
+                    _rp,
                 )
                 try:
                     self._policy.check_circuit(self._provider_name)
                     with timed() as t:
-                        result = await self._do_recall(request)
+                        result = await self._dispatcher.recall(request)
                     self._policy.record_success()
                     self._metrics.inc_counter(
                         "astrocyte_recall_total",
@@ -527,7 +502,7 @@ class Astrocyte:
                         },
                     )
                     if self._config.dlp.scan_recall_output:
-                        result = self._scan_recall_output(result)
+                        result = self._output_scanner.scan_recall(result)
                     return apply_recall_authority(result, self._config.recall_authority)
                 except ProviderUnavailable:
                     return self._policy.handle_degraded_recall(self._provider_name)
@@ -542,11 +517,11 @@ class Astrocyte:
                 max_results,
                 max_tokens,
                 tags,
-                _rk,
+                _rp,
                 strat,
             )
             if self._config.dlp.scan_recall_output:
-                result = self._scan_recall_output(result)
+                result = self._output_scanner.scan_recall(result)
             return apply_recall_authority(result, self._config.recall_authority)
 
     async def reflect(
@@ -598,7 +573,7 @@ class Astrocyte:
                 try:
                     self._policy.check_circuit(self._provider_name)
                     with timed() as t:
-                        result = await self._do_reflect(request)
+                        result = await self._dispatcher.reflect(request)
                     self._policy.record_success()
                 except ProviderUnavailable:
                     return ReflectResult(answer="Memory unavailable", sources=[])
@@ -610,16 +585,14 @@ class Astrocyte:
             else:
                 strat = _normalize_multi_bank_strategy(strategy)
                 with timed() as t:
-                    _rk = self._recall_kwargs_dict(
-                        None, None, None, include_sources, None, None,
-                    )
+                    _rp = RecallParams(include_sources=include_sources)
                     recall_result = await self._multi_bank.recall(
                         query,
                         bank_ids,
                         max_results=20,  # Larger set for synthesis context
                         max_tokens=None,  # Budget applied after synthesis
                         tags=tags,
-                        kwargs=_rk,
+                        params=_rp,
                         strategy=strat,
                     )
                     auth_ctx: str | None = None
@@ -627,7 +600,7 @@ class Astrocyte:
                     if ra.enabled and ra.apply_to_reflect:
                         recall_result = apply_recall_authority(recall_result, ra)
                         auth_ctx = recall_result.authority_context
-                    result = await self._do_reflect_from_hits(
+                    result = await self._dispatcher.reflect_from_hits(
                         query=query,
                         hits=recall_result.hits,
                         bank_id=primary_bank,
@@ -660,7 +633,7 @@ class Astrocyte:
                 },
             )
             if self._config.dlp.scan_reflect_output:
-                result = self._scan_reflect_output(result)
+                result = self._output_scanner.scan_reflect(result)
             return result
 
     async def clear_bank(
@@ -733,7 +706,7 @@ class Astrocyte:
                 before_date=before_date,
                 scope=scope,
             )
-            result = await self._do_forget(request)
+            result = await self._dispatcher.forget(request)
             await self._hook_manager.fire(
                 "on_forget",
                 bank_id=bank_id,
@@ -829,7 +802,7 @@ class Astrocyte:
                 "results may be incomplete. Use a pipeline with list_vectors support for full coverage.",
                 bank_id,
             )
-            result = await self._do_recall(RecallRequest(query="*", bank_id=bank_id, max_results=10000))
+            result = await self._dispatcher.recall(RecallRequest(query="*", bank_id=bank_id, max_results=10000))
             for hit in result.hits:
                 created_at = hit.metadata.get("_created_at") if hit.metadata else None
                 last_recalled = hit.metadata.get("_last_recalled_at") if hit.metadata else None
@@ -853,7 +826,7 @@ class Astrocyte:
         # Batch delete/archive
         deleted = 0
         if to_delete:
-            forget_result = await self._do_forget(ForgetRequest(bank_id=bank_id, memory_ids=to_delete))
+            forget_result = await self._dispatcher.forget(ForgetRequest(bank_id=bank_id, memory_ids=to_delete))
             deleted = forget_result.deleted_count
 
         archived = sum(1 for a in actions if a.action == "archive")
@@ -935,7 +908,7 @@ class Astrocyte:
         self._policy.check_access(bank_id, "admin", context)
 
         count = await _export(
-            recall_fn=self._do_recall,
+            recall_fn=self._dispatcher.recall,
             bank_id=bank_id,
             path=path,
             provider_name=self._provider_name,
@@ -964,7 +937,7 @@ class Astrocyte:
         self._policy.check_access(bank_id, "admin", context)
 
         result: ImportResult = await _import(
-            retain_fn=self._do_retain,
+            retain_fn=self._dispatcher.retain,
             bank_id=bank_id,
             path=path,
             on_conflict=on_conflict,
@@ -990,202 +963,20 @@ class Astrocyte:
         return self._config.provider or "pipeline"
 
     # ---------------------------------------------------------------------------
-    # DLP output scanning
+    # Backwards-compat thin wrappers (tests access these directly)
     # ---------------------------------------------------------------------------
 
-    def _scan_recall_output(self, result: RecallResult) -> RecallResult:
-        """Scan recall hits for PII. Redact/warn/reject per DLP config."""
-        if not self._dlp_scanner:
-            return result
-        action = self._config.dlp.output_pii_action
-        scanned_hits: list[MemoryHit] = []
-        for hit in result.hits:
-            matches = self._dlp_scanner.scan(hit.text)
-            if not matches:
-                scanned_hits.append(hit)
-                continue
-            if action == "reject":
-                continue  # Drop hit silently
-            if action == "redact":
-                redacted, _ = self._dlp_scanner.apply(hit.text)
-                scanned_hits.append(
-                    MemoryHit(
-                        text=redacted,
-                        score=hit.score,
-                        fact_type=hit.fact_type,
-                        metadata=hit.metadata,
-                        tags=hit.tags,
-                        occurred_at=hit.occurred_at,
-                        source=hit.source,
-                        memory_id=hit.memory_id,
-                        bank_id=hit.bank_id,
-                        memory_layer=hit.memory_layer,
-                        utility_score=hit.utility_score,
-                    )
-                )
-            else:
-                # warn — pass through with logging
-                self._logger.log(
-                    "astrocyte.dlp.recall_pii_detected",
-                    bank_id=hit.bank_id or "",
-                    operation="recall",
-                    data={"pii_types": ",".join(m.pii_type for m in matches), "memory_id": hit.memory_id or ""},
-                )
-                scanned_hits.append(hit)
-
-        return RecallResult(
-            hits=scanned_hits,
-            total_available=result.total_available,
-            truncated=result.truncated,
-            trace=result.trace,
-        )
-
-    def _scan_reflect_output(self, result: ReflectResult) -> ReflectResult:
-        """Scan reflect answer for PII. Redact/warn/reject per DLP config."""
-        if not self._dlp_scanner:
-            return result
-        matches = self._dlp_scanner.scan(result.answer)
-        if not matches:
-            return result
-
-        action = self._config.dlp.output_pii_action
-        if action == "reject":
-            return ReflectResult(
-                answer="",
-                confidence=None,
-                sources=result.sources,
-                observations=["Reflect output blocked by DLP policy: PII detected"],
-            )
-        if action == "redact":
-            redacted, _ = self._dlp_scanner.apply(result.answer)
-            return ReflectResult(
-                answer=redacted,
-                confidence=result.confidence,
-                sources=result.sources,
-                observations=result.observations,
-            )
-        # warn
-        self._logger.log(
-            "astrocyte.dlp.reflect_pii_detected",
-            operation="reflect",
-            data={"pii_types": ",".join(m.pii_type for m in matches)},
-        )
-        return result
-
-    # ---------------------------------------------------------------------------
-    # Provider dispatch
-    # ---------------------------------------------------------------------------
+    @property
+    def _tiered_retriever(self):
+        """Expose tiered retriever for testing/introspection."""
+        return self._dispatcher.tiered_retriever
 
     async def _do_retain(self, request: RetainRequest) -> RetainResult:
-        if self._engine_provider:
-            return await self._engine_provider.retain(request)
-        if self._pipeline:
-            return await self._pipeline.retain(request)
-        raise ConfigError("No provider or pipeline configured")
+        return await self._dispatcher.retain(request)
 
     async def _do_recall(self, request: RecallRequest) -> RecallResult:
-        if self._engine_provider:
-            if self._tiered_retriever is not None and self._config.tiered_retrieval.full_recall == "hybrid":
-                return await self._tiered_retriever.retrieve(request)
-            result = await self._engine_provider.recall(request)
-            # Hybrid merges pipeline (which already fuses external_context in RRF); do not merge twice.
-            from astrocyte.hybrid import HybridEngineProvider
-
-            if request.external_context and not isinstance(self._engine_provider, HybridEngineProvider):
-                return merge_external_into_recall_result(result, request.external_context, request.max_results)
-            return result
-        if self._pipeline:
-            if self._tiered_retriever is not None:
-                return await self._tiered_retriever.retrieve(request)
-            return await self._pipeline.recall(request)
-        raise ConfigError("No provider or pipeline configured")
-
-    async def _do_reflect(self, request: ReflectRequest) -> ReflectResult:
-        # Check if provider supports reflect
-        if self._engine_provider:
-            if self._capabilities and self._capabilities.supports_reflect:
-                return await self._engine_provider.reflect(request)
-            # Fallback
-            if self._config.fallback_strategy == "error":
-                raise CapabilityNotSupported(self._provider_name, "reflect")
-            if self._config.fallback_strategy == "degrade":
-                # Return recall results as-is
-                recall_result = await self._do_recall(
-                    RecallRequest(query=request.query, bank_id=request.bank_id, max_results=10)
-                )
-                return ReflectResult(
-                    answer="\n".join(h.text for h in recall_result.hits),
-                    sources=recall_result.hits,
-                )
-            # local_llm fallback needs pipeline's reflect
-            if self._pipeline:
-                return await self._pipeline.reflect(request)
-            raise CapabilityNotSupported(self._provider_name, "reflect")
-
-        if self._pipeline:
-            return await self._pipeline.reflect(request)
-
-        raise ConfigError("No provider or pipeline configured")
+        return await self._dispatcher.recall(request)
 
     async def _do_forget(self, request: ForgetRequest) -> ForgetResult:
-        if self._engine_provider:
-            if self._capabilities and self._capabilities.supports_forget:
-                return await self._engine_provider.forget(request)
-            raise CapabilityNotSupported(self._provider_name, "forget")
-        # Pipeline: delete from vector store
-        if self._pipeline:
-            if request.scope == "all" and hasattr(self._pipeline.vector_store, "list_vectors"):
-                # Delete all vectors in bank by paginating through them
-                total_deleted = 0
-                while True:
-                    batch = await self._pipeline.vector_store.list_vectors(request.bank_id, offset=0, limit=100)
-                    if not batch:
-                        break
-                    ids = [v.id for v in batch]
-                    total_deleted += await self._pipeline.vector_store.delete(ids, request.bank_id)
-                return ForgetResult(deleted_count=total_deleted)
-            if request.memory_ids:
-                count = await self._pipeline.vector_store.delete(request.memory_ids, request.bank_id)
-                return ForgetResult(deleted_count=count)
-        raise CapabilityNotSupported(self._provider_name, "forget")
-
-    async def _do_reflect_from_hits(
-        self,
-        query: str,
-        hits: list[MemoryHit],
-        bank_id: str,
-        max_tokens: int | None = None,
-        dispositions: Any = None,
-        authority_context: str | None = None,
-    ) -> ReflectResult:
-        """Synthesize over pre-fetched hits (used by multi-bank reflect).
-
-        Tries in order:
-        1. Pipeline reflect (if available) — builds a ReflectRequest, recall is skipped
-           because we already have hits, so we call synthesize() directly.
-        2. Engine reflect with degrade fallback — concatenate hit texts.
-        3. Raise if nothing can synthesize.
-        """
-        # If we have a pipeline with an LLM, use its synthesis directly
-        if self._pipeline:
-            from astrocyte.pipeline.reflect import synthesize
-
-            return await synthesize(
-                query=query,
-                hits=hits,
-                llm_provider=self._pipeline.llm_provider,
-                dispositions=dispositions,
-                max_tokens=max_tokens or 2048,
-                authority_context=authority_context,
-            )
-
-        # If engine supports reflect, we can't easily pass pre-fetched hits to it,
-        # so fall back to degrade mode: concatenate hit texts as the answer.
-        if hits:
-            return ReflectResult(
-                answer="\n".join(h.text for h in hits),
-                sources=hits,
-            )
-
-        return ReflectResult(answer="No relevant memories found across banks.", sources=[])
+        return await self._dispatcher.forget(request)
 

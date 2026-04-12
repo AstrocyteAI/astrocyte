@@ -16,6 +16,13 @@ from astrocyte.types import AccessGrant
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
+_BASE_SENSITIVE_FIELD_KEYS = (
+    "api_key",
+    "password",
+    "token",
+    "secret",
+)
+
 # ---------------------------------------------------------------------------
 # Profile directory (shipped inside the package)
 # ---------------------------------------------------------------------------
@@ -69,7 +76,7 @@ class ValidationConfig:
 
 @dataclass
 class MetadataSanitizationConfig:
-    blocked_keys: list[str] = field(default_factory=lambda: ["api_key", "password", "token", "secret"])
+    blocked_keys: list[str] = field(default_factory=lambda: list(_BASE_SENSITIVE_FIELD_KEYS))
     max_metadata_size_bytes: int = 4096
 
 
@@ -515,16 +522,24 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def _filter_dataclass_fields(cls: type, data: dict) -> dict:
-    """Filter dict to only keys that are valid fields of the dataclass. Prevents TypeError on unknown keys."""
+def _filter_dataclass_fields(cls: type, data: dict, *, drop_none: bool = False) -> dict:
+    """Filter dict to valid dataclass fields; optionally drop ``None`` values."""
     valid = {f.name for f in fields(cls)}
-    return {k: v for k, v in data.items() if k in valid}
+    return {k: v for k, v in data.items() if k in valid and (not drop_none or v is not None)}
 
 
-_SENSITIVE_FIELD_PATTERNS = frozenset({
-    "api_key", "secret", "token", "password", "dsn", "connection_string",
-    "credentials", "auth", "jwks_url", "issuer", "audience",
-})
+_SENSITIVE_FIELD_PATTERNS = frozenset(
+    _BASE_SENSITIVE_FIELD_KEYS
+    + (
+        "dsn",
+        "connection_string",
+        "credentials",
+        "auth",
+        "jwks_url",
+        "issuer",
+        "audience",
+    )
+)
 
 
 def _is_sensitive_field(ref: str) -> bool:
@@ -548,10 +563,8 @@ def _parse_homeostasis(data: dict) -> HomeostasisConfig:
         recall_max_tokens=data.get("recall_max_tokens"),
         reflect_max_tokens=data.get("reflect_max_tokens"),
         retain_max_content_bytes=data.get("retain_max_content_bytes"),
-        rate_limits=RateLimitConfig(
-            **_filter_dataclass_fields(RateLimitConfig, {k: v for k, v in rl.items() if v is not None})
-        ),
-        quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, {k: v for k, v in q.items() if v is not None})),
+        rate_limits=RateLimitConfig(**_filter_dataclass_fields(RateLimitConfig, rl, drop_none=True)),
+        quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, q, drop_none=True)),
     )
 
 
@@ -675,9 +688,19 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
 
     if "access_grants" in data and data["access_grants"]:
         grants: list[AccessGrant] = []
-        for row in data["access_grants"]:
+        for idx, row in enumerate(data["access_grants"]):
             if not isinstance(row, dict):
                 continue
+            required_keys = ("bank_id", "principal", "permissions")
+            missing = [k for k in required_keys if k not in row]
+            if missing:
+                raise ConfigError(
+                    f"Invalid access_grants entry at index {idx}: missing required field(s): {', '.join(missing)}"
+                )
+            if not isinstance(row["permissions"], list):
+                raise ConfigError(
+                    f"Invalid access_grants entry at index {idx}: 'permissions' must be a list."
+                )
             grants.append(
                 AccessGrant(
                     bank_id=str(row["bank_id"]),
@@ -924,9 +947,14 @@ def access_grants_for_astrocyte(config: AstrocyteConfig) -> list[AccessGrant]:
         for bank_id, bc in config.banks.items():
             if not bc.access:
                 continue
-            for row in bc.access:
+            for idx, row in enumerate(bc.access):
                 if not isinstance(row, dict):
                     continue
+                label = f"banks.{bank_id}.access[{idx}]"
+                if "principal" not in row:
+                    raise ConfigError(f"{label} missing required key: principal")
+                if "permissions" not in row or not isinstance(row["permissions"], list):
+                    raise ConfigError(f"{label} missing or invalid 'permissions' (must be a list)")
                 out.append(
                     AccessGrant(
                         bank_id=bank_id,
