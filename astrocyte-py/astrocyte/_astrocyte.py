@@ -6,17 +6,15 @@ multi-bank orchestration, and hook dispatch.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import re
-import threading
-import uuid
-from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from astrocyte._hooks import HookHandler, HookManager
+from astrocyte._multi_bank import MultiBankOrchestrator
+from astrocyte._policy import PolicyEnforcer
+from astrocyte._validation import validate_bank_id
 from astrocyte.analytics import BankMetricsCollector, compute_bank_health, counters_to_quality_point
 from astrocyte.config import AstrocyteConfig, load_config
 from astrocyte.errors import (
@@ -24,14 +22,11 @@ from astrocyte.errors import (
     CapabilityNotSupported,
     ConfigError,
     ProviderUnavailable,
-    RateLimited,
 )
-from astrocyte.identity import BankResolver, accessible_read_banks, context_principal_label, effective_permissions
+from astrocyte.identity import context_principal_label
 from astrocyte.lifecycle import LifecycleManager
 from astrocyte.mip.router import MipRouter
-from astrocyte.policy.barriers import ContentValidator, MetadataSanitizer, PiiScanner
-from astrocyte.policy.escalation import CircuitBreaker, DegradedModeHandler
-from astrocyte.policy.homeostasis import QuotaTracker, RateLimiter, enforce_token_budget
+from astrocyte.policy.barriers import PiiScanner
 from astrocyte.policy.observability import MetricsCollector, StructuredLogger, span, timed
 from astrocyte.recall.authority import apply_recall_authority
 from astrocyte.recall.merge_result import merge_external_into_recall_result
@@ -43,7 +38,6 @@ from astrocyte.types import (
     ForgetRequest,
     ForgetResult,
     HealthStatus,
-    HookEvent,
     LegalHold,
     LifecycleRunResult,
     MemoryHit,
@@ -62,9 +56,6 @@ if TYPE_CHECKING:
     from astrocyte.pipeline.tiered_retrieval import TieredRetriever
     from astrocyte.provider import EngineProvider
 
-# Hook handler type — FFI-safe: takes a HookEvent, returns an awaitable or None.
-HookHandler = Callable[[HookEvent], Awaitable[None] | None]
-
 logger = logging.getLogger("astrocyte")
 
 
@@ -80,57 +71,8 @@ def _normalize_multi_bank_strategy(
     raise ConfigError(f"Unknown multi-bank strategy: {strategy!r}")
 
 
-_BANK_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:@\-]{0,254}$")
-
-
-def _validate_bank_id(bank_id: str) -> None:
-    """Validate bank_id format: 1–255 chars, alphanumeric start, safe characters only."""
-    if not bank_id or not _BANK_ID_RE.match(bank_id):
-        raise ConfigError(
-            f"Invalid bank_id {bank_id!r}: must be 1–255 characters, "
-            "start with alphanumeric, and contain only [a-zA-Z0-9._:@-]"
-        )
-
-
-def _bank_visit_order(bank_ids: list[str], cascade_order: list[str] | None) -> list[str]:
-    if not cascade_order:
-        return list(bank_ids)
-    out: list[str] = []
-    seen: set[str] = set()
-    for b in cascade_order:
-        if b in bank_ids and b not in seen:
-            out.append(b)
-            seen.add(b)
-    for b in bank_ids:
-        if b not in seen:
-            out.append(b)
-            seen.add(b)
-    return out
-
-
-def _dedupe_hits_by_text(hits: list[MemoryHit]) -> list[MemoryHit]:
-    """One hit per distinct text, keeping the highest-scoring instance."""
-    best: dict[str, MemoryHit] = {}
-    for h in hits:
-        prev = best.get(h.text)
-        if prev is None or h.score > prev.score:
-            best[h.text] = h
-    return sorted(best.values(), key=lambda x: x.score, reverse=True)
-
-
-def _apply_bank_weights(hits: list[MemoryHit], weights: dict[str, float] | None) -> list[MemoryHit]:
-    if not weights:
-        return list(hits)
-    out: list[MemoryHit] = []
-    for h in hits:
-        bid = h.bank_id or ""
-        w = float(weights.get(bid, 1.0))
-        out.append(replace(h, score=h.score * w))
-    return out
-
-
-def _tag_hits_with_bank(hits: list[MemoryHit], bank_id: str) -> list[MemoryHit]:
-    return [replace(h, bank_id=bank_id) if h.bank_id is None else h for h in hits]
+# Re-export for backwards compatibility (tests import _validate_bank_id from here)
+_validate_bank_id = validate_bank_id
 
 
 class Astrocyte:
@@ -146,60 +88,12 @@ class Astrocyte:
         self._config = config
         self._logger = StructuredLogger(level=config.observability.log_level)
 
-        # Policy layer
-        self._pii_scanner = PiiScanner(
-            mode=config.barriers.pii.mode,
-            action=config.barriers.pii.action,
-            countries=config.barriers.pii.countries,
-            type_overrides=config.barriers.pii.type_overrides,
-        )
-        self._content_validator = ContentValidator(
-            max_content_length=config.barriers.validation.max_content_length,
-            reject_empty=config.barriers.validation.reject_empty_content,
-            allowed_content_types=config.barriers.validation.allowed_content_types,
-        )
-        self._metadata_sanitizer = MetadataSanitizer(
-            blocked_keys=config.barriers.metadata.blocked_keys,
-            max_size_bytes=config.barriers.metadata.max_metadata_size_bytes,
-        )
-        self._quota_tracker = QuotaTracker()
-        self._rate_quota_lock = threading.Lock()
-
-        # Rate limiters (per operation)
-        self._rate_limiters: dict[str, RateLimiter] = {}
-        rl = config.homeostasis.rate_limits
-        if rl.retain_per_minute:
-            self._rate_limiters["retain"] = RateLimiter(rl.retain_per_minute)
-        if rl.recall_per_minute:
-            self._rate_limiters["recall"] = RateLimiter(rl.recall_per_minute)
-        if rl.reflect_per_minute:
-            self._rate_limiters["reflect"] = RateLimiter(rl.reflect_per_minute)
-
-        # Circuit breaker
-        cb = config.escalation.circuit_breaker
-        self._circuit_breaker = CircuitBreaker(
-            failure_threshold=cb.failure_threshold,
-            recovery_timeout_seconds=cb.recovery_timeout_seconds,
-            half_open_max_calls=cb.half_open_max_calls,
-        )
-        self._degraded_handler = DegradedModeHandler(mode=config.escalation.degraded_mode)
-
-        # Quotas (daily limits)
-        self._quota_limits: dict[str, int | None] = {
-            "retain": config.homeostasis.quotas.retain_per_day,
-            "reflect": config.homeostasis.quotas.reflect_per_day,
-        }
+        # Extracted subsystems
+        self._policy = PolicyEnforcer(config)
+        self._hook_manager = HookManager(self._logger)
 
         # Metrics
         self._metrics = MetricsCollector(enabled=config.observability.prometheus_enabled)
-
-        # Access control
-        self._access_grants: list[AccessGrant] = []
-
-        # Hooks — typed as HookHandler (not Any)
-        # Lock protects against concurrent register_hook + _fire_hooks
-        self._hooks: dict[str, list[HookHandler]] = {}
-        self._hooks_lock = threading.Lock()
 
         # DLP output scanner (always regex, independent of input PII config)
         self._dlp_scanner: PiiScanner | None = None
@@ -226,6 +120,9 @@ class Astrocyte:
         self._capabilities: EngineCapabilities | None = None
         # Tiered retrieval (optional; wired when ``tiered_retrieval.enabled`` and pipeline is set)
         self._tiered_retriever: TieredRetriever | None = None
+
+        # Multi-bank orchestrator (wired lazily after provider is set)
+        self._multi_bank: MultiBankOrchestrator | None = None
 
     @property
     def config(self) -> AstrocyteConfig:
@@ -262,6 +159,7 @@ class Astrocyte:
         if hasattr(provider, "capabilities"):
             self._capabilities = provider.capabilities()
         self._rebuild_tiered_retrieval()
+        self._rebuild_multi_bank()
 
     def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
@@ -274,6 +172,7 @@ class Astrocyte:
         if self._mip_router and hasattr(pipeline, "llm_provider"):
             self._mip_router._llm_provider = pipeline.llm_provider
         self._rebuild_tiered_retrieval()
+        self._rebuild_multi_bank()
 
     def _rebuild_tiered_retrieval(self) -> None:
         """Construct :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` when enabled."""
@@ -314,133 +213,28 @@ class Astrocyte:
             full_recall=full_recall_fn,
         )
 
+    def _rebuild_multi_bank(self) -> None:
+        """Rebuild MultiBankOrchestrator when provider changes."""
+        self._multi_bank = MultiBankOrchestrator(
+            do_recall=self._do_recall,
+            make_request=self._make_recall_request,
+            circuit_breaker_record_failure=self._policy.record_failure,
+            metrics=self._metrics,
+            provider_name=self._provider_name,
+        )
+
     def set_access_grants(self, grants: list[AccessGrant]) -> None:
         """Configure access grants."""
-        self._access_grants = grants
+        self._policy.set_access_grants(grants)
+
+    @property
+    def _rate_limiters(self) -> dict:
+        """Expose rate limiters for testing/introspection."""
+        return self._policy._rate_limiters
 
     def register_hook(self, event_type: str, handler: HookHandler) -> None:
         """Register an event hook handler."""
-        with self._hooks_lock:
-            if event_type not in self._hooks:
-                self._hooks[event_type] = []
-            self._hooks[event_type].append(handler)
-
-    # ---------------------------------------------------------------------------
-    # Hook dispatch
-    # ---------------------------------------------------------------------------
-
-    async def _fire_hooks(
-        self,
-        event_type: str,
-        bank_id: str | None = None,
-        data: dict[str, str | int | float | bool | None] | None = None,
-    ) -> None:
-        """Fire all registered hooks for an event type. Non-blocking, failures logged."""
-        with self._hooks_lock:
-            handlers = list(self._hooks.get(event_type, []))
-        if not handlers:
-            return
-        event = HookEvent(
-            event_id=uuid.uuid4().hex,
-            type=event_type,
-            timestamp=datetime.now(timezone.utc),
-            bank_id=bank_id,
-            data=data,
-        )
-        for handler in handlers:
-            try:
-                result = handler(event)
-                if asyncio.iscoroutine(result) or asyncio.isfuture(result):
-                    await result
-            except Exception:
-                self._logger.log(
-                    "astrocyte.hook.error",
-                    bank_id=bank_id,
-                    data={"event_type": event_type},
-                    level=logging.WARNING,
-                )
-
-    # ---------------------------------------------------------------------------
-    # Quota enforcement
-    # ---------------------------------------------------------------------------
-
-    def _check_quota(self, bank_id: str, operation: str) -> None:
-        """Check daily quota. Raises RateLimited if exceeded."""
-        limit = self._quota_limits.get(operation)
-        if not self._quota_tracker.check(bank_id, operation, limit):
-            raise RateLimited(bank_id=bank_id, operation=operation)
-
-    # ---------------------------------------------------------------------------
-    # Access control
-    # ---------------------------------------------------------------------------
-
-    def _make_bank_resolver(self) -> BankResolver:
-        i = self._config.identity
-        return BankResolver(
-            user_prefix=i.user_bank_prefix,
-            agent_prefix=i.agent_bank_prefix,
-            service_prefix=i.service_bank_prefix,
-        )
-
-    def _resolve_read_bank_ids(
-        self,
-        bank_id: str | None,
-        banks: list[str] | None,
-        context: AstrocyteContext | None,
-    ) -> list[str]:
-        """Resolve bank list for recall/reflect; optional identity-driven auto-resolve."""
-        bank_ids = banks or ([bank_id] if bank_id else [])
-        if not bank_ids and self._config.identity.auto_resolve_banks and context is not None:
-            known = list((self._config.banks or {}).keys())
-            bank_ids = accessible_read_banks(
-                context,
-                self._access_grants,
-                known_bank_ids=known or None,
-                resolver=self._make_bank_resolver(),
-            )
-        if not bank_ids:
-            raise ConfigError("Either bank_id or banks must be provided")
-        for bid in bank_ids:
-            _validate_bank_id(bid)
-        return bank_ids
-
-    def _check_access(self, bank_id: str, permission: str, context: AstrocyteContext | None) -> None:
-        """Check access control. Raises AccessDenied if denied."""
-        if not self._config.access_control.enabled:
-            return
-        if context is None:
-            if self._config.access_control.default_policy == "open":
-                return
-            raise AccessDenied("anonymous", bank_id, permission)
-
-        eff = effective_permissions(context, self._access_grants, bank_id)
-        if permission in eff:
-            return
-
-        if self._config.access_control.default_policy == "open":
-            return
-
-        raise AccessDenied(context_principal_label(context), bank_id, permission)
-
-    # ---------------------------------------------------------------------------
-    # Rate limiting
-    # ---------------------------------------------------------------------------
-
-    def _check_rate_limit(self, bank_id: str, operation: str) -> None:
-        """Check rate limit for operation."""
-        limiter = self._rate_limiters.get(operation)
-        if limiter:
-            limiter.check_and_record(bank_id, operation)
-
-    def _check_rate_and_quota(self, bank_id: str, operation: str) -> None:
-        """Atomically check rate limit and quota under a shared lock.
-
-        Prevents TOCTOU: without this, a concurrent request could pass between
-        separate rate limit and quota checks.
-        """
-        with self._rate_quota_lock:
-            self._check_rate_limit(bank_id, operation)
-            self._check_quota(bank_id, operation)
+        self._hook_manager.register(event_type, handler)
 
     # ---------------------------------------------------------------------------
     # Public API
@@ -469,20 +263,15 @@ class Astrocyte:
             source: Origin identifier for the content.
             pii_detected: Whether PII was already detected upstream.
         """
-        _validate_bank_id(bank_id)
+        validate_bank_id(bank_id)
         with span("astrocyte.retain", {"astrocyte.bank_id": bank_id}):
             # Input size validation — reject oversized content before pipeline processing
-            max_content_bytes = self._config.homeostasis.retain_max_content_bytes
-            if max_content_bytes and len(content.encode("utf-8")) > max_content_bytes:
-                return RetainResult(
-                    stored=False,
-                    error=f"Content exceeds maximum size ({len(content.encode('utf-8'))} > {max_content_bytes} bytes)",
-                )
-            if tags and len(tags) > 100:
-                return RetainResult(stored=False, error=f"Too many tags ({len(tags)} > 100)")
+            input_error = self._policy.validate_retain_input(content, tags)
+            if input_error:
+                return RetainResult(stored=False, error=input_error)
 
             # Access control
-            self._check_access(bank_id, "write", context)
+            self._policy.check_access(bank_id, "write", context)
 
             # MIP routing (before policy layer)
             if self._mip_router:
@@ -500,7 +289,7 @@ class Astrocyte:
                 if routing.bank_id:
                     # Re-check access for new bank
                     if routing.bank_id != bank_id:
-                        self._check_access(routing.bank_id, "write", context)
+                        self._policy.check_access(routing.bank_id, "write", context)
                     bank_id = routing.bank_id
                 if routing.tags is not None:
                     tags = routing.tags
@@ -508,40 +297,38 @@ class Astrocyte:
                     return RetainResult(stored=False, error="Rejected by MIP routing rule")
 
             # Rate limiting + quota (atomic to prevent TOCTOU)
-            self._check_rate_and_quota(bank_id, "retain")
+            self._policy.check_rate_and_quota(bank_id, "retain")
 
             # Content validation
-            errors = self._content_validator.validate(content, content_type)
+            errors = self._policy.validate_content(content, content_type)
             if errors:
                 return RetainResult(stored=False, error="; ".join(errors))
 
             # PII scanning (async for LLM/rules_then_llm modes)
-            if self._config.barriers.pii.mode in ("llm", "rules_then_llm"):
-                content, pii_matches = await self._pii_scanner.apply_async(content)
-            else:
-                content, pii_matches = self._pii_scanner.apply(content)
+            content, pii_matches = await self._policy.scan_pii(content, self._config.barriers.pii.mode)
             if pii_matches:
+                pii_action = self._policy.pii_action
                 self._logger.log(
                     "astrocyte.policy.pii_detected",
                     bank_id=bank_id,
                     operation="retain",
-                    data={"pii_types": ",".join(m.pii_type for m in pii_matches), "action": self._pii_scanner.action},
+                    data={"pii_types": ",".join(m.pii_type for m in pii_matches), "action": pii_action},
                 )
                 self._metrics.inc_counter(
                     "astrocyte_pii_detected_total",
-                    {"bank_id": bank_id, "action": self._pii_scanner.action},
+                    {"bank_id": bank_id, "action": pii_action},
                 )
-                await self._fire_hooks(
+                await self._hook_manager.fire(
                     "on_pii_detected",
                     bank_id=bank_id,
                     data={
                         "pii_types": ",".join(m.pii_type for m in pii_matches),
-                        "action": self._pii_scanner.action,
+                        "action": pii_action,
                     },
                 )
 
             # Metadata sanitization
-            metadata, meta_warnings = self._metadata_sanitizer.sanitize(metadata)
+            metadata, meta_warnings = self._policy.sanitize_metadata(metadata)
 
             # Build request
             request = RetainRequest(
@@ -557,11 +344,11 @@ class Astrocyte:
 
             # Route to provider
             try:
-                self._circuit_breaker.check(self._provider_name)
+                self._policy.check_circuit(self._provider_name)
                 with timed() as t:
                     result = await self._do_retain(request)
-                self._circuit_breaker.record_success()
-                self._quota_tracker.record(bank_id, "retain")
+                self._policy.record_success()
+                self._policy.record_quota(bank_id, "retain")
                 self._metrics.inc_counter(
                     "astrocyte_retain_total",
                     {"bank_id": bank_id, "provider": self._provider_name, "status": "ok"},
@@ -576,7 +363,7 @@ class Astrocyte:
                     len(content),
                     deduplicated=getattr(result, "deduplicated", False),
                 )
-                await self._fire_hooks(
+                await self._hook_manager.fire(
                     "on_retain",
                     bank_id=bank_id,
                     data={
@@ -586,10 +373,10 @@ class Astrocyte:
                 )
                 return result
             except ProviderUnavailable:
-                self._degraded_handler.handle_retain(self._provider_name)
+                self._policy.handle_degraded_retain(self._provider_name)
                 return RetainResult(stored=False, error="Provider unavailable (degraded mode)")
             except Exception:
-                self._circuit_breaker.record_failure()
+                self._policy.record_failure()
                 self._metrics.inc_counter(
                     "astrocyte_retain_total",
                     {"bank_id": bank_id, "provider": self._provider_name, "status": "error"},
@@ -682,18 +469,18 @@ class Astrocyte:
         :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` for cheap tiers.
         """
         # Resolve bank(s)
-        bank_ids = self._resolve_read_bank_ids(bank_id, banks, context)
+        bank_ids = self._policy.resolve_read_bank_ids(bank_id, banks, context)
 
         max_tokens = max_tokens or self._config.homeostasis.recall_max_tokens
 
         with span("astrocyte.recall", {"astrocyte.bank_count": len(bank_ids), "astrocyte.bank_id": bank_ids[0] if len(bank_ids) == 1 else f"{bank_ids[0]}+{len(bank_ids)-1}"}):
             # Access control for all banks
             for bid in bank_ids:
-                self._check_access(bid, "read", context)
+                self._policy.check_access(bid, "read", context)
 
             # Rate limiting + quota (atomic per-bank)
             for bid in bank_ids:
-                self._check_rate_and_quota(bid, "recall")
+                self._policy.check_rate_and_quota(bid, "recall")
 
             # Build kwargs dict from explicit params for internal helpers
             _rk = self._recall_kwargs_dict(
@@ -712,10 +499,10 @@ class Astrocyte:
                     _rk,
                 )
                 try:
-                    self._circuit_breaker.check(self._provider_name)
+                    self._policy.check_circuit(self._provider_name)
                     with timed() as t:
                         result = await self._do_recall(request)
-                    self._circuit_breaker.record_success()
+                    self._policy.record_success()
                     self._metrics.inc_counter(
                         "astrocyte_recall_total",
                         {"bank_id": bank_ids[0], "provider": self._provider_name, "status": "ok"},
@@ -731,7 +518,7 @@ class Astrocyte:
                         len(result.hits),
                         top_score,
                     )
-                    await self._fire_hooks(
+                    await self._hook_manager.fire(
                         "on_recall",
                         bank_id=bank_ids[0],
                         data={
@@ -743,13 +530,13 @@ class Astrocyte:
                         result = self._scan_recall_output(result)
                     return apply_recall_authority(result, self._config.recall_authority)
                 except ProviderUnavailable:
-                    return self._degraded_handler.handle_recall(self._provider_name)
+                    return self._policy.handle_degraded_recall(self._provider_name)
                 except Exception:
-                    self._circuit_breaker.record_failure()
+                    self._policy.record_failure()
                     raise
 
             strat = _normalize_multi_bank_strategy(strategy)
-            result = await self._multi_bank_recall(
+            result = await self._multi_bank.recall(
                 query,
                 bank_ids,
                 max_results,
@@ -786,7 +573,7 @@ class Astrocyte:
         recall across multiple banks and synthesize over the fused results.
         """
         # Resolve bank(s)
-        bank_ids = self._resolve_read_bank_ids(bank_id, banks, context)
+        bank_ids = self._policy.resolve_read_bank_ids(bank_id, banks, context)
 
         max_tokens = max_tokens or self._config.homeostasis.reflect_max_tokens
         primary_bank = bank_ids[0]
@@ -794,10 +581,10 @@ class Astrocyte:
         with span("astrocyte.reflect", {"astrocyte.bank_count": len(bank_ids), "astrocyte.bank_id": bank_ids[0] if len(bank_ids) == 1 else f"{bank_ids[0]}+{len(bank_ids)-1}"}):
             # Access control for all banks
             for bid in bank_ids:
-                self._check_access(bid, "read", context)
+                self._policy.check_access(bid, "read", context)
 
             for bid in bank_ids:
-                self._check_rate_and_quota(bid, "reflect")
+                self._policy.check_rate_and_quota(bid, "reflect")
 
             # ── Single bank: delegate to provider/pipeline reflect ──
             if len(bank_ids) == 1:
@@ -809,14 +596,14 @@ class Astrocyte:
                     dispositions=dispositions,
                 )
                 try:
-                    self._circuit_breaker.check(self._provider_name)
+                    self._policy.check_circuit(self._provider_name)
                     with timed() as t:
                         result = await self._do_reflect(request)
-                    self._circuit_breaker.record_success()
+                    self._policy.record_success()
                 except ProviderUnavailable:
                     return ReflectResult(answer="Memory unavailable", sources=[])
                 except Exception:
-                    self._circuit_breaker.record_failure()
+                    self._policy.record_failure()
                     raise
 
             # ── Multi-bank: recall across banks, then synthesize ──
@@ -826,7 +613,7 @@ class Astrocyte:
                     _rk = self._recall_kwargs_dict(
                         None, None, None, include_sources, None, None,
                     )
-                    recall_result = await self._multi_bank_recall(
+                    recall_result = await self._multi_bank.recall(
                         query,
                         bank_ids,
                         max_results=20,  # Larger set for synthesis context
@@ -853,7 +640,7 @@ class Astrocyte:
                 primary_bank,
                 success=bool(result.answer.strip()),
             )
-            self._quota_tracker.record(primary_bank, "reflect")
+            self._policy.record_quota(primary_bank, "reflect")
             self._metrics.inc_counter(
                 "astrocyte_reflect_total",
                 {"bank_id": ",".join(bank_ids), "provider": self._provider_name, "status": "ok"},
@@ -863,7 +650,7 @@ class Astrocyte:
                 t["elapsed_ms"] / 1000,
                 {"bank_id": ",".join(bank_ids), "provider": self._provider_name},
             )
-            await self._fire_hooks(
+            await self._hook_manager.fire(
                 "on_reflect",
                 bank_id=primary_bank,
                 data={
@@ -905,14 +692,14 @@ class Astrocyte:
             reason: Audit reason when ``compliance=True``.
             before_date: Delete memories created before this date.
         """
-        _validate_bank_id(bank_id)
+        validate_bank_id(bank_id)
         with span("astrocyte.forget", {"astrocyte.bank_id": bank_id}):
             # scope="all" requires admin permission
             if scope == "all":
                 if self._config.access_control.enabled:
-                    self._check_access(bank_id, "admin", context)
+                    self._policy.check_access(bank_id, "admin", context)
             else:
-                self._check_access(bank_id, "forget", context)
+                self._policy.check_access(bank_id, "forget", context)
 
             # Legal hold check — compliance=True bypasses for right-to-forget.
             # Even when access_control is disabled, compliance bypass requires
@@ -921,8 +708,6 @@ class Astrocyte:
                 self._lifecycle.check_forget_allowed(bank_id)
             else:
                 if context is None:
-                    from astrocyte.errors import AccessDenied
-
                     raise AccessDenied("anonymous", bank_id, "compliance_forget")
                 # Log compliance forget with actor identity for audit trail
                 principal_label = context_principal_label(context)
@@ -939,7 +724,7 @@ class Astrocyte:
                 )
                 # When access control is enabled, also require admin permission
                 if self._config.access_control.enabled:
-                    self._check_access(bank_id, "admin", context)
+                    self._policy.check_access(bank_id, "admin", context)
 
             request = ForgetRequest(
                 bank_id=bank_id,
@@ -949,7 +734,7 @@ class Astrocyte:
                 scope=scope,
             )
             result = await self._do_forget(request)
-            await self._fire_hooks(
+            await self._hook_manager.fire(
                 "on_forget",
                 bank_id=bank_id,
                 data={
@@ -1147,7 +932,7 @@ class Astrocyte:
         """
         from astrocyte.portability import export_bank as _export
 
-        self._check_access(bank_id, "admin", context)
+        self._policy.check_access(bank_id, "admin", context)
 
         count = await _export(
             recall_fn=self._do_recall,
@@ -1157,7 +942,7 @@ class Astrocyte:
             include_embeddings=include_embeddings,
             include_entities=include_entities,
         )
-        await self._fire_hooks("on_export", bank_id=bank_id, data={"memory_count": count, "path": path})
+        await self._hook_manager.fire("on_export", bank_id=bank_id, data={"memory_count": count, "path": path})
         return count
 
     async def import_bank(
@@ -1176,7 +961,7 @@ class Astrocyte:
         from astrocyte.portability import ImportResult
         from astrocyte.portability import import_bank as _import
 
-        self._check_access(bank_id, "admin", context)
+        self._policy.check_access(bank_id, "admin", context)
 
         result: ImportResult = await _import(
             retain_fn=self._do_retain,
@@ -1185,7 +970,7 @@ class Astrocyte:
             on_conflict=on_conflict,
             progress_fn=progress_fn,
         )
-        await self._fire_hooks(
+        await self._hook_manager.fire(
             "on_import",
             bank_id=bank_id,
             data={
@@ -1404,150 +1189,3 @@ class Astrocyte:
 
         return ReflectResult(answer="No relevant memories found across banks.", sources=[])
 
-    async def _multi_bank_recall(
-        self,
-        query: str,
-        bank_ids: list[str],
-        max_results: int,
-        max_tokens: int | None,
-        tags: list[str] | None,
-        kwargs: dict[str, Any],
-        strategy: MultiBankStrategy,
-    ) -> RecallResult:
-        """Multi-bank recall — strategy dispatch."""
-        if strategy.mode == "parallel":
-            return await self._multi_bank_recall_parallel(
-                query, bank_ids, max_results, max_tokens, tags, kwargs, strategy
-            )
-        if strategy.mode == "cascade":
-            return await self._multi_bank_recall_cascade(
-                query, bank_ids, max_results, max_tokens, tags, kwargs, strategy
-            )
-        if strategy.mode == "first_match":
-            return await self._multi_bank_recall_first_match(
-                query, bank_ids, max_results, max_tokens, tags, kwargs, strategy
-            )
-        raise ConfigError(f"Unknown multi-bank mode: {strategy.mode!r}")
-
-    async def _multi_bank_recall_parallel(
-        self,
-        query: str,
-        bank_ids: list[str],
-        max_results: int,
-        max_tokens: int | None,
-        tags: list[str] | None,
-        kwargs: dict[str, Any],
-        strategy: MultiBankStrategy,
-    ) -> RecallResult:
-        reqs: list[RecallRequest] = []
-        for bid in bank_ids:
-            reqs.append(
-                await self._make_recall_request(query, bid, max_results, None, tags, kwargs),
-            )
-        tasks = [self._do_recall(r) for r in reqs]
-
-        # Timeout prevents a single hung provider from blocking all banks.
-        # 30s is generous — individual provider timeouts should be shorter.
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=30.0,
-            )
-        except asyncio.TimeoutError:
-            logger.error("Multi-bank parallel recall timed out after 30s for banks: %s", bank_ids)
-            self._metrics.inc_counter(
-                "astrocyte_multi_bank_recall_timeout_total",
-                {"bank_ids": ",".join(bank_ids)},
-            )
-            return RecallResult(hits=[], total_available=0, truncated=False)
-
-        all_hits: list[MemoryHit] = []
-        total_available = 0
-        for bid, result in zip(bank_ids, results):
-            if isinstance(result, RecallResult):
-                all_hits.extend(_tag_hits_with_bank(result.hits, bid))
-                total_available += result.total_available
-            elif isinstance(result, BaseException):
-                logger.warning("Multi-bank recall failed for bank '%s': %s", bid, result)
-                self._circuit_breaker.record_failure()
-                self._metrics.inc_counter(
-                    "astrocyte_recall_total",
-                    {"bank_id": bid, "provider": self._provider_name, "status": "error"},
-                )
-
-        weighted = _apply_bank_weights(all_hits, strategy.bank_weights)
-        weighted.sort(key=lambda h: h.score, reverse=True)
-
-        if strategy.dedup_across_banks:
-            deduped = _dedupe_hits_by_text(weighted)
-        else:
-            deduped = weighted
-
-        trimmed = deduped[:max_results]
-        truncated = False
-        if max_tokens:
-            trimmed, truncated = enforce_token_budget(trimmed, max_tokens)
-
-        return RecallResult(hits=trimmed, total_available=total_available, truncated=truncated)
-
-    async def _multi_bank_recall_cascade(
-        self,
-        query: str,
-        bank_ids: list[str],
-        max_results: int,
-        max_tokens: int | None,
-        tags: list[str] | None,
-        kwargs: dict[str, Any],
-        strategy: MultiBankStrategy,
-    ) -> RecallResult:
-        order = _bank_visit_order(bank_ids, strategy.cascade_order)
-        accumulated: list[MemoryHit] = []
-        total_available = 0
-
-        for bid in order:
-            result = await self._do_recall(
-                await self._make_recall_request(query, bid, max_results, None, tags, kwargs),
-            )
-            total_available += result.total_available
-            accumulated.extend(_tag_hits_with_bank(result.hits, bid))
-
-            merged_for_stop = _dedupe_hits_by_text(accumulated) if strategy.dedup_across_banks else list(accumulated)
-            if len(merged_for_stop) >= strategy.min_results_to_stop:
-                break
-
-        working = _dedupe_hits_by_text(accumulated) if strategy.dedup_across_banks else accumulated
-        weighted = _apply_bank_weights(working, strategy.bank_weights)
-        weighted.sort(key=lambda h: h.score, reverse=True)
-        trimmed = weighted[:max_results]
-        truncated = False
-        if max_tokens:
-            trimmed, truncated = enforce_token_budget(trimmed, max_tokens)
-        return RecallResult(hits=trimmed, total_available=total_available, truncated=truncated)
-
-    async def _multi_bank_recall_first_match(
-        self,
-        query: str,
-        bank_ids: list[str],
-        max_results: int,
-        max_tokens: int | None,
-        tags: list[str] | None,
-        kwargs: dict[str, Any],
-        strategy: MultiBankStrategy,
-    ) -> RecallResult:
-        order = _bank_visit_order(bank_ids, strategy.cascade_order)
-        total_available = 0
-        for bid in order:
-            result = await self._do_recall(
-                await self._make_recall_request(query, bid, max_results, None, tags, kwargs),
-            )
-            total_available += result.total_available
-            if result.hits:
-                hits = _tag_hits_with_bank(result.hits, bid)
-                hits = hits[:max_results]
-                hits = _apply_bank_weights(hits, strategy.bank_weights)
-                hits.sort(key=lambda h: h.score, reverse=True)
-                truncated = False
-                if max_tokens:
-                    hits, truncated = enforce_token_budget(hits, max_tokens)
-                return RecallResult(hits=hits, total_available=total_available, truncated=truncated)
-        return RecallResult(hits=[], total_available=total_available, truncated=False)
