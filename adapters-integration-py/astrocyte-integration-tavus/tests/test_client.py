@@ -10,7 +10,7 @@ from astrocyte_integration_tavus import TavusAPIError, TavusClient
 
 @pytest.mark.asyncio
 async def test_list_conversations_sends_api_key_and_query() -> None:
-    captured: dict[str, object] = {}
+    captured: dict[str, str | None] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["url"] = str(request.url)
@@ -31,6 +31,8 @@ async def test_list_conversations_sends_api_key_and_query() -> None:
         out = await tc.list_conversations(limit=5, page=2, status="ended")
 
     assert out["total_count"] == 1
+    assert out["data"][0]["conversation_id"] == "c1"
+    assert captured["key"] == "secret-key"
     assert "limit=5" in str(captured["url"])
     assert "page=2" in str(captured["url"])
     assert "status=ended" in str(captured["url"])
