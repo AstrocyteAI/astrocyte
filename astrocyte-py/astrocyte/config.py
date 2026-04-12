@@ -215,6 +215,10 @@ class SourceConfig:
       Requires ``url``, ``topic``, ``consumer_group``, ``target_bank`` / ``target_bank_template``.
       For Redis, ``url`` is a Redis URL; for Kafka, ``url`` is bootstrap servers (e.g. ``localhost:9092``).
       Optional ``path``: Redis consumer name or Kafka ``client_id``.
+    * **poll** / **api_poll** — scheduled HTTP pull — ``driver: github`` (``astrocyte-ingestion-github``).
+      Requires ``interval_seconds``, ``path`` as ``owner/repo``, ``target_bank`` (or template), and
+      ``auth.token`` (or env-substituted) for the GitHub API. Optional ``url`` overrides the API base
+      (default ``https://api.github.com``; use GitHub Enterprise ``.../api/v3`` when needed).
     """
 
     type: str = ""
@@ -783,6 +787,34 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
                     raise ConfigError(f"sources.{name}: type proxy requires url")
                 if not (src.target_bank or "").strip():
                     raise ConfigError(f"sources.{name}: type proxy requires target_bank")
+            if st in ("poll", "api_poll"):
+                driver = (src.driver or "").strip().lower()
+                if driver != "github":
+                    raise ConfigError(
+                        f"sources.{name}: poll driver {driver!r} is not supported (use github; "
+                        "install astrocyte-ingestion-github)"
+                    )
+                if not src.interval_seconds or int(src.interval_seconds) < 10:
+                    raise ConfigError(
+                        f"sources.{name}: type poll requires interval_seconds >= 10 "
+                        "(GitHub API rate limits; use 60+ in production)"
+                    )
+                pr = (src.path or "").strip()
+                if not pr or "/" not in pr or pr.count("/") != 1:
+                    raise ConfigError(
+                        f"sources.{name}: type poll with driver github requires path: owner/repo "
+                        f"(got {pr!r})"
+                    )
+                if not (src.target_bank or "").strip() and not (src.target_bank_template or "").strip():
+                    raise ConfigError(
+                        f"sources.{name}: type poll requires target_bank or target_bank_template"
+                    )
+                tok = (src.auth or {}).get("token") if src.auth else None
+                if not (str(tok).strip() if tok is not None else ""):
+                    raise ConfigError(
+                        f"sources.{name}: type poll with driver github requires auth.token "
+                        "(GitHub personal access token or fine-grained token)"
+                    )
             if st == "stream":
                 driver = (src.driver or "redis").strip().lower()
                 if driver not in ("redis", "kafka"):

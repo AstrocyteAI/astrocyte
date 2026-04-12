@@ -9,11 +9,12 @@ It is **distinct** from **[`adapters-storage-py/`](../adapters-storage-py/README
 ```
 adapters-ingestion-py/
 ├── README.md
-├── astrocyte-ingestion-kafka/   # Kafka IngestSource (aiokafka)
-└── astrocyte-ingestion-redis/     # Redis Streams IngestSource (redis-py)
+├── astrocyte-ingestion-kafka/    # Kafka IngestSource (aiokafka)
+├── astrocyte-ingestion-redis/      # Redis Streams IngestSource (redis-py)
+└── astrocyte-ingestion-github/     # GitHub Issues API poll (httpx)
 ```
 
-Stream **`driver`** values are resolved via **`astrocyte.ingest_stream_drivers`** (see `astrocyte._discovery`). **`astrocyte[stream]`** pulls these packages (versions pinned in **`astrocyte-py/pyproject.toml`**; monorepo **`[tool.uv.sources]`** for local dev).
+Stream **`driver`** values are resolved via **`astrocyte.ingest_stream_drivers`**; poll drivers via **`astrocyte.ingest_poll_drivers`** (see `astrocyte._discovery`). **`astrocyte[stream]`** / **`astrocyte[poll]`** pull these packages (versions pinned in **`astrocyte-py/pyproject.toml`**; monorepo **`[tool.uv.sources]`** for local dev).
 
 Package names follow **`astrocyte-ingestion-{transport}`** where possible.
 
@@ -23,4 +24,4 @@ Package names follow **`astrocyte-ingestion-{transport}`** where possible.
 
 ## PyPI
 
-Trusted publishing workflows: **`publish-astrocyte-ingestion-kafka.yml`** and **`publish-astrocyte-ingestion-redis.yml`** (tag **`v*`** — same convention as other Astrocyte packages).
+Trusted publishing workflows: **`publish-astrocyte-ingestion-kafka.yml`**, **`publish-astrocyte-ingestion-redis.yml`**, and **`publish-astrocyte-ingestion-github.yml`** (tag **`v*`** — same convention as other Astrocyte packages).

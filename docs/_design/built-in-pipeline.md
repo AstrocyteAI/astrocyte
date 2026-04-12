@@ -55,6 +55,10 @@ HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook
 
 **Declarative `sources:`** may use `type: stream` with a **`driver`** string (`kafka`, `redis`, or any driver registered by an installed package). Resolution matches **storage adapters**: Python **entry points** in the group **`astrocyte.ingest_stream_drivers`** (see `astrocyte._discovery.resolve_provider`). The core wheel registers **no** stream drivers; **`astrocyte-ingestion-kafka`** registers **`kafka`**, **`astrocyte-ingestion-redis`** registers **`redis`**. Install **`astrocyte[stream]`** (or the adapter packages individually). Building **`SourceRegistry.from_sources_config`** still requires **`retain=...`** (e.g. `retain_callable_for_astrocyte`). Payload parsing stays in core: **`parse_ingest_kafka_value`** (Kafka message values) and **`parse_ingest_stream_fields`** (Redis stream fields).
 
+### M4 — Poll ingest (`type: poll` / `api_poll`)
+
+**Declarative `sources:`** may use **`type: poll`** (alias **`api_poll`**) with **`driver: github`**. Drivers resolve via **`astrocyte.ingest_poll_drivers`**; **`astrocyte-ingestion-github`** registers **`github`** (Issues REST API, skips PRs). Install **`astrocyte[poll]`** (or that package alone). **`path`** is **`owner/repo`**; **`interval_seconds`** ≥ 10 (prefer 60+ in production); **`auth.token`** is a GitHub PAT or fine-grained token. **`SourceRegistry.from_sources_config`** still requires **`retain=...`**.
+
 ### Multimodal content (optional)
 
 When **`RetainRequest`** (or the public API) includes **image/audio** as `ContentPart` lists (see `multimodal-llm-spi.md`), the pipeline does **not** assume every stage consumes raw media:

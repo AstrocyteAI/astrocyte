@@ -51,3 +51,11 @@ def test_redis_ingest_stream_driver_entry_point() -> None:
     except LookupError:
         pytest.skip("astrocyte-ingestion-redis not installed (no redis stream driver entry point)")
     assert cls.__name__ == "RedisStreamIngestSource"
+
+
+def test_github_ingest_poll_driver_entry_point() -> None:
+    try:
+        cls = resolve_provider("github", "ingest_poll_drivers")
+    except LookupError:
+        pytest.skip("astrocyte-ingestion-github not installed (no github poll driver entry point)")
+    assert cls.__name__ == "GithubPollIngestSource"

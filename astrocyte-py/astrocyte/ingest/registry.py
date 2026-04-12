@@ -46,6 +46,28 @@ class SourceRegistry:
             st = (cfg.type or "").strip().lower()
             if st == "webhook":
                 reg.register(WebhookIngestSource(str(sid), cfg))
+            elif st in ("poll", "api_poll"):
+                driver = (cfg.driver or "").strip().lower()
+                if retain is None:
+                    raise ConfigError(
+                        f"sources.{sid}: type poll requires retain=... "
+                        "(use astrocyte.ingest.runtime.retain_callable_for_astrocyte(astrocyte))"
+                    )
+                try:
+                    source_cls = resolve_provider(driver, "ingest_poll_drivers")
+                except LookupError as e:
+                    avail = sorted(discover_entry_points("ingest_poll_drivers").keys())
+                    hint = ", ".join(avail) if avail else "none"
+                    raise ConfigError(
+                        f"sources.{sid}: poll driver {driver!r} is not installed or unknown. "
+                        f"Installed drivers: {hint}. "
+                        "For GitHub, install e.g. pip install astrocyte-ingestion-github or pip install 'astrocyte[poll]'."
+                    ) from e
+                except Exception as e:
+                    raise ConfigError(
+                        f"sources.{sid}: failed to load poll driver {driver!r}: {e}"
+                    ) from e
+                reg.register(source_cls(str(sid), cfg, retain=retain))
             elif st == "stream":
                 driver = (cfg.driver or "redis").strip().lower()
                 if retain is None:

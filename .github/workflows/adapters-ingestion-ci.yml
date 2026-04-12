@@ -8,6 +8,7 @@ on:
       - ".github/workflows/adapters-ingestion-ci.yml"
       - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
       - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
+      - ".github/workflows/publish-astrocyte-ingestion-github.yml"
   pull_request:
     paths:
       - "adapters-ingestion-py/**"
@@ -38,6 +39,12 @@ jobs:
 
       - name: astrocyte-ingestion-kafka
         working-directory: adapters-ingestion-py/astrocyte-ingestion-kafka
+        run: |
+          uv sync --extra dev
+          uv run pytest tests -v --override-ini="addopts="
+
+      - name: astrocyte-ingestion-github
+        working-directory: adapters-ingestion-py/astrocyte-ingestion-github
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="

@@ -216,6 +216,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-kafka" },
     { name = "astrocyte-ingestion-redis" },
     { name = "deepeval" },
@@ -228,6 +229,7 @@ all = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 dev = [
+    { name = "astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-kafka" },
     { name = "astrocyte-ingestion-redis" },
     { name = "deepeval" },
@@ -259,6 +261,9 @@ otel = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
 ]
+poll = [
+    { name = "astrocyte-ingestion-github" },
+]
 prometheus = [
     { name = "prometheus-client" },
 ]
@@ -269,6 +274,9 @@ stream = [
 
 [package.metadata]
 requires-dist = [
+    { name = "astrocyte-ingestion-github", marker = "extra == 'all'", editable = "../adapters-ingestion-py/astrocyte-ingestion-github" },
+    { name = "astrocyte-ingestion-github", marker = "extra == 'dev'", editable = "../adapters-ingestion-py/astrocyte-ingestion-github" },
+    { name = "astrocyte-ingestion-github", marker = "extra == 'poll'", editable = "../adapters-ingestion-py/astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-kafka", marker = "extra == 'all'", editable = "../adapters-ingestion-py/astrocyte-ingestion-kafka" },
     { name = "astrocyte-ingestion-kafka", marker = "extra == 'dev'", editable = "../adapters-ingestion-py/astrocyte-ingestion-kafka" },
     { name = "astrocyte-ingestion-kafka", marker = "extra == 'stream'", editable = "../adapters-ingestion-py/astrocyte-ingestion-kafka" },
@@ -305,7 +313,25 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'dev'", specifier = ">=0.30" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'gateway'", specifier = ">=0.30" },
 ]
-provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "prometheus", "stream"]
+provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "poll", "prometheus", "stream"]
+
+[[package]]
+name = "astrocyte-ingestion-github"
+version = "0.1.0"
+source = { editable = "../adapters-ingestion-py/astrocyte-ingestion-github" }
+dependencies = [
+    { name = "astrocyte" },
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "astrocyte", editable = "." },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "astrocyte-ingestion-kafka"

@@ -60,6 +60,9 @@ stream = [
     "astrocyte-ingestion-kafka>=0.1.0,<1",
     "astrocyte-ingestion-redis>=0.1.0,<1",
 ]
+poll = [
+    "astrocyte-ingestion-github>=0.1.0,<1",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -74,9 +77,10 @@ dev = [
     "uvicorn[standard]>=0.30",
     "astrocyte-ingestion-kafka>=0.1.0,<1",
     "astrocyte-ingestion-redis>=0.1.0,<1",
+    "astrocyte-ingestion-github>=0.1.0,<1",
 ]
 all = [
-    "astrocyte[otel,prometheus,mcp,eval,openai,gateway,stream]",
+    "astrocyte[otel,prometheus,mcp,eval,openai,gateway,stream,poll]",
 ]
 
 [project.scripts]
@@ -109,6 +113,7 @@ packages = ["astrocyte"]
 [tool.uv.sources]
 astrocyte-ingestion-kafka = { path = "../adapters-ingestion-py/astrocyte-ingestion-kafka", editable = true }
 astrocyte-ingestion-redis = { path = "../adapters-ingestion-py/astrocyte-ingestion-redis", editable = true }
+astrocyte-ingestion-github = { path = "../adapters-ingestion-py/astrocyte-ingestion-github", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

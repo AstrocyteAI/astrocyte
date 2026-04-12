@@ -17,6 +17,7 @@ on:
       - ".github/workflows/publish-astrocyte-gateway-py-image.yml"
       - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
       - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
+      - ".github/workflows/publish-astrocyte-ingestion-github.yml"
   pull_request:
     paths:
       - "astrocyte-py/**"
@@ -32,6 +33,7 @@ on:
       - ".github/workflows/publish-astrocyte-gateway-py-image.yml"
       - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
       - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
+      - ".github/workflows/publish-astrocyte-ingestion-github.yml"
   workflow_dispatch:
 
 permissions:
