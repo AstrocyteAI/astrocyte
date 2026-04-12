@@ -43,12 +43,19 @@ class DedupDetector:
         # bank_id -> list of (memory_id, embedding)
         self._cache: dict[str, list[tuple[str, list[float]]]] = {}
 
+    def _touch_bank(self, bank_id: str) -> None:
+        """Move bank to end of dict (most recently used) for LRU eviction."""
+        if bank_id in self._cache:
+            self._cache[bank_id] = self._cache.pop(bank_id)
+
     def is_duplicate(self, bank_id: str, embedding: list[float]) -> tuple[bool, float]:
         """Check if embedding is a near-duplicate of cached content.
 
         Returns (is_dup, max_similarity).
         """
         entries = self._cache.get(bank_id, [])
+        if entries:
+            self._touch_bank(bank_id)
         max_sim = 0.0
 
         for _, cached_emb in entries:
@@ -63,9 +70,11 @@ class DedupDetector:
         """Add an embedding to the cache for future dedup checks."""
         if bank_id not in self._cache:
             if len(self._cache) >= self._MAX_BANKS:
-                oldest_bank = next(iter(self._cache))
-                del self._cache[oldest_bank]
+                # Evict least-recently-used bank (first key in insertion-ordered dict)
+                lru_bank = next(iter(self._cache))
+                del self._cache[lru_bank]
             self._cache[bank_id] = []
+        self._touch_bank(bank_id)
 
         entries = self._cache[bank_id]
         entries.append((memory_id, embedding))

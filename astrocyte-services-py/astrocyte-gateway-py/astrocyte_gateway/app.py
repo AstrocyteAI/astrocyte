@@ -81,8 +81,8 @@ def _configure_gateway_middleware(app: FastAPI) -> None:
                 CORSMiddleware,
                 allow_origins=origins,
                 allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
+                allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
             )
 
     # Outermost: request ID + structured access log (see observability.py).

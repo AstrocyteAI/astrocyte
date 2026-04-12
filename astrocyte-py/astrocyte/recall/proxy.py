@@ -6,6 +6,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import re
 import socket
 from typing import TYPE_CHECKING, Any
 from urllib.parse import ParseResult, parse_qsl, quote, urlparse, urlunparse
@@ -211,6 +212,8 @@ async def build_proxy_headers(
             out["Authorization"] = f"Bearer {token}"
     elif t == "api_key":
         header_name = str(auth.get("header") or "X-API-Key")
+        if not re.match(r"^[A-Za-z0-9\-]+$", header_name):
+            raise ValueError(f"Invalid header name in proxy auth config: {header_name!r}")
         val = auth.get("value") if auth.get("value") is not None else auth.get("token")
         if val is not None and str(val).strip():
             out[header_name] = str(val)

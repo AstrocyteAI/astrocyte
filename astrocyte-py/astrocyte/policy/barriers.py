@@ -26,7 +26,7 @@ logger = logging.getLogger("astrocyte.pii")
 
 _PII_PATTERNS: dict[str, tuple[re.Pattern[str], str]] = {
     "email": (
-        re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"),
+        re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}"),
         "[EMAIL_REDACTED]",
     ),
     "phone": (
@@ -466,7 +466,12 @@ class MetadataSanitizer:
         cleaned: Metadata = {}
 
         for key, value in metadata.items():
-            if key.lower() in self.blocked_keys or any(bk in key.lower() for bk in self.blocked_keys):
+            # Match exact key or key as a standalone word boundary segment
+            key_lower = key.lower()
+            if key_lower in self.blocked_keys or any(
+                re.search(rf"(?:^|[_.\-]){re.escape(bk)}(?:$|[_.\-])", key_lower)
+                for bk in self.blocked_keys
+            ):
                 warnings.append(f"Blocked metadata key: '{key}'")
                 continue
             cleaned[key] = value
