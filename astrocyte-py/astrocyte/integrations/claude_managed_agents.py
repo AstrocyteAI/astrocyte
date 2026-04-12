@@ -86,6 +86,7 @@ Usage — high-level helper:
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from astrocyte.types import AstrocyteContext
@@ -93,6 +94,7 @@ from astrocyte.types import AstrocyteContext
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Tool names — canonical set
@@ -327,12 +329,12 @@ def _format_managed_session_error(event: Any) -> str:
             try:
                 payload = model_dump()
             except Exception:
-                pass
+                logger.debug("managed session error: model_dump failed", exc_info=True)
         if payload is not None:
             try:
                 return json.dumps(payload, default=str)
             except Exception:
-                pass
+                logger.debug("managed session error: json.dumps(payload) failed", exc_info=True)
     parts: list[str] = []
     for key in ("type", "message", "code", "detail"):
         val = getattr(err, key, None)
@@ -464,5 +466,5 @@ def delete_managed_session(client: Any, session_id: str) -> None:
             events=[{"type": "user.interrupt"}],
         )
     except Exception:
-        pass
+        logger.debug("user.interrupt before session delete failed (ignored)", exc_info=True)
     client.beta.sessions.delete(session_id)

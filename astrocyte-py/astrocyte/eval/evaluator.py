@@ -5,6 +5,7 @@ See docs/_design/evaluation.md for the full specification.
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -27,6 +28,8 @@ from astrocyte.types import (
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryEvaluator:
@@ -207,7 +210,7 @@ class MemoryEvaluator:
             try:
                 await self.brain._do_forget(ForgetRequest(bank_id=bank_id, scope="all"))
             except Exception:
-                pass  # Best-effort cleanup
+                logger.debug("eval cleanup forget failed (best-effort)", exc_info=True)
 
         # Build config snapshot with judge info
         config_snapshot: dict[str, str | int | float | bool | None] = {

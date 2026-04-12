@@ -26,7 +26,6 @@ from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 from astrocyte.testing.in_memory import InMemoryVectorStore
 from astrocyte.types import Completion, LLMCapabilities, Message, TokenUsage
 
-
 # ---------------------------------------------------------------------------
 # Minimal OpenAI LLM adapter (inline — not a full provider package)
 # ---------------------------------------------------------------------------

@@ -106,7 +106,7 @@ class TestAmaMemories:
 
         # Every line must be valid JSON
         with open(output) as f:
-            for i, line in enumerate(f):
+            for _, line in enumerate(f):
                 data = json.loads(line)  # Should not raise
                 assert isinstance(data, dict)
 

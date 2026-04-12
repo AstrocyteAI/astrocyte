@@ -10,6 +10,7 @@ triggered by push to main or manual dispatch.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
 import sys
 
@@ -19,13 +20,7 @@ _skip_reason_key = "ANTHROPIC_API_KEY not set"
 _skip_reason_sdk = "anthropic SDK not installed"
 
 _has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-
-try:
-    import anthropic  # noqa: F401
-
-    _has_sdk = True
-except ImportError:
-    _has_sdk = False
+_has_sdk = importlib.util.find_spec("anthropic") is not None
 
 _skip = pytest.mark.skipif(
     not _has_sdk or not _has_key,

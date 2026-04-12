@@ -31,7 +31,6 @@ from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 from astrocyte.testing.in_memory import InMemoryVectorStore
 from astrocyte.types import Completion, LLMCapabilities, Message, TokenUsage
 
-
 # ---------------------------------------------------------------------------
 # Minimal OpenAI LLM adapter (same as run_eval.py)
 # ---------------------------------------------------------------------------
@@ -121,7 +120,7 @@ async def main(benchmark: str, data_path: str, output: str | None, max_questions
             max_questions=max_questions,
         )
         print(f"Overall accuracy:  {result.overall_accuracy:.4f}")
-        print(f"Category breakdown:")
+        print("Category breakdown:")
         for cat, acc in sorted(result.category_accuracy.items()):
             print(f"  {cat}: {acc:.4f}")
 
@@ -133,7 +132,7 @@ async def main(benchmark: str, data_path: str, output: str | None, max_questions
             max_questions=max_questions,
         )
         print(f"Overall accuracy:  {result.overall_accuracy:.4f}")
-        print(f"Category breakdown:")
+        print("Category breakdown:")
         for cat, acc in sorted(result.category_accuracy.items()):
             print(f"  {cat}: {acc:.4f}")
     else:
@@ -142,7 +141,7 @@ async def main(benchmark: str, data_path: str, output: str | None, max_questions
 
     # Print standard eval metrics
     m = result.eval_result.metrics
-    print(f"\nRetrieval metrics:")
+    print("\nRetrieval metrics:")
     print(f"  Recall precision: {m.recall_precision:.4f}")
     print(f"  Recall hit rate:  {m.recall_hit_rate:.4f}")
     print(f"  Recall MRR:       {m.recall_mrr:.4f}")

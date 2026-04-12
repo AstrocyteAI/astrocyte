@@ -31,7 +31,6 @@ from astrocyte.integrations.managed_agents import (
     create_subagent_definition,
 )
 
-
 # ---------------------------------------------------------------------------
 # Pattern 1: Single agent with session-scoped memory
 # ---------------------------------------------------------------------------

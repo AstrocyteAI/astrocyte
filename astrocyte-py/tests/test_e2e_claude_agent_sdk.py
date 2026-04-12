@@ -16,6 +16,7 @@ alone—those can succeed while the API wallet the CLI uses is empty.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
 import shutil
 import sys
@@ -25,13 +26,7 @@ import pytest
 _skip_reason_sdk = "claude-agent-sdk not installed"
 _skip_reason_key = "ANTHROPIC_API_KEY not set"
 
-try:
-    import claude_agent_sdk  # noqa: F401
-
-    _has_sdk = True
-except ImportError:
-    _has_sdk = False
-
+_has_sdk = importlib.util.find_spec("claude_agent_sdk") is not None
 _has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 _skip = pytest.mark.skipif(
@@ -214,9 +209,7 @@ if __name__ == "__main__":
         print("ANTHROPIC_API_KEY not set, skipping e2e tests")
         sys.exit(0)
 
-    try:
-        import claude_agent_sdk  # noqa: F401
-    except ImportError:
+    if importlib.util.find_spec("claude_agent_sdk") is None:
         print("claude-agent-sdk not installed, skipping e2e tests")
         sys.exit(0)
 

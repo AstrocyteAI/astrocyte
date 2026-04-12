@@ -968,7 +968,10 @@ class Astrocyte:
                 items = await self._pipeline.vector_store.list_vectors(bank_id, limit=0)
                 memory_count = len(items)
             except Exception:
-                pass  # list_vectors with limit=0 may not be supported; that's fine
+                logger.debug(
+                    "list_vectors(limit=0) failed or unsupported; bank_health memory_count=0",
+                    exc_info=True,
+                )
         return compute_bank_health(bank_id, counters, memory_count)
 
     async def all_bank_health(self) -> list["BankHealth"]:

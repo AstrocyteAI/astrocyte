@@ -60,7 +60,7 @@ def available_providers() -> dict[str, dict[str, Any]]:
     Returns a dict of {group: {name: class}} for all installed providers.
     """
     result: dict[str, dict[str, Any]] = {}
-    for group_key, group_name in ENTRY_POINT_GROUPS.items():
+    for group_key, _ in ENTRY_POINT_GROUPS.items():
         providers = discover_entry_points(group_key)
         if providers:
             result[group_key] = providers
