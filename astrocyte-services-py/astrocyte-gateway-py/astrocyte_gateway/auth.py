@@ -16,6 +16,8 @@ from astrocyte.types import ActorIdentity, AstrocyteContext
 
 __all__ = ["get_astrocyte_context"]
 
+_MISSING_JWT_AUDIENCE_WARNING_LOGGED = False
+
 
 def _auth_mode() -> str:
     return os.environ.get("ASTROCYTE_AUTH_MODE", "dev").strip().lower()
@@ -51,10 +53,14 @@ def _context_from_oidc_payload(payload: dict[str, Any]) -> AstrocyteContext:
     sub = payload.get("sub")
     if not sub or not isinstance(sub, str):
         raise HTTPException(status_code=401, detail="Token missing sub")
-    actor_type = os.environ.get("ASTROCYTE_OIDC_ACTOR_TYPE", "user").strip().lower()
-    claim_type = payload.get("astrocyte_actor_type")
-    if isinstance(claim_type, str) and claim_type.strip():
-        actor_type = claim_type.strip().lower()
+    # Default actor type from environment; JWT claim takes precedence when present.
+    default_actor_type = os.environ.get("ASTROCYTE_OIDC_ACTOR_TYPE", "user").strip().lower()
+    claim_actor_type = payload.get("astrocyte_actor_type")
+    actor_type = (
+        claim_actor_type.strip().lower()
+        if isinstance(claim_actor_type, str) and claim_actor_type.strip()
+        else default_actor_type
+    )
     tid = payload.get("tid") or payload.get("tenant_id")
     tenant_id = str(tid).strip() if tid is not None and str(tid).strip() else None
     claims = {k: str(v) for k, v in payload.items() if isinstance(v, (str, int, float, bool))}
@@ -99,10 +105,13 @@ def resolve_astrocyte_identity(
         if aud:
             decode_kwargs["audience"] = aud
         else:
-            logging.getLogger("astrocyte.gateway").warning(
-                "ASTROCYTE_JWT_AUDIENCE is not set — tokens will be accepted without audience validation. "
-                "Set this variable to prevent cross-service token reuse."
-            )
+            global _MISSING_JWT_AUDIENCE_WARNING_LOGGED  # noqa: PLW0603
+            if not _MISSING_JWT_AUDIENCE_WARNING_LOGGED:
+                logging.getLogger("astrocyte.gateway").warning(
+                    "ASTROCYTE_JWT_AUDIENCE is not set — tokens will be accepted without audience validation. "
+                    "Set this variable to prevent cross-service token reuse."
+                )
+                _MISSING_JWT_AUDIENCE_WARNING_LOGGED = True
         try:
             payload = jwt.decode(token, secret, **decode_kwargs)
         except PyJWTError as e:
