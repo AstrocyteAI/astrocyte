@@ -19,9 +19,13 @@ _WINDOW_S = 1.0
 
 
 def _client_key(request: Request) -> str:
-    raw = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    if raw:
-        return raw[:128]
+    """Extract client identity for rate limiting.
+
+    Prefers the actual TCP peer address (request.client.host) over
+    X-Forwarded-For, which is user-controlled and trivially spoofable.
+    If you deploy behind a trusted reverse proxy that sets X-Forwarded-For,
+    configure the proxy to strip/overwrite the header — don't rely on it here.
+    """
     if request.client:
         return request.client.host[:128]
     return "unknown"

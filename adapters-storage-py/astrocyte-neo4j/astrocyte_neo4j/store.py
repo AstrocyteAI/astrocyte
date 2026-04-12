@@ -51,15 +51,21 @@ class Neo4jGraphStore:
         return out
 
     async def store_links(self, links: list[EntityLink], bank_id: str) -> list[str]:
+        import logging
+
+        _logger = logging.getLogger("astrocyte.neo4j")
         ids: list[str] = []
         async with self._driver.session(database=self._database) as session:
             for i, link in enumerate(links):
-                await session.run(
+                result = await session.run(
                     """
-                    MATCH (s:AstrocyteEntity {entity_id: $sid, bank: $bank})
-                    MATCH (t:AstrocyteEntity {entity_id: $tid, bank: $bank})
+                    OPTIONAL MATCH (s:AstrocyteEntity {entity_id: $sid, bank: $bank})
+                    OPTIONAL MATCH (t:AstrocyteEntity {entity_id: $tid, bank: $bank})
+                    WITH s, t
+                    WHERE s IS NOT NULL AND t IS NOT NULL
                     MERGE (s)-[r:ENTITY_LINK {link_type: $lt}]->(t)
                     SET r.metadata = $meta
+                    RETURN s IS NOT NULL AS source_found, t IS NOT NULL AS target_found
                     """,
                     sid=link.source_entity_id,
                     tid=link.target_entity_id,
@@ -67,6 +73,14 @@ class Neo4jGraphStore:
                     lt=link.link_type,
                     meta=dict(link.metadata or {}),
                 )
+                record = await result.single()
+                if record is None or not record["source_found"] or not record["target_found"]:
+                    _logger.warning(
+                        "store_links: entity not found for link %s -> %s in bank '%s'",
+                        link.source_entity_id,
+                        link.target_entity_id,
+                        bank_id,
+                    )
                 ids.append(f"lnk_{i}")
         return ids
 
@@ -75,20 +89,34 @@ class Neo4jGraphStore:
         associations: list[MemoryEntityAssociation],
         bank_id: str,
     ) -> None:
+        import logging
+
+        _logger = logging.getLogger("astrocyte.neo4j")
         async with self._driver.session(database=self._database) as session:
             for a in associations:
-                await session.run(
+                result = await session.run(
                     """
                     MERGE (m:AstrocyteMemory {memory_id: $mid, bank: $bank})
                     ON CREATE SET m.text = ''
                     WITH m
-                    MATCH (e:AstrocyteEntity {entity_id: $eid, bank: $bank})
+                    OPTIONAL MATCH (e:AstrocyteEntity {entity_id: $eid, bank: $bank})
+                    WITH m, e
+                    WHERE e IS NOT NULL
                     MERGE (m)-[:MENTIONS]->(e)
+                    RETURN e IS NOT NULL AS entity_found
                     """,
                     mid=a.memory_id,
                     eid=a.entity_id,
                     bank=bank_id,
                 )
+                record = await result.single()
+                if record is None or not record["entity_found"]:
+                    _logger.warning(
+                        "link_memories_to_entities: entity '%s' not found in bank '%s' for memory '%s'",
+                        a.entity_id,
+                        bank_id,
+                        a.memory_id,
+                    )
 
     async def query_neighbors(
         self,

@@ -1,6 +1,6 @@
 ---
 title: Astrocyte
-description: Astrocyte v0.8.0 — memory for agents with Tier 1 adapters, optional gateway, recall authority, and ingest connectors.
+description: Open-source memory framework for AI agents — pluggable backends, governance, and a built-in intelligence pipeline.
 topic: end-user
 template: splash
 tableOfContents: false
@@ -12,8 +12,6 @@ hero:
   tagline: >
     Astrocyte is an open-source framework that gives AI agents persistent memory — with pluggable backends,
     built-in governance, and a pipeline that works out of the box.
-    The v0.8.0 line ships production Tier 1 adapters, the optional astrocyte-gateway-py HTTP service,
-    optional recall authority, and ingest transports (streams and poll).
   image:
     html: |
       <img src="./logo.svg" alt="Astrocyte mascot" class="landing-hero-mascot dark:sl-hidden" width="280" height="280" decoding="async" loading="eager" />
@@ -29,7 +27,8 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/components";
+import { Card, CardGrid, Code, LinkCard, Tabs, TabItem } from "@astrojs/starlight/components";
+import PypiInstall from "../../components/PypiInstall.astro";
 
 <div class="landing">
 
@@ -48,14 +47,14 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
 <div class="quickstart-panel">
   <Tabs syncKey="astrocyte-install">
     <TabItem label="pip">
-      <div class="quickstart-block">pip install astrocyte astrocyte-pgvector</div>
+      <PypiInstall manager="pip" />
     </TabItem>
     <TabItem label="uv">
-      <div class="quickstart-block quickstart-block--uv">
-        <div>uv pip install astrocyte astrocyte-pgvector</div>
+      <div class="quickstart-block--uv">
+        <PypiInstall manager="uv" />
         <p class="quickstart-note">
           In a uv-managed project, use{" "}
-          <code>uv add astrocyte astrocyte-pgvector</code> to record dependencies in{" "}
+          <code>uv add</code> instead to record dependencies in{" "}
           <code>pyproject.toml</code>.
         </p>
       </div>
@@ -63,10 +62,7 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
   </Tabs>
 
   <p class="quickstart-note">
-    <strong>PyPI:</strong> install <code>astrocyte</code> <strong>0.8.x</strong> for the M5–M7 milestone bundle (adapters + gateway-era features).{" "}
-    <a href="https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md">CHANGELOG</a>
-    {" · "}
-    <a href="https://github.com/AstrocyteAI/astrocyte/blob/main/RELEASING.md">Releasing</a>.
+    Version resolved from <a href="https://pypi.org/project/astrocyte/">PyPI</a> on page load.
   </p>
 
   <Tabs syncKey="astrocyte-quickstart-code">

@@ -139,22 +139,26 @@ class InMemoryGraphStore:
     SPI_VERSION: ClassVar[int] = 1
 
     def __init__(self) -> None:
-        self._entities: dict[str, Entity] = {}
-        self._links: list[EntityLink] = []
-        self._memory_entity_map: list[MemoryEntityAssociation] = []
+        self._entities: dict[str, dict[str, Entity]] = {}  # bank_id → {entity_id → Entity}
+        self._links: dict[str, list[EntityLink]] = {}  # bank_id → links
+        self._memory_entity_map: dict[str, list[MemoryEntityAssociation]] = {}  # bank_id → assocs
 
     async def store_entities(self, entities: list[Entity], bank_id: str) -> list[str]:
+        if bank_id not in self._entities:
+            self._entities[bank_id] = {}
         ids = []
         for entity in entities:
-            self._entities[entity.id] = entity
+            self._entities[bank_id][entity.id] = entity
             ids.append(entity.id)
         return ids
 
     async def store_links(self, links: list[EntityLink], bank_id: str) -> list[str]:
+        if bank_id not in self._links:
+            self._links[bank_id] = []
         ids = []
         for link in links:
             lid = uuid.uuid4().hex[:12]
-            self._links.append(link)
+            self._links[bank_id].append(link)
             ids.append(lid)
         return ids
 
@@ -163,7 +167,9 @@ class InMemoryGraphStore:
         associations: list[MemoryEntityAssociation],
         bank_id: str,
     ) -> None:
-        self._memory_entity_map.extend(associations)
+        if bank_id not in self._memory_entity_map:
+            self._memory_entity_map[bank_id] = []
+        self._memory_entity_map[bank_id].extend(associations)
 
     async def query_neighbors(
         self,
@@ -172,9 +178,9 @@ class InMemoryGraphStore:
         max_depth: int = 2,
         limit: int = 20,
     ) -> list[GraphHit]:
-        # Find memories linked to these entities
+        # Find memories linked to these entities within this bank
         memory_ids: set[str] = set()
-        for assoc in self._memory_entity_map:
+        for assoc in self._memory_entity_map.get(bank_id, []):
             if assoc.entity_id in entity_ids:
                 memory_ids.add(assoc.memory_id)
 
@@ -191,7 +197,8 @@ class InMemoryGraphStore:
 
     async def query_entities(self, query: str, bank_id: str, limit: int = 10) -> list[Entity]:
         query_lower = query.lower()
-        results = [e for e in self._entities.values() if query_lower in e.name.lower()]
+        bank_entities = self._entities.get(bank_id, {})
+        results = [e for e in bank_entities.values() if query_lower in e.name.lower()]
         return results[:limit]
 
     async def health(self) -> HealthStatus:

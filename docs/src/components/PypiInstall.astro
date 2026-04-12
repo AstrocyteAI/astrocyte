@@ -1,0 +1,93 @@
+---
+/**
+ * Install snippet that resolves the latest version from PyPI at runtime.
+ *
+ * Renders a `<pre><code>` block with a static fallback version, then
+ * replaces it client-side by fetching the shields.io JSON endpoint
+ * (which proxies PyPI). The shields.io endpoint is fast, CORS-friendly,
+ * and cacheable — unlike the raw PyPI JSON API which lacks CORS headers.
+ *
+ * Props:
+ *   manager: "pip" | "uv"
+ */
+interface Props {
+  manager: "pip" | "uv";
+}
+
+const { manager } = Astro.props;
+
+// Build-time fallback — replaced at runtime
+let fallbackVersion = "…";
+try {
+  const pins = await import("../data/pypi-install-pins.json");
+  fallbackVersion = pins["astrocyte"] ?? "…";
+} catch {
+  // prebuild hasn't run yet — show placeholder
+}
+
+const prefix = manager === "uv" ? "uv pip install" : "pip install";
+const fallbackCmd = `${prefix} astrocyte==${fallbackVersion} astrocyte-pgvector==${fallbackVersion}`;
+---
+
+<div class="pypi-install" data-manager={manager}>
+  <pre
+    class="astro-code"
+    style="background-color: var(--astro-code-color-background); padding: 1rem; border-radius: 0.5rem; overflow-x: auto;"
+    tabindex="0"
+  ><code class="pypi-install-code">{fallbackCmd}</code></pre>
+</div>
+
+<script>
+  // Hydrate all PypiInstall instances on the page
+  const SHIELDS_URL = "https://img.shields.io/pypi/v/astrocyte.json";
+  const CACHE_KEY = "astrocyte-pypi-version";
+  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  function getCached(): string | null {
+    try {
+      const raw = sessionStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const { version, ts } = JSON.parse(raw);
+      if (Date.now() - ts < CACHE_TTL_MS) return version;
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  function setCache(version: string): void {
+    try {
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ version, ts: Date.now() }));
+    } catch { /* ignore */ }
+  }
+
+  async function resolveVersion(): Promise<string | null> {
+    const cached = getCached();
+    if (cached) return cached;
+    try {
+      const res = await fetch(SHIELDS_URL);
+      if (!res.ok) return null;
+      const data = await res.json();
+      // shields.io returns { "name": "pypi", "value": "0.4.2", ... }
+      const version = data?.value;
+      if (typeof version === "string" && version.length > 0) {
+        setCache(version);
+        return version;
+      }
+    } catch { /* network error — keep fallback */ }
+    return null;
+  }
+
+  async function hydrate(): Promise<void> {
+    const version = await resolveVersion();
+    if (!version) return;
+    document.querySelectorAll<HTMLDivElement>(".pypi-install").forEach((el) => {
+      const manager = el.dataset.manager;
+      const prefix = manager === "uv" ? "uv pip install" : "pip install";
+      const code = el.querySelector<HTMLElement>(".pypi-install-code");
+      if (code) {
+        code.textContent = `${prefix} astrocyte==${version} astrocyte-pgvector==${version}`;
+      }
+    });
+  }
+
+  hydrate();
+</script>

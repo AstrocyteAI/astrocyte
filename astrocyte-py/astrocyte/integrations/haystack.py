@@ -97,19 +97,9 @@ class AstrocyteRetriever:
 
     def run(self, query: str, **kwargs: Any) -> dict[str, list[AstrocyteDocument]]:
         """Synchronous retrieval for Haystack pipeline compatibility."""
-        import asyncio
+        from astrocyte.integrations._sync_utils import _run_async_from_sync
 
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.arun(query, **kwargs)).result()
-        return asyncio.run(self.arun(query, **kwargs))
+        return _run_async_from_sync(self.arun(query, **kwargs))
 
 
 class AstrocyteWriter:

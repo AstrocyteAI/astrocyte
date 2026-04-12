@@ -267,6 +267,19 @@ class PgVectorStore:
                 )
                 return cur.rowcount or 0
 
+    async def close(self) -> None:
+        """Close the connection pool. Safe to call multiple times."""
+        async with self._pool_lock:
+            if self._pool is not None:
+                await self._pool.close()
+                self._pool = None
+
+    async def __aenter__(self) -> "PgVectorStore":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     async def health(self) -> HealthStatus:
         try:
             pool = await self._ensure_pool()

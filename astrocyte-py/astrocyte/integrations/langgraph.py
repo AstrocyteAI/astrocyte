@@ -20,12 +20,12 @@ Maps:
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.integrations._sync_utils import _run_async_from_sync
 from astrocyte.types import AstrocyteContext
 
 
@@ -153,30 +153,8 @@ class AstrocyteMemory:
     # Sync wrappers for frameworks that don't support async
     def save_context_sync(self, inputs: dict, outputs: dict, **kwargs: Any) -> None:
         """Synchronous wrapper for save_context."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                pool.submit(asyncio.run, self.save_context(inputs, outputs, **kwargs)).result()
-        else:
-            asyncio.run(self.save_context(inputs, outputs, **kwargs))
+        _run_async_from_sync(self.save_context(inputs, outputs, **kwargs))
 
     def search_sync(self, query: str, **kwargs: Any) -> list[dict]:
         """Synchronous wrapper for search."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.search(query, **kwargs)).result()
-        else:
-            return asyncio.run(self.search(query, **kwargs))
+        return _run_async_from_sync(self.search(query, **kwargs))

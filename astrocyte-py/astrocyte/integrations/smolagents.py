@@ -53,15 +53,9 @@ class AstrocyteSmolTool:
 
     def __call__(self, **kwargs: Any) -> Any:
         """Sync fallback — smolagents may call tools synchronously."""
-        import asyncio
+        from astrocyte.integrations._sync_utils import _run_async_from_sync
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self._fn(**kwargs)).result()
-        return asyncio.run(self._fn(**kwargs))
+        return _run_async_from_sync(self._fn(**kwargs))
 
 
 def astrocyte_smolagent_tools(

@@ -432,6 +432,28 @@ def _substitute_env_vars(value: str) -> str:
     return _ENV_VAR_PATTERN.sub(_replace, value)
 
 
+def _find_unresolved_env_vars(
+    data: dict | list | str | int | float | bool | None,
+    path: str = "",
+) -> list[str]:
+    """Find all unresolved ${VAR_NAME} references after env var substitution.
+
+    Returns list of strings like "vector_store_config.dsn: ${DATABASE_URL}".
+    """
+    unresolved: list[str] = []
+    if isinstance(data, str):
+        for match in _ENV_VAR_PATTERN.finditer(data):
+            unresolved.append(f"{path}: ${{{match.group(1)}}}")
+    elif isinstance(data, dict):
+        for k, v in data.items():
+            child_path = f"{path}.{k}" if path else str(k)
+            unresolved.extend(_find_unresolved_env_vars(v, child_path))
+    elif isinstance(data, list):
+        for i, v in enumerate(data):
+            unresolved.extend(_find_unresolved_env_vars(v, f"{path}[{i}]"))
+    return unresolved
+
+
 def _substitute_env_recursive(
     data: dict | list | str | int | float | bool | None,
 ) -> dict | list | str | int | float | bool | None:
@@ -926,6 +948,15 @@ def load_config(path: str | Path) -> AstrocyteConfig:
 
     # Substitute environment variables
     raw = _substitute_env_recursive(raw)
+
+    # Warn about unresolved env vars — these likely indicate missing secrets
+    unresolved = _find_unresolved_env_vars(raw)
+    if unresolved:
+        import logging
+
+        _cfg_logger = logging.getLogger("astrocyte.config")
+        for ref in unresolved:
+            _cfg_logger.warning("Unresolved environment variable in config: %s", ref)
 
     # Merge order: compliance (lowest) → behavior profile → user config (highest).
     # _deep_merge(base, override) → override wins.

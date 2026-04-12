@@ -20,12 +20,12 @@ The AstrocyteRM wraps brain.recall() to match this pattern.
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+from astrocyte.integrations._sync_utils import _run_async_from_sync
 from astrocyte.types import AstrocyteContext
 
 
@@ -55,17 +55,7 @@ class AstrocyteRM:
         Returns list of passage strings.
         """
         k = k or self.default_k
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self._retrieve(query, k)).result()
-        return asyncio.run(self._retrieve(query, k))
+        return _run_async_from_sync(self._retrieve(query, k))
 
     async def _retrieve(self, query: str, k: int) -> list[str]:
         result = await self.brain.recall(query, bank_id=self.bank_id, max_results=k, context=self._context)

@@ -160,12 +160,19 @@ class QdrantVectorStore:
             return 0
         await self._ensure_collection()
         pids = [_point_uuid(i, bank_id) for i in ids]
-        await self._client.delete(
+        # Check which points actually exist before deletion
+        existing = await self._client.get_points(
             collection_name=self._collection,
-            points_selector=pids,
-            wait=True,
+            ids=pids,
         )
-        return len(ids)
+        existing_count = len(existing) if existing else 0
+        if existing_count > 0:
+            await self._client.delete(
+                collection_name=self._collection,
+                points_selector=pids,
+                wait=True,
+            )
+        return existing_count
 
     async def list_vectors(
         self,

@@ -5,9 +5,10 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "sync-docs": "node scripts/sync-docs.mjs",
-    "predev": "pnpm run sync-docs",
+    "fetch-pypi-pins": "node scripts/fetch-pypi-pins.mjs",
+    "predev": "pnpm run sync-docs && pnpm run fetch-pypi-pins",
     "dev": "astro dev",
-    "prebuild": "pnpm run sync-docs",
+    "prebuild": "pnpm run sync-docs && pnpm run fetch-pypi-pins",
     "build": "astro build",
     "preview": "astro preview"
   },

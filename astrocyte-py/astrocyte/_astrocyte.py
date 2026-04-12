@@ -182,7 +182,11 @@ class Astrocyte:
         self._access_grants: list[AccessGrant] = []
 
         # Hooks — typed as HookHandler (not Any)
+        # Lock protects against concurrent register_hook + _fire_hooks
+        import threading
+
         self._hooks: dict[str, list[HookHandler]] = {}
+        self._hooks_lock = threading.Lock()
 
         # DLP output scanner (always regex, independent of input PII config)
         self._dlp_scanner: PiiScanner | None = None
@@ -303,9 +307,10 @@ class Astrocyte:
 
     def register_hook(self, event_type: str, handler: HookHandler) -> None:
         """Register an event hook handler."""
-        if event_type not in self._hooks:
-            self._hooks[event_type] = []
-        self._hooks[event_type].append(handler)
+        with self._hooks_lock:
+            if event_type not in self._hooks:
+                self._hooks[event_type] = []
+            self._hooks[event_type].append(handler)
 
     # ---------------------------------------------------------------------------
     # Hook dispatch
@@ -318,7 +323,8 @@ class Astrocyte:
         data: dict[str, str | int | float | bool | None] | None = None,
     ) -> None:
         """Fire all registered hooks for an event type. Non-blocking, failures logged."""
-        handlers = self._hooks.get(event_type, [])
+        with self._hooks_lock:
+            handlers = list(self._hooks.get(event_type, []))
         if not handlers:
             return
         event = HookEvent(
@@ -432,6 +438,16 @@ class Astrocyte:
         pipeline fields (``occurred_at``, ``source``, …).
         """
         with span("astrocyte.retain", {"astrocyte.bank_id": bank_id}):
+            # Input size validation — reject oversized content before pipeline processing
+            max_content_bytes = self._config.homeostasis.retain_max_content_bytes
+            if max_content_bytes and len(content.encode("utf-8")) > max_content_bytes:
+                return RetainResult(
+                    stored=False,
+                    error=f"Content exceeds maximum size ({len(content.encode('utf-8'))} > {max_content_bytes} bytes)",
+                )
+            if tags and len(tags) > 100:
+                return RetainResult(stored=False, error=f"Too many tags ({len(tags)} > 100)")
+
             # Access control
             self._check_access(bank_id, "write", context)
 
@@ -836,6 +852,19 @@ class Astrocyte:
                     from astrocyte.errors import AccessDenied
 
                     raise AccessDenied("anonymous", bank_id, "compliance_forget")
+                # Log compliance forget with actor identity for audit trail
+                principal_label = context_principal_label(context)
+                reason = kwargs.get("reason", "compliance_forget_request")
+                self._logger.log(
+                    "astrocyte.compliance.forget",
+                    bank_id=bank_id,
+                    data={
+                        "actor": principal_label,
+                        "reason": str(reason),
+                        "scope": scope or "selective",
+                    },
+                    level=logging.WARNING,
+                )
                 # When access control is enabled, also require admin permission
                 if self._config.access_control.enabled:
                     self._check_access(bank_id, "admin", context)
@@ -1309,7 +1338,20 @@ class Astrocyte:
             )
         tasks = [self._do_recall(r) for r in reqs]
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Timeout prevents a single hung provider from blocking all banks.
+        # 30s is generous — individual provider timeouts should be shorter.
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Multi-bank parallel recall timed out after 30s for banks: %s", bank_ids)
+            self._metrics.inc_counter(
+                "astrocyte_multi_bank_recall_timeout_total",
+                {"bank_ids": ",".join(bank_ids)},
+            )
+            return RecallResult(hits=[], total_available=0, truncated=False)
 
         all_hits: list[MemoryHit] = []
         total_available = 0
@@ -1319,6 +1361,11 @@ class Astrocyte:
                 total_available += result.total_available
             elif isinstance(result, BaseException):
                 logger.warning("Multi-bank recall failed for bank '%s': %s", bid, result)
+                self._circuit_breaker.record_failure()
+                self._metrics.inc_counter(
+                    "astrocyte_recall_total",
+                    {"bank_id": bid, "provider": self._provider_name, "status": "error"},
+                )
 
         weighted = _apply_bank_weights(all_hits, strategy.bank_weights)
         weighted.sort(key=lambda h: h.score, reverse=True)
