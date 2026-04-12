@@ -11,6 +11,9 @@ on:
       - "adapters-py/**"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   adapters:
     runs-on: ubuntu-latest

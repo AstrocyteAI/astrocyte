@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   # Matches `requires-python` / classifiers in astrocyte-py/pyproject.toml
   astrocyte-py:

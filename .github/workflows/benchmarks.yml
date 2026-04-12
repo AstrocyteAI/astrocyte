@@ -17,6 +17,10 @@ on:
     # Weekly Monday 6am UTC
     - cron: "0 6 * * 1"
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   matrix-setup:
     name: Configure benchmark matrix

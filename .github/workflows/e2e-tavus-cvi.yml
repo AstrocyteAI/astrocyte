@@ -5,6 +5,9 @@ name: e2e Tavus CVI
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   composer:
     name: e2e Tavus CVI composer
