@@ -1,14 +1,14 @@
-# Integration tests for optional Tier-1 store adapters (Docker services).
-name: Adapters
+# Integration tests for optional Tier-1 storage adapters (Docker services).
+name: Adapters (storage)
 
 on:
   push:
     paths:
-      - "adapters-py/**"
-      - ".github/workflows/adapters-ci.yml"
+      - "adapters-storage-py/**"
+      - ".github/workflows/adapters-storage-ci.yml"
   pull_request:
     paths:
-      - "adapters-py/**"
+      - "adapters-storage-py/**"
   workflow_dispatch:
 
 permissions:
@@ -74,19 +74,19 @@ jobs:
           exit 1
 
       - name: astrocyte-qdrant
-        working-directory: adapters-py/astrocyte-qdrant
+        working-directory: adapters-storage-py/astrocyte-qdrant
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="
 
       - name: astrocyte-neo4j
-        working-directory: adapters-py/astrocyte-neo4j
+        working-directory: adapters-storage-py/astrocyte-neo4j
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="
 
       - name: astrocyte-elasticsearch
-        working-directory: adapters-py/astrocyte-elasticsearch
+        working-directory: adapters-storage-py/astrocyte-elasticsearch
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="

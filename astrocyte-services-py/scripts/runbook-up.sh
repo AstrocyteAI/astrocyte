@@ -56,7 +56,7 @@ else
 fi
 
 echo "Applying SQL migrations..."
-( export DATABASE_URL="$MIGRATE_URL" && ../adapters-py/astrocyte-pgvector/scripts/migrate.sh )
+( export DATABASE_URL="$MIGRATE_URL" && ../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh )
 
 echo "Starting full stack (runbook config)..."
 docker compose -f docker-compose.yml -f docker-compose.runbook.yml up --build -d

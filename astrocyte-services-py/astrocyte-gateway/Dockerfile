@@ -7,7 +7,7 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /build
 COPY astrocyte-py /build/astrocyte-py
-COPY adapters-py/astrocyte-pgvector /build/astrocyte-pgvector
+COPY adapters-storage-py/astrocyte-pgvector /build/astrocyte-pgvector
 COPY astrocyte-services-py/astrocyte-gateway /build/astrocyte-gateway
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \

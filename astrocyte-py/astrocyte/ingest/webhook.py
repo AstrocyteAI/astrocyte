@@ -14,6 +14,7 @@ from astrocyte.config import SourceConfig
 from astrocyte.errors import IngestError
 from astrocyte.ingest.bank_resolve import resolve_ingest_bank_id
 from astrocyte.ingest.hmac_auth import verify_hmac_sha256
+from astrocyte.ingest.payload import parse_ingest_json_object
 from astrocyte.types import Metadata, RetainResult
 
 RetainCallable = Callable[..., Awaitable[RetainResult]]
@@ -34,26 +35,7 @@ def _parse_json_body(raw: bytes) -> tuple[str, str | None, str, Metadata | None]
         raise IngestError(f"invalid JSON body: {e}") from e
     if not isinstance(data, dict):
         raise IngestError("JSON body must be an object")
-    text = data.get("content") or data.get("text")
-    if not text or not isinstance(text, str):
-        raise IngestError("JSON must include string content or text")
-    principal = data.get("principal")
-    pr: str | None = str(principal).strip() if principal is not None else None
-    ct = data.get("content_type") or "text"
-    content_type = str(ct) if isinstance(ct, str) else "text"
-    meta_raw = data.get("metadata")
-    metadata = _coerce_metadata(meta_raw)
-    return text, pr, content_type, metadata
-
-
-def _coerce_metadata(meta_raw: object) -> Metadata | None:
-    if not isinstance(meta_raw, dict):
-        return None
-    out: Metadata = {}
-    for k, v in meta_raw.items():
-        if isinstance(v, (str, int, float, bool)) or v is None:
-            out[str(k)] = v  # type: ignore[assignment]
-    return out if out else None
+    return parse_ingest_json_object(data)
 
 
 @dataclass(frozen=True)

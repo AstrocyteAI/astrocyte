@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from astrocyte._discovery import discover_entry_points, resolve_provider
 from astrocyte.config import SourceConfig
+from astrocyte.errors import ConfigError
 from astrocyte.ingest.source import IngestSource, WebhookIngestSource
+from astrocyte.ingest.webhook import RetainCallable
 
 
 class SourceRegistry:
@@ -30,7 +33,12 @@ class SourceRegistry:
             await s.stop()
 
     @classmethod
-    def from_sources_config(cls, sources: dict[str, SourceConfig] | None) -> SourceRegistry:
+    def from_sources_config(
+        cls,
+        sources: dict[str, SourceConfig] | None,
+        *,
+        retain: RetainCallable | None = None,
+    ) -> SourceRegistry:
         reg = cls()
         if not sources:
             return reg
@@ -38,4 +46,26 @@ class SourceRegistry:
             st = (cfg.type or "").strip().lower()
             if st == "webhook":
                 reg.register(WebhookIngestSource(str(sid), cfg))
+            elif st == "stream":
+                driver = (cfg.driver or "redis").strip().lower()
+                if retain is None:
+                    raise ConfigError(
+                        f"sources.{sid}: type stream requires retain=... "
+                        "(use astrocyte.ingest.runtime.retain_callable_for_astrocyte(astrocyte))"
+                    )
+                try:
+                    source_cls = resolve_provider(driver, "ingest_stream_drivers")
+                except LookupError as e:
+                    avail = sorted(discover_entry_points("ingest_stream_drivers").keys())
+                    hint = ", ".join(avail) if avail else "none"
+                    raise ConfigError(
+                        f"sources.{sid}: stream driver {driver!r} is not installed or unknown. "
+                        f"Installed drivers: {hint}. "
+                        "For kafka + redis, install e.g. pip install 'astrocyte[stream]'."
+                    ) from e
+                except Exception as e:
+                    raise ConfigError(
+                        f"sources.{sid}: failed to load stream driver {driver!r}: {e}"
+                    ) from e
+                reg.register(source_cls(str(sid), cfg, retain=retain))
         return reg

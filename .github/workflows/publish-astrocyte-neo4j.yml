@@ -1,5 +1,5 @@
 # One workflow file per PyPI project — required for Trusted Publishing OIDC subject matching.
-# Integration tests must pass before build/publish (same stack as adapters-ci.yml neo4j leg).
+# Integration tests must pass before build/publish (same stack as adapters-storage-ci.yml neo4j leg).
 name: Publish astrocyte-neo4j to PyPI
 
 on:
@@ -52,7 +52,7 @@ jobs:
           exit 1
 
       - name: Run pytest (astrocyte-neo4j)
-        working-directory: adapters-py/astrocyte-neo4j
+        working-directory: adapters-storage-py/astrocyte-neo4j
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="
@@ -78,13 +78,13 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Pin version in pyproject.toml
-        working-directory: adapters-py/astrocyte-neo4j
+        working-directory: adapters-storage-py/astrocyte-neo4j
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
       - name: Build package
-        working-directory: adapters-py/astrocyte-neo4j
+        working-directory: adapters-storage-py/astrocyte-neo4j
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.ver.outputs.version }}
         run: uv build
@@ -93,7 +93,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dist-neo4j
-          path: adapters-py/astrocyte-neo4j/dist/
+          path: adapters-storage-py/astrocyte-neo4j/dist/
 
   attest:
     needs: build

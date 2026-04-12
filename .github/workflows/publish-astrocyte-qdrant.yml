@@ -1,5 +1,5 @@
 # One workflow file per PyPI project — required for Trusted Publishing OIDC subject matching.
-# Integration tests must pass before build/publish (same stack as adapters-ci.yml qdrant leg).
+# Integration tests must pass before build/publish (same stack as adapters-storage-ci.yml qdrant leg).
 name: Publish astrocyte-qdrant to PyPI
 
 on:
@@ -35,7 +35,7 @@ jobs:
           python-version: "3.12"
 
       - name: Run pytest (astrocyte-qdrant)
-        working-directory: adapters-py/astrocyte-qdrant
+        working-directory: adapters-storage-py/astrocyte-qdrant
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="
@@ -61,13 +61,13 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Pin version in pyproject.toml
-        working-directory: adapters-py/astrocyte-qdrant
+        working-directory: adapters-storage-py/astrocyte-qdrant
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
       - name: Build package
-        working-directory: adapters-py/astrocyte-qdrant
+        working-directory: adapters-storage-py/astrocyte-qdrant
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.ver.outputs.version }}
         run: uv build
@@ -76,7 +76,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dist-qdrant
-          path: adapters-py/astrocyte-qdrant/dist/
+          path: adapters-storage-py/astrocyte-qdrant/dist/
 
   attest:
     needs: build

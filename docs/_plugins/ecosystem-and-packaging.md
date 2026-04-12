@@ -101,26 +101,28 @@ astrocyte-py/                         # Python implementation (open source)
 
 ### 2.2 Tier 1 retrieval providers
 
-Monorepo layout: optional packages live under **`adapters-py/`** (for example **`adapters-py/astrocyte-pgvector/`**).
+Monorepo layout: optional packages live under **`adapters-storage-py/`** (for example **`adapters-storage-py/astrocyte-pgvector/`**).
 
 ```
-adapters-py/astrocyte-pgvector/       # Vector + optional full-text via PostgreSQL
+adapters-storage-py/astrocyte-pgvector/       # Vector + optional full-text via PostgreSQL
 ├── astrocyte_pgvector/
 │   ├── __init__.py                    # PgVectorStore (implements VectorStore)
 │   ├── fulltext.py                    # Optional: PgDocumentStore (tsvector BM25)
 │   └── migrations/                    # Alembic migrations for required tables
 ├── pyproject.toml
 
-adapters-py/astrocyte-neo4j/          # Graph store via Neo4j
+adapters-storage-py/astrocyte-neo4j/          # Graph store via Neo4j
 ├── astrocyte_neo4j/
 │   ├── __init__.py                    # Neo4jGraphStore (implements GraphStore)
 ├── pyproject.toml
 
-adapters-py/astrocyte-qdrant/         # Vector store via Qdrant
+adapters-storage-py/astrocyte-qdrant/         # Vector store via Qdrant
 ├── astrocyte_qdrant/
 │   ├── __init__.py                    # QdrantVectorStore (implements VectorStore)
 ├── pyproject.toml
 ```
+
+**Ingest transports** (optional): **`adapters-ingestion-py/`** holds packages such as **`astrocyte-ingestion-kafka`** and **`astrocyte-ingestion-redis`** — **not** `VectorStore` / `GraphStore` / `DocumentStore` (those stay under **`adapters-storage-py/`**). **Vendor / product** integrations (outbound, bidirectional) are intended to live under **`adapters-integration-py/`** as packages land. Core ingest types may still live in **`astrocyte-py`** until split for independent versioning.
 
 ### 2.3 Tier 2 memory engine providers
 
@@ -201,7 +203,7 @@ Providers register using Python's standard entry point mechanism (`importlib.met
 ### 3.1 Tier 1: Retrieval providers
 
 ```toml
-# adapters-py/astrocyte-pgvector/pyproject.toml
+# adapters-storage-py/astrocyte-pgvector/pyproject.toml
 [project.entry-points."astrocyte.vector_stores"]
 pgvector = "astrocyte_pgvector:PgVectorStore"
 
@@ -210,13 +212,13 @@ pgvector = "astrocyte_pgvector.fulltext:PgDocumentStore"
 ```
 
 ```toml
-# adapters-py/astrocyte-neo4j/pyproject.toml
+# adapters-storage-py/astrocyte-neo4j/pyproject.toml
 [project.entry-points."astrocyte.graph_stores"]
 neo4j = "astrocyte_neo4j:Neo4jGraphStore"
 ```
 
 ```toml
-# adapters-py/astrocyte-qdrant/pyproject.toml
+# adapters-storage-py/astrocyte-qdrant/pyproject.toml
 [project.entry-points."astrocyte.vector_stores"]
 qdrant = "astrocyte_qdrant:QdrantVectorStore"
 ```

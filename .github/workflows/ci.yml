@@ -3,7 +3,27 @@ name: CI
 on:
   push:
     branches: [main, master]
+    paths:
+      - "astrocyte-py/**"
+      - "adapters-ingestion-py/**"
+      - "adapters-integration-py/**"
+      - "adapters-storage-py/**"
+      - "astrocyte-services-py/**"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/gateway-publish-test-gate.yml"
+      - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
+      - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
   pull_request:
+    paths:
+      - "astrocyte-py/**"
+      - "adapters-ingestion-py/**"
+      - "adapters-integration-py/**"
+      - "adapters-storage-py/**"
+      - "astrocyte-services-py/**"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/gateway-publish-test-gate.yml"
+      - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
+      - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
   workflow_dispatch:
 
 permissions:

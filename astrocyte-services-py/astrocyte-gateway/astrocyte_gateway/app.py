@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -22,6 +23,8 @@ from astrocyte.errors import (
     RateLimited,
 )
 from astrocyte.ingest.registry import SourceRegistry
+from astrocyte.ingest.runtime import retain_callable_for_astrocyte
+from astrocyte.ingest.supervisor import IngestSupervisor
 from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.types import AstrocyteContext
 
@@ -95,12 +98,25 @@ def require_admin_if_configured(request: Request) -> None:
 
 def create_app() -> FastAPI:
     brain = build_astrocyte()
-    ingest_registry = SourceRegistry.from_sources_config(brain.config.sources)
+    ingest_registry = SourceRegistry.from_sources_config(
+        brain.config.sources,
+        retain=retain_callable_for_astrocyte(brain),
+    )
+    ingest_supervisor = IngestSupervisor(ingest_registry)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        await ingest_supervisor.start()
+        try:
+            yield
+        finally:
+            await ingest_supervisor.stop()
 
     app = FastAPI(
         title="Astrocyte gateway",
         description="HTTP API over astrocyte-py (Tier 1 pipeline; configure with astrocyte.yaml / optional mip.yaml).",
         version="0.1.0",
+        lifespan=lifespan,
     )
     _configure_gateway_middleware(app)
 
@@ -301,19 +317,9 @@ def create_app() -> FastAPI:
         _admin: Annotated[None, Depends(require_admin_if_configured)],
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        """List configured ingest sources and best-effort health."""
+        """List configured ingest sources and best-effort health (via :class:`IngestSupervisor`)."""
         _ = ctx
-        out: list[dict[str, Any]] = []
-        for src in ingest_registry.all_sources():
-            row: dict[str, Any] = {"id": src.source_id, "type": src.source_type}
-            try:
-                hs = await src.health_check()
-                row["healthy"] = hs.healthy
-                row["message"] = hs.message
-            except Exception as e:  # noqa: BLE001 — admin surface
-                row["healthy"] = False
-                row["message"] = str(e)
-            out.append(row)
+        out = await ingest_supervisor.health_snapshot()
         return {"sources": out}
 
     @app.get("/v1/admin/banks")

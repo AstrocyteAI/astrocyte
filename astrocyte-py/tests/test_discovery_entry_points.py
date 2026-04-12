@@ -35,3 +35,19 @@ def test_in_memory_graph_and_document_entry_points() -> None:
     d = resolve_provider("in_memory", "document_stores")
     assert g.__name__ == "InMemoryGraphStore"
     assert d.__name__ == "InMemoryDocumentStore"
+
+
+def test_kafka_ingest_stream_driver_entry_point() -> None:
+    try:
+        cls = resolve_provider("kafka", "ingest_stream_drivers")
+    except LookupError:
+        pytest.skip("astrocyte-ingestion-kafka not installed (no kafka stream driver entry point)")
+    assert cls.__name__ == "KafkaStreamIngestSource"
+
+
+def test_redis_ingest_stream_driver_entry_point() -> None:
+    try:
+        cls = resolve_provider("redis", "ingest_stream_drivers")
+    except LookupError:
+        pytest.skip("astrocyte-ingestion-redis not installed (no redis stream driver entry point)")
+    assert cls.__name__ == "RedisStreamIngestSource"

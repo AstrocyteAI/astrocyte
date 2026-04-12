@@ -158,7 +158,7 @@ This section names **which folders** own **AuthZ wiring** in [`astrocyte-py`](..
 | **Calling `set_access_grants()` at process startup** | **`astrocyte-services-py/astrocyte-gateway`** — **`astrocyte_gateway/brain.py`** (`build_astrocyte()`): after **`Astrocyte(config)`** and **`set_pipeline(...)`**, apply grants from the loaded config. |
 | **Trusted `principal` on each HTTP request** (production) | **`astrocyte-gateway`** — FastAPI dependencies / middleware: map verified JWT, API key, mTLS identity to **`AstrocyteContext`**, not an unauthenticated client header alone. |
 
-**Not here:** [`astrocyte-pgvector`](../adapters-py/astrocyte-pgvector/) — it implements **VectorStore** only; it does not participate in access grants.
+**Not here:** [`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/) — it implements **VectorStore** only; it does not participate in access grants.
 
 ### 8.2 External PDP (`AccessPolicyProvider`)
 

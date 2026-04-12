@@ -39,7 +39,7 @@ uv run --directory astrocyte-services-py/astrocyte-gateway astrocyte-gateway
 
 **uv:** `pyproject.toml` pins **`[tool.uv.sources]`** so `astrocyte` resolves from **`../../astrocyte-py`** (editable). Run `uv sync` from **`astrocyte-services-py/astrocyte-gateway/`**. Plain **`pip`** users should `pip install -e ../../astrocyte-py` first, then install this package.
 
-**PostgreSQL (pgvector):** Install the optional adapter (`uv sync --extra pgvector`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts **Postgres + this service** together. For Postgres only on the host, see [`astrocyte-pgvector`](../../adapters-py/astrocyte-pgvector/README.md).
+**PostgreSQL (pgvector):** Install the optional adapter (`uv sync --extra pgvector`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts **Postgres + this service** together. For Postgres only on the host, see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md).
 
 Then set `vector_store: pgvector` in YAML or `ASTROCYTE_VECTOR_STORE=pgvector`, and pass a DSN via `vector_store_config.dsn` or `DATABASE_URL` / `ASTROCYTE_PG_DSN`.
 
@@ -60,7 +60,7 @@ Then set `vector_store: pgvector` in YAML or `ASTROCYTE_VECTOR_STORE=pgvector`, 
 | `ASTROCYTE_LLM_PROVIDER` | Override `llm_provider` when no YAML file is used (default `mock`). |
 | `ASTROCYTE_GRAPH_STORE` | Optional graph store name. |
 | `ASTROCYTE_DOCUMENT_STORE` | Optional document store name. |
-| `DATABASE_URL` / `ASTROCYTE_PG_DSN` | When using **`pgvector`**, connection URI for PostgreSQL (see [`astrocyte-pgvector`](../../adapters-py/astrocyte-pgvector/README.md)); can be omitted if `dsn` is set in YAML `vector_store_config`. |
+| `DATABASE_URL` / `ASTROCYTE_PG_DSN` | When using **`pgvector`**, connection URI for PostgreSQL (see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md)); can be omitted if `dsn` is set in YAML `vector_store_config`. |
 | `ASTROCYTE_MAX_REQUEST_BODY_BYTES` | If set to a positive integer, reject requests whose **`Content-Length`** exceeds it (**413**). Unset = no limit (dev default). |
 | `ASTROCYTE_CORS_ORIGINS` | Comma-separated allowed origins for **browser** `fetch` (e.g. `https://app.example.com`). Unset = CORS middleware not added (same-origin / server-to-server only). |
 | `ASTROCYTE_ADMIN_TOKEN` | If set, **`GET /v1/admin/*`** requires header **`X-Admin-Token`** with the same value (use behind TLS; rotate like any secret). Unset = admin routes behave like other API routes (auth mode only). |

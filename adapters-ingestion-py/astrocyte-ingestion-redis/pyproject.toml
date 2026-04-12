@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocyte-ingestion-redis"
+version = "0.1.0"
+description = "Redis Streams IngestSource adapter for Astrocyte"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "astrocyte",
+    "redis>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.entry-points."astrocyte.ingest_stream_drivers"]
+redis = "astrocyte_ingestion_redis.source:RedisStreamIngestSource"
+
+[tool.hatch.build.targets.wheel]
+packages = ["astrocyte_ingestion_redis"]
+
+[tool.uv.sources]
+astrocyte = { path = "../../astrocyte-py", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]

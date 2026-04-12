@@ -52,6 +52,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiokafka", marker = "extra == 'all'", specifier = ">=0.13.0" },
+    { name = "aiokafka", marker = "extra == 'dev'", specifier = ">=0.13.0" },
+    { name = "aiokafka", marker = "extra == 'stream'", specifier = ">=0.13.0" },
     { name = "deepeval", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0" },
@@ -77,12 +80,15 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.2" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "redis", marker = "extra == 'all'", specifier = ">=5.0.0" },
+    { name = "redis", marker = "extra == 'dev'", specifier = ">=5.0.0" },
+    { name = "redis", marker = "extra == 'stream'", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'all'", specifier = ">=0.30" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'dev'", specifier = ">=0.30" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'gateway'", specifier = ">=0.30" },
 ]
-provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "prometheus"]
+provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "prometheus", "stream"]
 
 [[package]]
 name = "astrocyte-gateway"
@@ -114,7 +120,7 @@ pgvector = [
 [package.metadata]
 requires-dist = [
     { name = "astrocyte", editable = "../../astrocyte-py" },
-    { name = "astrocyte-pgvector", marker = "extra == 'pgvector'", editable = "../../adapters-py/astrocyte-pgvector" },
+    { name = "astrocyte-pgvector", marker = "extra == 'pgvector'", editable = "../../adapters-storage-py/astrocyte-pgvector" },
     { name = "cryptography", specifier = ">=42" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
@@ -130,7 +136,7 @@ provides-extras = ["dev", "pgvector", "otel"]
 
 [[package]]
 name = "astrocyte-pgvector"
-source = { editable = "../../adapters-py/astrocyte-pgvector" }
+source = { editable = "../../adapters-storage-py/astrocyte-pgvector" }
 dependencies = [
     { name = "astrocyte" },
     { name = "pgvector" },

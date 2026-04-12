@@ -1,5 +1,5 @@
 # One workflow file per PyPI project — required for Trusted Publishing OIDC subject matching.
-# Integration tests must pass before build/publish (same stack as adapters-ci.yml elasticsearch leg).
+# Integration tests must pass before build/publish (same stack as adapters-storage-ci.yml elasticsearch leg).
 name: Publish astrocyte-elasticsearch to PyPI
 
 on:
@@ -44,7 +44,7 @@ jobs:
           python-version: "3.12"
 
       - name: Run pytest (astrocyte-elasticsearch)
-        working-directory: adapters-py/astrocyte-elasticsearch
+        working-directory: adapters-storage-py/astrocyte-elasticsearch
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="
@@ -70,13 +70,13 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Pin version in pyproject.toml
-        working-directory: adapters-py/astrocyte-elasticsearch
+        working-directory: adapters-storage-py/astrocyte-elasticsearch
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
       - name: Build package
-        working-directory: adapters-py/astrocyte-elasticsearch
+        working-directory: adapters-storage-py/astrocyte-elasticsearch
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.ver.outputs.version }}
         run: uv build
@@ -85,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dist-elasticsearch
-          path: adapters-py/astrocyte-elasticsearch/dist/
+          path: adapters-storage-py/astrocyte-elasticsearch/dist/
 
   attest:
     needs: build

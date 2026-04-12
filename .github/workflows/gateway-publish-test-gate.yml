@@ -90,12 +90,12 @@ jobs:
         run: sudo apt-get update -y && sudo apt-get install -y postgresql-client
 
       - name: Migrate Postgres (pgvector SQL)
-        run: adapters-py/astrocyte-pgvector/scripts/migrate.sh
+        run: adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
 
       - name: Test astrocyte-pgvector
-        working-directory: adapters-py/astrocyte-pgvector
+        working-directory: adapters-storage-py/astrocyte-pgvector
         run: uv sync --extra dev && uv run python -m pytest
 
       - name: Gateway E2E (HTTP + pgvector, migrated schema)

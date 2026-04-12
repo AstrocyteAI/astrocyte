@@ -243,29 +243,29 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 ### Deliverables
 
-1. **Graph store: Neo4j adapter** — PyPI package **`astrocyte-neo4j`** (`adapters-py/astrocyte-neo4j/`)
+1. **Graph store: Neo4j adapter** — PyPI package **`astrocyte-neo4j`** (`adapters-storage-py/astrocyte-neo4j/`)
    - Implements `GraphStore` SPI
    - Entity and relationship CRUD
    - Neighborhood traversal for graph-enhanced recall
    - Cypher query generation
 
-2. **Document store: Elasticsearch/OpenSearch adapter** — **`astrocyte-elasticsearch`** (`adapters-py/astrocyte-elasticsearch/`)
+2. **Document store: Elasticsearch/OpenSearch adapter** — **`astrocyte-elasticsearch`** (`adapters-storage-py/astrocyte-elasticsearch/`)
    - Implements `DocumentStore` SPI
    - BM25 full-text search
    - Keyword retrieval for hybrid recall
    - Index lifecycle management
 
-3. **Vector stores** — **`astrocyte-pgvector`** (PostgreSQL + pgvector), **`astrocyte-qdrant`** (Qdrant); both under `adapters-py/`
+3. **Vector stores** — **`astrocyte-pgvector`** (PostgreSQL + pgvector), **`astrocyte-qdrant`** (Qdrant); both under `adapters-storage-py/`
    - Implement `VectorStore` SPI (pgvector may also expose document-oriented helpers where applicable)
    - Payload / collection management per backend
 
 ### Acceptance Criteria
 
 - [x] Each adapter has integration tests exercising the `VectorStore` / `GraphStore` / `DocumentStore` API (see each package’s `tests/`; optional: authors may also run shared suites from `astrocyte.testing`)
-- [x] Hybrid recall (vector + graph + document) produces fused results — core E2E: `tests/test_m5_hybrid_recall_e2e.py`, `tests/test_astrocyte_tier1.py` (in-memory); production adapters validated in `adapters-ci.yml`
+- [x] Hybrid recall (vector + graph + document) produces fused results — core E2E: `tests/test_m5_hybrid_recall_e2e.py`, `tests/test_astrocyte_tier1.py` (in-memory); production adapters validated in `adapters-storage-ci.yml`
 - [x] Each adapter ships as a separate PyPI package (`astrocyte-pgvector`, `astrocyte-qdrant`, `astrocyte-neo4j`, `astrocyte-elasticsearch`)
-- [x] Integration tests run against containerized instances in CI (`.github/workflows/adapters-ci.yml`; pgvector also covered from root `ci.yml`)
-- [x] README with quick-start — `adapters-py/README.md` plus per-adapter READMEs
+- [x] Integration tests run against containerized instances in CI (`.github/workflows/adapters-storage-ci.yml`; pgvector also covered from root `ci.yml`)
+- [x] README with quick-start — `adapters-storage-py/README.md` plus per-adapter READMEs
 
 **Same release — v0.8.0:** This milestone shares the **v0.8.0** line with **M6** (standalone gateway) and **M7** (structured recall authority). Hybrid adapters, gateway, and precedence config ship on the same minor family; see **§ M6** and **§ M7**.
 
@@ -386,10 +386,18 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 - **Through v1.0.0:** Prefer **additive** changes (new optional fields, new methods with defaults). **Breaking** changes require a **documented deprecation** in release notes and, where applicable, an ADR; after **v1.0.0**, **1.x** keeps SPIs **backwards-compatible** except in a **major** semver bump.
 - **Tier distinction:** **Tier 1** memory API and documented SPIs are stability-guaranteed; **Tier 2** engine-only or experimental surfaces stay explicitly labeled in code/docs until promoted.
 
-### Adapter packages (`adapters-py/`, PyPI `astrocyte-*`)
+### Adapter packages (`adapters-storage-py/`, PyPI `astrocyte-*`)
 
 - Adapters **implement** core SPIs; they release on their **own PyPI versions** but declare a **supported `astrocyte` core range** in each package README.
-- A **breaking SPI change** in core triggers coordinated **minor/major** adapter releases; CI (e.g. `adapters-ci.yml`) is the enforcement backstop.
+- A **breaking SPI change** in core triggers coordinated **minor/major** adapter releases; CI (e.g. `adapters-storage-ci.yml`) is the enforcement backstop.
+
+### Ingest transport packages (`adapters-ingestion-py/`)
+
+- **Ingest transport** adapters split from core (**`astrocyte-ingestion-kafka`**, **`astrocyte-ingestion-redis`**, …). Version and test like storage adapters when published; CI uses **`adapters-ingestion-ci.yml`**.
+
+### Vendor integration packages (`adapters-integration-py/`)
+
+- Reserved for **vendor / product** integrations (outbound API clients, bidirectional flows, gateway-related shims) that are **not** storage SPIs and **not** generic ingest transports. Empty until packages land.
 
 ### `astrocyte.yaml` / `astrocyte.yml` (declarative config)
 
@@ -443,7 +451,7 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 - Optional manual federated hits via `RecallRequest.external_context`
 
 ### v0.8.0 — Production storage (M5) + standalone gateway (M6) + structured recall authority (M7)
-- **M5 — adapters:** Neo4j (`astrocyte-neo4j`), Elasticsearch (`astrocyte-elasticsearch`), Qdrant (`astrocyte-qdrant`), PostgreSQL/pgvector (`astrocyte-pgvector`) — packages under `adapters-py/`; hybrid recall validated end-to-end (vector + graph + document)
+- **M5 — adapters:** Neo4j (`astrocyte-neo4j`), Elasticsearch (`astrocyte-elasticsearch`), Qdrant (`astrocyte-qdrant`), PostgreSQL/pgvector (`astrocyte-pgvector`) — packages under `adapters-storage-py/`; hybrid recall validated end-to-end (vector + graph + document)
 - **M6 — gateway:** FastAPI **`astrocyte-gateway`** (implemented in repo): Tier 1 REST, JWT/OIDC → `AstrocyteContext`, webhook ingest, health/admin, Docker/Compose/Helm, GHCR — **§ M6**
 - **M7 — precedence:** Optional `astrocyte.yaml` `recall_authority:` (ADR-004); labeled `authority_context` for recall/reflect; **not** the default recall path — full spec **§ M7**
 
@@ -482,7 +490,7 @@ SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this tra
 | Gap 3 | Deployment Models | M6 | v0.8.0 | **Shipped in-repo:** `astrocyte-gateway`, Docker/Compose/Helm, CI, GHCR (ADR-001 standalone path). **v0.8.x** tags per § Release numbering (no separate v0.9.0 tag). |
 | Gap 4 | Config Schema Evolution | M2 | v0.5.0 | Implemented in core (ADR-003); ships with M1 in same tag |
 | Gap 5 | User-Scoped Memory | M1 | v0.5.0 | Implemented in core (`BankResolver`, ACL, optional adapter `context`); HTTP UX via **`astrocyte-gateway`** auth + config |
-| Gap 6 | Production Storage Providers | M5 | v0.8.0 | Implemented: `adapters-py/` packages + CI + publish workflows |
+| Gap 6 | Production Storage Providers | M5 | v0.8.0 | Implemented: `adapters-storage-py/` packages + CI + publish workflows |
 | Gap 7 | Extraction Pipeline | M3 | v0.6.0 | Implemented (`pipeline/extraction`, chunking, profiles) |
 | Gap 8 | Structured recall authority (truth precedence vs cost-tiered retrieval) | M7 | v0.8.0 | Implemented (`recall_authority`, `astrocyte.recall.authority`, ADR-004) |
 

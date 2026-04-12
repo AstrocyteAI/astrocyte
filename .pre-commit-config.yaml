@@ -3,13 +3,13 @@
 #   uv run --project astrocyte-py pre-commit install
 #
 # Mirrors CI: `uv run ruff check astrocyte/ tests/` in astrocyte-py/, and
-# `uv run ruff check` under each adapters-py package (see package pyproject.toml).
+# `uv run ruff check` under each adapters-storage-py / adapters-ingestion-py package.
 #
 # Do not pass `--fix` here: autofix rewrites files during the hook and conflicts with
 # pre-commit’s stash of **unstaged** changes (partial `git add`), so the hook rolls back
 # and the commit fails. Run fixes locally instead:
 #   uv run ruff check astrocyte tests --fix && uv run ruff format astrocyte tests
-#   uv run ruff check adapters-py --fix   # per-package config under adapters-py/*/pyproject.toml
+#   uv run ruff check adapters-storage-py --fix   # per-package config under adapters-storage-py/*/pyproject.toml
 #
 # CodeQL is not run here: it builds a DB and analyzes the whole tree (minutes + large CLI).
 # Use repo **Settings → Code security → Code scanning** (GitHub default/setup) for CodeQL in CI.
@@ -20,5 +20,11 @@ repos:
       - id: ruff
         files: ^astrocyte-py/(astrocyte|tests)/.*\.py$
       - id: ruff
-        name: ruff (adapters-py)
-        files: ^adapters-py/.*\.py$
+        name: ruff (adapters-storage-py)
+        files: ^adapters-storage-py/.*\.py$
+      - id: ruff
+        name: ruff (adapters-ingestion-py)
+        files: ^adapters-ingestion-py/.*\.py$
+      - id: ruff
+        name: ruff (adapters-integration-py)
+        files: ^adapters-integration-py/.*\.py$

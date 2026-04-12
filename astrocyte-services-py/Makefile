@@ -25,7 +25,7 @@ help:
 	@echo "  make rebuild-runbook  down + runbook (full migrate + runbook stack)"
 	@echo "  make live             GET /live — process up only (no DB; good smoke test)"
 	@echo "  make health           GET /health — includes vector store / DB check"
-	@echo "  make migrate          Run adapters-py/astrocyte-pgvector/scripts/migrate.sh (needs Postgres on host port)"
+	@echo "  make migrate          Run adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh (needs Postgres on host port)"
 	@echo "  make clean            down and remove volumes (wipes Postgres data)"
 	@echo "  make ci-checks        CI: pytest (astrocyte-py + astrocyte-gateway), bash -n runbook-up.sh, compose config"
 	@echo "  make smoke-gateway    curl retain/recall against running gateway (see scripts/smoke-gateway.sh)"
@@ -70,7 +70,7 @@ migrate:
 	@set -a; [[ -f .env ]] && source ./.env; set +a; \
 	if [[ -n "$${MIGRATE_DATABASE_URL:-}" ]]; then export DATABASE_URL="$$MIGRATE_DATABASE_URL"; \
 	else export DATABASE_URL="postgresql://$${POSTGRES_USER:-astrocyte}:$${POSTGRES_PASSWORD:-astrocyte}@127.0.0.1:$${POSTGRES_PUBLISH_PORT:-5433}/$${POSTGRES_DB:-astrocyte}"; fi; \
-	../adapters-py/astrocyte-pgvector/scripts/migrate.sh
+	../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh
 
 # CI: astrocyte-py tests + shellcheck-style + compose merge + gateway unit tests (no Docker stack required).
 ci-checks: ci-shell ci-compose ci-pytest ci-gateway-tests

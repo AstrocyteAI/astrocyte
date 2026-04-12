@@ -1,0 +1,43 @@
+# Unit tests for optional ingest transport adapters (no Docker services required).
+name: Adapters (ingestion)
+
+on:
+  push:
+    paths:
+      - "adapters-ingestion-py/**"
+      - ".github/workflows/adapters-ingestion-ci.yml"
+      - ".github/workflows/publish-astrocyte-ingestion-kafka.yml"
+      - ".github/workflows/publish-astrocyte-ingestion-redis.yml"
+  pull_request:
+    paths:
+      - "adapters-ingestion-py/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ingest-redis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: astrocyte-ingestion-redis
+        working-directory: adapters-ingestion-py/astrocyte-ingestion-redis
+        run: |
+          uv sync --extra dev
+          uv run pytest tests -v --override-ini="addopts="
+
+      - name: astrocyte-ingestion-kafka
+        working-directory: adapters-ingestion-py/astrocyte-ingestion-kafka
+        run: |
+          uv sync --extra dev
+          uv run pytest tests -v --override-ini="addopts="

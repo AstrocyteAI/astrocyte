@@ -14,6 +14,7 @@ ENTRY_POINT_GROUPS = {
     "engine_providers": "astrocyte.engine_providers",
     "llm_providers": "astrocyte.llm_providers",
     "outbound_transports": "astrocyte.outbound_transports",
+    "ingest_stream_drivers": "astrocyte.ingest_stream_drivers",
 }
 
 

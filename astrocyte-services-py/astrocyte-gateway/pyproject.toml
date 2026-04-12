@@ -33,7 +33,7 @@ otel = [
 # `astrocyte` is not published to PyPI yet; resolve it from the sibling package when using uv.
 [tool.uv.sources]
 astrocyte = { path = "../../astrocyte-py", editable = true }
-astrocyte-pgvector = { path = "../../adapters-py/astrocyte-pgvector", editable = true }
+astrocyte-pgvector = { path = "../../adapters-storage-py/astrocyte-pgvector", editable = true }
 
 [project.scripts]
 astrocyte-gateway = "astrocyte_gateway.main:main"

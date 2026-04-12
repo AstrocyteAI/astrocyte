@@ -51,6 +51,10 @@ Details: chunking uses sentence, paragraph, dialogue, or fixed-size strategies; 
 
 HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook_ingest` with the matching `SourceConfig`. JSON body: `content` or `text`, optional `principal`, `content_type`, `metadata`. **HMAC** when `auth.type: hmac` (`secret`, optional `header`). **Bank**: `target_bank` or `target_bank_template` with `{principal}`. Optional **`astrocyte[gateway]`**: `create_ingest_webhook_app` (Starlette ASGI) exposes `POST /v1/ingest/webhook/{source_id}`. Full gateway (JWT, OpenAPI, Docker) is M6. **M4.1** federated recall (`astrocyte.recall.proxy`, RRF merge) is separate from gateway HTTP; see `product-roadmap-v1.md` §M4.1. OAuth for proxy sources is documented in **`adr-003-config-schema.md`** (proxy `auth`). Not in core today but can be added when needed: a **hosted redirect/callback** flow, **PKCE**, and **device / JWT bearer** grants — see that ADR for the explicit “layered on later” note.
 
+### M4 — Stream ingest (`type: stream`)
+
+**Declarative `sources:`** may use `type: stream` with a **`driver`** string (`kafka`, `redis`, or any driver registered by an installed package). Resolution matches **storage adapters**: Python **entry points** in the group **`astrocyte.ingest_stream_drivers`** (see `astrocyte._discovery.resolve_provider`). The core wheel registers **no** stream drivers; **`astrocyte-ingestion-kafka`** registers **`kafka`**, **`astrocyte-ingestion-redis`** registers **`redis`**. Install **`astrocyte[stream]`** (or the adapter packages individually). Building **`SourceRegistry.from_sources_config`** still requires **`retain=...`** (e.g. `retain_callable_for_astrocyte`). Payload parsing stays in core: **`parse_ingest_kafka_value`** (Kafka message values) and **`parse_ingest_stream_fields`** (Redis stream fields).
+
 ### Multimodal content (optional)
 
 When **`RetainRequest`** (or the public API) includes **image/audio** as `ContentPart` lists (see `multimodal-llm-spi.md`), the pipeline does **not** assume every stage consumes raw media:

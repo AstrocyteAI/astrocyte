@@ -208,7 +208,14 @@ class IdentityConfig:
 
 @dataclass
 class SourceConfig:
-    """External data source definition (webhook ingest: see ``astrocyte.ingest``)."""
+    """External data source definition (``astrocyte.ingest``).
+
+    * **webhook** — HTTP push; gateway / ASGI binds the route.
+    * **stream** — long-running consumer — ``driver: redis`` (Redis Streams) or ``kafka`` (Kafka).
+      Requires ``url``, ``topic``, ``consumer_group``, ``target_bank`` / ``target_bank_template``.
+      For Redis, ``url`` is a Redis URL; for Kafka, ``url`` is bootstrap servers (e.g. ``localhost:9092``).
+      Optional ``path``: Redis consumer name or Kafka ``client_id``.
+    """
 
     type: str = ""
     extraction_profile: str | None = None
@@ -776,6 +783,25 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
                     raise ConfigError(f"sources.{name}: type proxy requires url")
                 if not (src.target_bank or "").strip():
                     raise ConfigError(f"sources.{name}: type proxy requires target_bank")
+            if st == "stream":
+                driver = (src.driver or "redis").strip().lower()
+                if driver not in ("redis", "kafka"):
+                    raise ConfigError(
+                        f"sources.{name}: stream driver {driver!r} is not supported (use redis or kafka)"
+                    )
+                if not (src.url or "").strip():
+                    raise ConfigError(
+                        f"sources.{name}: type stream requires url (Redis URL or Kafka bootstrap servers)"
+                    )
+                if not (src.topic or "").strip():
+                    tlabel = "Redis stream key / Kafka topic"
+                    raise ConfigError(f"sources.{name}: type stream requires topic ({tlabel})")
+                if not (src.consumer_group or "").strip():
+                    raise ConfigError(f"sources.{name}: type stream requires consumer_group")
+                if not (src.target_bank or "").strip() and not (src.target_bank_template or "").strip():
+                    raise ConfigError(
+                        f"sources.{name}: type stream requires target_bank or target_bank_template"
+                    )
             if src.extraction_profile:
                 if src.extraction_profile not in profiles:
                     raise ConfigError(

@@ -7,7 +7,7 @@
 From the monorepo (with `astrocyte` available):
 
 ```bash
-cd adapters-py/astrocyte-pgvector
+cd adapters-storage-py/astrocyte-pgvector
 uv sync
 # or: pip install -e ../../astrocyte-py && pip install -e .
 ```
@@ -42,7 +42,7 @@ DDL is shipped as **plain SQL** under [`migrations/`](migrations/) and applied w
 
 ```bash
 export DATABASE_URL='postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte'
-cd adapters-py/astrocyte-pgvector
+cd adapters-storage-py/astrocyte-pgvector
 ./scripts/migrate.sh
 ```
 
