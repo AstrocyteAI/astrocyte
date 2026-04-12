@@ -224,6 +224,13 @@ def main() -> None:
         help="Use uvicorn on 127.0.0.1 + real TCP (background thread); slower, closer to production",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON only (for CI)")
+    parser.add_argument(
+        "--max-overhead-p99-ms",
+        type=float,
+        default=None,
+        metavar="MS",
+        help="Exit with status 2 if overhead_p99_ms exceeds MS (optional SLO gate for CI)",
+    )
     args = parser.parse_args()
 
     try:
@@ -231,6 +238,15 @@ def main() -> None:
     except Exception as e:
         print(f"bench_gateway_overhead failed: {e}", file=sys.stderr)
         raise SystemExit(1) from e
+
+    if args.max_overhead_p99_ms is not None:
+        p99 = float(result.get("overhead_p99_ms", 0.0))
+        if p99 > args.max_overhead_p99_ms:
+            print(
+                f"bench_gateway_overhead: overhead_p99_ms={p99:.3f} exceeds --max-overhead-p99-ms={args.max_overhead_p99_ms}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
 
     transport = result.get("transport", "asgi_in_process")
     if args.json:

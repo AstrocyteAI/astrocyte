@@ -11,6 +11,7 @@ def _clear_gateway_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ASTROCYTE_ADMIN_TOKEN", raising=False)
     monkeypatch.delenv("ASTROCYTE_MAX_REQUEST_BODY_BYTES", raising=False)
     monkeypatch.delenv("ASTROCYTE_CORS_ORIGINS", raising=False)
+    monkeypatch.delenv("ASTROCYTE_RATE_LIMIT_PER_SECOND", raising=False)
 
 
 def test_admin_routes_require_token_when_configured(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -96,3 +97,37 @@ access_control: { enabled: false }
         },
     )
     assert pre.status_code == 200
+
+
+def test_rate_limit_returns_429_when_exceeded(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(
+        """
+provider_tier: storage
+vector_store: in_memory
+llm_provider: mock
+barriers: { pii: { mode: disabled } }
+escalation: { degraded_mode: error }
+access_control: { enabled: false }
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ASTROCYTE_CONFIG_PATH", str(cfg))
+    monkeypatch.setenv("ASTROCYTE_AUTH_MODE", "dev")
+    monkeypatch.setenv("ASTROCYTE_RATE_LIMIT_PER_SECOND", "1")
+
+    from astrocyte_gateway.app import create_app
+
+    client = TestClient(create_app())
+    assert client.get("/live").status_code == 200
+    assert client.post(
+        "/v1/recall",
+        json={"query": "r", "bank_id": "b1", "max_results": 1},
+    ).status_code == 200
+    limited = client.post(
+        "/v1/recall",
+        json={"query": "r", "bank_id": "b1", "max_results": 1},
+    )
+    assert limited.status_code == 429
+    assert limited.json().get("detail")
+    assert limited.headers.get("retry-after") == "1"

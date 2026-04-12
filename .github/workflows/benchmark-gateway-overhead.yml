@@ -27,6 +27,7 @@ jobs:
         working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           ASTROCYTE_AUTH_MODE: dev
+        # Optional SLO gate: append e.g. `--max-overhead-p99-ms 10` (exit 2 if exceeded; tune per runner).
         run: uv run python scripts/bench_gateway_overhead.py --warmup 80 --iterations 1500 --json | tee bench-gateway-overhead.json
 
       - name: Summary

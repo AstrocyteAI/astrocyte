@@ -32,6 +32,7 @@ from astrocyte.types import AstrocyteContext
 from astrocyte_gateway.auth import get_astrocyte_context
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
+from astrocyte_gateway.rate_limit import SlidingWindowRateLimitMiddleware, rate_limit_max_from_env
 from astrocyte_gateway.serialization import to_jsonable
 
 # Bounds /health latency when the vector store (e.g. pgvector) cannot connect.
@@ -86,6 +87,11 @@ def _configure_gateway_middleware(app: FastAPI) -> None:
 
     # Outermost: request ID + structured access log (see observability.py).
     app.add_middleware(AccessContextMiddleware)
+
+    # Last registered = outermost on the stack — rate limit before other layers (optional).
+    rl = rate_limit_max_from_env()
+    if rl is not None:
+        app.add_middleware(SlidingWindowRateLimitMiddleware, max_per_window=rl)
 
 
 def require_admin_if_configured(request: Request) -> None:

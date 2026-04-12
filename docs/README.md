@@ -2,6 +2,8 @@
 
 Astrocyte is an open-source memory framework that sits between agents and storage—it provides a stable API for retain/recall/synthesize, pluggable retrieval and memory-engine backends, and a built-in policy layer for governance and observability.
 
+**Current release line — v0.8.0:** Tier 1 production storage adapters ([**`astrocyte-pgvector`**](../adapters-storage-py/astrocyte-pgvector/README.md), Qdrant, Neo4j, Elasticsearch), optional standalone HTTP [**`astrocyte-gateway-py`**](../astrocyte-services-py/astrocyte-gateway-py/README.md), optional **`recall_authority`** ([ADR-004](./_design/adr/adr-004-recall-authority.md)), and ingest connectors (Kafka, Redis streams, GitHub poll). Release notes: [**`CHANGELOG.md`**](../CHANGELOG.md) · tagging and PyPI order: [**`RELEASING.md`**](../RELEASING.md).
+
 This folder (`docs/`) is the **shared design specification** for the Astrocyte framework. The same repository also contains the **parallel service implementations**: **[`astrocyte-py/`](../astrocyte-py/README.md)** (Python) and **[`astrocyte-rs/`](../astrocyte-rs/README.md)** (Rust). Those directories are the Python and Rust Astrocyte services; design documents here apply to **both** unless stated otherwise.
 
 **Scope:** The framework is **memory + governance + provider SPIs**. It is **not** an LLM gateway and **not** an agent runtime: it does not define orchestration (graphs, tool loops, checkpoints, scheduling, multi-agent routing). How that split maps to **context engineering** (what the model sees) vs **harness engineering** (how the agent loop runs) — and where Astrocyte sits between them — is spelled out in [Architecture framework](./_design/architecture-framework.md) §1 (*Context engineering vs harness engineering*). **Agent cards** and **agent catalogs** are a common way to describe deployable agents; Astrocyte does not host the catalog or run the agent graph, but it **is** designed so card identity feeds memory through an explicit, repeatable **mapping to principal + memory bank** (declarative config and thin resolver helpers—see `architecture-framework.md` §1 and `agent-framework-middleware.md`). Vendor-specific card fields that are irrelevant to memory stay outside the core contract.
@@ -16,12 +18,12 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 | **[`astrocyte-services-py/`](../astrocyte-services-py/README.md)** | Optional **REST** ([`astrocyte-gateway-py`](../astrocyte-services-py/astrocyte-gateway-py/README.md)); not part of the core SPI. **Docker:** [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml); **runbook** ([`scripts/runbook-up.sh`](../astrocyte-services-py/scripts/runbook-up.sh)); **[`Makefile`](../astrocyte-services-py/Makefile)** for common Compose commands. Operations, env split (`ASTROCYTE_REST_DATABASE_URL` vs host migrate DSN), and debugging: [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md) and [Production-grade HTTP service §4](./_end-user/production-grade-http-service.md). |
 | **[`adapters-storage-py/`](../adapters-storage-py/README.md)** | Optional **Tier 1** **storage** adapters (`VectorStore` / `GraphStore` / `DocumentStore`), including **[`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md)** (PostgreSQL + pgvector), Qdrant, Neo4j, Elasticsearch. |
 | **[`adapters-ingestion-py/`](../adapters-ingestion-py/README.md)** | Optional **ingest transport** packages (**`astrocyte-ingestion-kafka`**, **`astrocyte-ingestion-redis`**, …). |
-| **[`adapters-integration-py/`](../adapters-integration-py/README.md)** | Reserved for **vendor / product** integrations (outbound and bidirectional); empty until packages land. |
+| **[`adapters-integration-py/`](../adapters-integration-py/README.md)** | **Vendor / product** integrations (outbound and bidirectional), e.g. **[`astrocyte-integration-tavus`](../adapters-integration-py/astrocyte-integration-tavus/README.md)**. |
 | **`astrocyte-rs/`** | **Rust** Astrocyte service; native crate; same framework contract as Python (see `implementation-language-strategy.md`). |
 
 **Source layout:** Spec markdown lives in **`docs/_design/`**, **`docs/_plugins/`**, and **`docs/_end-user/`** (underscore-prefixed authoring folders). Tutorials stay under **`docs/_tutorials/`**. **`scripts/sync-docs.mjs`** mirrors them into `src/content/docs/{design,plugins,end-user,tutorials}/` (gitignored) so published URLs stay **`/design/…`**, **`/plugins/…`**, etc. **`pnpm dev`** and **`pnpm build`** run **`sync-docs`** first (`predev` / `prebuild`); if you edit `_design/` / `_plugins/` / `_end-user/` / `_tutorials/` directly, run **`node scripts/sync-docs.mjs`** (or restart dev) so the site picks up changes. Cross-references in prose often use backticked filenames like `` `architecture-framework.md` `` as stable identifiers.
 
-**Authored hubs (non-numbered):** [Quick Start](./_end-user/quick-start.md), [Poll ingest with the standalone gateway](./_end-user/poll-ingest-gateway.md), [100 Agents in 100 Days](./_tutorials/100-agents-in-100-days.md).
+**Authored hubs (non-numbered):** [Quick Start](./_end-user/quick-start.md), [Poll ingest with the standalone gateway](./_end-user/poll-ingest-gateway.md), [Gateway edge & API gateways](./_end-user/gateway-edge-and-api-gateways.md), [100 Agents in 100 Days](./_tutorials/100-agents-in-100-days.md).
 
 ---
 
@@ -32,6 +34,8 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 | 1 | [Quick Start](./_end-user/quick-start.md) | Install core library; Docker Compose + reference REST |
 | 2 | [Production-grade HTTP service](./_end-user/production-grade-http-service.md) | Production HTTP checklist; `astrocyte-gateway-py`; Compose; ops **§4.5** |
 | 3 | [Poll ingest with the standalone gateway](./_end-user/poll-ingest-gateway.md) | GitHub poll + `GET /health/ingest`; extras **`astrocyte[poll]`** |
+| 4 | [Gateway edge & API gateways](./_end-user/gateway-edge-and-api-gateways.md) | Kong / APISIX / Azure APIM patterns; CORS, limits, rate limits; connector track |
+| 5 | [**`CHANGELOG.md`**](../CHANGELOG.md) (repo root) | **v0.8.0** release notes; semver history |
 
 ---
 
@@ -131,6 +135,7 @@ Numbers below refer to **§3 Design** bands (single index **1–24**) and **§2 
 - **Integrations (network, identity, UI):** Plugins **3**, Design **7**, **12**, Plugins **4**.
 - **Production HTTP / Backend for Frontend (BFF) hosting Astrocyte:** End user **2**; Design **3**, **7**, **8**, **13**, **20**, **10**, **9**; Plugins **3**.
 - **Poll ingest (GitHub) with `astrocyte-gateway-py`:** End user **3** (*Poll ingest with the standalone gateway*); Design **15** (*built-in pipeline*, M4 poll).
+- **v0.8.0 release notes & tagging:** End user **5** ([`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md)); [`RELEASING.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/RELEASING.md).
 
 ---
 

@@ -2,6 +2,8 @@
 
 This document defines how Astrocyte is distributed, how providers plug in at both tiers, how optional **memory export sinks**, outbound transport, and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier model and the read vs export split, see `architecture-framework.md` §2 and `storage-and-data-planes.md`. For SPI definitions, see `provider-spi.md`. For warehouse / lakehouse export design, see `memory-export-sink.md`. For credential gateways and proxy wiring, see `outbound-transport.md`. For identity wiring and external PDP integration, see `identity-and-external-policy.md`.
 
+**Current release line (v0.8.0):** Tier 1 storage adapters under `adapters-storage-py/` (including **`astrocyte-pgvector`**), optional **`astrocyte-gateway-py`**, optional **`recall_authority`** ([ADR-004](/design/adr/adr-004-recall-authority/)), and ingest connectors (Kafka, Redis streams, GitHub poll). Release history: [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) in the repository root.
+
 ---
 
 ## 1. Open-core model
@@ -348,6 +350,8 @@ discover_entry_points("engine_providers")
 **Important:** `Astrocyte.from_config(path)` loads **`AstrocyteConfig` only** — it does not instantiate vector stores, LLMs, or Tier‑2 engines. Bootstrap code must call `resolve_provider`, construct providers with `provider_config`, and attach them via `set_pipeline` and/or `set_engine_provider`. The reference HTTP app (`astrocyte-services-py`) implements **Tier 1** wiring from YAML; **Tier‑2 / engine wiring from the same config** there is optional work — see `wiring.py` / `brain.py` for what is enabled today.
 
 **HTTP extensions (auth, extra routers):** there are **no** published `astrocyte.rest.*` entry point groups yet. Identity is handled **in-process** (env-driven auth modes in the REST package). For custom auth or routes, embed `astrocyte` in your own FastAPI/ASGI app today; a narrow plugin surface for `astrocyte-gateway-py` (e.g. optional router and auth factory entry points) is planned so third parties do not have to fork the reference app.
+
+**Operations and edge:** Compose, health checks, gateway package layout, and production checklists are in [Production-grade HTTP service](/end-user/production-grade-http-service/) (especially §4–§5). [Poll ingest with the standalone gateway](/end-user/poll-ingest-gateway/) covers GitHub poll + `GET /health/ingest`. [Gateway edge & API gateways](/end-user/gateway-edge-and-api-gateways/) covers Kong / APISIX–class edges, CORS, and rate limits in front of the reference HTTP process.
 
 ---
 

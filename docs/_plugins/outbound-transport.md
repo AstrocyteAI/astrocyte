@@ -2,6 +2,8 @@
 
 This document defines the **optional, cross-cutting** integration surface for tools that sit **between Astrocyte and the network** - for example HTTP(S) proxies that inject API credentials, corporate TLS inspection CAs, or “secret gateway” products (OneCLI-class solutions). For how this fits next to memory and LLM providers, see `architecture-framework.md`. For the protocol sketch in the SPI doc, see `provider-spi.md` section 6.
 
+**Inbound edge vs outbound transport:** Corporate **ingress** (API gateway, JWT validation, coarse rate limits) is separate from this SPI — see [Gateway edge & API gateways](/end-user/gateway-edge-and-api-gateways/). This document is about **egress** from the Astrocyte process to LLMs and other outbound HTTP.
+
 ---
 
 ## 1. What this is not

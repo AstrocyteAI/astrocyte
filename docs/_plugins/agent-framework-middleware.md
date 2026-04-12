@@ -10,6 +10,8 @@ Astrocyte **does not** specify how an agent is structured (workflow graph, tools
 
 In **harness vs context** terms (see [Architecture framework](../_design/architecture-framework.md) §1, *Context engineering vs harness engineering*): framework integrations and your app are **harness**—they decide when to call memory and how to run the loop; Astrocyte sits **below** that. Turning `recall` hits into the next system block or user message is **context engineering**, which the **app** still owns—Astrocyte returns governed hits and synthesized text, not the only valid prompt shape.
 
+**Server-side ingest without an agent loop** (scheduled poll, GitHub → `retain`): see [Poll ingest with the standalone gateway](/end-user/poll-ingest-gateway/) and [Production-grade HTTP service](/end-user/production-grade-http-service/).
+
 ### Sandbox context and exfiltration
 
 Integrations should treat **sandbox id**, **environment** (e.g. dev/staging/prod), or **deployment tier** as first-class inputs alongside the **agent card** when resolving **principal** and **bank_id**. See `sandbox-awareness-and-exfiltration.md`.

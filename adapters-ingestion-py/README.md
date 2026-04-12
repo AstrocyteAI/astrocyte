@@ -18,6 +18,8 @@ Stream **`driver`** values are resolved via **`astrocyte.ingest_stream_drivers`*
 
 Package names follow **`astrocyte-ingestion-{transport}`** where possible.
 
+**Roadmap (v0.8.x connector track):** additional **stream** backends (e.g. **NATS**) and **poll** drivers (beyond GitHub Issues) follow the same **entry-point** pattern as the packages above — separate PyPI modules registering **`astrocyte.ingest_stream_drivers`** or **`astrocyte.ingest_poll_drivers`**. Prefer edge/API-gateway **rate limits** and **auth** for third-party APIs; see **[`docs/_end-user/gateway-edge-and-api-gateways.md`](../docs/_end-user/gateway-edge-and-api-gateways.md)**.
+
 **Observability:** set **`ASTROCYTE_LOG_FORMAT=json`** (same as the gateway) for structured lines from **`astrocyte.ingest.logutil`** — supervisor lifecycle, GitHub rate-limit warnings, Redis/Kafka transport failures.
 
 ## CI

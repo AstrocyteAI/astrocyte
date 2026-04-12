@@ -1,6 +1,6 @@
 ---
 title: Astrocyte
-description: Open-source memory framework for AI agents — retain, recall, and synthesize with any backend.
+description: Astrocyte v0.8.0 — memory for agents with Tier 1 adapters, optional gateway, recall authority, and ingest connectors.
 topic: end-user
 template: splash
 tableOfContents: false
@@ -12,6 +12,8 @@ hero:
   tagline: >
     Astrocyte is an open-source framework that gives AI agents persistent memory — with pluggable backends,
     built-in governance, and a pipeline that works out of the box.
+    The v0.8.0 line ships production Tier 1 adapters, the optional astrocyte-gateway-py HTTP service,
+    optional recall authority, and ingest transports (streams and poll).
   image:
     html: |
       <img src="./logo.svg" alt="Astrocyte mascot" class="landing-hero-mascot dark:sl-hidden" width="280" height="280" decoding="async" loading="eager" />
@@ -59,6 +61,13 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
       </div>
     </TabItem>
   </Tabs>
+
+  <p class="quickstart-note">
+    <strong>PyPI:</strong> install <code>astrocyte</code> <strong>0.8.x</strong> for the M5–M7 milestone bundle (adapters + gateway-era features).{" "}
+    <a href="https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md">CHANGELOG</a>
+    {" · "}
+    <a href="https://github.com/AstrocyteAI/astrocyte/blob/main/RELEASING.md">Releasing</a>.
+  </p>
 
   <Tabs syncKey="astrocyte-quickstart-code">
     <TabItem label="MIP routing">
@@ -396,6 +405,7 @@ prompt_vars = await memory.load_memory_variables({})
 
 <div class="pill-row" aria-label="Example stacks and integrations">
   <span class="pill">pgvector</span>
+  <span class="pill">Elasticsearch</span>
   <span class="pill">Pinecone</span>
   <span class="pill">Qdrant</span>
   <span class="pill">Neo4j</span>
@@ -410,8 +420,8 @@ prompt_vars = await memory.load_memory_variables({})
 
 <CardGrid>
   <Card title="Tier 1: Retrieval backends" icon="setting">
-    Use your existing databases. pgvector, Pinecone, Qdrant, Neo4j, Memgraph — the built-in pipeline handles
-    embedding, extraction, fusion, and synthesis on top.
+    Ship-first adapters include PostgreSQL (**pgvector**), **Qdrant**, **Neo4j**, and **Elasticsearch** (BM25 / keyword).
+    The built-in pipeline handles embedding, extraction, fusion, and synthesis on top — plus optional **recall_authority** for synthesis precedence.
   </Card>
   <Card title="Tier 2: Memory engines" icon="rocket">
     Full-stack engines that own the pipeline. Mystique, Mem0, Zep, Letta, Cognee — Astrocyte adds
@@ -487,8 +497,11 @@ prompt_vars = await memory.load_memory_variables({})
 
 <CardGrid>
   <LinkCard title="Quick Start" href="end-user/quick-start/" description="Install, configure, and run your first retain/recall in minutes." />
+  <LinkCard title="Production-grade HTTP service" href="end-user/production-grade-http-service/" description="Operate astrocyte-gateway-py: auth, health, Compose, observability checklist." />
+  <LinkCard title="Gateway edge & API gateways" href="end-user/gateway-edge-and-api-gateways/" description="Kong, APISIX, Azure APIM; CORS, limits, rate limits; benchmark and OpenAPI gates." />
   <LinkCard title="Provider SPI" href="plugins/provider-spi/" description="Build a storage adapter or engine provider for Astrocyte." />
   <LinkCard title="Architecture" href="design/architecture-framework/" description="Two-tier model, layer boundaries, and design principles." />
+  <LinkCard title="Product roadmap v1" href="design/product-roadmap-v1/" description="M1–M7 milestones, v0.8.0 scope, and the path to v1.0.0 GA." />
   <LinkCard title="Memory Intent Protocol" href="design/memory-intent-protocol/" description="Declarative routing — mechanical rules + LLM intent for multi-agent memory." />
   <LinkCard title="100 Agents in 100 Days" href="tutorials/100-agents-in-100-days/" description="Daily tutorials for building AI agents with persistent memory." />
 </CardGrid>

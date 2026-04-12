@@ -4,11 +4,14 @@ import starlightSidebarTopics from "starlight-sidebar-topics";
 import mermaid from "astro-mermaid";
 
 const owner = process.env.GITHUB_REPOSITORY_OWNER || "AstrocyteAI";
-const repo = process.env.GITHUB_REPOSITORY?.split("/")?.[1];
+const githubRepository = process.env.GITHUB_REPOSITORY;
+const repositoryParts = githubRepository?.split("/").filter(Boolean) ?? [];
+const repo =
+  repositoryParts.length >= 2 ? repositoryParts[1] : repositoryParts[0];
 const site = `https://${owner}.github.io`;
 const base = repo ? `/${repo}/` : "/";
 /** Absolute URL for link previews (WhatsApp, Slack, etc. require og:image). */
-const defaultOgImage = `${site}${base}logo.png`;
+const defaultOgImage = new URL("logo.png", `${site}${base}`).href;
 
 /** Explicit sidebar order (filenames without .md → routes). */
 const topicItems = {
@@ -17,6 +20,7 @@ const topicItems = {
     { label: "Quick Start", link: "/end-user/quick-start/" },
     { label: "Production-grade HTTP service", link: "/end-user/production-grade-http-service/" },
     { label: "Poll ingest with the standalone gateway", link: "/end-user/poll-ingest-gateway/" },
+    { label: "Gateway edge & API gateways", link: "/end-user/gateway-edge-and-api-gateways/" },
   ],
   plugins: [
     { label: "Provider SPI", link: "/plugins/provider-spi/" },

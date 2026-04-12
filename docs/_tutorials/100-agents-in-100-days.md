@@ -4,11 +4,13 @@ _Planned series — implementing AI agents and AI-enabled applications with Astr
 
 Each day adds **one** focused tutorial or example: runnable demos, integration patterns, and production-minded snippets. **First** we maintain a working catalog of **use cases** (consumer and enterprise). Daily tutorials will be chosen from this list and linked below as they ship.
 
+**Stack context:** The **v0.8.0** line includes Tier 1 storage adapters, optional **`astrocyte-gateway-py`**, optional **`recall_authority`**, and ingest connectors (Kafka, Redis, GitHub poll). See [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
+
 ## What to expect
 
 - Agent patterns (tool use, multi-step flows) **with durable memory** via Astrocyte
-- Pairings with the [reference REST server](/end-user/production-grade-http-service/) where it helps
-- Occasional deep links into the [plugin SPIs](/plugins/provider-spi/) and [design docs](/design/architecture-framework/)
+- Pairings with the [reference REST gateway](/end-user/production-grade-http-service/), [poll ingest](/end-user/poll-ingest-gateway/), or an [API edge](/end-user/gateway-edge-and-api-gateways/) where the tutorial needs a server-side hook
+- Occasional deep links into the [plugin SPIs](/plugins/provider-spi/), [agent framework middleware](/plugins/agent-framework-middleware/), and [design docs](/design/architecture-framework/)
 
 ## Use case catalog (before Day 1)
 
@@ -199,7 +201,7 @@ This section is the **backlog** for the series—not a commitment to order. Item
 
 ### How this turns into 100 days
 
-- **Pick one row per day** (or merge two thin rows into a richer tutorial). The combined catalog is **intentionally >100 numbered rows** (consumer **1–49**; enterprise **50–120**) so we can swap domains when a dependency lands (e.g., REST hardening, identity plugin).
+- **Pick one row per day** (or merge two thin rows into a richer tutorial). The combined catalog is **intentionally >100 numbered rows** (consumer **1–49**; enterprise **50–120**) so we can swap domains when a dependency lands (e.g., [gateway operations](/end-user/production-grade-http-service/), [poll ingest](/end-user/poll-ingest-gateway/), identity plugins).
 - **Tag each tutorial** by agent shape: reactive chat, scheduled job, tool loop with approvals, multi-agent handoff, or offline batch.
 - **Enterprise days** should link to [identity and policy](/design/identity-and-external-policy/) docs when touching PII or regulated flows.
 
@@ -209,7 +211,10 @@ While Day 1 is being prepared:
 
 - [Introduction](/introduction/) — scope, Python/Rust layout, and reading paths
 - [Quick Start](/end-user/quick-start/) — install core + run Compose
-- [Production-grade HTTP](/end-user/production-grade-http-service/) — checklist for operating behind an API
+- [Production-grade HTTP service](/end-user/production-grade-http-service/) — checklist for operating behind an API
+- [Poll ingest with the standalone gateway](/end-user/poll-ingest-gateway/) — GitHub poll + `GET /health/ingest`
+- [Gateway edge & API gateways](/end-user/gateway-edge-and-api-gateways/) — Kong / APISIX patterns, CORS, rate limits
+- [Built-in pipeline](/design/built-in-pipeline/) — how Tier 1 retrieval + intelligence stages fit together
 
 ---
 

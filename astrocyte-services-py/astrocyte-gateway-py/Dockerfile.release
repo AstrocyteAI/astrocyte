@@ -2,9 +2,9 @@
 # git tag), then install this package from the copied source tree. Build from repo root:
 #
 #   docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release \
-#     --build-arg ASTROCYTE_VERSION=0.7.7 \
-#     --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.7.7 \
-#     -t astrocyte-gateway-py:0.7.7 .
+#     --build-arg ASTROCYTE_VERSION=0.8.0 \
+#     --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.8.0 \
+#     -t astrocyte-gateway-py:0.8.0 .
 #
 # CI should only run this after wheels for that version exist on PyPI.
 
@@ -21,7 +21,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 ARG SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 
-RUN test -n "${ASTROCYTE_VERSION}" || (echo "ASTROCYTE_VERSION is required (PEP 440 version, e.g. 0.7.7)" >&2; exit 1)
+RUN test -n "${ASTROCYTE_VERSION}" || (echo "ASTROCYTE_VERSION is required (PEP 440 version, e.g. 0.8.0)" >&2; exit 1)
 
 RUN python -m venv /venv \
     && /venv/bin/pip install --upgrade pip \

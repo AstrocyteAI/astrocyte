@@ -223,7 +223,7 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 
 **Later (when we need them)**: a **hosted redirect/callback server** (or tighter gateway integration) for full browser OAuth UX, **PKCE**, and **device** / **JWT bearer** token grants — not required for the current library surface; see **`adr-003-config-schema.md`** (design note under proxy OAuth).
 
-**Relation to releases**: Shipped after **v0.7.0** (webhook ingest); see **CHANGELOG** `[Unreleased]` / next patch tag.
+**Relation to releases**: Shipped after **v0.7.0** (webhook ingest); bundled for users on the **v0.8.0** line — see root **`CHANGELOG.md`**.
 
 **Thin HTTP binding (library)**: optional `astrocyte[gateway]` provides `create_ingest_webhook_app` (Starlette ASGI) → `POST /v1/ingest/webhook/{source_id}` forwarding raw body/headers to `handle_webhook_ingest`. **Standalone** JWT/OIDC, OpenAPI, Docker/Helm, and ops packaging are **`astrocyte-gateway-py`** (§ M6 — shipped in-repo).
 
@@ -419,17 +419,14 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 
 ## Release Strategy
 
-### v0.4.2 (current)
-- Library-only deployment
-- pgvector as sole production vector store
-- Opaque principal identity (`principal: str`)
-- 19+ framework integrations (no context propagation)
-- Built-in intelligence pipeline (chunking, entity extraction, embedding, retrieval, fusion, reranking, reflect)
-- Policy layer (PII barriers, homeostasis, rate limiting, access control)
-- MIP (Memory Intent Protocol) with declarative routing
-- MCP server exposure
-- Claude Agent SDK + Claude Managed Agents integrations
-- LoCoMo + LongMemEval benchmark suite
+### Current release line
+
+**`v0.8.0`** and follow-on **`v0.8.x`** tags are the active line for **M5–M7** (production storage adapters, standalone gateway, structured recall authority) and the connector track. Release notes: root **`CHANGELOG.md`**; tag and PyPI order: **`RELEASING.md`**.
+
+### Historical — v0.4.x era (pre–M1 snapshot)
+
+- Library-first deployment narrative; opaque `principal: str`; early integrations
+- Baseline pipeline, policy, MIP, MCP — superseded by **v0.5.0+** milestones below
 
 ### v0.5.0 — Identity & Context (M1) + Config Schema (M2)
 - **M1:** Structured `AstrocyteContext` with `ActorIdentity` (backwards-compatible, `principal: str` still works)

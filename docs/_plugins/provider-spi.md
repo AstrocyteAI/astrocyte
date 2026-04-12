@@ -4,6 +4,8 @@
 
 This document defines the **three memory-related** Service Provider Interfaces (**Retrieval** = VectorStore / GraphStore / DocumentStore adapters; **Memory Engine**; **LLM**), an **optional cross-cutting Memory Export Sink** SPI for warehouse / lakehouse / open table-format **durable export** (append events—not online `recall`), plus an **optional cross-cutting** Outbound Transport SPI for HTTP/TLS/proxy configuration. For architecture and the read vs export split, see `architecture-framework.md` §2, `storage-and-data-planes.md`, and `memory-export-sink.md`. For outbound transport rationale and packaging, see `outbound-transport.md`.
 
+**Operators** (reference REST gateway, poll-based ingest, API edge): [Quick Start](/end-user/quick-start/), [Production-grade HTTP service](/end-user/production-grade-http-service/), [Poll ingest with the standalone gateway](/end-user/poll-ingest-gateway/), [Gateway edge & API gateways](/end-user/gateway-edge-and-api-gateways/). **Distribution and entry points:** [Ecosystem & packaging](/plugins/ecosystem-and-packaging/).
+
 ---
 
 ## 1. Retrieval Provider SPI (Tier 1)
@@ -12,7 +14,7 @@ This document defines the **three memory-related** Service Provider Interfaces (
 
 **Scope:** Tier 1 adapters are **retrieval-oriented** (not blob/object storage). In RAG and hybrid-search literature, the same ideas are often called **retrieval backends** or **retrieval infrastructure**: **VectorStore** ≈ dense / semantic (vector DB, ANN index), **GraphStore** ≈ structured graph traversal (knowledge graph), **DocumentStore** ≈ sparse / lexical (BM25, full-text). See `architecture-framework.md` §2 (Tier 1 table).
 
-Retrieval providers are simple adapters over those systems. They handle CRUD operations on vectors, entities, and documents **as indexed for retrieval**. Astrocyte' **built-in intelligence pipeline** (see `built-in-pipeline.md`) orchestrates these stores to provide the full memory experience: embedding, entity extraction, multi-strategy retrieval, fusion, and synthesis.
+Retrieval providers are simple adapters over those systems. They handle CRUD operations on vectors, entities, and documents **as indexed for retrieval**. Astrocyte's **built-in intelligence pipeline** (see `built-in-pipeline.md`) orchestrates these stores to provide the full memory experience: embedding, entity extraction, multi-strategy retrieval, fusion, and synthesis.
 
 The **logical backend** may be a **serving layer** on top of a warehouse or lakehouse (SQL endpoint, query engine on Iceberg/Delta, OLAP tier, or your own HTTP façade), not only a dedicated vector DB—**if** you can implement the Tier 1 protocols with acceptable latency. That is **operational `recall`**. **Durable export** to the same warehouse or lake for BI/compliance uses the separate **Memory Export Sink** SPI (`memory-export-sink.md`); do not conflate `emit` / `flush` with `search_similar`.
 
@@ -294,9 +296,9 @@ See `built-in-pipeline.md` for the full pipeline specification.
 
 ### 2.1 Overview
 
-Memory engine providers are full-stack memory systems that handle the entire pipeline internally - from content ingestion through retrieval and synthesis. When a memory engine provider is active, Astrocyte' built-in pipeline **steps aside**. The framework only applies **governance** (policy layer), not intelligence.
+Memory engine providers are full-stack memory systems that handle the entire pipeline internally - from content ingestion through retrieval and synthesis. When a memory engine provider is active, Astrocyte's built-in pipeline **steps aside**. The framework only applies **governance** (policy layer), not intelligence.
 
-Memory engine providers own their own storage backends (vector DBs, graph DBs, etc.) internally. Users configure database choices through the memory engine's `provider_config`, not through Astrocyte' retrieval SPIs.
+Memory engine providers own their own storage backends (vector DBs, graph DBs, etc.) internally. Users configure database choices through the memory engine's `provider_config`, not through Astrocyte's retrieval SPIs.
 
 ### 2.2 The protocol
 
@@ -988,7 +990,7 @@ caller → brain.recall(query, budget)
    ```
 4. **Use Astrocyte DTOs** for all inputs and outputs. Map to/from your engine's native types inside your provider.
 5. **Declare capabilities honestly.** Over-declaring causes runtime errors; under-declaring causes unnecessary fallbacks.
-6. **Own your storage.** Your engine manages its own vector DB, graph DB, etc. Users configure those through `provider_config`, not through Astrocyte' retrieval SPIs.
+6. **Own your storage.** Your engine manages its own vector DB, graph DB, etc. Users configure those through `provider_config`, not through Astrocyte's retrieval SPIs.
 
 ### 8.3 Building an outbound transport plugin
 

@@ -2,6 +2,8 @@
 
 This document specifies **first-class image and audio** (and optional document) payloads for the **LLM Provider SPI** and the **built-in pipeline**, so gateways such as LiteLLM and OpenRouter can pass **vision / audio** inputs to multimodal models **without** ad-hoc string encoding. For **non-LLM** video/voice platforms (Tavus, ElevenLabs TTS-only, etc.), see `presentation-layer-and-multimodal-services.md`.
 
+**Related:** [Provider SPI](/plugins/provider-spi/) (LLM and multimodal sections), [Outbound transport](/plugins/outbound-transport/) (HTTP client configuration for provider SDKs).
+
 ---
 
 ## 1. Design principles

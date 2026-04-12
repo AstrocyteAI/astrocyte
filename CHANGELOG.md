@@ -4,14 +4,27 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-04-12 (M5 + M6 + M7 — production adapters, gateway, recall authority)
+
+This release bundles **M5** (production storage providers), **M6** (standalone HTTP gateway), and **M7** (structured recall authority) on one minor version line, per `docs/_design/product-roadmap-v1.md`. Subsequent connector and edge work ships as **v0.8.1**, **v0.8.2**, …
+
+### Changed
+
+- **PyPI / install**: adapter and gateway packages now require **`astrocyte>=0.7.0,<0.9`** (was **`<0.8`**) so **v0.8.x** resolves cleanly; pin **`astrocyte==0.8.0`** (and matching adapter versions) together for the M5–M7 milestone bundle.
+
 ### Added
 
-- **M4.1 — Federated / proxy recall**: `sources:` entries with `type: proxy`, `url` (supports `{query}`), and `target_bank` fetch remote JSON (`hits` or `results`) and merge with local retrieval via **RRF** in `PipelineOrchestrator.recall`. Callers may also pass `RecallRequest.external_context`. Module `astrocyte.recall.proxy` (`fetch_proxy_recall_hits`, `gather_proxy_hits_for_bank`, `merge_manual_and_proxy_hits`). Tier-2 engine-only recall merges proxy hits without double-applying them for `HybridEngineProvider`.
-- **OAuth2 (proxy)**: **`token_endpoint_auth_method`** `client_secret_post` | `client_secret_basic`; **`oauth2_refresh`** / **`oauth2` + `grant_type: refresh_token`** with **`refresh_token`** rotation; **`exchange_oauth2_authorization_code`** for authorization-code exchange (returns tokens — persist **`refresh_token`** for config). Helpers: **`post_oauth2_token_endpoint`**, **`fetch_oauth2_refresh_access_token`**, **`auth_with_oauth_cache_namespace`**.
-- **M4.1 extensions**: optional **`recall_method: POST`** and **`recall_body`** (JSON dict/str with `__astrocyte.query__` / `__astrocyte.bank_id__` placeholders); **`auth.type: api_key`** plus optional **`auth.headers`**; **`auth.type: oauth2_client_credentials`** (`token_url`, `client_id`, `client_secret`, optional `scope`) with in-memory token cache (`astrocyte.recall.oauth`). OTel span `astrocyte.proxy_recall` when tracing is enabled. **`observability.prometheus_enabled`**: counters **`astrocyte_proxy_recall_total`** (`source_id`, `status`) and histogram **`astrocyte_proxy_recall_duration_seconds`** (`source_id`) on each proxy HTTP call (metrics passed from `Astrocyte` into proxy merge). **`TieredRetriever`** skips cache when `external_context` is set, merges federated hits on BM25 shortcut, and preserves `external_context` through tier-4 reformulation. **`tiered_retrieval.enabled`**: `Astrocyte.set_pipeline` builds a `TieredRetriever` over the pipeline (optional `recall_cache` from config); **`Astrocyte._do_recall`** delegates to it instead of `PipelineOrchestrator.recall` when enabled (Tier-1 pipeline path only; not used when recall goes through a Tier-2 engine provider alone or through `HybridEngineProvider`). Stable imports: `merge_external_into_recall_result`, `PLACE_QUERY`, `PLACE_BANK`, `build_proxy_headers`, `clear_oauth2_token_cache_for_tests` on `astrocyte` and `astrocyte.recall`.
-- Core dependency **`httpx`** (outbound proxy GET).
-- Optional **`[gateway]`** extra: Starlette ASGI app `create_ingest_webhook_app` for `POST /v1/ingest/webhook/{source_id}` (thin HTTP binding ahead of full M6 gateway).
-- **SPI contract tests** (`tests/test_spi_vector_store_contract.py`) as the reference harness for M5 vector store adapters.
+- **M5 — Storage adapters** (separate PyPI packages under `adapters-storage-py/`): **`astrocyte-pgvector`**, **`astrocyte-qdrant`**, **`astrocyte-neo4j`**, **`astrocyte-elasticsearch`** implementing Tier 1 `VectorStore` / `GraphStore` / `DocumentStore`; CI and publish workflows.
+- **M6 — `astrocyte-gateway-py`**: FastAPI REST (`/v1/retain`, `/v1/recall`, `/v1/reflect`, `/v1/forget`), webhook ingest, health (`/health`, `/health/ingest`), optional admin routes, JWT/OIDC/`api_key`/`dev` auth → `AstrocyteContext`, Docker/Compose/Helm, GHCR image workflow.
+- **M7 — Structured recall authority**: optional `recall_authority:` in config (`RecallAuthorityConfig`), `RecallResult.authority_context`, optional reflect injection; see ADR-004 and `built-in-pipeline.md`.
+- **M4.1 — Federated / proxy recall**: `sources:` with `type: proxy`, remote JSON merge with local RRF (`astrocyte.recall.proxy`); OAuth helpers, tiered retrieval integration, observability hooks — see prior `[Unreleased]` notes in git history for detail.
+- **Ingest transports**: `astrocyte-ingestion-kafka`, `astrocyte-ingestion-redis` (streams), `astrocyte-ingestion-github` (poll); `astrocyte[poll]` / `astrocyte[stream]` extras.
+- **Gateway edge hardening (v0.8.x track)**: optional **`ASTROCYTE_RATE_LIMIT_PER_SECOND`**, documented CORS/body limits; **`scripts/bench_gateway_overhead.py --max-overhead-p99-ms`**; OpenAPI path contract tests; operator doc **[Gateway edge & API gateways](docs/_end-user/gateway-edge-and-api-gateways.md)**.
+
+### Notes
+
+- **SPI contract tests** for vector stores remain the reference for adapter authors (`astrocyte-py/tests/test_spi_vector_store_contract.py`).
+- Release: tag **`v0.8.0`** at repo root → **`release.yml`** publishes **`astrocyte`** → **`astrocyte-pgvector`** → gateway image; see **`RELEASING.md`**.
 
 ## [0.7.0] — 2026-04-11 (M4 external data sources — library ingest)
 
@@ -22,8 +35,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Notes
 
-- **Proxy / federated recall** (M4.1) ships in the next release after v0.7.0 — see `[Unreleased]` / `docs/_design/product-roadmap-v1.md` §M4.1.
-- Full **standalone gateway** (JWT, Docker, admin routes) remains **M6**.
+- **M4.1** (proxy recall) and later milestones ship in **v0.8.0+**; see **[0.8.0]** above.
 
 ## [0.6.0] — 2026-04-11 (M3 extraction pipeline)
 
@@ -33,6 +45,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Profile-driven `metadata_mapping`, `tag_rules`, `entity_extraction`, and `fact_type` on retain.
 - Packaged defaults: `astrocyte/pipeline/extraction_builtin.yaml`; stable imports: `prepare_retain_input`, `merged_extraction_profiles`, `extraction_profile_for_source`, `PreparedRetainInput`.
 
-[Unreleased]: https://github.com/AstrocyteAI/astrocyte/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/AstrocyteAI/astrocyte/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/AstrocyteAI/astrocyte/releases/tag/v0.8.0
 [0.7.0]: https://github.com/AstrocyteAI/astrocyte/releases/tag/v0.7.0
 [0.6.0]: https://github.com/AstrocyteAI/astrocyte/releases/tag/v0.6.0
