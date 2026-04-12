@@ -18,7 +18,8 @@ env:
 
 jobs:
   test-astrocyte-py:
-    name: astrocyte-py (Python ${{ env.PYTHON_VERSION }})
+    # Job `name` cannot use `env`; keep "3.12" in sync with env.PYTHON_VERSION above.
+    name: astrocyte-py (Python 3.12)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
