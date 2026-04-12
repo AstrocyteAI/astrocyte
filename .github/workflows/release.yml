@@ -7,8 +7,14 @@ on:
     tags:
       - "v*"
 
+# Reusable workflows cannot request broader permissions than the caller grants.
+# Child workflows need OIDC + attestations (PyPI Trusted Publishing, provenance) and
+# packages:write for GHCR (gateway image).
 permissions:
   contents: read
+  id-token: write
+  attestations: write
+  packages: write
 
 jobs:
   publish-astrocyte:
