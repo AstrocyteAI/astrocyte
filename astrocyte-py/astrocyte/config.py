@@ -55,7 +55,7 @@ class PiiConfig:
     mode: str = "regex"  # "regex" | "ner" | "llm" | "rules_then_llm" | "disabled"
     action: str = "redact"  # "redact" | "reject" | "warn"
     patterns: list[dict[str, str]] | None = None
-    countries: list[str] | None = None  # ["SG", "IN", "UK", "US", "DE", "FR", "IT", "ES", "AU", "CA", "JP", "CN"]
+    countries: list[str] | None = None  # ["SG", "IN", "GB", "US", "DE", "FR", "IT", "ES", "AU", "CA", "JP", "CN"]
     type_overrides: dict[str, dict[str, str]] | None = None  # {"credit_card": {"action": "reject"}}
 
 

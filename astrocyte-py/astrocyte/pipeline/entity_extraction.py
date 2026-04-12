@@ -60,7 +60,10 @@ def _parse_entities(response: str) -> list[Entity]:
         # Handle markdown code blocks
         if "```" in text:
             start = text.index("```") + 3
-            if text[start:].startswith("json"):
+            if start > len(text):
+                logger.warning("Malformed markdown code block in entity response")
+                return []
+            if start + 4 <= len(text) and text[start:start + 4].lower() == "json":
                 start += 4
             close = text.find("```", start)
             if close < 0:
