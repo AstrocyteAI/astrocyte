@@ -1,0 +1,79 @@
+# Optional manual smoke: start uvicorn + concurrent POST /v1/recall; fails if any non-200.
+# Does not assert latency SLOs (shared runners are noisy). See scripts/smoke_gateway_load.py.
+name: Smoke test gateway HTTP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - name: Install gateway + dev (httpx)
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
+        run: uv sync --extra dev
+
+      - name: Start gateway
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
+        env:
+          ASTROCYTE_AUTH_MODE: dev
+        run: |
+          set -euo pipefail
+          nohup uv run python -m uvicorn astrocyte_gateway.app:create_app \
+            --factory --host 127.0.0.1 --port 18080 \
+            > /tmp/astrocyte-gateway-smoke.log 2>&1 &
+          echo $! > /tmp/astrocyte-gateway-smoke.pid
+          ready=0
+          for _ in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:18080/live > /dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            echo "Gateway did not become ready on /live within 90s"
+            cat /tmp/astrocyte-gateway-smoke.log || true
+            exit 1
+          fi
+          echo "Gateway ready on http://127.0.0.1:18080"
+
+      - name: Concurrent recall smoke
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
+        run: |
+          uv run python scripts/smoke_gateway_load.py \
+            --base-url http://127.0.0.1:18080 \
+            --warmup 30 \
+            --requests 400 \
+            --concurrency 10 \
+            | tee smoke-gateway-http.json
+
+      - name: Summary
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
+        if: success()
+        run: |
+          echo "### Gateway HTTP smoke (JSON)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat smoke-gateway-http.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop gateway
+        if: always()
+        run: |
+          if [ -f /tmp/astrocyte-gateway-smoke.pid ]; then
+            kill "$(cat /tmp/astrocyte-gateway-smoke.pid)" 2>/dev/null || true
+          fi
+          sleep 1
+          if [ -f /tmp/astrocyte-gateway-smoke.log ]; then
+            echo "---- gateway log (tail) ----"
+            tail -n 80 /tmp/astrocyte-gateway-smoke.log || true
+          fi

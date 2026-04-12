@@ -51,9 +51,34 @@ uv run python scripts/bench_gateway_overhead.py
 uv run python scripts/bench_gateway_overhead.py --json
 # Fewer iterations (faster smoke):
 uv run python scripts/bench_gateway_overhead.py --warmup 20 --iterations 200
+
+# Real TCP + uvicorn (loopback, uvicorn in a background thread — closer to production than ASGITransport):
+uv run python scripts/bench_gateway_overhead.py --tcp --warmup 20 --iterations 200
 ```
 
+**Fully external process (optional):** start the gateway in one shell, then hit it with any HTTP client (no paired “direct recall” subtraction in-process):
+
+Run **`uv sync`** once from this package directory so **`astrocyte`** resolves from **`../../astrocyte-py`**.
+
+Use **`uv run python -m uvicorn ...`** (recommended). On some machines **`uv run uvicorn`** still executes a **`uvicorn`** script from **pyenv/global PATH** (`~/.pyenv/.../bin/uvicorn`) instead of the project `.venv`, which triggers **`ModuleNotFoundError: No module named 'astrocyte'`**. Invoking **`python -m uvicorn`** forces the interpreter from **`uv run`**’s environment.
+
+```bash
+# Terminal A — cwd must be this package (editable astrocyte via uv.sources)
+cd /path/to/astrocyte/astrocyte-services-py/astrocyte-gateway-py
+uv sync
+ASTROCYTE_AUTH_MODE=dev ASTROCYTE_PORT=18080 \
+  uv run python -m uvicorn astrocyte_gateway.app:create_app --factory --host 127.0.0.1 --port 18080 --access-log --log-level warning
+
+# Terminal B (example: curl)
+curl -sS -X POST http://127.0.0.1:18080/v1/recall -H 'Content-Type: application/json' \
+  -d '{"query":"bench","bank_id":"b1","max_results":5}' | head -c 200
+```
+
+That measures **end-to-end HTTP latency** only (includes another process and whatever core recall costs); use it for load tests or to mirror deployment topology.
+
 On GitHub: **Actions → Benchmark gateway overhead → Run workflow** (manual dispatch; prints JSON to the job summary).
+
+**Concurrent HTTP smoke (optional):** with uvicorn running (local or CI), **`scripts/smoke_gateway_load.py`** sends many parallel **`POST /v1/recall`** requests and exits **non-zero** if any response is not **200**. GitHub Actions: **Actions → Smoke test gateway HTTP → Run workflow** (starts the gateway in the job, then runs the script; checks success rate only, not latency SLOs).
 
 **PostgreSQL (pgvector):** Install the optional adapter (`uv sync --extra pgvector`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts **Postgres + this service** together. For Postgres only on the host, see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md).
 
