@@ -216,7 +216,10 @@ async def build_proxy_headers(
             raise ValueError(f"Invalid header name in proxy auth config: {header_name!r}")
         val = auth.get("value") if auth.get("value") is not None else auth.get("token")
         if val is not None and str(val).strip():
-            out[header_name] = str(val)
+            val_str = str(val)
+            if "\r" in val_str or "\n" in val_str:
+                raise ValueError("Header value contains CRLF characters (possible injection)")
+            out[header_name] = val_str
     return out
 
 

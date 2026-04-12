@@ -79,6 +79,28 @@ class TestMetrics:
     def test_percentile_empty(self):
         assert percentile([], 50) == 0.0
 
+    def test_percentile_bounds_over_100(self):
+        with pytest.raises(ValueError, match="between 0 and 100"):
+            percentile([1.0, 2.0, 3.0], 150)
+
+    def test_percentile_bounds_over_100_float(self):
+        with pytest.raises(ValueError, match="between 0 and 100"):
+            percentile([1.0, 2.0, 3.0], 100.1)
+
+    def test_percentile_bounds_negative(self):
+        with pytest.raises(ValueError, match="between 0 and 100"):
+            percentile([1.0, 2.0, 3.0], -10)
+
+    def test_percentile_bounds_negative_float(self):
+        with pytest.raises(ValueError, match="between 0 and 100"):
+            percentile([1.0, 2.0, 3.0], -0.1)
+
+    def test_percentile_boundary_zero(self):
+        assert percentile([1.0, 5.0, 10.0], 0) == 1.0
+
+    def test_percentile_boundary_hundred(self):
+        assert percentile([1.0, 5.0, 10.0], 100) == 10.0
+
     def test_text_overlap_all_found(self):
         assert text_overlap_score(["dark", "mode"], "Calvin prefers dark mode") == 1.0
 
@@ -248,6 +270,41 @@ class TestMemoryEvaluator:
         )
         result = await evaluator.run_suite(custom, bank_id="eval-reflect")
         assert result.metrics.reflect_accuracy is not None
+
+    async def test_reflect_accuracy_is_fraction(self):
+        """reflect_accuracy must be between 0.0 and 1.0."""
+        brain, _ = _make_brain()
+        evaluator = MemoryEvaluator(brain)
+
+        custom = EvalSuite(
+            name="reflect-accuracy-check",
+            retains=[
+                RetainCase(content="Alice works at NASA on rocket engines"),
+                RetainCase(content="Bob prefers tea over coffee"),
+            ],
+            recalls=[],
+            reflects=[
+                ReflectCase(query="Where does Alice work?", expected_topics=["NASA"]),
+                ReflectCase(query="What does Bob prefer?", expected_topics=["tea"]),
+            ],
+        )
+        result = await evaluator.run_suite(custom, bank_id="eval-reflect-frac")
+        assert result.metrics.reflect_accuracy is not None
+        assert 0.0 <= result.metrics.reflect_accuracy <= 1.0
+
+    async def test_reflect_accuracy_no_reflects_is_none(self):
+        """When no reflect cases exist, reflect_accuracy should be None."""
+        brain, _ = _make_brain()
+        evaluator = MemoryEvaluator(brain)
+
+        custom = EvalSuite(
+            name="no-reflect",
+            retains=[RetainCase(content="some data")],
+            recalls=[RecallCase(query="data", expected_contains=["data"])],
+            reflects=[],
+        )
+        result = await evaluator.run_suite(custom, bank_id="eval-no-reflect")
+        assert result.metrics.reflect_accuracy is None
 
     async def test_per_query_results(self):
         brain, _ = _make_brain()
