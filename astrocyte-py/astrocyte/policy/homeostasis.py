@@ -92,12 +92,38 @@ class RateLimiter:
 
 
 def count_tokens(text: str) -> int:
-    """Approximate token count via word splitting.
+    """Approximate token count using a hybrid heuristic.
 
-    Phase 1: simple whitespace split (~0.75 tokens per word).
+    Strategy:
+    - Uses character-to-token ratio (~4 chars/token for English prose)
+      combined with word count as a cross-check.
+    - For CJK-heavy text (detected by character class), uses ~1.5 chars/token.
+    - Takes the max of both estimates for safety (overcount > undercount).
+
     Phase 2 (Rust): tiktoken-compatible BPE tokenizer.
     """
-    return max(1, int(len(text.split()) * 1.33))
+    if not text:
+        return 1
+
+    char_count = len(text)
+    word_count = len(text.split())
+
+    # Detect CJK content: count characters in CJK Unified Ideographs ranges
+    cjk_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or '\u3040' <= c <= '\u30ff' or '\uac00' <= c <= '\ud7af')
+    cjk_ratio = cjk_chars / max(char_count, 1)
+
+    if cjk_ratio > 0.3:
+        # CJK text: ~1.5 characters per token
+        char_estimate = int(char_count / 1.5)
+    else:
+        # Latin/mixed text: ~4 characters per token
+        char_estimate = int(char_count / 4)
+
+    # Word-based estimate: ~1.33 tokens per whitespace-delimited word
+    word_estimate = int(word_count * 1.33)
+
+    # Take the higher estimate — overcount is safer than undercount for budgets
+    return max(1, max(char_estimate, word_estimate))
 
 
 def enforce_token_budget(hits: list[MemoryHit], max_tokens: int) -> tuple[list[MemoryHit], bool]:

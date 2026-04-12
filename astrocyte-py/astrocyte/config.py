@@ -523,6 +523,43 @@ def _filter_dataclass_fields(cls: type, data: dict) -> dict:
     return {k: v for k, v in data.items() if k in valid}
 
 
+def _parse_homeostasis(data: dict) -> HomeostasisConfig:
+    """Parse a homeostasis config block (used at top-level and per-bank)."""
+    rl = data.get("rate_limits", {}) if isinstance(data.get("rate_limits"), dict) else {}
+    q = data.get("quotas", {}) if isinstance(data.get("quotas"), dict) else {}
+    return HomeostasisConfig(
+        recall_max_tokens=data.get("recall_max_tokens"),
+        reflect_max_tokens=data.get("reflect_max_tokens"),
+        retain_max_content_bytes=data.get("retain_max_content_bytes"),
+        rate_limits=RateLimitConfig(
+            **_filter_dataclass_fields(RateLimitConfig, {k: v for k, v in rl.items() if v is not None})
+        ),
+        quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, {k: v for k, v in q.items() if v is not None})),
+    )
+
+
+def _parse_barriers(data: dict) -> BarrierConfig:
+    """Parse a barriers config block (used at top-level and per-bank)."""
+    pii_data = data.get("pii", {}) if isinstance(data.get("pii"), dict) else {}
+    val_data = data.get("validation", {}) if isinstance(data.get("validation"), dict) else {}
+    meta_data = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
+    return BarrierConfig(
+        pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, pii_data)),
+        validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, val_data)),
+        metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, meta_data)),
+    )
+
+
+def _parse_signal_quality(data: dict) -> SignalQualityConfig:
+    """Parse a signal_quality config block (used at top-level and per-bank)."""
+    dedup_data = data.get("dedup", {}) if isinstance(data.get("dedup"), dict) else {}
+    noisy_data = data.get("noisy_bank", {}) if isinstance(data.get("noisy_bank"), dict) else {}
+    return SignalQualityConfig(
+        dedup=DedupConfig(**_filter_dataclass_fields(DedupConfig, dedup_data)),
+        noisy_bank=NoisyBankConfig(**_filter_dataclass_fields(NoisyBankConfig, noisy_data)),
+    )
+
+
 def _dict_to_config(data: dict) -> AstrocyteConfig:
     """Convert a flat/nested dict to AstrocyteConfig with nested dataclasses."""
     config = AstrocyteConfig()
@@ -550,29 +587,10 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
 
     # Nested config objects
     if "homeostasis" in data:
-        h = data["homeostasis"]
-        rl = h.get("rate_limits", {})
-        q = h.get("quotas", {})
-        config.homeostasis = HomeostasisConfig(
-            recall_max_tokens=h.get("recall_max_tokens"),
-            reflect_max_tokens=h.get("reflect_max_tokens"),
-            retain_max_content_bytes=h.get("retain_max_content_bytes"),
-            rate_limits=RateLimitConfig(
-                **_filter_dataclass_fields(RateLimitConfig, {k: v for k, v in rl.items() if v is not None})
-            ),
-            quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, {k: v for k, v in q.items() if v is not None})),
-        )
+        config.homeostasis = _parse_homeostasis(data["homeostasis"])
 
     if "barriers" in data:
-        b = data["barriers"]
-        pii_data = b.get("pii", {})
-        val_data = b.get("validation", {})
-        meta_data = b.get("metadata", {})
-        config.barriers = BarrierConfig(
-            pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, pii_data)),
-            validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, val_data)),
-            metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, meta_data)),
-        )
+        config.barriers = _parse_barriers(data["barriers"])
 
     if "escalation" in data:
         e = data["escalation"]
@@ -602,13 +620,7 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         config.mcp = McpConfig(**_filter_dataclass_fields(McpConfig, data["mcp"]))
 
     if "signal_quality" in data:
-        sq = data["signal_quality"]
-        dedup_data = sq.get("dedup", {})
-        noisy_data = sq.get("noisy_bank", {})
-        config.signal_quality = SignalQualityConfig(
-            dedup=DedupConfig(**_filter_dataclass_fields(DedupConfig, dedup_data)),
-            noisy_bank=NoisyBankConfig(**_filter_dataclass_fields(NoisyBankConfig, noisy_data)),
-        )
+        config.signal_quality = _parse_signal_quality(data["signal_quality"])
 
     if "recall_cache" in data:
         config.recall_cache = RecallCacheConfig(**_filter_dataclass_fields(RecallCacheConfig, data["recall_cache"]))
@@ -692,36 +704,11 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
                 access=bdata.get("access"),
             )
             if "homeostasis" in bdata and isinstance(bdata["homeostasis"], dict):
-                h = bdata["homeostasis"]
-                rl = h.get("rate_limits", {}) if isinstance(h.get("rate_limits"), dict) else {}
-                q = h.get("quotas", {}) if isinstance(h.get("quotas"), dict) else {}
-                bc.homeostasis = HomeostasisConfig(
-                    recall_max_tokens=h.get("recall_max_tokens"),
-                    reflect_max_tokens=h.get("reflect_max_tokens"),
-                    retain_max_content_bytes=h.get("retain_max_content_bytes"),
-                    rate_limits=RateLimitConfig(**_filter_dataclass_fields(RateLimitConfig, rl)),
-                    quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, q)),
-                )
+                bc.homeostasis = _parse_homeostasis(bdata["homeostasis"])
             if "barriers" in bdata and isinstance(bdata["barriers"], dict):
-                b = bdata["barriers"]
-                pii_data = b.get("pii", {}) if isinstance(b.get("pii"), dict) else {}
-                val_data = b.get("validation", {}) if isinstance(b.get("validation"), dict) else {}
-                meta_data = b.get("metadata", {}) if isinstance(b.get("metadata"), dict) else {}
-                bc.barriers = BarrierConfig(
-                    pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, pii_data)),
-                    validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, val_data)),
-                    metadata=MetadataSanitizationConfig(
-                        **_filter_dataclass_fields(MetadataSanitizationConfig, meta_data)
-                    ),
-                )
+                bc.barriers = _parse_barriers(bdata["barriers"])
             if "signal_quality" in bdata and isinstance(bdata["signal_quality"], dict):
-                sq = bdata["signal_quality"]
-                dedup_data = sq.get("dedup", {}) if isinstance(sq.get("dedup"), dict) else {}
-                noisy_data = sq.get("noisy_bank", {}) if isinstance(sq.get("noisy_bank"), dict) else {}
-                bc.signal_quality = SignalQualityConfig(
-                    dedup=DedupConfig(**_filter_dataclass_fields(DedupConfig, dedup_data)),
-                    noisy_bank=NoisyBankConfig(**_filter_dataclass_fields(NoisyBankConfig, noisy_data)),
-                )
+                bc.signal_quality = _parse_signal_quality(bdata["signal_quality"])
             banks[str(bid)] = bc
         config.banks = banks
 

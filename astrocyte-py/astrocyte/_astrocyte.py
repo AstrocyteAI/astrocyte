@@ -432,6 +432,15 @@ class Astrocyte:
         if limiter:
             limiter.check_and_record(bank_id, operation)
 
+    def _check_rate_and_quota(self, bank_id: str, operation: str) -> None:
+        """Atomically check rate limit and quota together.
+
+        Prevents TOCTOU: without this, a concurrent request could pass between
+        separate rate limit and quota checks.
+        """
+        self._check_rate_limit(bank_id, operation)
+        self._check_quota(bank_id, operation)
+
     # ---------------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------------
@@ -444,13 +453,19 @@ class Astrocyte:
         metadata: dict[str, str | int | float | bool | None] | None = None,
         tags: list[str] | None = None,
         context: AstrocyteContext | None = None,
+        content_type: str = "text",
+        extraction_profile: str | None = None,
+        occurred_at: datetime | None = None,
+        source: str | None = None,
         **kwargs: Any,
     ) -> RetainResult:
         """Store content into memory.
 
-        Keyword args include ``content_type`` (``text``, ``conversation``, ``document``, …),
-        ``extraction_profile`` (name under YAML ``extraction_profiles:``), and other
-        pipeline fields (``occurred_at``, ``source``, …).
+        Args:
+            content_type: ``text``, ``conversation``, ``document``, etc.
+            extraction_profile: Name under YAML ``extraction_profiles:``.
+            occurred_at: When the content originally occurred.
+            source: Origin identifier for the content.
         """
         _validate_bank_id(bank_id)
         with span("astrocyte.retain", {"astrocyte.bank_id": bank_id}):
@@ -473,11 +488,11 @@ class Astrocyte:
 
                 mip_input = RuleEngineInput(
                     content=content,
-                    content_type=kwargs.get("content_type", "text"),
+                    content_type=content_type,
                     metadata=metadata,
                     tags=tags,
                     pii_detected=bool(kwargs.get("pii_detected")),
-                    source=kwargs.get("source"),
+                    source=source,
                 )
                 routing = await self._mip_router.route(mip_input)
                 if routing.bank_id:
@@ -490,12 +505,11 @@ class Astrocyte:
                 if routing.retain_policy == "reject":
                     return RetainResult(stored=False, error="Rejected by MIP routing rule")
 
-            # Rate limiting + quota
-            self._check_rate_limit(bank_id, "retain")
-            self._check_quota(bank_id, "retain")
+            # Rate limiting + quota (atomic to prevent TOCTOU)
+            self._check_rate_and_quota(bank_id, "retain")
 
             # Content validation
-            errors = self._content_validator.validate(content, kwargs.get("content_type", "text"))
+            errors = self._content_validator.validate(content, content_type)
             if errors:
                 return RetainResult(stored=False, error="; ".join(errors))
 
@@ -533,10 +547,10 @@ class Astrocyte:
                 bank_id=bank_id,
                 metadata=metadata,
                 tags=tags,
-                occurred_at=kwargs.get("occurred_at"),
-                source=kwargs.get("source"),
-                content_type=kwargs.get("content_type", "text"),
-                extraction_profile=kwargs.get("extraction_profile"),
+                occurred_at=occurred_at,
+                source=source,
+                content_type=content_type,
+                extraction_profile=extraction_profile,
             )
 
             # Route to provider
@@ -606,11 +620,34 @@ class Astrocyte:
             tags=tags,
             fact_types=kwargs.get("fact_types"),
             time_range=kwargs.get("time_range"),
-            include_sources=kwargs.get("include_sources", False),
+            include_sources=bool(kwargs.get("include_sources", False)),
             layer_weights=kwargs.get("layer_weights"),
             detail_level=kwargs.get("detail_level"),
             external_context=ext,
         )
+
+    def _recall_kwargs_dict(
+        self,
+        external_context: list[MemoryHit] | None,
+        fact_types: list[str] | None,
+        time_range: tuple[datetime, datetime] | None,
+        include_sources: bool,
+        layer_weights: dict[str, float] | None,
+        detail_level: str | None,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Bundle explicit recall params into a kwargs dict for internal helpers."""
+        d: dict[str, Any] = {
+            "external_context": external_context,
+            "fact_types": fact_types,
+            "time_range": time_range,
+            "include_sources": include_sources,
+            "layer_weights": layer_weights,
+            "detail_level": detail_level,
+        }
+        if extra:
+            d.update(extra)
+        return d
 
     async def recall(
         self,
@@ -623,6 +660,12 @@ class Astrocyte:
         max_tokens: int | None = None,
         tags: list[str] | None = None,
         context: AstrocyteContext | None = None,
+        external_context: list[MemoryHit] | None = None,
+        fact_types: list[str] | None = None,
+        time_range: tuple[datetime, datetime] | None = None,
+        include_sources: bool = False,
+        layer_weights: dict[str, float] | None = None,
+        detail_level: str | None = None,
         **kwargs: Any,
     ) -> RecallResult:
         """Retrieve relevant memories for a query.
@@ -630,22 +673,16 @@ class Astrocyte:
         With multiple ``banks``, use ``strategy`` (or a :class:`MultiBankStrategy`) to choose
         ``parallel`` (default), ``cascade`` (widen until enough hits), or ``first_match``.
 
-        **Keyword-only (``**kwargs``) — pipeline / M4.1**
-
-        - ``external_context``: list of :class:`~astrocyte.types.MemoryHit` merged with retrieval
-          (RRF in the built-in pipeline). Combined with configured ``sources:`` entries of
-          ``type: proxy`` for the active bank.
-        - ``fact_types``, ``time_range``, ``include_sources``, ``layer_weights``, ``detail_level``:
-          forwarded to :class:`~astrocyte.types.RecallRequest` when supported by the provider.
+        Args:
+            external_context: Extra :class:`MemoryHit` items merged with retrieval via RRF.
+            fact_types: Filter by fact type (e.g. ``["preference", "event"]``).
+            time_range: ``(start, end)`` datetime tuple to scope retrieval.
+            include_sources: Include source metadata in results.
+            layer_weights: Per-layer scoring weights for tiered retrieval.
+            detail_level: Granularity hint (``"summary"`` / ``"full"``).
 
         When ``tiered_retrieval.enabled`` is set and a pipeline is configured, recall uses
-        :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` for cheap tiers. Tier 3+
-        uses the built-in pipeline by default (``tiered_retrieval.full_recall: pipeline``) when no
-        Tier-2 engine is set; with ``full_recall: hybrid`` and a
-        :class:`~astrocyte.hybrid.HybridEngineProvider`, tier 3+ calls hybrid merge (engine +
-        pipeline) while lower tiers still use the pipeline orchestrator. A plain Tier-2 engine
-        without tiered config still uses ``engine.recall`` only. Proxy HTTP metrics require
-        ``observability.prometheus_enabled``.
+        :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` for cheap tiers.
         """
         # Resolve bank(s)
         bank_ids = self._resolve_read_bank_ids(bank_id, banks, context)
@@ -657,9 +694,15 @@ class Astrocyte:
             for bid in bank_ids:
                 self._check_access(bid, "read", context)
 
-            # Rate limiting — check each bank (rate limits are per-bank)
+            # Rate limiting + quota (atomic per-bank)
             for bid in bank_ids:
-                self._check_rate_limit(bid, "recall")
+                self._check_rate_and_quota(bid, "recall")
+
+            # Build kwargs dict from explicit params for internal helpers
+            _rk = self._recall_kwargs_dict(
+                external_context, fact_types, time_range,
+                include_sources, layer_weights, detail_level, kwargs,
+            )
 
             # Single bank — direct
             if len(bank_ids) == 1:
@@ -669,7 +712,7 @@ class Astrocyte:
                     max_results,
                     max_tokens,
                     tags,
-                    kwargs,
+                    _rk,
                 )
                 try:
                     self._circuit_breaker.check(self._provider_name)
@@ -715,7 +758,7 @@ class Astrocyte:
                 max_results,
                 max_tokens,
                 tags,
-                kwargs,
+                _rk,
                 strat,
             )
             if self._config.dlp.scan_recall_output:
@@ -731,9 +774,15 @@ class Astrocyte:
         strategy: Literal["cascade", "parallel", "first_match"] | MultiBankStrategy | None = None,
         max_tokens: int | None = None,
         context: AstrocyteContext | None = None,
+        include_sources: bool = True,
+        dispositions: Any | None = None,
         **kwargs: Any,
     ) -> ReflectResult:
         """Synthesize an answer from memory.
+
+        Args:
+            include_sources: Include source memories in the result.
+            dispositions: Emotional/tonal dispositions for synthesis.
 
         Supports multi-bank reflect: pass ``banks`` (and optionally ``strategy``) to
         recall across multiple banks and synthesize over the fused results.
@@ -750,8 +799,7 @@ class Astrocyte:
                 self._check_access(bid, "read", context)
 
             for bid in bank_ids:
-                self._check_rate_limit(bid, "reflect")
-                self._check_quota(bid, "reflect")
+                self._check_rate_and_quota(bid, "reflect")
 
             # ── Single bank: delegate to provider/pipeline reflect ──
             if len(bank_ids) == 1:
@@ -759,8 +807,8 @@ class Astrocyte:
                     query=query,
                     bank_id=primary_bank,
                     max_tokens=max_tokens,
-                    include_sources=kwargs.get("include_sources", True),
-                    dispositions=kwargs.get("dispositions"),
+                    include_sources=include_sources,
+                    dispositions=dispositions,
                 )
                 try:
                     self._circuit_breaker.check(self._provider_name)
@@ -796,7 +844,7 @@ class Astrocyte:
                         hits=recall_result.hits,
                         bank_id=primary_bank,
                         max_tokens=max_tokens,
-                        dispositions=kwargs.get("dispositions"),
+                        dispositions=dispositions,
                         authority_context=auth_ctx,
                     )
 
@@ -844,11 +892,18 @@ class Astrocyte:
         tags: list[str] | None = None,
         scope: str | None = None,
         context: AstrocyteContext | None = None,
+        compliance: bool = False,
+        reason: str | None = None,
+        before_date: datetime | None = None,
         **kwargs: Any,
     ) -> ForgetResult:
         """Remove memories.
 
-        Use ``scope="all"`` to delete everything in a bank (requires admin).
+        Args:
+            scope: ``"all"`` to delete everything in a bank (requires admin).
+            compliance: Bypass legal holds for right-to-forget (requires context).
+            reason: Audit reason when ``compliance=True``.
+            before_date: Delete memories created before this date.
         """
         _validate_bank_id(bank_id)
         with span("astrocyte.forget", {"astrocyte.bank_id": bank_id}):
@@ -862,7 +917,7 @@ class Astrocyte:
             # Legal hold check — compliance=True bypasses for right-to-forget.
             # Even when access_control is disabled, compliance bypass requires
             # explicit context (caller must identify themselves).
-            if not kwargs.get("compliance"):
+            if not compliance:
                 self._lifecycle.check_forget_allowed(bank_id)
             else:
                 if context is None:
@@ -871,13 +926,13 @@ class Astrocyte:
                     raise AccessDenied("anonymous", bank_id, "compliance_forget")
                 # Log compliance forget with actor identity for audit trail
                 principal_label = context_principal_label(context)
-                reason = kwargs.get("reason", "compliance_forget_request")
+                audit_reason = reason or "compliance_forget_request"
                 self._logger.log(
                     "astrocyte.compliance.forget",
                     bank_id=bank_id,
                     data={
                         "actor": principal_label,
-                        "reason": str(reason),
+                        "reason": str(audit_reason),
                         "scope": scope or "selective",
                     },
                     level=logging.WARNING,
@@ -890,7 +945,7 @@ class Astrocyte:
                 bank_id=bank_id,
                 memory_ids=memory_ids,
                 tags=tags,
-                before_date=kwargs.get("before_date"),
+                before_date=before_date,
                 scope=scope,
             )
             result = await self._do_forget(request)
@@ -948,31 +1003,62 @@ class Astrocyte:
         actions: list[LifecycleAction] = []
         to_delete: list[str] = []
 
-        # Scan all memories in bank
-        result = await self._do_recall(RecallRequest(query="*", bank_id=bank_id, max_results=10000))
-
-        for hit in result.hits:
-            created_at = hit.metadata.get("_created_at") if hit.metadata else None
-            last_recalled = hit.metadata.get("_last_recalled_at") if hit.metadata else None
-
-            # Parse datetime strings if needed
-            if isinstance(created_at, str):
-                created_at = datetime.fromisoformat(created_at)
-            if isinstance(last_recalled, str):
-                last_recalled = datetime.fromisoformat(last_recalled)
-
-            action = self._lifecycle.evaluate_memory_ttl(
-                memory_id=hit.memory_id or "",
-                bank_id=bank_id,
-                created_at=created_at,
-                last_recalled_at=last_recalled,
-                tags=hit.tags,
-                fact_type=hit.fact_type,
-                now=now,
-            )
-            actions.append(action)
-            if action.action in ("delete", "archive"):
-                to_delete.append(hit.memory_id or "")
+        # Scan memories via paginated list_vectors (avoids query="*" + 10K limit)
+        vector_store = self._pipeline.vector_store if self._pipeline else None
+        if vector_store and hasattr(vector_store, "list_vectors"):
+            scan_offset = 0
+            scan_batch = 200
+            while True:
+                items = await vector_store.list_vectors(bank_id, offset=scan_offset, limit=scan_batch)
+                if not items:
+                    break
+                for item in items:
+                    created_at = item.metadata.get("_created_at") if item.metadata else None
+                    last_recalled = item.metadata.get("_last_recalled_at") if item.metadata else None
+                    if isinstance(created_at, str):
+                        created_at = datetime.fromisoformat(created_at)
+                    if isinstance(last_recalled, str):
+                        last_recalled = datetime.fromisoformat(last_recalled)
+                    action = self._lifecycle.evaluate_memory_ttl(
+                        memory_id=item.id,
+                        bank_id=bank_id,
+                        created_at=created_at,
+                        last_recalled_at=last_recalled,
+                        tags=item.metadata.get("_tags", "").split(",") if item.metadata and item.metadata.get("_tags") else None,
+                        fact_type=item.metadata.get("_fact_type") if item.metadata else None,
+                        now=now,
+                    )
+                    actions.append(action)
+                    if action.action in ("delete", "archive"):
+                        to_delete.append(item.id)
+                scan_offset += len(items)
+                if len(items) < scan_batch:
+                    break
+                if scan_offset > 100_000:
+                    logger.warning("Lifecycle scan capped at 100k vectors for bank %s", bank_id)
+                    break
+        else:
+            # Fallback for engine-only or stores without list_vectors
+            result = await self._do_recall(RecallRequest(query="*", bank_id=bank_id, max_results=10000))
+            for hit in result.hits:
+                created_at = hit.metadata.get("_created_at") if hit.metadata else None
+                last_recalled = hit.metadata.get("_last_recalled_at") if hit.metadata else None
+                if isinstance(created_at, str):
+                    created_at = datetime.fromisoformat(created_at)
+                if isinstance(last_recalled, str):
+                    last_recalled = datetime.fromisoformat(last_recalled)
+                action = self._lifecycle.evaluate_memory_ttl(
+                    memory_id=hit.memory_id or "",
+                    bank_id=bank_id,
+                    created_at=created_at,
+                    last_recalled_at=last_recalled,
+                    tags=hit.tags,
+                    fact_type=hit.fact_type,
+                    now=now,
+                )
+                actions.append(action)
+                if action.action in ("delete", "archive"):
+                    to_delete.append(hit.memory_id or "")
 
         # Batch delete/archive
         deleted = 0

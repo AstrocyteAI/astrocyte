@@ -11,6 +11,7 @@ Tier 1 consolidation supports:
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -21,6 +22,47 @@ if TYPE_CHECKING:
     from astrocyte.provider import GraphStore, VectorStore
 
 logger = logging.getLogger("astrocyte.pipeline")
+
+
+class _VectorBuckets:
+    """Simple quantization-based bucketing for near-duplicate detection.
+
+    Reduces pairwise comparisons from O(n²) to O(n × bucket_size) by
+    grouping vectors into buckets based on their top-k dimensions.
+    Only vectors in the same bucket are compared via cosine similarity.
+    """
+
+    def __init__(self, num_bands: int = 8) -> None:
+        self._num_bands = num_bands
+        # bucket_key -> list of (id, vector)
+        self._buckets: dict[tuple[int, ...], list[tuple[str, list[float]]]] = defaultdict(list)
+
+    def _bucket_key(self, vector: list[float]) -> tuple[int, ...]:
+        """Quantize vector into a coarse bucket key."""
+        if not vector:
+            return ()
+        # Pick evenly-spaced dimensions and quantize to {-1, 0, 1}
+        dims = len(vector)
+        step = max(1, dims // self._num_bands)
+        return tuple(
+            (1 if vector[i] > 0.1 else (-1 if vector[i] < -0.1 else 0))
+            for i in range(0, min(dims, step * self._num_bands), step)
+        )
+
+    def find_similar(self, vector: list[float], threshold: float) -> bool:
+        """Check if any stored vector is similar above threshold."""
+        key = self._bucket_key(vector)
+        for _, seen_vec in self._buckets.get(key, []):
+            try:
+                if cosine_similarity(vector, seen_vec) >= threshold:
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    def add(self, item_id: str, vector: list[float]) -> None:
+        key = self._bucket_key(vector)
+        self._buckets[key].append((item_id, vector))
 
 
 @dataclass
@@ -56,7 +98,7 @@ async def run_consolidation(
     duplicates_removed = 0
     stale_archived = 0
     total_scanned = 0
-    seen_embeddings: list[tuple[str, list[float]]] = []
+    seen_index = _VectorBuckets()
     to_delete_dedup: list[str] = []
     to_delete_stale: list[str] = []
 
@@ -71,20 +113,12 @@ async def run_consolidation(
         for item in batch:
             total_scanned += 1
 
-            # -- Dedup check --
-            is_dup = False
-            for _, seen_vec in seen_embeddings:
-                try:
-                    sim = cosine_similarity(item.vector, seen_vec)
-                except ValueError:
-                    continue
-                if sim >= similarity_threshold:
-                    to_delete_dedup.append(item.id)
-                    is_dup = True
-                    break
-
-            if not is_dup:
-                seen_embeddings.append((item.id, item.vector))
+            # -- Dedup check (bucketed: O(n × bucket_size) instead of O(n²)) --
+            is_dup = seen_index.find_similar(item.vector, similarity_threshold)
+            if is_dup:
+                to_delete_dedup.append(item.id)
+            else:
+                seen_index.add(item.id, item.vector)
 
             # -- Stale archival check --
             if not is_dup and archive_unretrieved_after_days is not None and item.metadata:
