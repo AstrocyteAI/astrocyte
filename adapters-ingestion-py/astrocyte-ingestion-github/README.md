@@ -18,7 +18,7 @@ sources:
     type: poll
     driver: github
     path: octocat/Hello-World          # owner/repo
-    interval_seconds: 120              # >= 10; use 60+ to respect rate limits
+    interval_seconds: 120              # >= 60 (GitHub API rate limits)
     target_bank: engineering
     auth:
       token: ${GITHUB_TOKEN}           # classic PAT or fine-grained token (issues read)

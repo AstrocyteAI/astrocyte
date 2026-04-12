@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   adapters:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     services:
       qdrant:

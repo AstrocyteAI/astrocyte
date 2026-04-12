@@ -88,8 +88,8 @@ class GithubPollIngestSource:
 
     def _interval_s(self) -> float:
         n = self._config.interval_seconds
-        if n is None or int(n) < 10:
-            raise IngestError("poll requires interval_seconds >= 10")
+        if n is None or int(n) < 60:
+            raise IngestError("poll requires interval_seconds >= 60")
         return float(int(n))
 
     async def start(self) -> None:

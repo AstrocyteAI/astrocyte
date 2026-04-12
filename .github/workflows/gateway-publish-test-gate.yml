@@ -15,6 +15,8 @@ env:
 jobs:
   services-ci:
     name: Services CI (compose, shell, astrocyte-gateway-py)
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -32,6 +34,8 @@ jobs:
 
   gateway-examples-matrix:
     name: gateway example ${{ matrix.example }}
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -62,6 +66,8 @@ jobs:
 
   pgvector-integration:
     name: pgvector integration
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     services:
       postgres:

@@ -24,8 +24,13 @@ import threading
 import time
 from typing import Any
 
+# TCP bench: wait for uvicorn to accept connections on /live (startup race).
+MAX_READINESS_RETRIES = 200
+READINESS_POLL_INTERVAL_S = 0.02
+
 
 def _percentile_ns(sorted_ns: list[int], q: float) -> float:
+    """Linear interpolation percentile on **sorted** nanoseconds. ``q`` is **0–100** (e.g. 50, 95)."""
     if not sorted_ns:
         return 0.0
     if len(sorted_ns) == 1:
@@ -163,7 +168,7 @@ async def _run_tcp(*, warmup: int, iterations: int) -> dict[str, Any]:
     base = f"http://127.0.0.1:{port}"
     try:
         with httpx.Client(timeout=5.0) as sync_client:
-            for _ in range(200):
+            for _ in range(MAX_READINESS_RETRIES):
                 try:
                     r = sync_client.get(f"{base}/live")
                     if r.status_code == 200:
@@ -171,7 +176,7 @@ async def _run_tcp(*, warmup: int, iterations: int) -> dict[str, Any]:
                 except httpx.HTTPError:
                     # Server not accepting yet (connection refused, reset); retry until ready.
                     pass
-                time.sleep(0.02)
+                time.sleep(READINESS_POLL_INTERVAL_S)
             else:
                 raise RuntimeError("uvicorn did not become ready on /live")
 

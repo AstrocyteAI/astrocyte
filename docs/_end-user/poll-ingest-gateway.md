@@ -1,6 +1,6 @@
 # Poll ingest with the standalone gateway
 
-Use **`type: poll`** / **`api_poll`** in **`astrocyte.yaml`** so the gateway starts long-running ingest sources (for example **GitHub Issues** via **`astrocyte-ingestion-github`**) together with **`astrocyte-gateway-py`**.
+Use **`type: poll`** / **`api_poll`** in **`astrocyte.yaml`** so the gateway starts long-running ingest sources (for example **GitHub Issues** via **`astrocyte-ingestion-github`**) together with **`astrocyte-gateway-py`**. Works with **`provider_tier: storage`** (built-in pipeline) or **`engine`**; defaults in examples often use **`engine`** with **`in_memory`** / **`mock`** for local demos.
 
 ## 1. Install extras
 
@@ -34,7 +34,7 @@ sources:
       token: ${GITHUB_TOKEN}
 ```
 
-- **`interval_seconds`**: minimum **10** (validation); prefer **60+** in production (GitHub rate limits).
+- **`interval_seconds`**: **`validate_astrocyte_config`** requires **≥ 60** for poll sources. Use **60+** in production for GitHub: authenticated REST is capped (e.g. **5,000 requests/hour** per token for typical use), and shorter intervals burn budget fast on active repos.
 - **`auth.token`**: classic PAT or fine-grained token with **`issues`** read access to the repo.
 
 ## 3. Run the gateway

@@ -18,15 +18,30 @@ permissions:
 
 jobs:
   publish-astrocyte:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      packages: write
     uses: ./.github/workflows/publish.yml
     secrets: inherit
 
   publish-pgvector:
     needs: publish-astrocyte
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      packages: write
     uses: ./.github/workflows/publish-astrocyte-pgvector.yml
     secrets: inherit
 
   publish-gateway-image:
     needs: publish-pgvector
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      packages: write
     uses: ./.github/workflows/publish-astrocyte-gateway-py-image.yml
     secrets: inherit

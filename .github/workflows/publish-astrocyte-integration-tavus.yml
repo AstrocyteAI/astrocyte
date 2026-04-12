@@ -14,6 +14,8 @@ permissions:
 jobs:
   test:
     name: Unit tests (astrocyte-integration-tavus)
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -34,6 +36,9 @@ jobs:
 
   build:
     needs: test
+    permissions:
+      contents: read
+      actions: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -72,6 +77,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       id-token: write
       attestations: write
     steps:
@@ -89,6 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/download-artifact@v8

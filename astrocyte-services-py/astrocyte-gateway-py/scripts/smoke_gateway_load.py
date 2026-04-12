@@ -51,12 +51,14 @@ async def _run(
     times_s = [dt for _, dt in rows]
     bad = [c for c in codes if c != 200]
 
-    def pct(q: float) -> float:
-        s = sorted(times_s)
-        if not s:
+    times_s_sorted = sorted(times_s)
+
+    def calculate_percentile(q: float) -> float:
+        """``q`` is a fraction in ``[0, 1]`` (e.g. ``0.95`` for p95)."""
+        if not times_s_sorted:
             return 0.0
-        idx = int(q * (len(s) - 1))
-        return s[idx] * 1000.0
+        idx = int(q * (len(times_s_sorted) - 1))
+        return times_s_sorted[idx] * 1000.0
 
     summary = {
         "url": url,
@@ -67,9 +69,9 @@ async def _run(
         "rps": round(total / wall_s, 2) if wall_s > 0 else 0.0,
         "all_200": len(bad) == 0,
         "status_codes": dict(Counter(codes)),
-        "latency_ms_p50": round(pct(0.50), 3),
-        "latency_ms_p95": round(pct(0.95), 3),
-        "latency_ms_p99": round(pct(0.99), 3),
+        "latency_ms_p50": round(calculate_percentile(0.50), 3),
+        "latency_ms_p95": round(calculate_percentile(0.95), 3),
+        "latency_ms_p99": round(calculate_percentile(0.99), 3),
         "latency_ms_mean": round(statistics.mean(times_s) * 1000.0, 3) if times_s else 0.0,
     }
 

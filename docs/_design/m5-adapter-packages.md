@@ -1,6 +1,8 @@
 # M5 — Production storage adapters (package layout)
 
-M5 ships **separate PyPI packages** per backend (roadmap: Neo4j graph, Elasticsearch/OpenSearch document, Qdrant vector). They implement the Tier 1 SPIs in `astrocyte.provider` (`GraphStore`, `DocumentStore`, `VectorStore`).
+M5 ships **separate PyPI packages** per backend. They implement the Tier 1 SPIs in `astrocyte.provider` (`GraphStore`, `DocumentStore`, `VectorStore`).
+
+**In this repository:** [`adapters-storage-py/`](../../adapters-storage-py/README.md) packages include **`astrocyte-pgvector`** (PostgreSQL + pgvector), **`astrocyte-qdrant`**, **`astrocyte-neo4j`**, and **`astrocyte-elasticsearch`** — each with its own `pyproject.toml` and published image or wheel workflows as applicable.
 
 ## Conformance
 

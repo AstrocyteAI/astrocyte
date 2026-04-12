@@ -57,9 +57,9 @@ HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook
 
 ### M4 — Poll ingest (`type: poll` / `api_poll`)
 
-**Declarative `sources:`** may use **`type: poll`** (alias **`api_poll`**) with **`driver: github`**. Drivers resolve via **`astrocyte.ingest_poll_drivers`**; **`astrocyte-ingestion-github`** registers **`github`** (Issues REST API, skips PRs). Install **`astrocyte[poll]`** (or that package alone). **`path`** is **`owner/repo`**; **`interval_seconds`** ≥ 10 (prefer 60+ in production); **`auth.token`** is a GitHub PAT or fine-grained token. **`SourceRegistry.from_sources_config`** still requires **`retain=...`**.
+**Declarative `sources:`** may use **`type: poll`** (alias **`api_poll`**) with **`driver: github`**. Drivers resolve via **`astrocyte.ingest_poll_drivers`**; **`astrocyte-ingestion-github`** registers **`github`** (Issues REST API, skips PRs). Install **`astrocyte[poll]`** (or that package alone). **`path`** is **`owner/repo`**; **`interval_seconds`** ≥ 60 (minimum validation and recommended baseline for production); **`auth.token`** is a GitHub PAT or fine-grained token. **`SourceRegistry.from_sources_config`** still requires **`retain=...`**.
 
-**Gateway ops:** **`GET /health/ingest`** on **`astrocyte-gateway-py`** returns ingest-only readiness (per-source health). Set **`ASTROCYTE_LOG_FORMAT=json`** for structured ingest lines (supervisor start/stop, GitHub rate-limit warnings, stream failures) via **`astrocyte.ingest.logutil`**. Recipe: **[`docs/_how-to/poll-ingest-gateway.md`](../_how-to/poll-ingest-gateway.md)**.
+**Gateway ops:** **`GET /health/ingest`** on **`astrocyte-gateway-py`** returns ingest-only readiness (per-source health). Set **`ASTROCYTE_LOG_FORMAT=json`** for structured ingest lines (supervisor start/stop, GitHub rate-limit warnings, stream failures) via **`astrocyte.ingest.logutil`**. Recipe: **[`poll-ingest-gateway.md`](../_end-user/poll-ingest-gateway.md)**.
 
 ### Extraction profiles for issues vs transcripts
 
@@ -214,7 +214,7 @@ This table captures what users get at each tier, helping them make informed upgr
 | Capability | Built-in pipeline (Tier 1) | Mystique engine (Tier 2) |
 |---|---|---|
 | **Chunking** | Sentence/paragraph splitting | Sophisticated content-aware chunking |
-| **Entity extraction** | spaCy NER or single-pass LLM | Multi-pass LLM with normalization and canonical resolution |
+| **Entity extraction** | LLM-based extraction (LLM provider SPI) when graph store + profile allow; **spaCy** is optional for **PII policy** scanning, not the default retain-path NER | Multi-pass LLM with normalization and canonical resolution |
 | **Embedding** | Standard models via LLM SPI | Tuned HNSW with partial indexes per fact type |
 | **Semantic retrieval** | Vector similarity search | Vector similarity with optimized ef_search tuning |
 | **Graph retrieval** | Basic neighbor traversal (depth 2) | Spreading activation with configurable decay |
@@ -225,7 +225,7 @@ This table captures what users get at each tier, helping them make informed upgr
 | **Reflect** | Single-pass LLM synthesis | Agentic multi-turn with tool use (lookup, recall, learn, expand) |
 | **Dispositions** | Basic prompt guidance (limited) | Native personality modulation (skepticism, literalism, empathy) |
 | **Consolidation** | Dedup + archive by age | Quality-based loss functions, observation formation, mental models |
-| **Entity resolution** | NER + exact-match dedup | Canonical resolution with co-occurrence tracking, alias management |
+| **Entity resolution** | LLM-extracted entities + exact-match dedup | Canonical resolution with co-occurrence tracking, alias management |
 | **Scale** | Single process | Multi-tenant, distributed, production-grade |
 | **Temporal links** | Not supported | Temporal proximity links between memories |
 | **Observations** | Not supported | Synthesized knowledge consolidated from raw facts |

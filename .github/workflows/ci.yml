@@ -46,6 +46,9 @@ jobs:
   # Matches `requires-python` / classifiers in astrocyte-py/pyproject.toml
   astrocyte-py:
     name: astrocyte-py (Python ${{ matrix.python-version }})
+    permissions:
+      contents: read
+      actions: write
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -104,10 +107,14 @@ jobs:
 
   # astrocyte-gateway-py: shared with `release.yml` / `publish-astrocyte-gateway-py-image.yml` (see `gateway-publish-test-gate.yml`).
   gateway-publish-test-gate:
+    permissions:
+      contents: read
     uses: ./.github/workflows/gateway-publish-test-gate.yml
 
   adapters-integration-tavus:
     name: astrocyte-integration-tavus
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -133,6 +140,8 @@ jobs:
   e2e-claude-agent-sdk:
     name: e2e Claude Agent SDK
     if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -179,6 +188,8 @@ jobs:
   e2e-claude-managed-agents:
     name: e2e Claude Managed Agents
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -214,6 +225,8 @@ jobs:
   ci:
     name: CI
     needs: [astrocyte-py, gateway-publish-test-gate, adapters-integration-tavus]
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - run: echo "All checks passed"

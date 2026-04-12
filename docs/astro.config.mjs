@@ -16,6 +16,7 @@ const topicItems = {
     { label: "Introduction", link: "/introduction/" },
     { label: "Quick Start", link: "/end-user/quick-start/" },
     { label: "Production-grade reference server", link: "/end-user/production-grade-http-service/" },
+    { label: "Poll ingest (gateway)", link: "/end-user/poll-ingest-gateway/" },
   ],
   plugins: [
     { label: "Provider SPI", link: "/plugins/provider-spi/" },
@@ -62,6 +63,7 @@ const topicItems = {
         { label: "ADR-001 Deployment models", link: "/design/adr/adr-001-deployment-models/" },
         { label: "ADR-002 Identity model", link: "/design/adr/adr-002-identity-model/" },
         { label: "ADR-003 Config schema", link: "/design/adr/adr-003-config-schema/" },
+        { label: "ADR-004 Recall authority", link: "/design/adr/adr-004-recall-authority/" },
       ],
     },
     { label: "Storage and data planes", link: "/design/storage-and-data-planes/" },

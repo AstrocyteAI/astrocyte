@@ -11,6 +11,8 @@ permissions:
 jobs:
   composer:
     name: e2e Tavus CVI composer
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

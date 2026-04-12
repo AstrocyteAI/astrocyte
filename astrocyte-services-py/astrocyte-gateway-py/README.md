@@ -148,7 +148,7 @@ OpenAPI docs: `/docs` when the HTTP service is running.
 
 **Example configs** (Tier 1, MIP, webhook) are grouped under **[`examples/`](./examples/)** — each scenario has its **own subfolder** with an **`astrocyte.yaml`** (or MIP-only `mip.yaml`). Set **`ASTROCYTE_CONFIG_PATH`** to that file (absolute path, or run the gateway with cwd inside that folder).
 
-**Poll ingest (GitHub Issues):** install **`astrocyte[poll]`** (or **`astrocyte-ingestion-github`**) and follow **[`docs/_how-to/poll-ingest-gateway.md`](../../docs/_how-to/poll-ingest-gateway.md)**.
+**Poll ingest (GitHub Issues):** install **`astrocyte[poll]`** (or **`astrocyte-ingestion-github`**) and follow **[`docs/_end-user/poll-ingest-gateway.md`](../../docs/_end-user/poll-ingest-gateway.md)**.
 
 **Tests:** from **`astrocyte-services-py/astrocyte-gateway-py/`**, run **`uv sync --extra dev --extra pgvector`** then **`uv run python -m pytest`** (use `python -m pytest` so the project venv is used). Integration against Postgres is in **`tests/test_integration_pgvector_http.py`** and runs in CI when **`DATABASE_URL`** is set and migrations have been applied (**`ASTROCYTE_GATEWAY_E2E_MIGRATED=1`** after `migrate.sh`).
 

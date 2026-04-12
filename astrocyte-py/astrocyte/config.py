@@ -794,10 +794,10 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
                         f"sources.{name}: poll driver {driver!r} is not supported (use github; "
                         "install astrocyte-ingestion-github)"
                     )
-                if not src.interval_seconds or int(src.interval_seconds) < 10:
+                if not src.interval_seconds or int(src.interval_seconds) < 60:
                     raise ConfigError(
-                        f"sources.{name}: type poll requires interval_seconds >= 10 "
-                        "(GitHub API rate limits; use 60+ in production)"
+                        f"sources.{name}: type poll requires interval_seconds >= 60 "
+                        "(GitHub API rate limits)"
                     )
                 pr = (src.path or "").strip()
                 if not pr or "/" not in pr or pr.count("/") != 1:

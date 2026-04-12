@@ -24,6 +24,8 @@ permissions:
 jobs:
   matrix-setup:
     name: Configure benchmark matrix
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -38,6 +40,9 @@ jobs:
   benchmark:
     name: "Run: ${{ matrix.benchmark }}"
     needs: matrix-setup
+    permissions:
+      contents: read
+      actions: write
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
@@ -107,6 +112,9 @@ jobs:
     name: Aggregate results
     needs: benchmark
     if: always()
+    permissions:
+      contents: read
+      actions: write
     runs-on: ubuntu-latest
 
     steps:

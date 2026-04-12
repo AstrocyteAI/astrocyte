@@ -21,7 +21,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 
 **Source layout:** Spec markdown lives in **`docs/_design/`**, **`docs/_plugins/`**, and **`docs/_end-user/`** (underscore-prefixed authoring folders). Tutorials stay under **`docs/_tutorials/`**. **`scripts/sync-docs.mjs`** mirrors them into `src/content/docs/{design,plugins,end-user,tutorials}/` (gitignored) so published URLs stay **`/design/…`**, **`/plugins/…`**, etc. **`pnpm dev`** and **`pnpm build`** run **`sync-docs`** first (`predev` / `prebuild`); if you edit `_design/` / `_plugins/` / `_end-user/` / `_tutorials/` directly, run **`node scripts/sync-docs.mjs`** (or restart dev) so the site picks up changes. Cross-references in prose often use backticked filenames like `` `architecture-framework.md` `` as stable identifiers.
 
-**Authored hubs (non-numbered):** [Quick Start](./_end-user/quick-start.md), [100 Agents in 100 Days](./_tutorials/100-agents-in-100-days.md).
+**Authored hubs (non-numbered):** [Quick Start](./_end-user/quick-start.md), [Poll ingest (gateway)](./_end-user/poll-ingest-gateway.md), [100 Agents in 100 Days](./_tutorials/100-agents-in-100-days.md).
 
 ---
 
@@ -31,6 +31,7 @@ This folder (`docs/`) is the **shared design specification** for the Astrocyte f
 |---|-------|--------|
 | 1 | [Quick Start](./_end-user/quick-start.md) | Install core library; Docker Compose + reference REST |
 | 2 | [Production-grade HTTP service](./_end-user/production-grade-http-service.md) | Production HTTP checklist; `astrocyte-gateway-py`; Compose; ops **§4.5** |
+| 3 | [Poll ingest (gateway)](./_end-user/poll-ingest-gateway.md) | GitHub poll + `GET /health/ingest`; extras **`astrocyte[poll]`** |
 
 ---
 
@@ -59,6 +60,7 @@ Indexes below use **topic bands** (sidebar order matches `astro.config.mjs`).
 | — | [ADR-001 Deployment models](./_design/adr/adr-001-deployment-models.md) | Library vs standalone gateway vs gateway plugin |
 | — | [ADR-002 Identity model](./_design/adr/adr-002-identity-model.md) | Structured `AstrocyteContext`, OBO (on-behalf-of / delegated access), migration phases |
 | — | [ADR-003 Config schema](./_design/adr/adr-003-config-schema.md) | Optional `sources`, `agents`, `deployment`, `identity` |
+| — | [ADR-004 Structured recall authority](./_design/adr/adr-004-recall-authority.md) | Precedence in synthesis (`recall_authority`); not cost-tier retrieval |
 | 1 | [Astrocyte in neuroscience](./_design/neuroscience-astrocyte.md) | Biological metaphor and vocabulary |
 | 2 | [Design principles](./_design/design-principles.md) | Engineering principles mapped from neuroscience |
 | 3 | [Astrocyte framework architecture](./_design/architecture-framework.md) | Layers, two-tier providers, SPI overview |
@@ -128,6 +130,7 @@ Numbers below refer to **§3 Design** bands (single index **1–24**) and **§2 
 - **Declarative memory routing:** Design **18** (*MIP*), **17** (*MCP server*), **13** (*policy layer*).
 - **Integrations (network, identity, UI):** Plugins **3**, Design **7**, **12**, Plugins **4**.
 - **Production HTTP / Backend for Frontend (BFF) hosting Astrocyte:** End user **2**; Design **3**, **7**, **8**, **13**, **20**, **10**, **9**; Plugins **3**.
+- **Poll ingest (GitHub) with `astrocyte-gateway-py`:** End user **3**; Design **15** (*built-in pipeline*, M4 poll).
 
 ---
 
