@@ -8,7 +8,7 @@ import json
 import logging
 import socket
 from typing import TYPE_CHECKING, Any
-from urllib.parse import ParseResult, quote, urlparse, urlunparse
+from urllib.parse import ParseResult, parse_qsl, quote, urlparse, urlunparse
 
 import httpx
 
@@ -148,6 +148,22 @@ def _rebuild_request_url_pinned_to_ip(
     else:
         netloc = hostpart
     return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+
+
+def _httpx_url_and_query_params(url: str) -> tuple[str, list[tuple[str, str]] | None]:
+    """Split *url* into a path-only URL for the httpx *url* argument and query pairs for *params*.
+
+    User-controlled search text must not be concatenated into the URL string passed to httpx
+    (SSRF static analysis + clearer separation of authority vs query).
+    """
+    p = urlparse((url or "").strip())
+    without_query = urlunparse((p.scheme, p.netloc, p.path, p.params, "", p.fragment))
+    if not p.query:
+        return without_query, None
+    pairs = parse_qsl(p.query, keep_blank_values=True)
+    if not pairs:
+        return without_query, None
+    return without_query, list(pairs)
 
 
 async def validate_proxy_recall_dns(host: str, port: int) -> None:
@@ -364,11 +380,14 @@ async def fetch_proxy_recall_hits(
                     }
                     req_extensions = {"sni_hostname": req_host} if sch == "https" else None
 
+                httpx_url, httpx_params = _httpx_url_and_query_params(effective_url)
+
                 async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                     if method == "POST":
                         r = await client.request(
                             "POST",
-                            effective_url,
+                            httpx_url,
+                            params=httpx_params,
                             headers=out_headers,
                             json=body,
                             extensions=req_extensions,
@@ -376,7 +395,8 @@ async def fetch_proxy_recall_hits(
                     else:
                         r = await client.request(
                             "GET",
-                            effective_url,
+                            httpx_url,
+                            params=httpx_params,
                             headers=out_headers,
                             extensions=req_extensions,
                         )

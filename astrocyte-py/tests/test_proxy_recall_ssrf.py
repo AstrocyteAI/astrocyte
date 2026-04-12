@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from astrocyte.config import SourceConfig
-from astrocyte.recall.proxy import validate_proxy_recall_url
+from astrocyte.recall.proxy import _httpx_url_and_query_params, validate_proxy_recall_url
 
 
 @pytest.mark.parametrize(
@@ -39,6 +39,18 @@ def test_validate_proxy_recall_url_rejects_unsafe(url: str) -> None:
 )
 def test_validate_proxy_recall_url_accepts_public_http_urls(url: str) -> None:
     validate_proxy_recall_url(url)
+
+
+def test_httpx_url_and_query_params_splits_query_string_from_url() -> None:
+    u, p = _httpx_url_and_query_params("https://a.example/r?foo=1&q=hello%20x")
+    assert u == "https://a.example/r"
+    assert p == [("foo", "1"), ("q", "hello x")]
+
+
+def test_httpx_url_and_query_params_no_query() -> None:
+    u, p = _httpx_url_and_query_params("https://a.example/r")
+    assert u == "https://a.example/r"
+    assert p is None
 
 
 @pytest.mark.asyncio
@@ -104,7 +116,9 @@ async def test_fetch_proxy_recall_hits_proceeds_after_public_dns() -> None:
     inner.request.assert_called_once()
     call = inner.request.call_args
     assert call[0][0] == "GET"
+    assert "?" not in str(call[0][1])
     assert "93.184.216.34" in str(call[0][1])
+    assert call[1]["params"] == [("q", "x")]
     assert call[1]["headers"]["Host"] == "example.com"
     assert call[1]["extensions"] == {"sni_hostname": "example.com"}
 
@@ -134,6 +148,8 @@ async def test_fetch_proxy_recall_hits_literal_ip_no_host_override() -> None:
         with patch("astrocyte.recall.proxy.httpx.AsyncClient", return_value=cm):
             await fetch_proxy_recall_hits("s1", cfg, query="x", bank_id="b1")
     call = inner.request.call_args
+    assert "?" not in str(call[0][1])
     assert "93.184.216.34" in str(call[0][1])
+    assert call[1]["params"] == [("q", "x")]
     assert call[1]["headers"].get("Host") is None
     assert call[1]["extensions"] is None
