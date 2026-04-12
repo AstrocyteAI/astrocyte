@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from typing import Any
 
@@ -98,7 +99,6 @@ def resolve_astrocyte_identity(
         if aud:
             decode_kwargs["audience"] = aud
         else:
-            import logging
             logging.getLogger("astrocyte.gateway").warning(
                 "ASTROCYTE_JWT_AUDIENCE is not set — tokens will be accepted without audience validation. "
                 "Set this variable to prevent cross-service token reuse."

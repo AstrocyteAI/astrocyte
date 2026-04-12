@@ -29,12 +29,13 @@ async def extract_entities(
     text: str,
     llm_provider: LLMProvider,
     model: str | None = None,
+    max_text_length: int = 2000,
 ) -> list[Entity]:
     """Extract named entities from text via LLM.
 
     Returns a list of Entity objects. Returns empty list on failure.
     """
-    user_msg = f"<content>\n{text[:2000]}\n</content>"
+    user_msg = f"<content>\n{text[:max_text_length]}\n</content>"
     try:
         completion = await llm_provider.complete(
             messages=[
@@ -85,7 +86,7 @@ def _parse_entities(response: str) -> list[Entity]:
                 continue
             entities.append(
                 Entity(
-                    id=uuid.uuid4().hex[:12],
+                    id=uuid.uuid4().hex,
                     name=item["name"],
                     entity_type=item.get("entity_type", "OTHER"),
                     aliases=item.get("aliases", []),

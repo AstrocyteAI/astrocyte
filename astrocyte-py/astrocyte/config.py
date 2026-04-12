@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
 
@@ -517,9 +517,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 def _filter_dataclass_fields(cls: type, data: dict) -> dict:
     """Filter dict to only keys that are valid fields of the dataclass. Prevents TypeError on unknown keys."""
-    import dataclasses
-
-    valid = {f.name for f in dataclasses.fields(cls)}
+    valid = {f.name for f in fields(cls)}
     return {k: v for k, v in data.items() if k in valid}
 
 
