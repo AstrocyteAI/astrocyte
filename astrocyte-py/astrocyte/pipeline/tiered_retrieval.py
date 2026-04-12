@@ -1,6 +1,6 @@
 """Adaptive tiered retrieval — progressive escalation from cache to agentic recall.
 
-Inspired by ByteRover's 5-tier approach: most queries resolve cheaply.
+Inspired by ByteRover's tiered approach: most queries resolve cheaply.
 Only novel/ambiguous queries escalate to full multi-strategy retrieval.
 
 Sync decision logic, async execution — Rust migration candidate for the sync parts.
@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from astrocyte.pipeline.recall_cache import RecallCache
+from astrocyte.pipeline.recent_buffer import RecentMemoryBuffer
 from astrocyte.recall.merge_result import merge_external_into_recall_result
 from astrocyte.types import MemoryHit, RecallRequest, RecallResult, RecallTrace
 
@@ -36,6 +37,7 @@ class TieredRetriever:
         self,
         pipeline: PipelineOrchestrator,
         recall_cache: RecallCache | None = None,
+        recent_buffer: RecentMemoryBuffer | None = None,
         min_results: int = 3,
         min_score: float = 0.3,
         max_tier: int = 3,
@@ -44,6 +46,7 @@ class TieredRetriever:
     ) -> None:
         self.pipeline = pipeline
         self.recall_cache = recall_cache
+        self.recent_buffer = recent_buffer
         self.min_results = min_results
         self.min_score = min_score
         self.max_tier = min(max_tier, 4)
@@ -54,6 +57,17 @@ class TieredRetriever:
         if self._full_recall is not None:
             return await self._full_recall(request)
         return await self.pipeline.recall(request)
+
+    def notify_retain(self, bank_id: str, memory_id: str, text: str, metadata: dict | None = None) -> None:
+        """Called after a successful retain to populate the recent buffer.
+
+        Should be called by the dispatcher or orchestrator for each stored chunk.
+        Invalidates the recall cache for the bank (contents changed).
+        """
+        if self.recent_buffer is not None:
+            self.recent_buffer.add(bank_id, memory_id, text, metadata)
+        if self.recall_cache is not None:
+            self.recall_cache.invalidate_bank(bank_id)
 
     async def retrieve(self, request: RecallRequest) -> RecallResult:
         """Run tiered retrieval, escalating until sufficient results found."""
@@ -83,6 +97,35 @@ class TieredRetriever:
                 )
         else:
             query_vector = None
+
+        # ── Tier 1: Fuzzy text match on recent memories ──
+        if self.recent_buffer and self.max_tier >= 1:
+            fuzzy_hits = self.recent_buffer.search(
+                request.query, request.bank_id,
+                limit=request.max_results * 2,
+                min_score=self.min_score,
+            )
+            if len(fuzzy_hits) >= self.min_results:
+                hits = fuzzy_hits[: request.max_results]
+                result = RecallResult(
+                    hits=hits,
+                    total_available=len(fuzzy_hits),
+                    truncated=len(fuzzy_hits) > request.max_results,
+                    trace=RecallTrace(
+                        strategies_used=["fuzzy_recent"],
+                        total_candidates=len(fuzzy_hits),
+                        fusion_method="fuzzy_recent",
+                        tier_used=1,
+                        cache_hit=False,
+                    ),
+                )
+                if request.external_context:
+                    result = merge_external_into_recall_result(
+                        result, request.external_context, request.max_results
+                    )
+                if self.recall_cache and query_vector and allow_cache:
+                    self.recall_cache.put(request.bank_id, query_vector, result)
+                return result
 
         # ── Tier 2: BM25 keyword only ──
         if self.pipeline.document_store and self.max_tier >= 2:
