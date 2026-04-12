@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import ipaddress
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -51,13 +52,23 @@ async def test_brain_recall_merges_configured_proxy_hits():
     brain = Astrocyte(cfg)
     brain.set_pipeline(pipeline)
 
-    with patch("astrocyte.recall.proxy.httpx.AsyncClient") as client_cls:
+    # Pin DNS so the test does not depend on resolving example.com (CI/sandbox/offline safe).
+    pinned_public = ipaddress.ip_address("93.184.216.34")
+    with (
+        patch(
+            "astrocyte.recall.proxy._sync_dns_validate_and_first_public_ip",
+            return_value=pinned_public,
+        ),
+        patch("astrocyte.recall.proxy.httpx.AsyncClient") as client_cls,
+    ):
         instance = AsyncMock()
-        resp = AsyncMock()
+        # Implementation uses client.request(GET|POST, ...), not .get(); sync body methods avoid
+        # AsyncMock coroutine warnings on raise_for_status() / json().
+        resp = MagicMock()
         resp.status_code = 200
-        resp.raise_for_status = lambda: None
-        resp.json = lambda: remote
-        instance.get = AsyncMock(return_value=resp)
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value=remote)
+        instance.request = AsyncMock(return_value=resp)
         instance.__aenter__ = AsyncMock(return_value=instance)
         instance.__aexit__ = AsyncMock(return_value=None)
         client_cls.return_value = instance
@@ -66,4 +77,4 @@ async def test_brain_recall_merges_configured_proxy_hits():
 
     texts = {h.text for h in result.hits}
     assert "from remote API" in texts
-    instance.get.assert_called_once()
+    instance.request.assert_called_once()
