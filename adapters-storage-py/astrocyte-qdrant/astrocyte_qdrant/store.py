@@ -160,10 +160,12 @@ class QdrantVectorStore:
             return 0
         await self._ensure_collection()
         pids = [_point_uuid(i, bank_id) for i in ids]
-        # Check which points actually exist before deletion
-        existing = await self._client.get_points(
+        # Retrieve only point ids first so we can return the number actually deleted.
+        existing = await self._client.retrieve(
             collection_name=self._collection,
             ids=pids,
+            with_payload=False,
+            with_vectors=False,
         )
         existing_count = len(existing) if existing else 0
         if existing_count > 0:
