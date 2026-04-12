@@ -42,11 +42,9 @@ class TestTieredRetrieval:
             total_available=1,
             truncated=False,
         )
-        # We need to compute the embedding to cache it
-        from astrocyte.pipeline.embedding import _pseudo_embedding
-
-        vec = _pseudo_embedding("test query")
-        cache.put("bank-1", vec, cached_result)
+        # Compute embedding using the same provider the retriever will use
+        vecs = await llm.embed(["test query"])
+        cache.put("bank-1", vecs[0], cached_result)
 
         tiered = TieredRetriever(pipeline, recall_cache=cache, max_tier=4)
         result = await tiered.retrieve(RecallRequest(query="test query", bank_id="bank-1"))

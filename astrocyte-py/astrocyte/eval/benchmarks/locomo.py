@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from astrocyte.eval.metrics import text_overlap_score
+from astrocyte.eval.metrics import word_overlap_score
 from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 
 # Minimum text overlap score to consider an answer correct.
@@ -220,14 +220,14 @@ class LoComoBenchmark:
             elapsed = (time.monotonic() - t0) * 1000
             recall_latencies.append(elapsed)
 
-            # Check if answer appears in recall hits
+            # Check if answer appears in recall hits (word overlap handles paraphrasing)
             answer_in_recall = any(
-                text_overlap_score([q.answer], h.text) > ANSWER_OVERLAP_THRESHOLD for h in result.hits
+                word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD for h in result.hits
             )
 
             # Also try reflect
             reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
-            answer_in_reflect = text_overlap_score([q.answer], reflect_result.answer) > ANSWER_OVERLAP_THRESHOLD
+            answer_in_reflect = word_overlap_score(q.answer, reflect_result.answer) > ANSWER_OVERLAP_THRESHOLD
 
             is_correct = answer_in_recall or answer_in_reflect
             if is_correct:
@@ -260,7 +260,7 @@ class LoComoBenchmark:
             # Build QueryResult for standard metrics
             relevant_ids: set[str] = set()
             for h in result.hits:
-                if h.memory_id and text_overlap_score([q.answer], h.text) > ANSWER_OVERLAP_THRESHOLD:
+                if h.memory_id and word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD:
                     relevant_ids.add(h.memory_id)
             retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
 

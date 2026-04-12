@@ -362,10 +362,12 @@ class TestIntegrationErrorCases:
 
     async def test_pydantic_ai_retain_failure_reports_error(self):
         """Pydantic AI retain tool reports errors in return string."""
-        brain, _ = _make_brain(retain_max_content_bytes=1)
+        max_bytes = 10
+        oversized_content = "x" * 64  # Explicitly larger than max_bytes
+        brain, _ = _make_brain(retain_max_content_bytes=max_bytes)
         tools = astrocyte_tools(brain, bank_id="b1")
         retain_fn = next(t["function"] for t in tools if t["name"] == "memory_retain")
-        result = await retain_fn("This content is too long to store")
+        result = await retain_fn(oversized_content)
         assert "Failed" in result
 
     async def test_pydantic_ai_recall_no_results(self):
@@ -377,9 +379,12 @@ class TestIntegrationErrorCases:
 
     async def test_openai_retain_failure_returns_error_json(self):
         """OpenAI tools retain handler returns error in JSON."""
-        brain, _ = _make_brain(retain_max_content_bytes=1)
+        max_bytes = 1
+        brain, _ = _make_brain(retain_max_content_bytes=max_bytes)
         _, handlers = astrocyte_tool_definitions(brain, bank_id="b1")
-        result_json = await handlers["memory_retain"](content="Too long content")
+        content = "aa"
+        assert len(content.encode("utf-8")) > max_bytes
+        result_json = await handlers["memory_retain"](content=content)
         result = json.loads(result_json)
         assert result["stored"] is False
         assert result["error"] is not None

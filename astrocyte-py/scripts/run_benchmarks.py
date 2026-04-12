@@ -33,17 +33,25 @@ from pathlib import Path
 
 
 def _build_test_brain():
-    """Create an Astrocyte instance with in-memory providers (no API keys needed)."""
+    """Create an Astrocyte instance with in-memory pipeline (no API keys needed).
+
+    Uses InMemoryVectorStore + MockLLMProvider with bag-of-words embeddings
+    so the full pipeline path (chunk → embed → store → recall → reflect) is
+    exercised with meaningful semantic retrieval.
+    """
     from astrocyte._astrocyte import Astrocyte
     from astrocyte.config import AstrocyteConfig
-    from astrocyte.testing.in_memory import InMemoryEngineProvider
+    from astrocyte.pipeline.orchestrator import PipelineOrchestrator
+    from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
 
     config = AstrocyteConfig()
-    config.provider = "test"
     config.barriers.pii.mode = "disabled"
     brain = Astrocyte(config)
-    engine = InMemoryEngineProvider()
-    brain.set_engine_provider(engine)
+    pipeline = PipelineOrchestrator(
+        vector_store=InMemoryVectorStore(),
+        llm_provider=MockLLMProvider(),
+    )
+    brain.set_pipeline(pipeline)
     return brain
 
 
@@ -255,7 +263,7 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
                             {"speaker": "User1", "text": "I just moved to San Francisco last week."},
                             {"speaker": "User2", "text": "That's great! I've been living in NYC for 5 years."},
                         ],
-                        date_time="2025-01-15",
+                        date_time="January 15, 2025",
                     ),
                     LoCoMoSession(
                         session_id="session_2",
@@ -263,7 +271,23 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
                             {"speaker": "User1", "text": "I got a new job at a startup working on AI."},
                             {"speaker": "User2", "text": "Congrats! I'm still at the bank doing data analysis."},
                         ],
-                        date_time="2025-02-01",
+                        date_time="February 1, 2025",
+                    ),
+                    LoCoMoSession(
+                        session_id="session_3",
+                        turns=[
+                            {"speaker": "User1", "text": "I adopted a golden retriever puppy named Max."},
+                            {"speaker": "User2", "text": "That's adorable! I have two cats, Luna and Shadow."},
+                        ],
+                        date_time="March 10, 2025",
+                    ),
+                    LoCoMoSession(
+                        session_id="session_4",
+                        turns=[
+                            {"speaker": "User1", "text": "Max is growing so fast! He loves the dog park near Golden Gate."},
+                            {"speaker": "User2", "text": "I'm thinking of visiting SF next month. We should meet up!"},
+                        ],
+                        date_time="April 5, 2025",
                     ),
                 ],
                 questions=[
@@ -282,10 +306,45 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
                         conversation_id="synth-convo-1",
                     ),
                     LoCoMoQuestion(
+                        question="What is the name of User1's dog?",
+                        answer="Max golden retriever",
+                        category="single-hop",
+                        evidence_ids=["session_3"],
+                        conversation_id="synth-convo-1",
+                    ),
+                    LoCoMoQuestion(
+                        question="What pets does User2 have?",
+                        answer="two cats named Luna and Shadow",
+                        category="single-hop",
+                        evidence_ids=["session_3"],
+                        conversation_id="synth-convo-1",
+                    ),
+                    LoCoMoQuestion(
                         question="Who changed cities recently and what is their new job?",
                         answer="User1 moved to San Francisco and works at an AI startup",
                         category="multi-hop",
                         evidence_ids=["session_1", "session_2"],
+                        conversation_id="synth-convo-1",
+                    ),
+                    LoCoMoQuestion(
+                        question="What park does User1 take Max to and in which city?",
+                        answer="Golden Gate dog park in San Francisco",
+                        category="multi-hop",
+                        evidence_ids=["session_1", "session_4"],
+                        conversation_id="synth-convo-1",
+                    ),
+                    LoCoMoQuestion(
+                        question="When did User1 get their pet?",
+                        answer="March 2025",
+                        category="temporal",
+                        evidence_ids=["session_3"],
+                        conversation_id="synth-convo-1",
+                    ),
+                    LoCoMoQuestion(
+                        question="Did User1 get their job before or after getting their dog?",
+                        answer="before User1 got the job in February and the dog in March",
+                        category="temporal",
+                        evidence_ids=["session_2", "session_3"],
                         conversation_id="synth-convo-1",
                     ),
                 ],

@@ -585,32 +585,166 @@ def _parse_signal_quality(data: dict) -> SignalQualityConfig:
     )
 
 
+def _parse_escalation(data: dict) -> EscalationConfig:
+    """Parse an ``escalation:`` config block."""
+    cb = data.get("circuit_breaker", {})
+    return EscalationConfig(
+        circuit_breaker=CircuitBreakerConfig(**_filter_dataclass_fields(CircuitBreakerConfig, cb)),
+        degraded_mode=data.get("degraded_mode", "empty_recall"),
+    )
+
+
+def _parse_recall_authority(data: dict) -> RecallAuthorityConfig:
+    """Parse a ``recall_authority:`` config block."""
+    tiers_raw = data.get("tiers") or []
+    tiers: list[RecallAuthorityTierConfig] = []
+    if isinstance(tiers_raw, list):
+        for row in tiers_raw:
+            if isinstance(row, dict):
+                tiers.append(RecallAuthorityTierConfig(**_filter_dataclass_fields(RecallAuthorityTierConfig, row)))
+    tb = data.get("tier_by_bank")
+    tier_by_bank: dict[str, str] = {}
+    if isinstance(tb, dict):
+        tier_by_bank = {str(k): str(v) for k, v in tb.items()}
+    return RecallAuthorityConfig(
+        enabled=bool(data.get("enabled", False)),
+        rules_inline=data.get("rules_inline"),
+        rules_path=data.get("rules_path"),
+        apply_to_reflect=bool(data.get("apply_to_reflect", True)),
+        tier_by_bank=tier_by_bank,
+        tiers=tiers,
+    )
+
+
+def _parse_access_grants(data: list) -> list[AccessGrant]:
+    """Parse an ``access_grants:`` list, validating required fields."""
+    grants: list[AccessGrant] = []
+    for idx, row in enumerate(data):
+        if not isinstance(row, dict):
+            continue
+        required_keys = ("bank_id", "principal", "permissions")
+        missing = [k for k in required_keys if k not in row]
+        if missing:
+            raise ConfigError(
+                f"Invalid access_grants entry at index {idx}: missing required field(s): {', '.join(missing)}"
+            )
+        if not isinstance(row["permissions"], list):
+            raise ConfigError(
+                f"Invalid access_grants entry at index {idx}: 'permissions' must be a list."
+            )
+        grants.append(
+            AccessGrant(
+                bank_id=str(row["bank_id"]),
+                principal=str(row["principal"]),
+                permissions=[str(p) for p in row["permissions"]],
+            )
+        )
+    return grants
+
+
+def _parse_lifecycle(data: dict) -> LifecycleConfig:
+    """Parse a ``lifecycle:`` config block."""
+    ttl_data = data.get("ttl", {})
+    return LifecycleConfig(
+        enabled=data.get("enabled", False),
+        ttl=LifecycleTtlConfig(**_filter_dataclass_fields(LifecycleTtlConfig, ttl_data)),
+    )
+
+
+def _parse_banks(data: dict) -> dict[str, BankConfig]:
+    """Parse a ``banks:`` config block with per-bank overrides."""
+    banks: dict[str, BankConfig] = {}
+    for bid, bdata in data.items():
+        if not isinstance(bdata, dict):
+            continue
+        bc = BankConfig(
+            profile=bdata.get("profile"),
+            access=bdata.get("access"),
+        )
+        if "homeostasis" in bdata and isinstance(bdata["homeostasis"], dict):
+            bc.homeostasis = _parse_homeostasis(bdata["homeostasis"])
+        if "barriers" in bdata and isinstance(bdata["barriers"], dict):
+            bc.barriers = _parse_barriers(bdata["barriers"])
+        if "signal_quality" in bdata and isinstance(bdata["signal_quality"], dict):
+            bc.signal_quality = _parse_signal_quality(bdata["signal_quality"])
+        banks[str(bid)] = bc
+    return banks
+
+
+def _parse_agents(data: dict) -> dict[str, AgentRegistrationConfig]:
+    """Parse an ``agents:`` config block."""
+    agents: dict[str, AgentRegistrationConfig] = {}
+    for aid, adata in data.items():
+        if not isinstance(adata, dict):
+            continue
+        row = dict(adata)
+        if row.get("banks") is None and row.get("allowed_banks") is not None:
+            row["banks"] = list(row["allowed_banks"])
+        agents[str(aid)] = AgentRegistrationConfig(**_filter_dataclass_fields(AgentRegistrationConfig, row))
+    return agents
+
+
+def _parse_deployment(data: dict) -> DeploymentConfig:
+    """Parse a ``deployment:`` config block."""
+    tls: TlsConfig | None = None
+    if isinstance(data.get("tls"), dict):
+        tls = TlsConfig(**_filter_dataclass_fields(TlsConfig, data["tls"]))
+    dep_no_tls = {k: v for k, v in data.items() if k != "tls"}
+    return DeploymentConfig(
+        **_filter_dataclass_fields(DeploymentConfig, dep_no_tls),
+        tls=tls,
+    )
+
+
+# Fields copied verbatim from the YAML dict onto AstrocyteConfig.
+_SCALAR_CONFIG_FIELDS = (
+    "provider_tier",
+    "profile",
+    "provider",
+    "provider_config",
+    "vector_store",
+    "vector_store_config",
+    "graph_store",
+    "graph_store_config",
+    "document_store",
+    "document_store_config",
+    "llm_provider",
+    "llm_provider_config",
+    "embedding_provider",
+    "embedding_provider_config",
+    "fallback_strategy",
+)
+
+# Sections whose value is passed through ``_filter_dataclass_fields`` directly.
+_SIMPLE_SECTION_MAP: dict[str, type] = {
+    "observability": ObservabilityConfig,
+    "access_control": AccessControlConfig,
+    "identity": IdentityConfig,
+    "defaults": DefaultsConfig,
+    "mcp": McpConfig,
+    "recall_cache": RecallCacheConfig,
+    "tiered_retrieval": TieredRetrievalConfig,
+    "curated_retain": CuratedRetainConfig,
+    "curated_recall": CuratedRecallConfig,
+    "dlp": DlpConfig,
+}
+
+
 def _dict_to_config(data: dict) -> AstrocyteConfig:
     """Convert a flat/nested dict to AstrocyteConfig with nested dataclasses."""
     config = AstrocyteConfig()
 
-    # Simple scalar fields
-    for field_name in [
-        "provider_tier",
-        "profile",
-        "provider",
-        "provider_config",
-        "vector_store",
-        "vector_store_config",
-        "graph_store",
-        "graph_store_config",
-        "document_store",
-        "document_store_config",
-        "llm_provider",
-        "llm_provider_config",
-        "embedding_provider",
-        "embedding_provider_config",
-        "fallback_strategy",
-    ]:
+    # ── Scalar fields ──
+    for field_name in _SCALAR_CONFIG_FIELDS:
         if field_name in data:
             setattr(config, field_name, data[field_name])
 
-    # Nested config objects
+    # ── Simple nested sections (filter + construct) ──
+    for section, cls in _SIMPLE_SECTION_MAP.items():
+        if section in data:
+            setattr(config, section, cls(**_filter_dataclass_fields(cls, data[section])))
+
+    # ── Complex nested sections (dedicated parsers) ──
     if "homeostasis" in data:
         config.homeostasis = _parse_homeostasis(data["homeostasis"])
 
@@ -618,134 +752,22 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         config.barriers = _parse_barriers(data["barriers"])
 
     if "escalation" in data:
-        e = data["escalation"]
-        cb = e.get("circuit_breaker", {})
-        config.escalation = EscalationConfig(
-            circuit_breaker=CircuitBreakerConfig(**_filter_dataclass_fields(CircuitBreakerConfig, cb)),
-            degraded_mode=e.get("degraded_mode", "empty_recall"),
-        )
-
-    if "observability" in data:
-        config.observability = ObservabilityConfig(
-            **_filter_dataclass_fields(ObservabilityConfig, data["observability"])
-        )
-
-    if "access_control" in data:
-        config.access_control = AccessControlConfig(
-            **_filter_dataclass_fields(AccessControlConfig, data["access_control"])
-        )
-
-    if "identity" in data:
-        config.identity = IdentityConfig(**_filter_dataclass_fields(IdentityConfig, data["identity"]))
-
-    if "defaults" in data:
-        config.defaults = DefaultsConfig(**_filter_dataclass_fields(DefaultsConfig, data["defaults"]))
-
-    if "mcp" in data:
-        config.mcp = McpConfig(**_filter_dataclass_fields(McpConfig, data["mcp"]))
+        config.escalation = _parse_escalation(data["escalation"])
 
     if "signal_quality" in data:
         config.signal_quality = _parse_signal_quality(data["signal_quality"])
 
-    if "recall_cache" in data:
-        config.recall_cache = RecallCacheConfig(**_filter_dataclass_fields(RecallCacheConfig, data["recall_cache"]))
-
-    if "tiered_retrieval" in data:
-        config.tiered_retrieval = TieredRetrievalConfig(
-            **_filter_dataclass_fields(TieredRetrievalConfig, data["tiered_retrieval"])
-        )
-
     if "recall_authority" in data and isinstance(data["recall_authority"], dict):
-        ra = data["recall_authority"]
-        tiers_raw = ra.get("tiers") or []
-        tiers: list[RecallAuthorityTierConfig] = []
-        if isinstance(tiers_raw, list):
-            for row in tiers_raw:
-                if isinstance(row, dict):
-                    tiers.append(RecallAuthorityTierConfig(**_filter_dataclass_fields(RecallAuthorityTierConfig, row)))
-        tb = ra.get("tier_by_bank")
-        tier_by_bank: dict[str, str] = {}
-        if isinstance(tb, dict):
-            tier_by_bank = {str(k): str(v) for k, v in tb.items()}
-        config.recall_authority = RecallAuthorityConfig(
-            enabled=bool(ra.get("enabled", False)),
-            rules_inline=ra.get("rules_inline"),
-            rules_path=ra.get("rules_path"),
-            apply_to_reflect=bool(ra.get("apply_to_reflect", True)),
-            tier_by_bank=tier_by_bank,
-            tiers=tiers,
-        )
-
-    if "curated_retain" in data:
-        config.curated_retain = CuratedRetainConfig(
-            **_filter_dataclass_fields(CuratedRetainConfig, data["curated_retain"])
-        )
-
-    if "curated_recall" in data:
-        config.curated_recall = CuratedRecallConfig(
-            **_filter_dataclass_fields(CuratedRecallConfig, data["curated_recall"])
-        )
+        config.recall_authority = _parse_recall_authority(data["recall_authority"])
 
     if "access_grants" in data and data["access_grants"]:
-        grants: list[AccessGrant] = []
-        for idx, row in enumerate(data["access_grants"]):
-            if not isinstance(row, dict):
-                continue
-            required_keys = ("bank_id", "principal", "permissions")
-            missing = [k for k in required_keys if k not in row]
-            if missing:
-                raise ConfigError(
-                    f"Invalid access_grants entry at index {idx}: missing required field(s): {', '.join(missing)}"
-                )
-            if not isinstance(row["permissions"], list):
-                raise ConfigError(
-                    f"Invalid access_grants entry at index {idx}: 'permissions' must be a list."
-                )
-            grants.append(
-                AccessGrant(
-                    bank_id=str(row["bank_id"]),
-                    principal=str(row["principal"]),
-                    permissions=[str(p) for p in row["permissions"]],
-                )
-            )
-        config.access_grants = grants
-
-    if "compliance_profile" in data:
-        config.compliance_profile = data["compliance_profile"]
-
-    if "dlp" in data:
-        config.dlp = DlpConfig(**_filter_dataclass_fields(DlpConfig, data["dlp"]))
+        config.access_grants = _parse_access_grants(data["access_grants"])
 
     if "lifecycle" in data:
-        lc = data["lifecycle"]
-        ttl_data = lc.get("ttl", {})
-        config.lifecycle = LifecycleConfig(
-            enabled=lc.get("enabled", False),
-            ttl=LifecycleTtlConfig(**_filter_dataclass_fields(LifecycleTtlConfig, ttl_data)),
-        )
-
-    if "mip_config_path" in data:
-        config.mip_config_path = data["mip_config_path"]
-    elif "mip" in data and isinstance(data["mip"], str):
-        config.mip_config_path = data["mip"]
+        config.lifecycle = _parse_lifecycle(data["lifecycle"])
 
     if "banks" in data and data["banks"]:
-        banks: dict[str, BankConfig] = {}
-        for bid, bdata in data["banks"].items():
-            if not isinstance(bdata, dict):
-                continue
-            bc = BankConfig(
-                profile=bdata.get("profile"),
-                access=bdata.get("access"),
-            )
-            if "homeostasis" in bdata and isinstance(bdata["homeostasis"], dict):
-                bc.homeostasis = _parse_homeostasis(bdata["homeostasis"])
-            if "barriers" in bdata and isinstance(bdata["barriers"], dict):
-                bc.barriers = _parse_barriers(bdata["barriers"])
-            if "signal_quality" in bdata and isinstance(bdata["signal_quality"], dict):
-                bc.signal_quality = _parse_signal_quality(bdata["signal_quality"])
-            banks[str(bid)] = bc
-        config.banks = banks
+        config.banks = _parse_banks(data["banks"])
 
     if "extraction_profiles" in data and isinstance(data["extraction_profiles"], dict):
         profiles: dict[str, ExtractionProfileConfig] = {}
@@ -764,26 +786,19 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         config.sources = sources
 
     if "agents" in data and isinstance(data["agents"], dict):
-        agents: dict[str, AgentRegistrationConfig] = {}
-        for aid, adata in data["agents"].items():
-            if not isinstance(adata, dict):
-                continue
-            row = dict(adata)
-            if row.get("banks") is None and row.get("allowed_banks") is not None:
-                row["banks"] = list(row["allowed_banks"])
-            agents[str(aid)] = AgentRegistrationConfig(**_filter_dataclass_fields(AgentRegistrationConfig, row))
-        config.agents = agents
+        config.agents = _parse_agents(data["agents"])
 
     if "deployment" in data and isinstance(data["deployment"], dict):
-        dep = data["deployment"]
-        tls: TlsConfig | None = None
-        if isinstance(dep.get("tls"), dict):
-            tls = TlsConfig(**_filter_dataclass_fields(TlsConfig, dep["tls"]))
-        dep_no_tls = {k: v for k, v in dep.items() if k != "tls"}
-        config.deployment = DeploymentConfig(
-            **_filter_dataclass_fields(DeploymentConfig, dep_no_tls),
-            tls=tls,
-        )
+        config.deployment = _parse_deployment(data["deployment"])
+
+    # ── Scalar fallbacks ──
+    if "compliance_profile" in data:
+        config.compliance_profile = data["compliance_profile"]
+
+    if "mip_config_path" in data:
+        config.mip_config_path = data["mip_config_path"]
+    elif "mip" in data and isinstance(data["mip"], str):
+        config.mip_config_path = data["mip"]
 
     return config
 

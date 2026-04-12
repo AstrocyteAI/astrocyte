@@ -16,6 +16,7 @@ from astrocyte.eval.metrics import (
     recall_hit,
     reciprocal_rank,
     text_overlap_score,
+    word_overlap_score,
 )
 from astrocyte.eval.suite import EvalSuite, RecallCase, ReflectCase, RetainCase, load_suite
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator
@@ -89,6 +90,31 @@ class TestMetrics:
 
     def test_text_overlap_no_expectations(self):
         assert text_overlap_score([], "anything") == 1.0
+
+    # word_overlap_score -------------------------------------------------------
+
+    def test_word_overlap_exact_match(self):
+        assert word_overlap_score("data analysis at a bank", "doing data analysis at the bank") == 1.0
+
+    def test_word_overlap_reordered(self):
+        score = word_overlap_score("San Francisco startup", "startup based in San Francisco")
+        assert score == 1.0
+
+    def test_word_overlap_partial(self):
+        score = word_overlap_score("golden retriever puppy named Max", "Max is a poodle")
+        assert 0.0 < score < 1.0
+
+    def test_word_overlap_no_match(self):
+        assert word_overlap_score("quantum physics lecture", "favorite pizza toppings") == 0.0
+
+    def test_word_overlap_empty_expected(self):
+        assert word_overlap_score("", "anything") == 1.0
+
+    def test_word_overlap_strips_punctuation(self):
+        assert word_overlap_score("Hello, world!", "hello world") == 1.0
+
+    def test_word_overlap_case_insensitive(self):
+        assert word_overlap_score("San FRANCISCO", "san francisco bay") == 1.0
 
 
 # ---------------------------------------------------------------------------
