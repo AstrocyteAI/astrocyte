@@ -42,7 +42,7 @@ flowchart TB
   CORE["astrocyte - core framework"]
   T1["Tier 1: astrocyte-pgvector, -neo4j, -qdrant, …"]
   T2["Tier 2: astrocyte-mem0, -zep, -mystique, …"]
-  LLM["LLM: astrocyte-litellm, -openai, -anthropic, …"]
+  LLM["LLM: astrocyte-llm-litellm, -openai, -anthropic, …"]
   TR["Optional: astrocyte-transport-*"]
   SK["Optional: astrocyte-sink-*"]
   AP["Optional: astrocyte-access-policy-*"]
@@ -145,8 +145,8 @@ astrocyte-mem0/                       # Community engine
 ### 2.4 LLM providers
 
 ```
-astrocyte-litellm/                    # Unified gateway (100+ models)
-├── astrocyte_litellm/
+astrocyte-llm-litellm/                    # Unified gateway (100+ models)
+├── astrocyte_llm_litellm/
 │   ├── __init__.py                    # LiteLLMProvider (implements LLMProvider)
 ├── pyproject.toml
 
@@ -161,7 +161,7 @@ astrocyte-anthropic/                  # Direct Anthropic adapter
 ├── pyproject.toml
 ```
 
-Note: AWS Bedrock, Azure OpenAI, and Google Vertex AI are accessed via `astrocyte-litellm` (which supports them natively) or via `astrocyte-openai` with a custom `api_base` for OpenAI-compatible endpoints. Self-hosted models (Ollama, vLLM, LM Studio) also work through either adapter. See `provider-spi.md` section 4.6-4.7 for configuration details.
+Note: AWS Bedrock, Azure OpenAI, and Google Vertex AI are accessed via `astrocyte-llm-litellm` (which supports them natively) or via `astrocyte-openai` with a custom `api_base` for OpenAI-compatible endpoints. Self-hosted models (Ollama, vLLM, LM Studio) also work through either adapter. See `provider-spi.md` section 4.6-4.7 for configuration details.
 
 ### 2.5 Outbound transport plugins
 
@@ -242,9 +242,9 @@ mem0 = "astrocyte_mem0:Mem0Provider"
 ### 3.3 LLM providers
 
 ```toml
-# astrocyte-litellm/pyproject.toml
+# astrocyte-llm-litellm/pyproject.toml
 [project.entry-points."astrocyte.llm_providers"]
-litellm = "astrocyte_litellm:LiteLLMProvider"
+litellm = "astrocyte_llm_litellm:LiteLLMProvider"
 ```
 
 ### 3.4 Outbound transport providers (optional)
@@ -580,7 +580,7 @@ DTOs use `dataclass` with default values for all optional fields. New fields are
 | astrocyte-mystique | EngineProvider | >=0.1 | EP 1 | Official |
 | astrocyte-mem0 | EngineProvider | >=0.1 | EP 1 | Community |
 | astrocyte-zep | EngineProvider | >=0.1 | EP 1 | Community |
-| astrocyte-litellm | LLMProvider | >=0.1 | LP 1 | Official |
+| astrocyte-llm-litellm | LLMProvider | >=0.1 | LP 1 | Official |
 | astrocyte-openai | LLMProvider | >=0.1 | LP 1 | Official |
 | astrocyte-anthropic | LLMProvider | >=0.1 | LP 1 | Official |
 
@@ -649,7 +649,7 @@ embedding_provider_config:
 ### Tier 1: Enterprise with AWS Bedrock
 
 ```bash
-pip install astrocyte astrocyte-pgvector astrocyte-litellm
+pip install astrocyte astrocyte-pgvector astrocyte-llm-litellm
 ```
 
 ```yaml

@@ -597,11 +597,11 @@ The Astrocyte LLM SPI is intentionally minimal (`complete()` + `embed()`) so tha
 
 | Package | Wraps | Models / Coverage | Dependency |
 |---|---|---|---|
-| `astrocyte-litellm` | LiteLLM | 100+ models across all providers (OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, etc.) | `litellm` |
+| `astrocyte-llm-litellm` | LiteLLM | 100+ models across all providers (OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, etc.) | `litellm` |
 | `astrocyte-openai` | OpenAI SDK | GPT-4o, GPT-4o-mini, o1, o3, text-embedding-3-* | `openai` |
 | `astrocyte-anthropic` | Anthropic SDK | Claude Opus, Sonnet, Haiku | `anthropic` |
 
-**Recommendation:** Use `astrocyte-litellm` if you need flexibility across providers or plan to switch models. Use a direct adapter if you're committed to one provider and want minimal dependencies.
+**Recommendation:** Use `astrocyte-llm-litellm` if you need flexibility across providers or plan to switch models. Use a direct adapter if you're committed to one provider and want minimal dependencies.
 
 ### 4.6 Cloud-managed LLM endpoints
 

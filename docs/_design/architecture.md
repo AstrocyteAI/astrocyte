@@ -191,7 +191,7 @@ The diagram below shows how Astrocyte relates to the systems around it: agent fr
 
 - **Agent frameworks** and **presentation platforms** (Tavus, ElevenLabs, …) are **peers** inside your application orchestrator. The orchestrator calls Astrocyte for memory and the presentation vendor for video/voice — Astrocyte and the vendor do not call each other directly.
 - **Tier 1** (built-in pipeline) and **Tier 2** (memory engine providers) are **alternative paths** through Astrocyte. Governance applies to both.
-- **LLM adapters** are pluggable: `astrocyte-litellm` (recommended, 100+ models via gateway), `astrocyte-openai`, `astrocyte-anthropic`, or custom. LiteLLM is not mandatory.
+- **LLM adapters** are pluggable: `astrocyte-llm-litellm` (recommended, 100+ models via gateway), `astrocyte-openai`, `astrocyte-anthropic`, or custom. LiteLLM is not mandatory.
 - **Export sinks** (Iceberg, Delta, warehouse) are designed but **not yet wired** into core — dashed lines indicate future integration.
 
 ```mermaid
@@ -283,7 +283,7 @@ flowchart TB
 
   subgraph LLM_ADAPTERS["LLM Adapters — complete and embed"]
     direction LR
-    A_LITELLM["astrocyte-litellm — 100+ models via gateway (recommended)"]
+    A_LITELLM["astrocyte-llm-litellm — 100+ models via gateway (recommended)"]
     A_OPENAI["astrocyte-openai — direct SDK"]
     A_ANTHROPIC["astrocyte-anthropic — direct SDK"]
     A_CUSTOM["Custom Adapter"]
@@ -684,7 +684,7 @@ These capabilities exist at the **framework layer** — they apply regardless of
 | Letta memory engine provider | `astrocyte-letta` | Apache 2.0 |
 | Cognee memory engine provider | `astrocyte-cognee` | Apache 2.0 |
 | **LLM providers** | | |
-| LiteLLM adapter | `astrocyte-litellm` | Apache 2.0 |
+| LiteLLM adapter | `astrocyte-llm-litellm` | Apache 2.0 |
 | OpenAI direct adapter | `astrocyte-openai` | Apache 2.0 |
 | Anthropic direct adapter | `astrocyte-anthropic` | Apache 2.0 |
 | **Outbound transport** | | |

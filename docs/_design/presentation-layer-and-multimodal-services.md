@@ -6,7 +6,7 @@ This document clarifies how Astrocyte relates to **commercial AI products that a
 
 ## 1. What the LLM Provider SPI covers
 
-Astrocyte needs **`complete()`** (chat-style messages → text) and **`embed()`** (texts → vectors) for the built-in pipeline and policies. Adapters such as **`astrocyte-litellm`** (and **`openai`** with a custom **`api_base`**) route those calls to **direct vendor SDKs**, **multi-provider gateways** (LiteLLM, Portkey, OpenRouter, cloud routers, …), or any **OpenAI-compatible HTTP** surface your deployment standardizes on.
+Astrocyte needs **`complete()`** (chat-style messages → text) and **`embed()`** (texts → vectors) for the built-in pipeline and policies. Adapters such as **`astrocyte-llm-litellm`** (and **`openai`** with a custom **`api_base`**) route those calls to **direct vendor SDKs**, **multi-provider gateways** (LiteLLM, Portkey, OpenRouter, cloud routers, …), or any **OpenAI-compatible HTTP** surface your deployment standardizes on.
 
 That scope **does not** include:
 
