@@ -19,6 +19,7 @@ const topicItems = {
     { label: "Introduction", link: "/introduction/" },
     { label: "Quick Start", link: "/end-user/quick-start/" },
     { label: "Configuration reference", link: "/end-user/configuration-reference/" },
+    { label: "Authentication setup", link: "/end-user/authentication-setup/" },
     { label: "Production-grade HTTP service", link: "/end-user/production-grade-http-service/" },
     { label: "Poll ingest with the standalone gateway", link: "/end-user/poll-ingest-gateway/" },
     { label: "Gateway edge & API gateways", link: "/end-user/gateway-edge-and-api-gateways/" },
