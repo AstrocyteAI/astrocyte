@@ -157,7 +157,7 @@ uv run --project astrocyte-py pre-commit run --all-files
 **[astrocyteai.github.io/astrocyte](https://astrocyteai.github.io/astrocyte/)**
 
 - [Quick Start](https://astrocyteai.github.io/astrocyte/end-user/quick-start/)
-- [Architecture](https://astrocyteai.github.io/astrocyte/design/architecture-framework/)
+- [Architecture](https://astrocyteai.github.io/astrocyte/design/architecture/)
 - [Provider SPI](https://astrocyteai.github.io/astrocyte/plugins/provider-spi/)
 - [Integration guides](https://astrocyteai.github.io/astrocyte/plugins/agent-framework-middleware/) (one per framework)
 

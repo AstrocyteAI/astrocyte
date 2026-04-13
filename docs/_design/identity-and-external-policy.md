@@ -138,7 +138,7 @@ External PDP decisions must still produce **audit events** compatible with `acce
 | Document | Topic |
 |---|---|
 | `access-control.md` | Principals, permissions, grants, enforcement order |
-| `architecture-framework.md` | Where identity/policy integration sits in the layer model |
+| `architecture.md` | Where identity/policy integration sits in the layer model |
 | `ecosystem-and-packaging.md` | Entry points and optional package naming |
 | `mcp-server.md` | MCP-scoped identity today; extend with §3 above |
 | `production-grade-http-service.md` | Reference HTTP service; AuthN/AuthZ checklist |

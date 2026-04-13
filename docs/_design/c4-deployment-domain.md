@@ -1,6 +1,6 @@
 # C4, deployment & domain model
 
-This document consolidates **C4 views**, deployment models, **domain modeling** (bounded contexts, aggregates), and **application architecture** (ports, sequences, enforcement) for Astrocyte as a product. It complements the normative framework specification in [`architecture-framework.md`](./architecture-framework.md). **Milestone plan** (M1–M7 through v1.0.0; **M5** and **M7** share **v0.8.0**): [`product-roadmap-v1.md`](./product-roadmap-v1.md).
+This document consolidates **C4 views**, deployment models, **domain modeling** (bounded contexts, aggregates), and **application architecture** (ports, sequences, enforcement) for Astrocyte as a product. It complements the normative framework specification in [`architecture.md`](./architecture.md). **Milestone plan** (M1–M7 through v1.0.0; **M5** and **M7** share **v0.8.0**): [`product-roadmap-v1.md`](./product-roadmap-v1.md).
 
 ## System Architecture
 

@@ -38,6 +38,42 @@ The harness **calls** memory and tools and **assembles** the next prompt; contex
 
 That boundary is the same “slot” many curricula label the **Context & Memory** plane: governed memory and cognition support—not “vectors only” or ad-hoc RAG. For a vendor-neutral **eight-plane** framing (and how it relates to **control outside the agent loop**), see the [Applied AI Fellowship](https://calvinchengx.github.io/applied-ai/). A **vocabulary crosswalk** between that coursework and Astrocyte primitives is in [Fellowship curriculum mapping](./curriculum-mapping.md).
 
+#### Harness integration view
+
+The diagram below shows how Astrocyte relates to the other planes in an agent stack. Gold boxes are Astrocyte's domain; gray boxes belong to the harness or external systems.
+
+- **Astrocyte** and the **Harness** are peers — bidirectional control flow. The harness calls retain/recall/reflect; Astrocyte returns governed results.
+- **Session** (checkpoints, turn state) belongs to the **harness**, not Astrocyte. The harness provides session context (principal, bank_id) when calling Astrocyte.
+- **Memory banks** are MIP-routed and **policy-scoped** — the configured compliance profile (GDPR, HIPAA, PDPA, CCPA) determines enforcement, not a single regulation.
+- **astrocyte-mcp** is the MCP tool bridge — any MCP-capable client gets memory without code integration.
+
+```mermaid
+flowchart TB
+  TOOLS[“Tools + Resources / MCP\nExternal capabilities”]
+  MCP_TOOL[“astrocyte-mcp tool”]
+
+  ASTROCYTE[“Astrocyte\nGoverned memory layer”]
+  HARNESS[“Harness\nOrchestrates agent loop”]
+  SANDBOX[“Sandbox\nSecure code execution”]
+
+  SESSION[“Session\nCheckpoints, turn state”]
+  ORCH[“Orchestration\nMulti-agent coordination”]
+
+  BANKS[“Memory banks\nMIP-routed, policy-scoped”]
+
+  TOOLS -.-> MCP_TOOL
+  MCP_TOOL -.-> ASTROCYTE
+
+  ASTROCYTE <--> HARNESS
+  HARNESS --> SANDBOX
+
+  HARNESS --> SESSION
+  HARNESS -.-> ORCH
+
+  ASTROCYTE --> BANKS
+  ORCH -.-> BANKS
+```
+
 **Agent cards and catalogs:** Many products describe agents with **agent cards** or registry metadata. Astrocyte does not execute those cards or own the catalog, but it **does** aim to understand them **at the memory boundary**: a small, explicit **mapping** from card identity to **principal + memory bank** (and optional defaults), declared in config and used by integrations, so memory calls stay consistent without one-off logic in every app. See `agent-framework-middleware.md`.
 
 **Sandbox awareness:** Execution sandboxes (containers, gVisor, microVMs, WASM, OS permission fences) limit **code** isolation; they do not by themselves stop **memory APIs** from becoming an **exfiltration** path if recall is mis-scoped or egress is wide open. Astrocyte is **sandbox-aware** in the sense of binding **principal + bank + environment/sandbox context** consistently and documenting **Backend for Frontend (BFF)** and **network** expectations—see `sandbox-awareness-and-exfiltration.md`.

@@ -16,7 +16,7 @@ From the repository root (or any environment with the repo on `PYTHONPATH`):
 pip install -e astrocyte-py/
 ```
 
-Use **`Astrocyte.from_config(...)`** and attach Tier 1 / Tier 2 providers in code—see the [architecture overview](/design/architecture-framework/) and [provider SPI](/plugins/provider-spi/). The library alone does **not** start an HTTP server.
+Use **`Astrocyte.from_config(...)`** and attach Tier 1 / Tier 2 providers in code—see the [architecture overview](/design/architecture/) and [provider SPI](/plugins/provider-spi/). The library alone does **not** start an HTTP server.
 
 ### Use the same client from an AI agent
 
@@ -153,4 +153,4 @@ Details, troubleshooting, and environment split (**`ASTROCYTE_REST_DATABASE_URL`
 - **Agent + memory patterns/tutorials:** [100 Agents in 100 Days](/tutorials/100-agents-in-100-days/).
 - **Operate and harden HTTP:** [Production-grade HTTP service](/end-user/production-grade-http-service/) (security, auth, grants, observability).
 - **Implement a provider or transport:** [Plugin developer docs](/plugins/provider-spi/) (SPI, entry points, packaging).
-- **Understand the design:** start with [Neuroscience & vocabulary](/design/neuroscience-astrocyte/) and [Architecture](/design/architecture-framework/).
+- **Understand the design:** start with [Neuroscience & vocabulary](/design/neuroscience-astrocyte/) and [Architecture](/design/architecture/).

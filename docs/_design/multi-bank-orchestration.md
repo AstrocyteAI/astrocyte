@@ -2,7 +2,7 @@
 
 Agents don't have one memory - they have several. A support agent has personal context about the current user, shared team knowledge, and org-wide policies. Astrocyte orchestrates across these banks because it sits above the provider layer.
 
-For the core API and provider architecture, see `architecture-framework.md`.
+For the core API and provider architecture, see `architecture.md`.
 
 ---
 

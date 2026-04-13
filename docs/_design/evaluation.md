@@ -86,7 +86,7 @@ class QueryResult:
 1. **Cost-efficiency comparison.** When `compare_providers()` runs the same suite against different configs, token usage is the third leg of the tradeoff alongside latency and accuracy. One provider may score higher but consume 10× more tokens.
 2. **Cost regression detection.** A config change that silently doubles LLM calls shows up as a spike in `total_tokens_used` even if accuracy holds steady.
 
-This is a **separate concern** from **global LLM spend tracking** (cumulative cost across all production calls, budget alerts, per-model breakdowns). Global spend tracking is the responsibility of your **LLM gateway or aggregator** (LiteLLM, Portkey, OpenRouter, etc.) — see `architecture-framework.md` §5 for the boundary. Astrocyte's per-run token counter works with any `LLMProvider` implementation, including ones backed by those gateways, because it accumulates `Completion.usage` at the framework level regardless of which backend is behind the protocol.
+This is a **separate concern** from **global LLM spend tracking** (cumulative cost across all production calls, budget alerts, per-model breakdowns). Global spend tracking is the responsibility of your **LLM gateway or aggregator** (LiteLLM, Portkey, OpenRouter, etc.) — see `architecture.md` §5 for the boundary. Astrocyte's per-run token counter works with any `LLMProvider` implementation, including ones backed by those gateways, because it accumulates `Completion.usage` at the framework level regardless of which backend is behind the protocol.
 
 ---
 

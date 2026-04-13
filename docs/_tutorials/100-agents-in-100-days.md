@@ -10,7 +10,7 @@ Each day adds **one** focused tutorial or example: runnable demos, integration p
 
 - Agent patterns (tool use, multi-step flows) **with durable memory** via Astrocyte
 - Pairings with the [reference REST gateway](/end-user/production-grade-http-service/), [poll ingest](/end-user/poll-ingest-gateway/), or an [API edge](/end-user/gateway-edge-and-api-gateways/) where the tutorial needs a server-side hook
-- Occasional deep links into the [plugin SPIs](/plugins/provider-spi/), [agent framework middleware](/plugins/agent-framework-middleware/), and [design docs](/design/architecture-framework/)
+- Occasional deep links into the [plugin SPIs](/plugins/provider-spi/), [agent framework middleware](/plugins/agent-framework-middleware/), and [design docs](/design/architecture/)
 
 ## Use case catalog (before Day 1)
 

@@ -54,7 +54,7 @@ function repoLinksToGitHub(content) {
 /**
  * Resolve ./foo.md and ../_plugins/bar.md relative to the source file, when target is under docs/.
  *
- * Emits relative URLs (e.g., `../architecture-framework/`, `../../plugins/provider-spi/`)
+ * Emits relative URLs (e.g., `../architecture/`, `../../plugins/provider-spi/`)
  * instead of root-relative URLs so that links work regardless of the GitHub Pages base path.
  */
 function docsMarkdownLinksToRoutes(content, sourceFileAbs, destFileAbs) {
