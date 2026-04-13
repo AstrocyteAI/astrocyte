@@ -172,6 +172,7 @@ class LiteLLMProvider:
         kwargs: dict[str, Any] = {
             "model": use_model,
             "input": safe_texts,
+            "num_retries": self._max_retries,
             "timeout": self._timeout,
             **self._extra,
         }
@@ -214,7 +215,7 @@ def _to_litellm_message(msg: Message) -> dict[str, Any]:
             parts.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{part.image_base64}"},
+                    "image_url": {"url": f"data:{getattr(part, 'media_type', 'image/png')};base64,{part.image_base64}"},
                 }
             )
 

@@ -54,6 +54,53 @@ agent = ConversableAgent("assistant", llm_config=llm_config)
 | `as_tools()` | OpenAI-format tool definitions |
 | `get_handlers()` | Async handler functions for tool dispatch |
 
+## End-to-end example
+
+A multi-agent AutoGen conversation with shared memory:
+
+```python
+import asyncio
+from astrocyte import Astrocyte
+from astrocyte.integrations.autogen import AstrocyteAutoGenMemory
+from autogen import ConversableAgent
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+
+memory = AstrocyteAutoGenMemory(
+    brain,
+    bank_id="team-shared",
+    agent_banks={"coder": "coder-notes", "reviewer": "review-notes"},
+)
+
+async def main():
+    # Coder stores implementation notes
+    await memory.save(
+        "Implemented retry logic with exponential backoff, max 3 retries",
+        agent_id="coder",
+    )
+
+    # Reviewer retrieves coder's notes for review context
+    context = await memory.get_context("retry implementation details")
+    print(context)
+
+    # Both agents share the team bank
+    await memory.save("Sprint goal: complete auth module by Friday")
+    results = await memory.query("sprint goals")
+    for hit in results:
+        print(f"  {hit['text']}")
+
+    # Export as OpenAI-format tools for function calling
+    tools = memory.as_tools()
+    handlers = memory.get_handlers()
+
+    coder = ConversableAgent(
+        "coder",
+        llm_config={"tools": tools, **llm_config},
+    )
+
+asyncio.run(main())
+```
+
 ## API reference
 
 ### `AstrocyteAutoGenMemory(brain, bank_id, *, agent_banks=None)`

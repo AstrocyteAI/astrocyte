@@ -46,6 +46,61 @@ await memory.reset()
 | `search(query)` | `brain.recall()` → structured hit dicts |
 | `reset()` | `brain.clear_bank()` |
 
+## End-to-end example
+
+A LlamaIndex chat engine with persistent memory:
+
+```python
+import asyncio
+from astrocyte import Astrocyte
+from astrocyte.integrations.llamaindex import AstrocyteLlamaMemory
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+memory = AstrocyteLlamaMemory(brain, bank_id="user-123", max_results=10)
+
+async def main():
+    # Store documents
+    await memory.put(
+        "Astrocyte supports semantic, graph, and keyword retrieval",
+        tags=["architecture"],
+        metadata={"source": "docs"},
+    )
+    await memory.put(
+        "Hybrid recall fuses results with RRF",
+        tags=["architecture"],
+    )
+
+    # Get formatted context for prompt injection
+    context = await memory.get("How does retrieval work?")
+    print(context)
+    # "- Astrocyte supports semantic, graph, and keyword retrieval\n- Hybrid recall fuses..."
+
+    # Structured search with tag filtering
+    results = await memory.search("retrieval", tags=["architecture"])
+    for hit in results:
+        print(f"  [{hit['score']:.2f}] {hit['text']}")
+
+    # Get all memories in the bank
+    all_mems = await memory.get_all()
+    print(f"Total memories: {len(all_mems)}")
+
+asyncio.run(main())
+```
+
+## Using in a Haystack-style pipeline
+
+```python
+from llama_index.core import VectorStoreIndex
+from llama_index.core.chat_engine import CondensePlusContextChatEngine
+
+# Use Astrocyte memory as additional context alongside LlamaIndex's own index
+context = await memory.get("user preferences")
+chat_engine = CondensePlusContextChatEngine.from_defaults(
+    retriever=index.as_retriever(),
+    system_prompt=f"Known user context:\n{context}",
+)
+```
+
 ## API reference
 
 ### `AstrocyteLlamaMemory(brain, bank_id, *, max_results=10)`

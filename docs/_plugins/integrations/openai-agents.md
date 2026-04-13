@@ -44,6 +44,60 @@ for call in response.choices[0].message.tool_calls:
 | `memory_reflect` | `{"query": "..."}` | `brain.reflect()` |
 | `memory_forget` | `{"memory_ids": [...]}` | `brain.forget()` |
 
+## End-to-end example
+
+A coding assistant with memory across chat sessions:
+
+```python
+import asyncio
+import json
+from openai import AsyncOpenAI
+from astrocyte import Astrocyte
+from astrocyte.integrations.openai_agents import astrocyte_tool_definitions
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+client = AsyncOpenAI()
+
+tools, handlers = astrocyte_tool_definitions(brain, bank_id="user-123")
+
+async def chat(user_message: str):
+    messages = [
+        {"role": "system", "content": (
+            "You have persistent memory. Use memory_recall before answering "
+            "to check what you know. Use memory_retain to save important facts."
+        )},
+        {"role": "user", "content": user_message},
+    ]
+
+    # Loop to handle tool calls
+    while True:
+        response = await client.chat.completions.create(
+            model="gpt-4o", messages=messages, tools=tools,
+        )
+        choice = response.choices[0]
+
+        if choice.finish_reason == "tool_calls":
+            messages.append(choice.message)
+            for call in choice.message.tool_calls:
+                handler = handlers[call.function.name]
+                result = await handler(**json.loads(call.function.arguments))
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": result,
+                })
+        else:
+            return choice.message.content
+
+async def main():
+    # Session 1
+    print(await chat("I'm working on a FastAPI project with PostgreSQL."))
+    # Session 2 — agent recalls the project context
+    print(await chat("What database am I using?"))
+
+asyncio.run(main())
+```
+
 ## API reference
 
 ### `astrocyte_tool_definitions(brain, bank_id, *, include_reflect=True, include_forget=False)`

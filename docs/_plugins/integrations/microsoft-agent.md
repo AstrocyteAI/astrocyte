@@ -40,6 +40,40 @@ Uses the same OpenAI-compatible format as the OpenAI Agents SDK integration. See
 | `memory_reflect` | `handlers["memory_reflect"]` | `brain.reflect()` |
 | `memory_forget` | `handlers["memory_forget"]` | `brain.forget()` |
 
+## End-to-end example
+
+A Microsoft Agent with memory for meeting notes:
+
+```python
+import asyncio
+from astrocyte import Astrocyte
+from astrocyte.integrations.microsoft_agent import astrocyte_ms_agent_tools
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+tools, handlers = astrocyte_ms_agent_tools(brain, bank_id="meeting-notes")
+
+async def main():
+    # Store meeting notes
+    result = await handlers["memory_retain"](
+        content="Q2 planning: migrate to Kubernetes by July, budget approved for 3 new hires",
+    )
+    print(result)
+
+    # Recall for a follow-up meeting
+    result = await handlers["memory_recall"](query="Q2 planning decisions")
+    print(result)
+
+    # Synthesize action items
+    result = await handlers["memory_reflect"](query="What are the open action items?")
+    print(result)
+
+asyncio.run(main())
+```
+
+## Shared format with OpenAI Agents SDK
+
+This integration uses the same OpenAI-compatible function-calling format. If you're already using the [OpenAI Agents SDK](./openai-agents.md) integration, the tool dispatch code is identical.
+
 ## API reference
 
 ### `astrocyte_ms_agent_tools(brain, bank_id, *, include_reflect=True, include_forget=False)`

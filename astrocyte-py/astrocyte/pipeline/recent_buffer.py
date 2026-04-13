@@ -8,6 +8,7 @@ Sync, self-contained — Rust migration candidate.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from difflib import SequenceMatcher
 from string import punctuation
 
 from astrocyte.types import MemoryHit
+
+logger = logging.getLogger(__name__)
 
 #: Default max recent items per bank.
 DEFAULT_MAX_PER_BANK = 100
@@ -125,6 +128,11 @@ class RecentMemoryBuffer:
                 # Evict LRU bank if at capacity
                 if len(self._buffers) >= self._MAX_BANKS:
                     lru_bank = next(iter(self._buffers))
+                    logger.warning(
+                        "RecentMemoryBuffer at capacity (%d banks); evicting LRU bank '%s'",
+                        self._MAX_BANKS,
+                        lru_bank,
+                    )
                     del self._buffers[lru_bank]
                 self._buffers[bank_id] = deque(maxlen=self.max_per_bank)
             self._buffers[bank_id].append(entry)
