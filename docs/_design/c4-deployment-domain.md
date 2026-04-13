@@ -24,8 +24,8 @@ C4Context
 
     System_Boundary(storage, "Storage Backends") {
         SystemDb_Ext(pgvector, "pgvector", "Vector store (production)")
-        SystemDb_Ext(graph_db, "Graph Store", "Neo4j / FalkorDB (SPI defined, no prod impl)")
-        SystemDb_Ext(doc_store, "Document Store", "Elasticsearch / OpenSearch (SPI defined, no prod impl)")
+        SystemDb_Ext(graph_db, "Graph Store", "Neo4j (astrocyte-neo4j adapter)")
+        SystemDb_Ext(doc_store, "Document Store", "Elasticsearch (astrocyte-elasticsearch adapter)")
     }
 
     System_Boundary(external, "External Systems (v1.0.0)") {
@@ -861,8 +861,8 @@ Secondary ports define how Astrocyte calls out to infrastructure. These are defi
 | Port (Protocol) | Current Adapters | Status |
 |---|---|---|
 | **VectorStore** | `astrocyte_pgvector.PgVectorStore`, `InMemoryVectorStore` (testing) | Production-ready |
-| **GraphStore** | `InMemoryGraphStore` (testing) | SPI defined, no production adapter |
-| **DocumentStore** | `InMemoryDocumentStore` (testing) | SPI defined, no production adapter |
+| **GraphStore** | `astrocyte_neo4j.Neo4jGraphStore`, `InMemoryGraphStore` (testing) | Production-ready |
+| **DocumentStore** | `astrocyte_elasticsearch.ElasticsearchDocumentStore`, `InMemoryDocumentStore` (testing) | Production-ready |
 | **LLMProvider** | `OpenAIProvider` (`providers/openai.py`) | Production-ready |
 | **EmbeddingProvider** | Shared with `LLMProvider.embed()` | Production-ready via OpenAI |
 

@@ -308,6 +308,7 @@ class ContentPart:
     image_base64: str | None = None
     audio_url: str | None = None
     audio_base64: str | None = None
+    media_type: str | None = None  # MIME type for base64 content, e.g. "image/png", "image/jpeg"
 
 
 @dataclass
