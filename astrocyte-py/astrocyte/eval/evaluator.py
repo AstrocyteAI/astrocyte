@@ -32,6 +32,178 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Phase helpers — each returns the data collected for that evaluation phase
+# ---------------------------------------------------------------------------
+
+
+async def _run_retain_phase(
+    brain: Astrocyte,
+    suite: EvalSuite,
+    bank_id: str,
+) -> tuple[dict[str, str], list[float]]:
+    """Phase 1: Retain all test memories. Returns (memory_map, latencies)."""
+    memory_map: dict[str, str] = {}
+    latencies: list[float] = []
+
+    for case in suite.retains:
+        t0 = time.monotonic()
+        result = await brain.retain(
+            case.content,
+            bank_id=bank_id,
+            tags=case.tags,
+        )
+        latencies.append((time.monotonic() - t0) * 1000)
+        if result.stored and result.memory_id:
+            memory_map[case.content] = result.memory_id
+
+    return memory_map, latencies
+
+
+async def _run_recall_phase(
+    brain: Astrocyte,
+    suite: EvalSuite,
+    bank_id: str,
+) -> tuple[list[QueryResult], list[float]]:
+    """Phase 2: Run recall queries. Returns (query_results, latencies)."""
+    query_results: list[QueryResult] = []
+    latencies: list[float] = []
+
+    for case in suite.recalls:
+        t0 = time.monotonic()
+        result = await brain.recall(
+            case.query,
+            bank_id=bank_id,
+            max_results=case.max_results,
+            tags=case.tags,
+        )
+        elapsed = (time.monotonic() - t0) * 1000
+        latencies.append(elapsed)
+
+        relevant_ids = _find_relevant_ids(case.expected_contains, result.hits)
+        retrieved_ids = [h.memory_id or "" for h in result.hits]
+
+        query_results.append(
+            QueryResult(
+                query=case.query,
+                expected=case.expected_contains,
+                actual=result.hits,
+                relevant_found=sum(1 for rid in retrieved_ids if rid in relevant_ids),
+                precision=precision_at_k(relevant_ids, retrieved_ids),
+                reciprocal_rank=reciprocal_rank(relevant_ids, retrieved_ids),
+                latency_ms=elapsed,
+            )
+        )
+
+    return query_results, latencies
+
+
+def _find_relevant_ids(expected_keywords: list[str], hits: list) -> set[str]:
+    """Identify which hits are relevant based on expected keyword overlap."""
+    relevant: set[str] = set()
+    for hit in hits:
+        if text_overlap_score(expected_keywords, hit.text) > 0 and hit.memory_id:
+            relevant.add(hit.memory_id)
+    return relevant
+
+
+async def _run_reflect_phase(
+    brain: Astrocyte,
+    suite: EvalSuite,
+    bank_id: str,
+) -> tuple[list[float], list[str], list[list[str]], list[float]]:
+    """Phase 3: Run reflect queries. Returns (scores, answers, source_texts, latencies)."""
+    scores: list[float] = []
+    answers: list[str] = []
+    source_texts: list[list[str]] = []
+    latencies: list[float] = []
+
+    for case in suite.reflects:
+        t0 = time.monotonic()
+        result = await brain.reflect(case.query, bank_id=bank_id)
+        latencies.append((time.monotonic() - t0) * 1000)
+        answers.append(result.answer)
+        source_texts.append([s.text for s in (result.sources or [])])
+        scores.append(text_overlap_score(case.expected_topics, result.answer))
+
+    return scores, answers, source_texts, latencies
+
+
+async def _run_deepeval_judge(
+    suite: EvalSuite,
+    query_results: list[QueryResult],
+    reflect_answers: list[str],
+    reflect_source_texts: list[list[str]],
+    judge_model: str | None,
+) -> object | None:
+    """Phase 3b: Optional DeepEval LLM-judged scoring."""
+    from astrocyte.eval.deepeval_judge import run_deepeval_judge
+
+    recall_pairs = [
+        {
+            "query": qr.query,
+            "retrieved_texts": [h.text for h in qr.actual],
+            "expected": " ".join(qr.expected) if qr.expected else None,
+        }
+        for qr in query_results
+    ]
+    reflect_pairs = [
+        {
+            "query": case.query,
+            "answer": reflect_answers[i] if i < len(reflect_answers) else "",
+            "source_texts": reflect_source_texts[i] if i < len(reflect_source_texts) else [],
+        }
+        for i, case in enumerate(suite.reflects)
+    ]
+    return await run_deepeval_judge(
+        recall_pairs=recall_pairs,
+        reflect_pairs=reflect_pairs,
+        model=judge_model,
+    )
+
+
+def _compute_metrics(
+    query_results: list[QueryResult],
+    retain_latencies: list[float],
+    recall_latencies: list[float],
+    reflect_scores: list[float],
+    reflect_latencies: list[float],
+    tokens_used: int,
+    total_duration: float,
+) -> EvalMetrics:
+    """Phase 4: Compute aggregate metrics from per-query results."""
+    precisions = [qr.precision for qr in query_results]
+    hit_rates = [1.0 if qr.relevant_found > 0 else 0.0 for qr in query_results]
+    mrrs = [qr.reciprocal_rank for qr in query_results]
+
+    ndcgs: list[float] = []
+    for qr in query_results:
+        relevant_ids = _find_relevant_ids(qr.expected, qr.actual)
+        retrieved = [h.memory_id or "" for h in qr.actual]
+        ndcgs.append(ndcg_at_k(relevant_ids, retrieved))
+
+    return EvalMetrics(
+        recall_precision=_safe_mean(precisions),
+        recall_hit_rate=_safe_mean(hit_rates),
+        recall_mrr=_safe_mean(mrrs),
+        recall_ndcg=_safe_mean(ndcgs),
+        retain_latency_p50_ms=percentile(retain_latencies, 50),
+        retain_latency_p95_ms=percentile(retain_latencies, 95),
+        recall_latency_p50_ms=percentile(recall_latencies, 50),
+        recall_latency_p95_ms=percentile(recall_latencies, 95),
+        total_tokens_used=tokens_used,
+        total_duration_seconds=total_duration,
+        reflect_accuracy=_safe_mean(reflect_scores) if reflect_scores else None,
+        reflect_latency_p50_ms=percentile(reflect_latencies, 50) if reflect_latencies else None,
+        reflect_latency_p95_ms=percentile(reflect_latencies, 95) if reflect_latencies else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Main evaluator
+# ---------------------------------------------------------------------------
+
+
 class MemoryEvaluator:
     """Runs evaluation suites against an Astrocyte instance.
 
@@ -68,154 +240,45 @@ class MemoryEvaluator:
             eval_suite = suite
 
         start_time = time.monotonic()
-        retain_latencies: list[float] = []
-        recall_latencies: list[float] = []
-        reflect_latencies: list[float] = []
 
         # Reset the pipeline's token counter so we measure only this run
         if self.brain._pipeline:
             self.brain._pipeline.reset_token_counter()
 
-        # ── Phase 1: Retain all test memories ──
-        memory_map: dict[str, str] = {}  # content → memory_id (for relevance matching)
-
-        for case in eval_suite.retains:
-            t0 = time.monotonic()
-            result = await self.brain.retain(
-                case.content,
-                bank_id=bank_id,
-                tags=case.tags,
-            )
-            elapsed = (time.monotonic() - t0) * 1000
-            retain_latencies.append(elapsed)
-            if result.stored and result.memory_id:
-                memory_map[case.content] = result.memory_id
-
-        # ── Phase 2: Run recall queries and measure ──
-        query_results: list[QueryResult] = []
-
-        for case in eval_suite.recalls:
-            t0 = time.monotonic()
-            result = await self.brain.recall(
-                case.query,
-                bank_id=bank_id,
-                max_results=case.max_results,
-                tags=case.tags,
-            )
-            elapsed = (time.monotonic() - t0) * 1000
-            recall_latencies.append(elapsed)
-
-            # Determine which results are "relevant" based on expected_contains
-            relevant_ids: set[str] = set()
-            for hit in result.hits:
-                score = text_overlap_score(case.expected_contains, hit.text)
-                if score > 0:
-                    if hit.memory_id:
-                        relevant_ids.add(hit.memory_id)
-
-            retrieved_ids = [h.memory_id or "" for h in result.hits]
-            relevant_found = sum(1 for rid in retrieved_ids if rid in relevant_ids)
-
-            qr = QueryResult(
-                query=case.query,
-                expected=case.expected_contains,
-                actual=result.hits,
-                relevant_found=relevant_found,
-                precision=precision_at_k(relevant_ids, retrieved_ids),
-                reciprocal_rank=reciprocal_rank(relevant_ids, retrieved_ids),
-                latency_ms=elapsed,
-            )
-            query_results.append(qr)
-
-        # ── Phase 3: Run reflect queries ──
-        reflect_scores: list[float] = []
-        reflect_answers: list[str] = []
-        reflect_source_texts: list[list[str]] = []
-
-        for case in eval_suite.reflects:
-            t0 = time.monotonic()
-            result = await self.brain.reflect(case.query, bank_id=bank_id)
-            elapsed = (time.monotonic() - t0) * 1000
-            reflect_latencies.append(elapsed)
-            reflect_answers.append(result.answer)
-            reflect_source_texts.append([s.text for s in (result.sources or [])])
-
-            # Score reflect quality by topic coverage
-            score = text_overlap_score(case.expected_topics, result.answer)
-            reflect_scores.append(score)
-
-        # ── Phase 3b: DeepEval LLM-judged scoring (optional) ──
-        deepeval_scores = None
-        if judge == "deepeval":
-            from astrocyte.eval.deepeval_judge import run_deepeval_judge
-
-            recall_pairs = [
-                {
-                    "query": qr.query,
-                    "retrieved_texts": [h.text for h in qr.actual],
-                    "expected": " ".join(qr.expected) if qr.expected else None,
-                }
-                for qr in query_results
-            ]
-            reflect_pairs_for_judge = [
-                {
-                    "query": case.query,
-                    "answer": reflect_answers[i] if i < len(reflect_answers) else "",
-                    "source_texts": reflect_source_texts[i] if i < len(reflect_source_texts) else [],
-                }
-                for i, case in enumerate(eval_suite.reflects)
-            ]
-            deepeval_scores = await run_deepeval_judge(
-                recall_pairs=recall_pairs,
-                reflect_pairs=reflect_pairs_for_judge,
-                model=judge_model,
-            )
-
-        # ── Phase 4: Compute aggregate metrics ──
-        total_duration = time.monotonic() - start_time
-
-        # Recall metrics
-        precisions = [qr.precision for qr in query_results]
-        hit_rates = [1.0 if qr.relevant_found > 0 else 0.0 for qr in query_results]
-        mrrs = [qr.reciprocal_rank for qr in query_results]
-
-        # NDCG per query
-        ndcgs: list[float] = []
-        for qr in query_results:
-            relevant_ids_for_ndcg: set[str] = set()
-            for hit in qr.actual:
-                if hit.memory_id and text_overlap_score(qr.expected, hit.text) > 0:
-                    relevant_ids_for_ndcg.add(hit.memory_id)
-            retrieved = [h.memory_id or "" for h in qr.actual]
-            ndcgs.append(ndcg_at_k(relevant_ids_for_ndcg, retrieved))
-
-        metrics = EvalMetrics(
-            recall_precision=_safe_mean(precisions),
-            recall_hit_rate=_safe_mean(hit_rates),
-            recall_mrr=_safe_mean(mrrs),
-            recall_ndcg=_safe_mean(ndcgs),
-            retain_latency_p50_ms=percentile(retain_latencies, 50),
-            retain_latency_p95_ms=percentile(retain_latencies, 95),
-            recall_latency_p50_ms=percentile(recall_latencies, 50),
-            recall_latency_p95_ms=percentile(recall_latencies, 95),
-            total_tokens_used=self.brain._pipeline.tokens_used if self.brain._pipeline else 0,
-            total_duration_seconds=total_duration,
-            reflect_accuracy=_safe_mean(reflect_scores) if reflect_scores else None,
-            reflect_latency_p50_ms=percentile(reflect_latencies, 50) if reflect_latencies else None,
-            reflect_latency_p95_ms=percentile(reflect_latencies, 95) if reflect_latencies else None,
+        # Phase 1–3: retain, recall, reflect
+        _memory_map, retain_latencies = await _run_retain_phase(self.brain, eval_suite, bank_id)
+        query_results, recall_latencies = await _run_recall_phase(self.brain, eval_suite, bank_id)
+        reflect_scores, reflect_answers, reflect_source_texts, reflect_latencies = await _run_reflect_phase(
+            self.brain, eval_suite, bank_id
         )
 
-        # ── Phase 5: Cleanup ──
+        # Phase 3b: optional DeepEval judge
+        deepeval_scores = None
+        if judge == "deepeval":
+            deepeval_scores = await _run_deepeval_judge(
+                eval_suite, query_results, reflect_answers, reflect_source_texts, judge_model
+            )
+
+        # Phase 4: aggregate metrics
+        metrics = _compute_metrics(
+            query_results=query_results,
+            retain_latencies=retain_latencies,
+            recall_latencies=recall_latencies,
+            reflect_scores=reflect_scores,
+            reflect_latencies=reflect_latencies,
+            tokens_used=self.brain._pipeline.tokens_used if self.brain._pipeline else 0,
+            total_duration=time.monotonic() - start_time,
+        )
+
+        # Phase 5: cleanup
         if clean_after:
             try:
                 await self.brain._do_forget(ForgetRequest(bank_id=bank_id, scope="all"))
             except Exception:
                 logger.debug("eval cleanup forget failed (best-effort)", exc_info=True)
 
-        # Build config snapshot with judge info
-        config_snapshot: dict[str, str | int | float | bool | None] = {
-            "judge": judge,
-        }
+        # Build result with optional DeepEval scores
+        config_snapshot: dict[str, str | int | float | bool | None] = {"judge": judge}
         if judge == "deepeval" and deepeval_scores:
             config_snapshot["deepeval_contextual_relevancy"] = deepeval_scores.contextual_relevancy
             config_snapshot["deepeval_faithfulness"] = deepeval_scores.faithfulness
