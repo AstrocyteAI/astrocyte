@@ -56,6 +56,61 @@ result = await tools[0]["handler"]({"content": "Calvin prefers dark mode"})
 | `memory_reflect` | `mcp__astrocyte_memory__memory_reflect` | `{"content": [{"type": "text", "text": "answer text"}]}` |
 | `memory_forget` | `mcp__astrocyte_memory__memory_forget` | `{"content": [{"type": "text", "text": '{"deleted_count": N}'}]}` |
 
+## End-to-end example
+
+A Claude agent that builds up project knowledge across sessions:
+
+```python
+import asyncio
+from astrocyte import Astrocyte
+from astrocyte.integrations.claude_agent_sdk import astrocyte_claude_agent_server
+from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+
+options = ClaudeAgentOptions(
+    mcp_servers={
+        "memory": astrocyte_claude_agent_server(brain, bank_id="project-alpha"),
+    },
+    allowed_tools=["mcp__astrocyte_memory__*"],
+    system=(
+        "You have persistent memory via MCP tools. "
+        "Store important project decisions with memory_retain. "
+        "Check memory_recall before answering project questions."
+    ),
+)
+
+async def chat(prompt: str) -> str:
+    async for message in query(prompt=prompt, options=options):
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            return message.result
+    return ""
+
+async def main():
+    # Session 1: share project decisions
+    print(await chat("We decided to use PostgreSQL with pgvector for storage."))
+
+    # Session 2: agent recalls without being told
+    print(await chat("What database are we using for this project?"))
+
+asyncio.run(main())
+```
+
+## Multi-agent with session-scoped memory
+
+Use `create_subagent_definition` for multi-agent setups where each sub-agent has isolated memory but can read from the coordinator:
+
+```python
+from astrocyte.integrations.claude_agent_sdk import (
+    create_coordinator_server,
+    create_subagent_definition,
+)
+
+coordinator = create_coordinator_server(brain, session_id="sess-1")
+researcher = create_subagent_definition(brain, role="researcher", session_id="sess-1")
+writer = create_subagent_definition(brain, role="writer", session_id="sess-1")
+```
+
 ## Claude Agent SDK helpers
 
 For session-scoped memory with the Claude Agent SDK (the local CLI-based SDK), use the helpers in `astrocyte.integrations.managed_agents`:

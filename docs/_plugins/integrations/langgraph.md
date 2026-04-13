@@ -58,6 +58,57 @@ Threads not in the mapping fall back to `bank_id`.
 | `search(query)` | `brain.recall()` → list of hit dicts |
 | `load_memory_variables(inputs)` | `brain.recall()` → formatted string for prompt injection |
 
+## End-to-end example
+
+A LangGraph agent that remembers conversation context across threads:
+
+```python
+import asyncio
+from astrocyte import Astrocyte
+from astrocyte.integrations.langgraph import AstrocyteMemory
+from langgraph.graph import StateGraph, MessagesState
+from langchain_openai import ChatOpenAI
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+memory = AstrocyteMemory(brain, bank_id="user-alice", auto_retain=True)
+llm = ChatOpenAI(model="gpt-4o")
+
+async def agent_node(state: MessagesState):
+    # Load relevant memories into the prompt
+    last_msg = state["messages"][-1].content
+    mem_vars = await memory.load_memory_variables({"topic": last_msg})
+
+    system = f"You are a helpful assistant.\n\nRelevant memories:\n{mem_vars['memory']}"
+    response = await llm.ainvoke([
+        {"role": "system", "content": system},
+        *state["messages"],
+    ])
+
+    # Save this exchange to memory
+    await memory.save_context(
+        inputs={"question": last_msg},
+        outputs={"answer": response.content},
+        thread_id="thread-1",
+    )
+    return {"messages": [response]}
+
+graph = StateGraph(MessagesState)
+graph.add_node("agent", agent_node)
+graph.set_entry_point("agent")
+app = graph.compile()
+
+async def main():
+    result = await app.ainvoke({"messages": [("user", "I prefer Python and dark mode")]})
+    # Memory auto-retained
+
+    # Later thread — agent has context
+    result = await app.ainvoke({"messages": [("user", "Set up my dev environment")]})
+    print(result["messages"][-1].content)
+    # References Python and dark mode from memory
+
+asyncio.run(main())
+```
+
 ## API reference
 
 ### `AstrocyteMemory(brain, bank_id, *, auto_retain=False, thread_to_bank=None)`

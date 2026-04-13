@@ -22,7 +22,9 @@ const topicItems = {
     { label: "Authentication setup", link: "/end-user/authentication-setup/" },
     { label: "Storage backend setup", link: "/end-user/storage-backend-setup/" },
     { label: "Monitoring & observability", link: "/end-user/monitoring-and-observability/" },
+    { label: "Memory API reference", link: "/end-user/memory-api-reference/" },
     { label: "Access control setup", link: "/end-user/access-control-setup/" },
+    { label: "Bank management", link: "/end-user/bank-management/" },
     { label: "Production-grade HTTP service", link: "/end-user/production-grade-http-service/" },
     { label: "Poll ingest with the standalone gateway", link: "/end-user/poll-ingest-gateway/" },
     { label: "Gateway edge & API gateways", link: "/end-user/gateway-edge-and-api-gateways/" },
@@ -33,6 +35,7 @@ const topicItems = {
     { label: "Outbound transport", link: "/plugins/outbound-transport/" },
     { label: "Multimodal LLM SPI", link: "/plugins/multimodal-llm-spi/" },
     { label: "Agent framework middleware", link: "/plugins/agent-framework-middleware/" },
+    { label: "MIP developer guide", link: "/plugins/mip-developer-guide/" },
     {
       label: "Integrations",
       collapsed: true,

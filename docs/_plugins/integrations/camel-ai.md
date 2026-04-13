@@ -54,6 +54,60 @@ Memories are tagged with `role:{role_name}` and `camel-ai` for filtering. Each r
 | `reflect(query, role=...)` | `brain.reflect()` on role's bank |
 | `clear(role=...)` | `brain.clear_bank()` on role's bank |
 
+## End-to-end example
+
+A medical simulation where doctor and patient roles have separate memories:
+
+```python
+import asyncio
+from astrocyte import Astrocyte
+from astrocyte.integrations.camel_ai import AstrocyteCamelMemory
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+
+memory = AstrocyteCamelMemory(
+    brain,
+    bank_id="medical-sim",
+    role_banks={"doctor": "doctor-notes", "patient": "patient-history"},
+)
+
+async def main():
+    # Patient describes symptoms (stored in patient bank)
+    await memory.write(
+        "I've had recurring headaches for 2 weeks, mostly in the morning",
+        role="patient",
+    )
+    await memory.write(
+        "The pain is usually a 6/10, located behind the eyes",
+        role="patient",
+    )
+
+    # Doctor records observations (stored in doctor bank)
+    await memory.write(
+        "Patient presents with tension-type headache pattern",
+        role="doctor",
+        agent_id="dr-smith",
+    )
+
+    # Doctor reviews patient history
+    history = await memory.read("headache symptoms", role="patient")
+    for hit in history:
+        print(f"  Patient said: {hit['text']}")
+
+    # Doctor synthesizes diagnosis
+    assessment = await memory.reflect(
+        "Based on patient symptoms, what is the likely diagnosis?",
+        role="doctor",
+    )
+    print(f"Assessment: {assessment}")
+
+    # Get formatted context for prompt injection
+    ctx = await memory.get_context("patient symptoms", role="patient")
+    print(ctx)
+
+asyncio.run(main())
+```
+
 ## API reference
 
 ### `AstrocyteCamelMemory(brain, bank_id, *, role_banks=None)`
