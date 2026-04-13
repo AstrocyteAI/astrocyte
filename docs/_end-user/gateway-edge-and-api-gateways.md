@@ -93,6 +93,8 @@ See **[`product-roadmap-v1.md`](../_design/product-roadmap-v1.md)** § **v0.8.x 
 ## 5. Further reading
 
 - **[Production-grade HTTP service](./production-grade-http-service.md)** — full checklist
+- **[Authentication setup](./authentication-setup.md)** — auth modes, OIDC providers, JWT claim mapping
+- **[Access control setup](./access-control-setup.md)** — grants, principals, per-bank permissions
 - **[`astrocyte-gateway-py` README](../../astrocyte-services-py/astrocyte-gateway-py/README.md)** — env, auth, Compose
 - **[Gateway plugins](../../gateway-plugins/README.md)** — Kong, APISIX, and Azure APIM integration plugins
 - **[ADR-001](../_design/adr/adr-001-deployment-models.md)** — library vs standalone gateway

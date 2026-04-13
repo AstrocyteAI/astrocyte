@@ -221,6 +221,18 @@ Align **`astrocyte-gateway-py`** with §3: real backends, verified AuthN, AuthZ 
 
 ---
 
+## Further reading
+
+- [Configuration reference](configuration-reference/) — full `astrocyte.yaml` schema
+- [Authentication setup](authentication-setup/) — auth modes, OIDC providers, JWT claim mapping
+- [Access control setup](access-control-setup/) — grants, principals, OBO
+- [Storage backend setup](storage-backend-setup/) — pgvector, Qdrant, Neo4j, Elasticsearch
+- [Monitoring & observability](monitoring-and-observability/) — health endpoints, logging, tracing, metrics, alerting
+- [Memory API reference](memory-api-reference/) — retain/recall/reflect/forget signatures
+- [Gateway edge & API gateways](gateway-edge-and-api-gateways/) — reverse proxies, edge rate limiting, gateway plugins
+
+---
+
 ## 6. Sign-off (optional)
 
 | Area | Owner | Date | Notes |

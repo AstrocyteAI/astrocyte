@@ -370,6 +370,8 @@ except AccessDenied as e:
 ## Further reading
 
 - [Authentication setup](authentication-setup/) — how identity reaches the gateway
+- [Bank management](bank-management/) — bank creation, multi-bank queries, and lifecycle recipes
+- [Memory API reference](memory-api-reference/) — retain/recall/reflect/forget signatures and context parameter
 - [Configuration reference](configuration-reference/) — `access_control`, `identity`, `access_grants` config schema
 - [Access control](../design/access-control/) — design doc with permission model and architecture
 - [ADR-002 Identity model](../design/adr/adr-002-identity-model/) — structured identity design rationale

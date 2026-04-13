@@ -180,7 +180,7 @@ At this scale, a single pgvector instance with async connection pooling handles 
 
 **Gateway Plugin vs Standalone Gateway**: The plugin model reuses existing API gateway infrastructure (no new process to manage) but constrains you to pre/post request hooks -- no reflect, no background ingestion, no long-running stream consumers. The standalone gateway requires a new process but provides full pipeline capability. **Trade**: infrastructure reuse for pipeline completeness.
 
-**Recommendation**: Ship library as default (v1.0.0 GA). Ship standalone gateway as the first additive deployment model (v1.0.0 or fast-follow). Defer gateway plugin to v1.1+ -- it requires per-gateway SDK work (Kong Lua, APISIX Lua, Azure APIM policy) and the value proposition is narrower.
+**Recommendation**: Ship library as default (v1.0.0 GA). Ship standalone gateway as the first additive deployment model (v1.0.0 or fast-follow). Gateway plugins for Kong, APISIX, and Azure APIM shipped in v0.8.x -- see `gateway-plugins/`.
 
 ### 4. Data Flow Patterns
 
@@ -894,9 +894,9 @@ Secondary Adapters (driven):
   astrocyte_pgvector/store.py              -> PgVectorStore (PostgreSQL + pgvector)
   astrocyte/providers/openai.py            -> OpenAIProvider (LLM + embedding)
   astrocyte/testing/in_memory.py           -> InMemory{Vector,Graph,Document}Store (test doubles)
-  (v1.0.0) astrocyte_kafka/consumer.py     -> KafkaIngestSource (planned)
-  (v1.0.0) astrocyte_neo4j/store.py        -> Neo4jGraphStore (planned)
-  (v1.0.0) astrocyte_elasticsearch/store.py -> ElasticsearchDocumentStore (planned)
+  astrocyte_kafka/consumer.py               -> KafkaIngestSource (planned)
+  astrocyte_neo4j/store.py                  -> Neo4jGraphStore (shipped v0.8.0)
+  astrocyte_elasticsearch/store.py          -> ElasticsearchDocumentStore (shipped v0.8.0)
 ```
 
 #### 2.5 Dependency Direction
@@ -917,7 +917,7 @@ astrocyte/              (core package -- no infrastructure imports)
 astrocyte_pgvector/     (separate package -- adapter)
   depends on: astrocyte.provider.VectorStore, astrocyte.types
 
-astrocyte_neo4j/        (planned -- separate package)
+astrocyte_neo4j/        (shipped v0.8.0 -- separate package)
   depends on: astrocyte.provider.GraphStore, astrocyte.types
 ```
 
@@ -1155,8 +1155,8 @@ The existing architecture documents reference a Rust strategy for performance-cr
 | Package | Purpose | License | Notes |
 |---|---|---|---|
 | `astrocyte-pgvector` | PostgreSQL + pgvector vector store | MIT | Already exists |
-| `astrocyte-neo4j` | Neo4j graph store | MIT | Planned v1.0.0 |
-| `astrocyte-elasticsearch` | Elasticsearch document store | MIT | Planned v1.0.0 |
+| `astrocyte-neo4j` | Neo4j graph store | MIT | Shipped v0.8.0 |
+| `astrocyte-elasticsearch` | Elasticsearch document store | MIT | Shipped v0.8.0 |
 | `astrocyte-falkordb` | FalkorDB graph store (Redis-based) | MIT | Post-v1.0.0 |
 | `astrocyte-kafka` | Kafka ingest source adapter | MIT | Planned v1.0.0 |
 | `astrocyte-redis-streams` | Redis Streams ingest source adapter | MIT | Planned v1.0.0 |

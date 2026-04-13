@@ -557,7 +557,9 @@ Error responses follow a consistent JSON structure:
 
 ## Further reading
 
-- [Configuration reference](configuration-reference.md) -- YAML schema for banks, storage, and extraction profiles.
-- [Authentication setup](authentication-setup.md) -- Token issuance, API keys, and OIDC integration.
-- [Access control setup](access-control-setup.md) -- Role-based and attribute-based policies.
-- [Storage backend setup](storage-backend-setup.md) -- PostgreSQL, SQLite, and custom backend configuration.
+- [Configuration reference](configuration-reference/) — YAML schema for banks, storage, and extraction profiles
+- [Bank management](bank-management/) — multi-bank queries, patterns, and lifecycle
+- [Authentication setup](authentication-setup/) — token issuance, API keys, and OIDC integration
+- [Access control setup](access-control-setup/) — role-based and attribute-based policies
+- [Storage backend setup](storage-backend-setup/) — pgvector, Qdrant, Neo4j, Elasticsearch
+- [MIP developer guide](../plugins/mip-developer-guide/) — declarative routing rules for retain operations

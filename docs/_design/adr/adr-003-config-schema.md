@@ -139,7 +139,7 @@ deployment:
 
 **Design decisions within `deployment`**:
 - `mode` defaults to `"library"`. When `"standalone"`, Astrocyte expects to be run via `astrocyte serve` CLI command which starts FastAPI/Uvicorn.
-- Gateway plugin mode (`"plugin"`) is deferred per ADR-001. The config section reserves the value but does not implement it.
+- Gateway plugin mode (`"plugin"`) is implemented — Kong, APISIX, and Azure APIM plugins shipped in v0.8.x (see `gateway-plugins/`).
 - `workers` controls Uvicorn worker count. Default 1 for development, recommend `2 * CPU + 1` for production.
 
 ### Section 4: `identity`

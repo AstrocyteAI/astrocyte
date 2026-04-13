@@ -328,6 +328,8 @@ See [Monitoring & observability](monitoring-and-observability.md) for dashboard 
 
 ## Further reading
 
-- [Access control setup](access-control-setup.md) -- principals, grants, and per-bank permissions
-- [Configuration reference](configuration-reference.md) -- full `astrocyte.yaml` key reference
-- [Monitoring & observability](monitoring-and-observability.md) -- health endpoints, metrics, alerting
+- [Memory API reference](memory-api-reference/) — retain/recall/reflect/forget signatures
+- [Access control setup](access-control-setup/) — principals, grants, and per-bank permissions
+- [Configuration reference](configuration-reference/) — full `astrocyte.yaml` key reference
+- [Monitoring & observability](monitoring-and-observability/) — health endpoints, metrics, alerting
+- [Multi-bank orchestration](../design/multi-bank-orchestration/) — design doc with strategy details and RRF fusion
