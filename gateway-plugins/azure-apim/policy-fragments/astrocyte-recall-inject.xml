@@ -1,0 +1,100 @@
+<!--
+  Astrocyte recall + inject policy fragment for Azure API Management.
+
+  Pre-hook: Extracts the last user message from an OpenAI-compatible
+  /chat/completions request, calls the Astrocyte gateway to recall
+  relevant memories, and injects them into the system prompt.
+
+  Named values required:
+    - astrocyte-gateway-url  (e.g. https://astrocyte.internal:8900)
+    - astrocyte-api-key      (API key for gateway authentication)
+
+  Usage:
+    <include-fragment fragment-id="astrocyte-recall-inject" />
+-->
+<fragment>
+  <!-- Only process OpenAI-compatible chat completion requests -->
+  <choose>
+    <when condition="@(context.Request.Body != null)">
+      <set-variable name="originalBody" value="@(context.Request.Body.As<string>(preserveContent: true))" />
+      <set-variable name="requestJson" value="@{
+        var body = JObject.Parse((string)context.Variables["originalBody"]);
+        var messages = body["messages"] as JArray;
+        if (messages == null || messages.Count == 0) return "";
+        // Find the last user message
+        for (int i = messages.Count - 1; i >= 0; i--) {
+          if (messages[i]["role"]?.ToString() == "user") {
+            return messages[i]["content"]?.ToString() ?? "";
+          }
+        }
+        return "";
+      }" />
+      <!-- Resolve bank_id from header or default -->
+      <set-variable name="bankId" value="@{
+        var header = context.Request.Headers.GetValueOrDefault("X-Astrocyte-Bank", "");
+        return string.IsNullOrEmpty(header) ? "default" : header;
+      }" />
+      <choose>
+        <when condition="@(!string.IsNullOrEmpty((string)context.Variables["requestJson"]))">
+          <!-- Call Astrocyte recall -->
+          <send-request mode="new" response-variable-name="recallResponse" timeout="5">
+            <set-url>@($"{{{{astrocyte-gateway-url}}}}/v1/recall")</set-url>
+            <set-method>POST</set-method>
+            <set-header name="Content-Type" exists-action="override">
+              <value>application/json</value>
+            </set-header>
+            <set-header name="X-Api-Key" exists-action="override">
+              <value>{{astrocyte-api-key}}</value>
+            </set-header>
+            <set-body>@{
+              return new JObject(
+                new JProperty("query", (string)context.Variables["requestJson"]),
+                new JProperty("bank_id", (string)context.Variables["bankId"]),
+                new JProperty("max_results", 5)
+              ).ToString();
+            }</set-body>
+          </send-request>
+          <!-- Inject memories into system prompt if recall returned hits -->
+          <choose>
+            <when condition="@(((IResponse)context.Variables["recallResponse"]).StatusCode == 200)">
+              <set-variable name="recallBody" value="@(((IResponse)context.Variables["recallResponse"]).Body.As<string>())" />
+              <set-body>@{
+                var recall = JObject.Parse((string)context.Variables["recallBody"]);
+                var hits = recall["hits"] as JArray;
+                if (hits == null || hits.Count == 0) {
+                  return (string)context.Variables["originalBody"];
+                }
+                // Format memory hits
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("The following memories are relevant to this conversation:");
+                for (int i = 0; i < hits.Count; i++) {
+                  sb.AppendLine($"[Memory {i + 1}] {hits[i]["text"]?.ToString()}");
+                }
+                var memoryBlock = sb.ToString();
+                // Inject into request body
+                var body = JObject.Parse((string)context.Variables["originalBody"]);
+                var messages = body["messages"] as JArray;
+                bool hasSystem = false;
+                foreach (var msg in messages) {
+                  if (msg["role"]?.ToString() == "system") {
+                    msg["content"] = msg["content"]?.ToString() + "\n\n" + memoryBlock;
+                    hasSystem = true;
+                    break;
+                  }
+                }
+                if (!hasSystem) {
+                  var systemMsg = new JObject(
+                    new JProperty("role", "system"),
+                    new JProperty("content", memoryBlock)
+                  );
+                  messages.Insert(0, systemMsg);
+                }
+                return body.ToString();
+              }</set-body>
+            </when>
+          </choose>
+        </when>
+      </choose>
+    </when>
+  </choose>
+</fragment>
