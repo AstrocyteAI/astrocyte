@@ -60,8 +60,8 @@ const topicItems = {
       items: [
         { label: "Neuroscience & vocabulary", link: "/design/neuroscience-astrocyte/" },
         { label: "Design principles", link: "/design/design-principles/" },
-        { label: "Architecture framework", link: "/design/architecture-framework/" },
-        { label: "Architecture brief (C4 & domain)", link: "/design/architecture-brief/" },
+        { label: "Architecture", link: "/design/architecture-framework/" },
+        { label: "C4, deployment & domain model", link: "/design/c4-deployment-domain/" },
         { label: "Product roadmap v1", link: "/design/product-roadmap-v1/" },
         {
           label: "ADRs",
@@ -95,7 +95,7 @@ const topicItems = {
         { label: "Memory Intent Protocol (MIP)", link: "/design/memory-intent-protocol/" },
         { label: "Multi-bank orchestration", link: "/design/multi-bank-orchestration/" },
         { label: "Storage and data planes", link: "/design/storage-and-data-planes/" },
-        { label: "M5 — Adapter packages", link: "/design/m5-adapter-packages/" },
+        { label: "Storage adapter packages", link: "/design/adapter-packages/" },
       ],
     },
     // ── Integrations & Extensibility ──

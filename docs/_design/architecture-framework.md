@@ -4,7 +4,7 @@ This document defines the layer boundaries, composition model, and relationship 
 
 **AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); the app maps credentials to an `AstrocyteContext` (at minimum a **principal** string; optionally structured **`actor`**, **`on_behalf_of`** (**OBO** — *on-behalf-of / delegated access*; standard in OAuth·identity; see [ADR-002](./adr/adr-002-identity-model.md)), **`tenant`**). Deciding **what** that identity may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable `access_grants` (including **OBO** permission intersection) and, in future, optional external policy engines — see section 4.6.
 
-For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the design principles these layers implement, see `design-principles.md`. For **C4 context/container diagrams**, deployment-model trade-offs, bounded-context map, and sequence diagrams aligned to product milestones, see `architecture-brief.md` and `product-roadmap-v1.md`.
+For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the design principles these layers implement, see `design-principles.md`. For **C4 context/container diagrams**, deployment-model trade-offs, bounded-context map, and sequence diagrams aligned to product milestones, see `c4-deployment-domain.md` and `product-roadmap-v1.md`.
 
 ---
 

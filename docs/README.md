@@ -59,7 +59,7 @@ Indexes below use **topic bands** (sidebar order matches `astro.config.mjs`).
 
 | # | Title | Topic |
 |---|-------|--------|
-| — | [Architecture brief (C4, domain, sequences)](./_design/architecture-brief.md) | Product architecture: context/containers, deployment models, DDD, hexagonal map |
+| — | [C4, deployment & domain model](./_design/c4-deployment-domain.md) | Product architecture: context/containers, deployment models, DDD, hexagonal map |
 | — | [Product roadmap v1 (M1–M7)](./_design/product-roadmap-v1.md) | Versioned milestones, gap-to-release mapping; **M5** + **M7** = **v0.8.0** (adapters + authority); **M7** separate from **cost tiers** (`tiered_retrieval`) |
 | — | [ADR-001 Deployment models](./_design/adr/adr-001-deployment-models.md) | Library vs standalone gateway vs gateway plugin |
 | — | [ADR-002 Identity model](./_design/adr/adr-002-identity-model.md) | Structured `AstrocyteContext`, OBO (on-behalf-of / delegated access), migration phases |
