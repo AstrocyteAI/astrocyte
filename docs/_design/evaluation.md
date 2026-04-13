@@ -306,7 +306,49 @@ astrocyte eval --suite basic --format table
 
 ---
 
-## 7. Evaluation and the two-tier model
+## 7. External benchmarks
+
+Astrocyte includes adapters for two academic memory benchmarks that test retrieval and reasoning quality on realistic conversational data.
+
+### 7.1 LoCoMo (ECAI 2025)
+
+[LoCoMo](https://github.com/snap-research/locomo) tests very long-term conversational memory across four QA categories:
+
+| Category | Tests | Question count |
+|---|---|---|
+| Single-hop | Direct fact recall from a single session | 282 |
+| Multi-hop | Reasoning across multiple sessions | 321 |
+| Open-domain | Broad knowledge questions | 96 |
+| Temporal | Time-aware reasoning (ordering, dates) | 841 |
+
+The dataset contains 10 conversations with ~200 sessions each and 1,986 total questions. The adapter (`astrocyte.eval.benchmarks.locomo`) retains each session as a conversational memory with `occurred_at` timestamps and dialogue-aware chunking, then evaluates recall + reflect against ground-truth answers using word overlap scoring.
+
+### 7.2 LongMemEval
+
+[LongMemEval](https://github.com/xiaowu0162/LongMemEval) tests memory extraction, reasoning, and temporal ordering from long conversation histories. The adapter (`astrocyte.eval.benchmarks.longmemeval`) loads conversation context, retains it, and evaluates against labeled QA pairs.
+
+### 7.3 Running benchmarks locally
+
+Benchmarks are run via `make` targets in `astrocyte-py/`:
+
+```bash
+make bench-smoke              # In-memory, no API key needed
+make bench-locomo-quick       # 50 questions, ~2-3 min (requires OPENAI_API_KEY)
+make bench-locomo             # Full dataset, ~30-60 min
+make bench-longmemeval        # LongMemEval
+make bench-compare            # Side-by-side: built-in OpenAI vs LiteLLM adapter
+make bench                    # All benchmarks
+```
+
+Datasets are fetched automatically on first run to `datasets/` (gitignored). Results are written to `benchmark-results/`.
+
+### 7.4 CI integration
+
+The GitHub Actions workflow (`.github/workflows/benchmarks.yml`) runs benchmarks weekly and on manual dispatch. It clones datasets, runs the selected benchmarks with `--max-questions 200` by default, and uploads results as artifacts.
+
+---
+
+## 8. Evaluation and the two-tier model
 
 | Suite | Tier 1 behavior | Tier 2 behavior |
 |---|---|---|
