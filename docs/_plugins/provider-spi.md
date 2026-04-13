@@ -2,7 +2,7 @@
 
 **SPI** means **Service Provider Interface**: a documented contract that third-party packages implement and register (same idea as Java’s `ServiceLoader` SPI; in Python, `typing.Protocol` plus `pyproject.toml` entry points).
 
-This document defines the **three memory-related** Service Provider Interfaces (**Retrieval** = VectorStore / GraphStore / DocumentStore adapters; **Memory Engine**; **LLM**), an **optional cross-cutting Memory Export Sink** SPI for warehouse / lakehouse / open table-format **durable export** (append events—not online `recall`), plus an **optional cross-cutting** Outbound Transport SPI for HTTP/TLS/proxy configuration. For architecture and the read vs export split, see `architecture-framework.md` §2, `storage-and-data-planes.md`, and `memory-export-sink.md`. For outbound transport rationale and packaging, see `outbound-transport.md`.
+This document defines the **three memory-related** Service Provider Interfaces (**Retrieval** = VectorStore / GraphStore / DocumentStore adapters; **Memory Engine**; **LLM**), an **optional cross-cutting Memory Export Sink** SPI for warehouse / lakehouse / open table-format **durable export** (append events—not online `recall`), plus an **optional cross-cutting** Outbound Transport SPI for HTTP/TLS/proxy configuration. For architecture and the read vs export split, see `architecture.md` §2, `storage-and-data-planes.md`, and `memory-export-sink.md`. For outbound transport rationale and packaging, see `outbound-transport.md`.
 
 **Operators** (reference REST gateway, poll-based ingest, API edge): [Quick Start](/end-user/quick-start/), [Production-grade HTTP service](/end-user/production-grade-http-service/), [Poll ingest with the standalone gateway](/end-user/poll-ingest-gateway/), [Gateway edge & API gateways](/end-user/gateway-edge-and-api-gateways/). **Distribution and entry points:** [Ecosystem & packaging](/plugins/ecosystem-and-packaging/).
 
@@ -12,7 +12,7 @@ This document defines the **three memory-related** Service Provider Interfaces (
 
 ### 1.1 Overview
 
-**Scope:** Tier 1 adapters are **retrieval-oriented** (not blob/object storage). In RAG and hybrid-search literature, the same ideas are often called **retrieval backends** or **retrieval infrastructure**: **VectorStore** ≈ dense / semantic (vector DB, ANN index), **GraphStore** ≈ structured graph traversal (knowledge graph), **DocumentStore** ≈ sparse / lexical (BM25, full-text). See `architecture-framework.md` §2 (Tier 1 table).
+**Scope:** Tier 1 adapters are **retrieval-oriented** (not blob/object storage). In RAG and hybrid-search literature, the same ideas are often called **retrieval backends** or **retrieval infrastructure**: **VectorStore** ≈ dense / semantic (vector DB, ANN index), **GraphStore** ≈ structured graph traversal (knowledge graph), **DocumentStore** ≈ sparse / lexical (BM25, full-text). See `architecture.md` §2 (Tier 1 table).
 
 Retrieval providers are simple adapters over those systems. They handle CRUD operations on vectors, entities, and documents **as indexed for retrieval**. Astrocyte's **built-in intelligence pipeline** (see `built-in-pipeline.md`) orchestrates these stores to provide the full memory experience: embedding, entity extraction, multi-strategy retrieval, fusion, and synthesis.
 
@@ -597,11 +597,11 @@ The Astrocyte LLM SPI is intentionally minimal (`complete()` + `embed()`) so tha
 
 | Package | Wraps | Models / Coverage | Dependency |
 |---|---|---|---|
-| `astrocyte-litellm` | LiteLLM | 100+ models across all providers (OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, etc.) | `litellm` |
+| `astrocyte-llm-litellm` | LiteLLM | 100+ models across all providers (OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, etc.) | `litellm` |
 | `astrocyte-openai` | OpenAI SDK | GPT-4o, GPT-4o-mini, o1, o3, text-embedding-3-* | `openai` |
 | `astrocyte-anthropic` | Anthropic SDK | Claude Opus, Sonnet, Haiku | `anthropic` |
 
-**Recommendation:** Use `astrocyte-litellm` if you need flexibility across providers or plan to switch models. Use a direct adapter if you're committed to one provider and want minimal dependencies.
+**Recommendation:** Use `astrocyte-llm-litellm` if you need flexibility across providers or plan to switch models. Use a direct adapter if you're committed to one provider and want minimal dependencies.
 
 ### 4.6 Cloud-managed LLM endpoints
 
@@ -824,7 +824,7 @@ Packaging and naming: **`ecosystem-and-packaging.md`** (`astrocyte-sink-*` prefi
 
 Some deployments route **all outbound HTTP** through a **credential gateway**, corporate proxy, or MITM-capable TLS stack. That requirement is **orthogonal** to memory tiers and to the LLM Provider SPI: it concerns **how** TCP/TLS/HTTP is established, not **what** `retain()` / `recall()` mean or **which** `complete()` / `embed()` API is called.
 
-Astrocyte defines an **optional** `OutboundTransportProvider` protocol. When configured, the core applies it at a **single choke point** when building HTTP clients used by LLM adapters and other outbound HTTP. **This is not an LLM gateway** and **not** a memory provider - see `architecture-framework.md` section 4.5 and the full design in `outbound-transport.md`.
+Astrocyte defines an **optional** `OutboundTransportProvider` protocol. When configured, the core applies it at a **single choke point** when building HTTP clients used by LLM adapters and other outbound HTTP. **This is not an LLM gateway** and **not** a memory provider - see `architecture.md` section 4.5 and the full design in `outbound-transport.md`.
 
 **Baseline without a plugin:** If `HTTP_PROXY` / `HTTPS_PROXY` / standard trust env vars are sufficient, users need no transport package; clients should respect the process environment.
 

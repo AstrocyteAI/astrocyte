@@ -26,7 +26,7 @@ Concrete directions (spec; implementation evolves in `astrocyte-py`, `astrocyte-
 
 | Layer | Role |
 |-------|------|
-| **Mapping** | **Agent card id**, **sandbox id**, **tenant**, and **environment** participate in resolving **principal** and **memory bank** (and optional defaults)—see `agent-framework-middleware.md` and `architecture-framework.md` §1. |
+| **Mapping** | **Agent card id**, **sandbox id**, **tenant**, and **environment** participate in resolving **principal** and **memory bank** (and optional defaults)—see `agent-framework-middleware.md` and `architecture.md` §1. |
 | **Authorization** | Per-bank **AuthZ** and grants remain mandatory for production; sandbox or environment may feed **external PDP** inputs—see `access-control.md`, `identity-and-external-policy.md`. |
 | **Policy** | Stricter **TTL**, **barriers**, or **export** rules for non-prod or untrusted tiers—see `policy-layer.md`, `data-governance.md`. |
 | **HTTP / Backend for Frontend (BFF)** | **Never** trust client-supplied **principal** or **bank** as sole proof; bind identity at the edge; see `_end-user/production-grade-http-service.md` §3. |
@@ -73,7 +73,7 @@ Even with strong **compute** isolation, **unrestricted outbound HTTP** from the 
 
 | Location | Purpose |
 |----------|---------|
-| **`docs/_design/`** (this doc, `architecture-framework.md`, `access-control.md`, `policy-layer.md`, `data-governance.md`) | Threat model, boundaries, policy hooks. |
+| **`docs/_design/`** (this doc, `architecture.md`, `access-control.md`, `policy-layer.md`, `data-governance.md`) | Threat model, boundaries, policy hooks. |
 | **`docs/_plugins/agent-framework-middleware.md`** | Card + **sandbox/environment** inputs to **principal / bank** resolvers. |
 | **`docs/_plugins/outbound-transport.md`** | Enterprise **HTTP/TLS/proxy** and credential gateways for **framework** outbound calls. |
 | **`docs/_end-user/production-grade-http-service.md`** | **Backend for Frontend (BFF)** AuthN binding, **no trusting** client-only principal, network and **API** hardening. |

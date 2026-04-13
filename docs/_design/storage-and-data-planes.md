@@ -2,7 +2,7 @@
 
 This page is a **routing hub**: it explains how Astrocyte splits **operational retrieval** (including recall against **serving / query layers** on top of warehouses and lakehouses), **durable export** to those systems for analytics, and **in-process bank health**—and which document to read next.
 
-**Canonical architecture:** [`architecture-framework.md`](./architecture-framework.md) §2 (*operational retrieval vs analytical persistence*) and §4 (*SPI overview*).
+**Canonical architecture:** [`architecture.md`](./architecture.md) §2 (*operational retrieval vs analytical persistence*) and §4 (*SPI overview*).
 
 ---
 

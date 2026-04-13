@@ -1,0 +1,48 @@
+# Benchmark configuration using astrocyte-llm-litellm adapter.
+#
+# Same models as config.yaml (OpenAI gpt-4o-mini / text-embedding-3-small)
+# but routed through LiteLLM gateway. Compare results side-by-side:
+#
+#   make bench-compare
+#
+# Requires:
+#   pip install astrocyte-llm-litellm   (or: uv pip install -e ../adapters-llm-py/astrocyte-llm-litellm)
+#   export OPENAI_API_KEY=sk-...
+
+profile: research
+
+provider_tier: storage
+
+# -- LLM & Embedding via LiteLLM --
+llm_provider: litellm
+llm_provider_config:
+  model: openai/gpt-4o-mini
+  embedding_model: openai/text-embedding-3-small
+
+# -- Policy (relaxed for benchmarking) --
+barriers:
+  pii:
+    mode: disabled
+  validation:
+    reject_empty_content: true
+
+homeostasis:
+  recall_max_tokens: 16384
+  reflect_max_tokens: 16384
+  rate_limits:
+    retain_per_minute: 500
+    recall_per_minute: 500
+    reflect_per_minute: 200
+
+signal_quality:
+  dedup:
+    enabled: false
+  noisy_bank:
+    enabled: false
+
+escalation:
+  degraded_mode: error
+
+observability:
+  otel_enabled: false
+  prometheus_enabled: false

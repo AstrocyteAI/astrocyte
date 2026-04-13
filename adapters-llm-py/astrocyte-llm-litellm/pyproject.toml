@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocyte-llm-litellm"
+dynamic = ["version"]
+description = "LiteLLM LLMProvider adapter for Astrocyte — 100+ models via one gateway"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "astrocyte>=0.7.0,<0.9",
+    "litellm>=1.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.2",
+]
+
+[project.entry-points."astrocyte.llm_providers"]
+litellm = "astrocyte_llm_litellm:LiteLLMProvider"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }  # Git root is two levels up
+
+[tool.hatch.build.targets.wheel]
+packages = ["astrocyte_llm_litellm"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-x --timeout=60 --tb=short"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]
+
+[tool.uv.sources]
+astrocyte = { path = "../../astrocyte-py", editable = true }

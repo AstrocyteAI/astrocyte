@@ -45,6 +45,7 @@ build/
 .coverage
 htmlcov/
 benchmark-results/
+datasets/
 
 # Rust
 target/

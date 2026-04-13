@@ -2,7 +2,7 @@
 
 This document specifies the open-source intelligence pipeline that ships with the Astrocyte core. The pipeline activates when `provider_tier: storage` - it transforms the Retrieval SPI's CRUD operations into a full memory experience.
 
-For the two-tier architecture this pipeline serves, see `architecture-framework.md`. For the Retrieval SPI it orchestrates, see `provider-spi.md`. For governance policies that wrap the pipeline, see `policy-layer.md`.
+For the two-tier architecture this pipeline serves, see `architecture.md`. For the Retrieval SPI it orchestrates, see `provider-spi.md`. For governance policies that wrap the pipeline, see `policy-layer.md`.
 
 ---
 
@@ -281,7 +281,7 @@ Per-memory composite score combining recency (exponential decay), frequency (rec
 
 ### 9.4 Adaptive tiered retrieval (implemented)
 
-5-tier **progressive escalation by cost and latency**: cache → fuzzy → BM25 → full multi-strategy → agentic recall. Each tier is cheaper than the next. Stops when `min_results` with `min_score` are found. Module: `astrocyte/pipeline/tiered_retrieval.py`. Config: `tiered_retrieval` in `astrocyte.yaml` (including optional `full_recall: hybrid` when using `HybridEngineProvider` — see core docstrings and `product-roadmap-v1.md`).
+5-tier **progressive escalation by cost and latency**: cache → fuzzy recent → BM25 → full multi-strategy → agentic recall. Each tier is cheaper than the next. Stops when `min_results` with `min_score` are found. Module: `astrocyte/pipeline/tiered_retrieval.py`. Config: `tiered_retrieval` in `astrocyte.yaml` (including optional `full_recall: hybrid` when using `HybridEngineProvider` — see core docstrings and `product-roadmap-v1.md`).
 
 **Terminology — cost tiers vs truth tiers:** “Tier” here means **how much work recall does**, not **which source is authoritative**. Do **not** confuse this with *precedence-in-the-prompt* RAG patterns (e.g. labeled Priority 1 / 2 / 3 blocks where graph facts override statistics and vectors). That style optimizes **structured precedence and conflict handling at generation time**; Astrocyte’s default story remains **algorithmic fusion** (e.g. RRF) and optional **layer weights**. **Structured recall authority** (**M7**, **v0.8.0**) is **implemented** as optional `recall_authority` in `astrocyte.yaml` (`RecallResult.authority_context`, reflect injection) — see **`adr-004-recall-authority.md`** and **`product-roadmap-v1.md` § M7**. It is **not** the default recall path when disabled.
 

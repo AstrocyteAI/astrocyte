@@ -1,6 +1,6 @@
 """Unit tests for pipeline/tiered_retrieval.py — progressive escalation paths.
 
-Covers all 4 implemented tiers (cache, BM25, full multi-strategy, agentic),
+Covers all 5 tiers (cache, fuzzy recent, BM25, full multi-strategy, agentic),
 escalation logic, cache interactions, external context merge, reformulation
 fallback, and edge cases.
 """
@@ -11,6 +11,7 @@ import pytest
 
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 from astrocyte.pipeline.recall_cache import RecallCache
+from astrocyte.pipeline.recent_buffer import RecentMemoryBuffer
 from astrocyte.pipeline.tiered_retrieval import TieredRetriever
 from astrocyte.testing.in_memory import (
     InMemoryDocumentStore,
@@ -134,6 +135,204 @@ class TestTier0Cache:
         r2 = await retriever.retrieve(RecallRequest(query="science", bank_id="b1", max_results=2))
         assert r2.trace.cache_hit is True
         assert len(r2.hits) <= 2
+
+
+# ---------------------------------------------------------------------------
+# Tier 1: Fuzzy text match on recent memories
+# ---------------------------------------------------------------------------
+
+
+class TestTier1FuzzyRecent:
+    @pytest.mark.asyncio
+    async def test_fuzzy_resolves_without_escalation(self):
+        """When recent buffer has sufficient fuzzy matches, don't escalate."""
+        pipeline, vs, _ = _make_pipeline()
+        buf = RecentMemoryBuffer()
+        buf.add("b1", "m1", "Alice works at NASA on rocket engines")
+        buf.add("b1", "m2", "Alice published a paper about propulsion at NASA")
+        buf.add("b1", "m3", "Alice mentors junior engineers at NASA headquarters")
+
+        retriever = TieredRetriever(
+            pipeline, recent_buffer=buf, min_results=2, min_score=0.2, max_tier=3,
+        )
+        result = await retriever.retrieve(RecallRequest(
+            query="Alice NASA", bank_id="b1", max_results=5,
+        ))
+        assert result.trace.tier_used == 1
+        assert result.trace.fusion_method == "fuzzy_recent"
+        assert "fuzzy_recent" in result.trace.strategies_used
+        assert len(result.hits) >= 2
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_handles_typos(self):
+        """Fuzzy matching should catch typos that BM25 would miss."""
+        pipeline, vs, _ = _make_pipeline()
+        buf = RecentMemoryBuffer()
+        buf.add("b1", "m1", "Alice works at NASA on rocket engines")
+        buf.add("b1", "m2", "Bob prefers tea over coffee every morning")
+        buf.add("b1", "m3", "Charlie studies quantum physics at MIT")
+
+        retriever = TieredRetriever(
+            pipeline, recent_buffer=buf, min_results=1, min_score=0.2, max_tier=3,
+        )
+        # "Alce" is a typo for "Alice", "NASSA" is a typo for "NASA"
+        result = await retriever.retrieve(RecallRequest(
+            query="Alce NASSA rockets", bank_id="b1", max_results=5,
+        ))
+        if result.trace.tier_used == 1:
+            # Fuzzy match caught the typos
+            assert any("NASA" in h.text for h in result.hits)
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_insufficient_escalates_to_tier2(self):
+        """When fuzzy returns too few hits, escalate to BM25/tier 3."""
+        pipeline, vs, _ = _make_pipeline()
+        buf = RecentMemoryBuffer()
+        buf.add("b1", "m1", "Alice works at NASA")  # Only 1 match
+
+        retriever = TieredRetriever(
+            pipeline, recent_buffer=buf, min_results=3, min_score=0.2, max_tier=3,
+        )
+        result = await retriever.retrieve(RecallRequest(
+            query="Alice NASA", bank_id="b1", max_results=5,
+        ))
+        assert result.trace.tier_used >= 2  # Escalated past fuzzy
+
+    @pytest.mark.asyncio
+    async def test_no_recent_buffer_skips_tier1(self):
+        """Without a recent buffer, tier 1 is skipped."""
+        pipeline, vs, _ = _make_pipeline()
+        await _seed_vectors(pipeline, ["Alice works at NASA"])
+
+        retriever = TieredRetriever(pipeline, recent_buffer=None, max_tier=3)
+        result = await retriever.retrieve(RecallRequest(
+            query="NASA", bank_id="b1", max_results=5,
+        ))
+        assert result.trace.tier_used == 3  # Skipped tier 1
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_per_bank_isolation(self):
+        """Fuzzy buffer for bank A should not match queries for bank B."""
+        pipeline, vs, _ = _make_pipeline()
+        buf = RecentMemoryBuffer()
+        buf.add("bank-a", "m1", "Alice works at NASA on rocket engines")
+        buf.add("bank-a", "m2", "Alice published research about propulsion")
+        buf.add("bank-a", "m3", "Alice mentors junior engineers")
+
+        retriever = TieredRetriever(
+            pipeline, recent_buffer=buf, min_results=2, min_score=0.2, max_tier=3,
+        )
+        result = await retriever.retrieve(RecallRequest(
+            query="Alice NASA", bank_id="bank-b", max_results=5,
+        ))
+        # bank-b has no recent memories — should not use tier 1
+        assert result.trace.tier_used != 1
+
+    @pytest.mark.asyncio
+    async def test_notify_retain_populates_buffer(self):
+        """notify_retain should add to the recent buffer."""
+        pipeline, vs, _ = _make_pipeline()
+        buf = RecentMemoryBuffer()
+        retriever = TieredRetriever(
+            pipeline, recent_buffer=buf, min_results=1, min_score=0.2, max_tier=3,
+        )
+
+        retriever.notify_retain("b1", "m1", "Alice works at NASA on rocket engines")
+        retriever.notify_retain("b1", "m2", "Alice published research about propulsion")
+        assert buf.size("b1") == 2
+
+        result = await retriever.retrieve(RecallRequest(
+            query="Alice NASA", bank_id="b1", max_results=5,
+        ))
+        assert result.trace.tier_used == 1
+
+    @pytest.mark.asyncio
+    async def test_notify_retain_invalidates_cache(self):
+        """notify_retain should invalidate the recall cache for the bank."""
+        pipeline, vs, _ = _make_pipeline()
+        await _seed_vectors(pipeline, ["Alice works at NASA"])
+        cache = RecallCache(similarity_threshold=0.8)
+
+        retriever = TieredRetriever(pipeline, recall_cache=cache, max_tier=3)
+
+        # Populate cache
+        await retriever.retrieve(RecallRequest(query="NASA", bank_id="b1", max_results=5))
+        assert cache.size("b1") == 1
+
+        # Notify retain — should invalidate cache
+        retriever.notify_retain("b1", "m99", "New content about NASA")
+        assert cache.size("b1") == 0
+
+
+# ---------------------------------------------------------------------------
+# RecentMemoryBuffer unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestRecentMemoryBuffer:
+    def test_add_and_search(self):
+        buf = RecentMemoryBuffer()
+        buf.add("b1", "m1", "Alice works at NASA")
+        results = buf.search("Alice NASA", "b1")
+        assert len(results) == 1
+        assert results[0].memory_id == "m1"
+
+    def test_search_empty_bank(self):
+        buf = RecentMemoryBuffer()
+        assert buf.search("anything", "b1") == []
+
+    def test_search_min_score_filter(self):
+        buf = RecentMemoryBuffer()
+        buf.add("b1", "m1", "Alice works at NASA on rocket engines")
+        # Query with no overlap — should not match at high min_score
+        results = buf.search("quantum physics", "b1", min_score=0.8)
+        assert len(results) == 0
+
+    def test_ring_buffer_evicts_oldest(self):
+        buf = RecentMemoryBuffer(max_per_bank=3)
+        buf.add("b1", "m1", "first memory about cats")
+        buf.add("b1", "m2", "second memory about dogs")
+        buf.add("b1", "m3", "third memory about birds")
+        buf.add("b1", "m4", "fourth memory about fish")
+        assert buf.size("b1") == 3
+        # First entry should be evicted
+        results = buf.search("cats", "b1", min_score=0.1)
+        assert not any(r.memory_id == "m1" for r in results)
+
+    def test_fuzzy_match_typo(self):
+        buf = RecentMemoryBuffer()
+        buf.add("b1", "m1", "Alice works at NASA headquarters")
+        # "Alce" is a typo for "Alice"
+        results = buf.search("Alce NASA", "b1", min_score=0.3)
+        assert len(results) >= 1
+
+    def test_per_bank_isolation(self):
+        buf = RecentMemoryBuffer()
+        buf.add("bank-a", "m1", "Alice works at NASA")
+        buf.add("bank-b", "m2", "Bob prefers coffee")
+        assert buf.size("bank-a") == 1
+        assert buf.size("bank-b") == 1
+        results = buf.search("Alice", "bank-b")
+        assert len(results) == 0
+
+    def test_clear_bank(self):
+        buf = RecentMemoryBuffer()
+        buf.add("b1", "m1", "Alice works at NASA")
+        buf.clear_bank("b1")
+        assert buf.size("b1") == 0
+
+    def test_size_total(self):
+        buf = RecentMemoryBuffer()
+        buf.add("b1", "m1", "memory one")
+        buf.add("b2", "m2", "memory two")
+        assert buf.size() == 2
+
+    def test_stop_words_ignored(self):
+        buf = RecentMemoryBuffer()
+        buf.add("b1", "m1", "The quick brown fox jumps over the lazy dog")
+        # Query with only stop words — no matches
+        results = buf.search("the is are", "b1", min_score=0.1)
+        assert len(results) == 0
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 This document describes how to operate Astrocyte **behind an HTTP (or similar) API** in production: security, durability, observability, and compliance. It applies whether you **embed** `Astrocyte` in your own service or use the optional **`astrocyte-gateway-py`** reference HTTP service in this repository.
 
-For the optional inbound edge and where a gateway sits relative to the core, see `architecture-framework.md` §3. For principals and banks, see `access-control.md`. For identity and external policy engines, see `identity-and-external-policy.md`. For outbound HTTP to LLMs and proxies, see `outbound-transport.md`.
+For the optional inbound edge and where a gateway sits relative to the core, see `architecture.md` §3. For principals and banks, see `access-control.md`. For identity and external policy engines, see `identity-and-external-policy.md`. For outbound HTTP to LLMs and proxies, see `outbound-transport.md`.
 
 **Checklists:** Items below use `- [ ]` so they render as **checkboxes** in GitHub, GitLab, VS Code, and many Markdown previews. Copy the doc or track items in your issue tracker.
 

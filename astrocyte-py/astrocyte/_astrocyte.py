@@ -169,6 +169,7 @@ class Astrocyte:
         """Construct :class:`~astrocyte.pipeline.tiered_retrieval.TieredRetriever` when enabled."""
         from astrocyte.hybrid import HybridEngineProvider
         from astrocyte.pipeline.recall_cache import RecallCache
+        from astrocyte.pipeline.recent_buffer import RecentMemoryBuffer
         from astrocyte.pipeline.tiered_retrieval import TieredRetriever
 
         self._dispatcher.tiered_retriever = None
@@ -194,9 +195,11 @@ class Astrocyte:
                 max_entries=rcc.max_entries,
                 ttl_seconds=rcc.ttl_seconds,
             )
+        recent = RecentMemoryBuffer()
         self._dispatcher.tiered_retriever = TieredRetriever(
             self._pipeline,
             recall_cache=cache,
+            recent_buffer=recent,
             min_results=trc.min_results,
             min_score=trc.min_score,
             max_tier=trc.max_tier,

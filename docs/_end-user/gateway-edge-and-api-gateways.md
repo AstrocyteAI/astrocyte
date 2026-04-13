@@ -28,12 +28,12 @@ Internet / VPC → API gateway or ingress (TLS, WAF, coarse rate limits)
 
 **Vendor-specific notes (patterns, not product endorsements)**
 
-| Platform | Role |
-|----------|------|
-| **Kong** | Routes, plugins (rate limit, JWT validation, OIDC), upstream to Kubernetes `Service` or VM pool |
-| **Apache APISIX** | Similar; use upstream health checks aligned with **`GET /health`** |
-| **Azure API Management** | Front door + policies; backend URL to your gateway **Service** / **Ingress** |
-| **AWS API Gateway + ALB** | Public API → Lambda/container; map authorizer claims to headers the gateway JWT mode expects |
+| Platform | Role | Astrocyte plugin |
+|----------|------|------------------|
+| **Kong** | Routes, plugins (rate limit, JWT validation, OIDC), upstream to Kubernetes `Service` or VM pool | [`gateway-plugins/kong/`](../../gateway-plugins/kong/) — Lua plugin for recall + retain |
+| **Apache APISIX** | Similar; use upstream health checks aligned with **`GET /health`** | [`gateway-plugins/apisix/`](../../gateway-plugins/apisix/) — Lua plugin for recall + retain |
+| **Azure API Management** | Front door + policies; backend URL to your gateway **Service** / **Ingress** | [`gateway-plugins/azure-apim/`](../../gateway-plugins/azure-apim/) — XML policy fragments (Bicep/Terraform/APIOps) |
+| **AWS API Gateway + ALB** | Public API → Lambda/container; map authorizer claims to headers the gateway JWT mode expects | — (not yet) |
 
 Keep **Astrocyte-specific** policy (banks, `recall_authority`, PII) in **`astrocyte.yaml`**; use the API gateway for **coarse** throttling, IP allow lists, and **OAuth** / **JWT** issuance at the edge if that matches your IdP layout.
 
@@ -59,15 +59,32 @@ Keep **Astrocyte-specific** policy (banks, `recall_authority`, PII) in **`astroc
 
 ---
 
-## 4. Connector track: more transports (streams, poll)
+## 4. Connector track: transports, poll, and gateway plugins
 
 **Shipped in-repo today:** **`astrocyte-ingestion-kafka`**, **`astrocyte-ingestion-redis`** (`type: stream`), **`astrocyte-ingestion-github`** (`type: poll`). Entry point groups: **`astrocyte.ingest_stream_drivers`**, **`astrocyte.ingest_poll_drivers`**.
 
-**Roadmap / deferred** (implement as separate PyPI packages when needed):
+### Gateway plugins (shipped)
+
+Thin integration plugins that add long-term memory to LLM API calls routed through existing API gateways. Each plugin intercepts OpenAI-compatible `/chat/completions` requests and transparently calls the Astrocyte standalone gateway for **recall** (pre-hook) and **retain** (post-hook).
+
+| Plugin | Gateway | Language | Location |
+|--------|---------|----------|----------|
+| **Kong** | [Kong Gateway](https://konghq.com/) | Lua | [`gateway-plugins/kong/`](../../gateway-plugins/kong/) |
+| **APISIX** | [Apache APISIX](https://apisix.apache.org/) | Lua | [`gateway-plugins/apisix/`](../../gateway-plugins/apisix/) |
+| **Azure APIM** | [Azure API Management](https://azure.microsoft.com/en-us/products/api-management) | XML policy fragments | [`gateway-plugins/azure-apim/`](../../gateway-plugins/azure-apim/) |
+
+**When to use gateway plugins vs the standalone gateway directly:**
+
+- Use a **gateway plugin** when your organization already routes LLM traffic through Kong, APISIX, or Azure APIM — zero agent code changes required.
+- Use the **standalone gateway** directly for new deployments, or when you need reflect, event streams, or poll connectors (plugins are request-scoped).
+
+See **[`gateway-plugins/README.md`](../../gateway-plugins/README.md)** for architecture, configuration, and limitations.
+
+### Roadmap / deferred
 
 - **NATS** (JetStream or core NATS) — same driver pattern as Kafka/Redis
 - **Additional poll drivers** (ticketing, CRM APIs) — same pattern as GitHub Issues
-- **Gateway plugins** (Kong/APIM-specific bundles) — packaging and docs only until a concrete product asks for them
+- **Additional gateway plugins** (AWS API Gateway, Envoy, etc.) — same thin-shim pattern
 
 See **[`product-roadmap-v1.md`](../_design/product-roadmap-v1.md)** § **v0.8.x — Connector & gateway integration track** and **[`adapters-ingestion-py/README.md`](../../adapters-ingestion-py/README.md)**.
 
@@ -77,4 +94,5 @@ See **[`product-roadmap-v1.md`](../_design/product-roadmap-v1.md)** § **v0.8.x 
 
 - **[Production-grade HTTP service](./production-grade-http-service.md)** — full checklist
 - **[`astrocyte-gateway-py` README](../../astrocyte-services-py/astrocyte-gateway-py/README.md)** — env, auth, Compose
+- **[Gateway plugins](../../gateway-plugins/README.md)** — Kong, APISIX, and Azure APIM integration plugins
 - **[ADR-001](../_design/adr/adr-001-deployment-models.md)** — library vs standalone gateway

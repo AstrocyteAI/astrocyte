@@ -2,7 +2,7 @@
 
 This roadmap organizes **8** identified architectural gaps into milestones, ordered by dependency and impact. Each milestone is a shippable increment — earlier milestones unblock later ones.
 
-**Architecture references**: See `architecture-brief.md` (System Architecture, Domain Model, Application Architecture), ADR-001 (Deployment Models), ADR-002 (Identity Model), ADR-003 (Config Schema).
+**Architecture references**: See `c4-deployment-domain.md` (System Architecture, Domain Model, Application Architecture), ADR-001 (Deployment Models), ADR-002 (Identity Model), ADR-003 (Config Schema).
 
 ---
 
@@ -236,7 +236,8 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 ### Deferred / remaining (see § Release Strategy)
 
 - NATS and other stream backends as needed
-- Additional **poll** drivers (beyond GitHub) and gateway **plugin** integrations (Kong, APISIX, …) as product priorities dictate
+- Additional **poll** drivers (beyond GitHub) as product priorities dictate
+- Additional gateway plugin targets (AWS API Gateway, Envoy, etc.) as needed — see **`gateway-plugins/`** for the shipped Kong, APISIX, and Azure APIM plugins
 
 ---
 
@@ -312,7 +313,7 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 - [x] AuthN maps to structured **`AstrocyteContext`**: **`api_key`**, **`jwt`/`jwt_hs256`**, **`jwt_oidc`** (JWKS, RS256) with **`ActorIdentity`** / claims — see `astrocyte-gateway-py` README and ADR-002.
 - [x] Webhook ingest works end-to-end through the gateway (`/v1/ingest/webhook/{source_id}`; CI + tests).
 - [x] Docker Compose + runbook bring up a working stack (`astrocyte-services-py/`; see services README).
-- [ ] **Performance:** < 10ms gateway-only overhead vs core latency — **not benchmarked in-repo**; treat as a follow-up measurement / load test, not a blocker for “M6 shipped.”
+- [ ] **Performance:** < 10ms gateway-only overhead vs core latency — a benchmark harness exists in-repo (`astrocyte-services-py/astrocyte-gateway-py/scripts/bench_gateway_overhead.py`) and a manual GitHub Actions workflow can run it, but the **< 10 ms** threshold is **not** enforced as a release gate because results are environment-dependent.
 - [x] **ADR-001:** Standalone gateway deployment path is **documented and implemented** (package, container, Helm, ops docs). Full organizational “validated” sign-off stays a **release / operator** checklist outside this file.
 
 ### Deferred (post–core gateway; scheduled from v0.8.x onward)
@@ -459,10 +460,10 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 
 ### v0.8.x — Connector & gateway integration track (toward v1.0.0)
 
-**Scope:** Implemented **from the v0.8.0 baseline** toward **v1.0.0**. You can describe this as the **“v0.9-era”** feature wave (streams, poll, gateway plugins) in planning docs; **git tags** stay **v0.8.1**, **v0.8.2**, … — **no v0.9.0 tag** — see § Release numbering.
+**Scope:** Implemented **from the v0.8.0 baseline** toward **v1.0.0**. You can describe this as the **”v0.9-era”** feature wave (streams, poll, gateway plugins) in planning docs; **git tags** stay **v0.8.1**, **v0.8.2**, … — **no v0.9.0 tag** — see § Release numbering.
 
 - Additional event stream / poll connectors (beyond Kafka, Redis, GitHub) and NATS where needed
-- Gateway **plugin** mode and integration kits (**Kong**, **APISIX**, **Azure API Management**, other API gateways / service meshes as needed)
+- **Gateway plugins — shipped:** Thin integration plugins for **Kong** (Lua), **Apache APISIX** (Lua), and **Azure API Management** (XML policy fragments + Bicep/Terraform/APIOps deployment). Located in **`gateway-plugins/`** at the repo root. Each plugin intercepts OpenAI-compatible `/chat/completions` requests and calls the standalone gateway for recall (pre-hook) and retain (post-hook). See **[`gateway-plugins/README.md`](../../gateway-plugins/README.md)**.
 - Hardening: CORS, body limits, admin auth, rate limits at the edge (as product requires)
 
 SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this track — **§ Stability: SPI, adapters, and config files**.
@@ -503,9 +504,10 @@ SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this tra
 
 **Primary engineering line — v0.8.x through v1.0.0**
 
-- **Streams, poll connectors, and gateway plugins** (Kong, APISIX, Azure API Management, others): implement on **v0.8.x** cadence per **§ v0.8.x — Connector & gateway integration track**.
+- **Streams and poll connectors** (Kafka, Redis, GitHub — shipped; NATS and others as needed): implement on **v0.8.x** cadence per **§ v0.8.x — Connector & gateway integration track**.
+  - **Gateway plugins** (Kong, APISIX, Azure APIM) **shipped** in **`gateway-plugins/`** — thin Lua/XML shims that call the standalone gateway for recall + retain.
 - **SPI, adapter, `astrocyte.yaml`, and `mip.yaml` stability:** follow **§ Stability**; encode deprecations before breaking changes.
-- Optional **gateway overhead benchmark** (M6 perf criterion) and **OpenAPI contract** tests for `/v1` if you want CI guarantees.
+- **Gateway quality gates:** benchmark tooling and OpenAPI contract tests already exist in-repo; decide whether to promote them from optional/manual checks to required CI or environment-specific SLO gates.
 
 **v1.0.0 GA**
 

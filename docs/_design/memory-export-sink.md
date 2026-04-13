@@ -6,7 +6,7 @@ This document specifies the **durable export / analytical persistence plane** fo
 
 **Non-goals:** This plane does **not** replace `brain.recall()` online path. It does **not** define similarity search over lake files **by itself**. Offline or batch SQL over exported tables is normal; **agent-time** hybrid recall still needs a **Tier 1** (or Tier 2) path—often implemented against a **serving** or query API **above** the same lake/warehouse (`storage-and-data-planes.md` §1). Downstream jobs (SQL, Spark, Flink, Trino) consume sink data for analytics; they are not a substitute for the export SPI unless you explicitly design a different product.
 
-**Related:** [`storage-and-data-planes.md`](./storage-and-data-planes.md) (hub), [`architecture-framework.md`](./architecture-framework.md) §2 (*operational vs analytical persistence*), [`provider-spi.md`](../_plugins/provider-spi.md) §5 (*Memory Export Sink SPI*), [`event-hooks.md`](./event-hooks.md) (*wiring from hooks*), [`memory-portability.md`](./memory-portability.md) (*AMA export vs sink events*), [`data-governance.md`](./data-governance.md) (*classification follows content into sinks only when explicitly allowed*).
+**Related:** [`storage-and-data-planes.md`](./storage-and-data-planes.md) (hub), [`architecture.md`](./architecture.md) §2 (*operational vs analytical persistence*), [`provider-spi.md`](../_plugins/provider-spi.md) §5 (*Memory Export Sink SPI*), [`event-hooks.md`](./event-hooks.md) (*wiring from hooks*), [`memory-portability.md`](./memory-portability.md) (*AMA export vs sink events*), [`data-governance.md`](./data-governance.md) (*classification follows content into sinks only when explicitly allowed*).
 
 ---
 

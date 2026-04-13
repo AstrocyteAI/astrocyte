@@ -18,6 +18,7 @@ const topicItems = {
   endUser: [
     { label: "Introduction", link: "/introduction/" },
     { label: "Quick Start", link: "/end-user/quick-start/" },
+    { label: "Configuration reference", link: "/end-user/configuration-reference/" },
     { label: "Production-grade HTTP service", link: "/end-user/production-grade-http-service/" },
     { label: "Poll ingest with the standalone gateway", link: "/end-user/poll-ingest-gateway/" },
     { label: "Gateway edge & API gateways", link: "/end-user/gateway-edge-and-api-gateways/" },
@@ -53,48 +54,88 @@ const topicItems = {
       ],
     },
   ],
-  /** Order matches README §3 bands (Foundations → Trust → Runtime → Durability → Quality). */
   design: [
-    { label: "Neuroscience & vocabulary", link: "/design/neuroscience-astrocyte/" },
-    { label: "Design principles", link: "/design/design-principles/" },
-    { label: "Architecture framework", link: "/design/architecture-framework/" },
-    { label: "Architecture brief (C4 & domain)", link: "/design/architecture-brief/" },
-    { label: "Product roadmap v1", link: "/design/product-roadmap-v1/" },
+    // ── Foundations ──
     {
-      label: "ADRs",
-      collapsed: true,
+      label: "Foundations",
       items: [
-        { label: "ADR-001 Deployment models", link: "/design/adr/adr-001-deployment-models/" },
-        { label: "ADR-002 Identity model", link: "/design/adr/adr-002-identity-model/" },
-        { label: "ADR-003 Config schema", link: "/design/adr/adr-003-config-schema/" },
-        { label: "ADR-004 Recall authority", link: "/design/adr/adr-004-recall-authority/" },
+        { label: "Neuroscience & vocabulary", link: "/design/neuroscience-astrocyte/" },
+        { label: "Design principles", link: "/design/design-principles/" },
+        { label: "Architecture", link: "/design/architecture/" },
+        { label: "C4, deployment & domain model", link: "/design/c4-deployment-domain/" },
+        { label: "Product roadmap v1", link: "/design/product-roadmap-v1/" },
+        {
+          label: "ADRs",
+          collapsed: true,
+          items: [
+            { label: "ADR-001 Deployment models", link: "/design/adr/adr-001-deployment-models/" },
+            { label: "ADR-002 Identity model", link: "/design/adr/adr-002-identity-model/" },
+            { label: "ADR-003 Config schema", link: "/design/adr/adr-003-config-schema/" },
+            { label: "ADR-004 Recall authority", link: "/design/adr/adr-004-recall-authority/" },
+          ],
+        },
       ],
     },
-    { label: "Storage and data planes", link: "/design/storage-and-data-planes/" },
-    { label: "Fellowship curriculum mapping", link: "/design/curriculum-mapping/" },
-    { label: "Implementation language strategy", link: "/design/implementation-language-strategy/" },
-    { label: "Identity & external policy", link: "/design/identity-and-external-policy/" },
-    { label: "Access control", link: "/design/access-control/" },
-    { label: "Sandbox awareness & exfiltration", link: "/design/sandbox-awareness-and-exfiltration/" },
-    { label: "Data governance", link: "/design/data-governance/" },
-    { label: "Innovations roadmap", link: "/design/innovations/" },
+    // ── Trust & Governance ──
     {
-      label: "Presentation layer & multimodal services",
-      link: "/design/presentation-layer-and-multimodal-services/",
+      label: "Trust & Governance",
+      items: [
+        { label: "Identity & external policy", link: "/design/identity-and-external-policy/" },
+        { label: "Access control", link: "/design/access-control/" },
+        { label: "Data governance", link: "/design/data-governance/" },
+        { label: "Sandbox awareness & exfiltration", link: "/design/sandbox-awareness-and-exfiltration/" },
+        { label: "Policy layer", link: "/design/policy-layer/" },
+      ],
     },
-    { label: "Policy layer", link: "/design/policy-layer/" },
-    { label: "Use-case profiles", link: "/design/use-case-profiles/" },
-    { label: "Built-in pipeline", link: "/design/built-in-pipeline/" },
-    { label: "Multi-bank orchestration", link: "/design/multi-bank-orchestration/" },
-    { label: "MCP server", link: "/design/mcp-server/" },
-    { label: "Memory Intent Protocol (MIP)", link: "/design/memory-intent-protocol/" },
-    { label: "Memory portability", link: "/design/memory-portability/" },
-    { label: "Memory lifecycle", link: "/design/memory-lifecycle/" },
-    { label: "Event hooks", link: "/design/event-hooks/" },
-    { label: "Memory export sink", link: "/design/memory-export-sink/" },
-    { label: "Bank health & utilization", link: "/design/memory-analytics/" },
-    { label: "Evaluation", link: "/design/evaluation/" },
-    { label: "Eval Dashboard", link: "/eval/dashboard/" },
+    // ── Runtime & Pipeline ──
+    {
+      label: "Runtime & Pipeline",
+      items: [
+        { label: "Built-in pipeline", link: "/design/built-in-pipeline/" },
+        { label: "Innovations roadmap", link: "/design/innovations/" },
+        { label: "Memory Intent Protocol (MIP)", link: "/design/memory-intent-protocol/" },
+        { label: "Multi-bank orchestration", link: "/design/multi-bank-orchestration/" },
+        { label: "Storage and data planes", link: "/design/storage-and-data-planes/" },
+        { label: "Storage adapter packages", link: "/design/adapter-packages/" },
+      ],
+    },
+    // ── Integrations & Extensibility ──
+    {
+      label: "Integrations & Extensibility",
+      items: [
+        { label: "MCP server", link: "/design/mcp-server/" },
+        { label: "Presentation layer & multimodal", link: "/design/presentation-layer-and-multimodal-services/" },
+        { label: "Event hooks", link: "/design/event-hooks/" },
+        { label: "Memory export sink", link: "/design/memory-export-sink/" },
+        { label: "Use-case profiles", link: "/design/use-case-profiles/" },
+      ],
+    },
+    // ── Durability & Lifecycle ──
+    {
+      label: "Durability & Lifecycle",
+      items: [
+        { label: "Memory lifecycle", link: "/design/memory-lifecycle/" },
+        { label: "Memory portability", link: "/design/memory-portability/" },
+      ],
+    },
+    // ── Quality & Observability ──
+    {
+      label: "Quality & Observability",
+      items: [
+        { label: "Bank health & utilization", link: "/design/memory-analytics/" },
+        { label: "Evaluation", link: "/design/evaluation/" },
+        { label: "Eval Dashboard", link: "/eval/dashboard/" },
+      ],
+    },
+    // ── Meta ──
+    {
+      label: "Meta",
+      collapsed: true,
+      items: [
+        { label: "Fellowship curriculum mapping", link: "/design/curriculum-mapping/" },
+        { label: "Implementation language strategy", link: "/design/implementation-language-strategy/" },
+      ],
+    },
   ],
   tutorials: [
     { label: "100 Agents in 100 Days", link: "/tutorials/100-agents-in-100-days/" },

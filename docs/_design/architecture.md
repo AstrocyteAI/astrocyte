@@ -4,7 +4,7 @@ This document defines the layer boundaries, composition model, and relationship 
 
 **AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); the app maps credentials to an `AstrocyteContext` (at minimum a **principal** string; optionally structured **`actor`**, **`on_behalf_of`** (**OBO** — *on-behalf-of / delegated access*; standard in OAuth·identity; see [ADR-002](./adr/adr-002-identity-model.md)), **`tenant`**). Deciding **what** that identity may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable `access_grants` (including **OBO** permission intersection) and, in future, optional external policy engines — see section 4.6.
 
-For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the design principles these layers implement, see `design-principles.md`. For **C4 context/container diagrams**, deployment-model trade-offs, bounded-context map, and sequence diagrams aligned to product milestones, see `architecture-brief.md` and `product-roadmap-v1.md`.
+For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the design principles these layers implement, see `design-principles.md`. For **C4 context/container diagrams**, deployment-model trade-offs, bounded-context map, and sequence diagrams aligned to product milestones, see `c4-deployment-domain.md` and `product-roadmap-v1.md`.
 
 ---
 
@@ -37,6 +37,42 @@ The harness **calls** memory and tools and **assembles** the next prompt; contex
 **Where Astrocyte sits:** It is **not** a harness (see *not an agent runtime* above). It **is** the **memory and retrieval substrate** and **policy layer** that **feeds** context engineering: durable `retain` / `recall` / `reflect`, hybrid retrieval, fusion, reranking, token budgets inside the pipeline, and governance (PII, quotas, access control). Your **application** still owns the final chat layout—how recall hits become system vs user messages—Astrocyte supplies **consistent, auditable memory**, not the entire transcript design.
 
 That boundary is the same “slot” many curricula label the **Context & Memory** plane: governed memory and cognition support—not “vectors only” or ad-hoc RAG. For a vendor-neutral **eight-plane** framing (and how it relates to **control outside the agent loop**), see the [Applied AI Fellowship](https://calvinchengx.github.io/applied-ai/). A **vocabulary crosswalk** between that coursework and Astrocyte primitives is in [Fellowship curriculum mapping](./curriculum-mapping.md).
+
+#### Harness integration view
+
+The diagram below shows how Astrocyte relates to the other planes in an agent stack. Gold boxes are Astrocyte's domain; gray boxes belong to the harness or external systems.
+
+- **Astrocyte** and the **Harness** are peers — bidirectional control flow. The harness calls retain/recall/reflect; Astrocyte returns governed results.
+- **Session** (checkpoints, turn state) belongs to the **harness**, not Astrocyte. The harness provides session context (principal, bank_id) when calling Astrocyte.
+- **Memory banks** are MIP-routed and **policy-scoped** — the configured compliance profile (GDPR, HIPAA, PDPA, CCPA) determines enforcement, not a single regulation.
+- **astrocyte-mcp** is the MCP tool bridge — any MCP-capable client gets memory without code integration.
+
+```mermaid
+flowchart TB
+  TOOLS[“Tools + Resources / MCP\nExternal capabilities”]
+  MCP_TOOL[“astrocyte-mcp tool”]
+
+  ASTROCYTE[“Astrocyte\nGoverned memory layer”]
+  HARNESS[“Harness\nOrchestrates agent loop”]
+  SANDBOX[“Sandbox\nSecure code execution”]
+
+  SESSION[“Session\nCheckpoints, turn state”]
+  ORCH[“Orchestration\nMulti-agent coordination”]
+
+  BANKS[“Memory banks\nMIP-routed, policy-scoped”]
+
+  TOOLS -.-> MCP_TOOL
+  MCP_TOOL -.-> ASTROCYTE
+
+  ASTROCYTE <--> HARNESS
+  HARNESS --> SANDBOX
+
+  HARNESS --> SESSION
+  HARNESS -.-> ORCH
+
+  ASTROCYTE --> BANKS
+  ORCH -.-> BANKS
+```
 
 **Agent cards and catalogs:** Many products describe agents with **agent cards** or registry metadata. Astrocyte does not execute those cards or own the catalog, but it **does** aim to understand them **at the memory boundary**: a small, explicit **mapping** from card identity to **principal + memory bank** (and optional defaults), declared in config and used by integrations, so memory calls stay consistent without one-off logic in every app. See `agent-framework-middleware.md`.
 
@@ -144,6 +180,156 @@ flowchart TD
 ```
 
 **Cross-bank “fusion”** (parallel multi-bank) merges **evidence from different banks** the principal may read. **In-pipeline “fusion”** on Tier 1 merges **vector / graph / lexical** hits **within** one recall path—the diagram’s diamond and two tier branches are unchanged; this block adds **bank scoping** *above* that split.
+
+---
+
+## 2.5 System architecture overview
+
+The diagram below shows how Astrocyte relates to the systems around it: agent frameworks, presentation platforms, LLM providers, storage backends, ingestion connectors, and export sinks.
+
+**Key relationships:**
+
+- **Agent frameworks** and **presentation platforms** (Tavus, ElevenLabs, …) are **peers** inside your application orchestrator. The orchestrator calls Astrocyte for memory and the presentation vendor for video/voice — Astrocyte and the vendor do not call each other directly.
+- **Tier 1** (built-in pipeline) and **Tier 2** (memory engine providers) are **alternative paths** through Astrocyte. Governance applies to both.
+- **LLM adapters** are pluggable: `astrocyte-llm-litellm` (recommended, 100+ models via gateway), `astrocyte-openai`, `astrocyte-anthropic`, or custom. LiteLLM is not mandatory.
+- **Export sinks** (Iceberg, Delta, warehouse) are designed but **not yet wired** into core — dashed lines indicate future integration.
+
+```mermaid
+flowchart TB
+  subgraph APP["Your Application / Orchestrator"]
+    direction LR
+
+    subgraph AGENTS["Agent Frameworks"]
+      direction LR
+      LG["LangGraph"]
+      CA["CrewAI"]
+      AG["AutoGen"]
+      LL["LlamaIndex"]
+      SK["Semantic Kernel"]
+      CU["Custom"]
+    end
+
+    subgraph PRESENT["Presentation Layer — how your agent is seen and heard"]
+      direction LR
+      TAV["Tavus — Conv. Video"]
+      HEY["HeyGen"]
+      DID["D-ID"]
+      EL["ElevenLabs — Voice / TTS"]
+      MORE_P["..."]
+    end
+  end
+
+  API["Astrocyte SDK / Gateway / MCP — retain, recall, reflect, forget"]
+
+  subgraph CORE["Astrocyte — Intelligent Memory Layer"]
+    direction TB
+
+    subgraph TIER1["Tier 1 — Built-in Pipeline (Astrocyte owns the intelligence)"]
+      direction TB
+
+      subgraph RETAIN_P["Retain"]
+        direction LR
+        MIP["Memory Intent Protocol"]
+        CHK["Dialogue-Aware Chunking"]
+        PII_R["PII Barriers — regex, NER, LLM"]
+        ENT["Entity Extraction"]
+        EMB["Embedding Generation"]
+        DDP["Dedup Detection"]
+        CUR["Curated Retain"]
+      end
+
+      subgraph RECALL_P["Recall / Reflect"]
+        direction LR
+        T0["Tier 0 Cache"]
+        T1["Tier 1 Fuzzy Recent"]
+        T2["Tier 2 BM25"]
+        T3["Tier 3 Semantic"]
+        T4["Tier 4 Agentic LLM"]
+        REF["Reflect — LLM synthesis"]
+      end
+    end
+
+    subgraph TIER2["Tier 2 — Memory Engine Providers (engine owns the pipeline)"]
+      direction LR
+      MEM0["Mem0"]
+      ZEP["Zep"]
+      MYS["Mystique"]
+      MORE_E["..."]
+    end
+
+    subgraph GOV["Governance and Policy — always active, both tiers"]
+      direction LR
+      QUOTA["Quotas and Rate Limits"]
+      HOOKS["Event Hooks and Webhooks"]
+      PROF["Compliance — GDPR, HIPAA, PDPA"]
+      TRANS["Outbound Transport — mTLS, proxy"]
+    end
+  end
+
+  subgraph CONNECTORS["Ingestion Connectors — via Gateway"]
+    direction TB
+    KFK["Kafka"]
+    RDS["Redis Streams"]
+    GH["GitHub Poll"]
+    SLK["Slack / JIRA / ..."]
+  end
+
+  subgraph SINKS["Export Sinks — designed, not yet wired"]
+    direction TB
+    ICE["Iceberg / Delta"]
+    PRQ["Parquet"]
+    WH["Warehouse"]
+  end
+
+  subgraph LLM_ADAPTERS["LLM Adapters — complete and embed"]
+    direction LR
+    A_LITELLM["astrocyte-llm-litellm — 100+ models via gateway (recommended)"]
+    A_OPENAI["astrocyte-openai — direct SDK"]
+    A_ANTHROPIC["astrocyte-anthropic — direct SDK"]
+    A_CUSTOM["Custom Adapter"]
+  end
+
+  subgraph STORAGE["Vector and Graph Stores"]
+    direction LR
+    PG["PostgreSQL pgvector"]
+    QD["Qdrant"]
+    N4["Neo4j"]
+    ES["Elasticsearch"]
+    MORE_S["..."]
+  end
+
+  subgraph MODELS["LLM Providers"]
+    direction LR
+    OAI["OpenAI"]
+    ANT["Anthropic"]
+    BED["AWS Bedrock"]
+    VTX["Google Vertex"]
+    AZR["Azure OpenAI"]
+    GRQ["Groq"]
+    OLL["Ollama / vLLM / Local"]
+    MORE_M["..."]
+  end
+
+  AGENTS -- "retain / recall / reflect" --> API
+  PRESENT -. "orchestrator feeds recall results into presentation dialogue" .-> API
+
+  API --> CORE
+
+  CONNECTORS -- "inbound events → retain" --> API
+
+  CORE -. "emit events (future)" .-> SINKS
+
+  TIER1 -- "embed and complete" --> LLM_ADAPTERS
+  TIER1 -- "store and search" --> STORAGE
+
+  TIER2 -. "engine manages its own LLM and storage" .-> MODELS
+  TIER2 -. "engine manages its own storage" .-> STORAGE
+
+  A_LITELLM --> MODELS
+  A_OPENAI --> OAI
+  A_ANTHROPIC --> ANT
+  A_CUSTOM --> MODELS
+```
 
 ---
 
@@ -498,7 +684,7 @@ These capabilities exist at the **framework layer** — they apply regardless of
 | Letta memory engine provider | `astrocyte-letta` | Apache 2.0 |
 | Cognee memory engine provider | `astrocyte-cognee` | Apache 2.0 |
 | **LLM providers** | | |
-| LiteLLM adapter | `astrocyte-litellm` | Apache 2.0 |
+| LiteLLM adapter | `astrocyte-llm-litellm` | Apache 2.0 |
 | OpenAI direct adapter | `astrocyte-openai` | Apache 2.0 |
 | Anthropic direct adapter | `astrocyte-anthropic` | Apache 2.0 |
 | **Outbound transport** | | |

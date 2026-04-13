@@ -127,6 +127,56 @@ results = await evaluator.run_suite("basic", bank_id="eval-bank")
 print(f"Recall precision: {results.metrics.recall_precision:.2%}")
 ```
 
+## Benchmarks
+
+Astrocyte includes adapters for two academic memory benchmarks plus built-in eval suites.
+
+| Benchmark | What it tests | Dataset |
+|---|---|---|
+| **LoCoMo** (ECAI 2025) | Long-term conversational memory — single-hop, multi-hop, temporal, open-domain QA | [snap-research/locomo](https://github.com/snap-research/locomo) |
+| **LongMemEval** | Long-context memory extraction, reasoning, temporal ordering | [xiaowu0162/LongMemEval](https://github.com/xiaowu0162/LongMemEval) |
+| **Built-in suites** | `basic` (quick validation) and `accuracy` (retrieval quality with ground truth) | Included |
+
+### Quick start
+
+```bash
+# Smoke test — no API key needed, in-memory providers
+make bench-smoke
+
+# With real LLM providers (requires OPENAI_API_KEY)
+export OPENAI_API_KEY=sk-...
+
+# Datasets are fetched automatically on first run
+make bench-locomo-quick       # LoCoMo, 50 questions (~2-3 min)
+make bench-locomo             # LoCoMo, full dataset (~30-60 min)
+make bench-longmemeval        # LongMemEval
+make bench-builtin            # Built-in suites only
+make bench                    # All benchmarks
+```
+
+### LLM adapter comparison
+
+Compare the built-in OpenAI provider against the LiteLLM adapter (same models, isolates the adapter as the variable):
+
+```bash
+pip install astrocyte-llm-litellm   # or: uv pip install -e ../adapters-llm-py/astrocyte-llm-litellm
+make bench-compare                  # Runs 50 LoCoMo questions through each
+```
+
+Results are written to `benchmark-results/openai/latest.json` and `benchmark-results/litellm/latest.json`.
+
+### Dataset management
+
+Datasets are cloned to `datasets/` (gitignored) on first benchmark run. To manage manually:
+
+```bash
+make fetch-datasets       # Fetch all datasets
+make clean-datasets       # Remove downloaded datasets
+make clean-results        # Remove benchmark results
+```
+
+See [`docs/_design/evaluation.md`](../docs/_design/evaluation.md) for the full evaluation specification.
+
 ## Development
 
 From [`astrocyte-py/`](.) with the dev extra:
@@ -157,7 +207,7 @@ uv run --project astrocyte-py pre-commit run --all-files
 **[astrocyteai.github.io/astrocyte](https://astrocyteai.github.io/astrocyte/)**
 
 - [Quick Start](https://astrocyteai.github.io/astrocyte/end-user/quick-start/)
-- [Architecture](https://astrocyteai.github.io/astrocyte/design/architecture-framework/)
+- [Architecture](https://astrocyteai.github.io/astrocyte/design/architecture/)
 - [Provider SPI](https://astrocyteai.github.io/astrocyte/plugins/provider-spi/)
 - [Integration guides](https://astrocyteai.github.io/astrocyte/plugins/agent-framework-middleware/) (one per framework)
 

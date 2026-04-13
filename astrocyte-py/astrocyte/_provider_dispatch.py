@@ -52,10 +52,19 @@ class ProviderDispatcher:
 
     async def retain(self, request: RetainRequest) -> RetainResult:
         if self.engine_provider:
-            return await self.engine_provider.retain(request)
-        if self.pipeline:
-            return await self.pipeline.retain(request)
-        raise ConfigError("No provider or pipeline configured")
+            result = await self.engine_provider.retain(request)
+        elif self.pipeline:
+            result = await self.pipeline.retain(request)
+        else:
+            raise ConfigError("No provider or pipeline configured")
+
+        # Notify tiered retriever of new content (populates recent buffer, invalidates cache)
+        if result.stored and self.tiered_retriever is not None and result.memory_id:
+            self.tiered_retriever.notify_retain(
+                request.bank_id, result.memory_id, request.content, request.metadata,
+            )
+
+        return result
 
     async def recall(self, request: RecallRequest) -> RecallResult:
         if self.engine_provider:
