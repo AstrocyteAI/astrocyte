@@ -147,6 +147,156 @@ flowchart TD
 
 ---
 
+## 2.5 System architecture overview
+
+The diagram below shows how Astrocyte relates to the systems around it: agent frameworks, presentation platforms, LLM providers, storage backends, ingestion connectors, and export sinks.
+
+**Key relationships:**
+
+- **Agent frameworks** and **presentation platforms** (Tavus, ElevenLabs, …) are **peers** inside your application orchestrator. The orchestrator calls Astrocyte for memory and the presentation vendor for video/voice — Astrocyte and the vendor do not call each other directly.
+- **Tier 1** (built-in pipeline) and **Tier 2** (memory engine providers) are **alternative paths** through Astrocyte. Governance applies to both.
+- **LLM adapters** are pluggable: `astrocyte-litellm` (recommended, 100+ models via gateway), `astrocyte-openai`, `astrocyte-anthropic`, or custom. LiteLLM is not mandatory.
+- **Export sinks** (Iceberg, Delta, warehouse) are designed but **not yet wired** into core — dashed lines indicate future integration.
+
+```mermaid
+flowchart TB
+  subgraph APP["Your Application / Orchestrator"]
+    direction LR
+
+    subgraph AGENTS["Agent Frameworks"]
+      direction LR
+      LG["LangGraph"]
+      CA["CrewAI"]
+      AG["AutoGen"]
+      LL["LlamaIndex"]
+      SK["Semantic Kernel"]
+      CU["Custom"]
+    end
+
+    subgraph PRESENT["Presentation Layer — how your agent is seen and heard"]
+      direction LR
+      TAV["Tavus — Conv. Video"]
+      HEY["HeyGen"]
+      DID["D-ID"]
+      EL["ElevenLabs — Voice / TTS"]
+      MORE_P["..."]
+    end
+  end
+
+  API["Astrocyte SDK / Gateway / MCP — retain, recall, reflect, forget"]
+
+  subgraph CORE["Astrocyte — Intelligent Memory Layer"]
+    direction TB
+
+    subgraph TIER1["Tier 1 — Built-in Pipeline (Astrocyte owns the intelligence)"]
+      direction TB
+
+      subgraph RETAIN_P["Retain"]
+        direction LR
+        MIP["Memory Intent Protocol"]
+        CHK["Dialogue-Aware Chunking"]
+        PII_R["PII Barriers — regex, NER, LLM"]
+        ENT["Entity Extraction"]
+        EMB["Embedding Generation"]
+        DDP["Dedup Detection"]
+        CUR["Curated Retain"]
+      end
+
+      subgraph RECALL_P["Recall / Reflect"]
+        direction LR
+        T0["Tier 0 Cache"]
+        T1["Tier 1 Fuzzy Recent"]
+        T2["Tier 2 BM25"]
+        T3["Tier 3 Semantic"]
+        T4["Tier 4 Agentic LLM"]
+        REF["Reflect — LLM synthesis"]
+      end
+    end
+
+    subgraph TIER2["Tier 2 — Memory Engine Providers (engine owns the pipeline)"]
+      direction LR
+      MEM0["Mem0"]
+      ZEP["Zep"]
+      MYS["Mystique"]
+      MORE_E["..."]
+    end
+
+    subgraph GOV["Governance and Policy — always active, both tiers"]
+      direction LR
+      QUOTA["Quotas and Rate Limits"]
+      HOOKS["Event Hooks and Webhooks"]
+      PROF["Compliance — GDPR, HIPAA, PDPA"]
+      TRANS["Outbound Transport — mTLS, proxy"]
+    end
+  end
+
+  subgraph CONNECTORS["Ingestion Connectors — via Gateway"]
+    direction TB
+    KFK["Kafka"]
+    RDS["Redis Streams"]
+    GH["GitHub Poll"]
+    SLK["Slack / JIRA / ..."]
+  end
+
+  subgraph SINKS["Export Sinks — designed, not yet wired"]
+    direction TB
+    ICE["Iceberg / Delta"]
+    PRQ["Parquet"]
+    WH["Warehouse"]
+  end
+
+  subgraph LLM_ADAPTERS["LLM Adapters — complete and embed"]
+    direction LR
+    A_LITELLM["astrocyte-litellm — 100+ models via gateway (recommended)"]
+    A_OPENAI["astrocyte-openai — direct SDK"]
+    A_ANTHROPIC["astrocyte-anthropic — direct SDK"]
+    A_CUSTOM["Custom Adapter"]
+  end
+
+  subgraph STORAGE["Vector and Graph Stores"]
+    direction LR
+    PG["PostgreSQL pgvector"]
+    QD["Qdrant"]
+    N4["Neo4j"]
+    ES["Elasticsearch"]
+    MORE_S["..."]
+  end
+
+  subgraph MODELS["LLM Providers"]
+    direction LR
+    OAI["OpenAI"]
+    ANT["Anthropic"]
+    BED["AWS Bedrock"]
+    VTX["Google Vertex"]
+    AZR["Azure OpenAI"]
+    GRQ["Groq"]
+    OLL["Ollama / vLLM / Local"]
+    MORE_M["..."]
+  end
+
+  AGENTS -- "retain / recall / reflect" --> API
+  PRESENT -. "orchestrator feeds recall results into presentation dialogue" .-> API
+
+  API --> CORE
+
+  CONNECTORS -- "inbound events → retain" --> API
+
+  CORE -. "emit events (future)" .-> SINKS
+
+  TIER1 -- "embed and complete" --> LLM_ADAPTERS
+  TIER1 -- "store and search" --> STORAGE
+
+  TIER2 -. "engine manages its own LLM and storage" .-> MODELS
+  TIER2 -. "engine manages its own storage" .-> STORAGE
+
+  A_LITELLM --> MODELS
+  A_OPENAI --> OAI
+  A_ANTHROPIC --> ANT
+  A_CUSTOM --> MODELS
+```
+
+---
+
 ## 3. Layer model
 
 ```mermaid
