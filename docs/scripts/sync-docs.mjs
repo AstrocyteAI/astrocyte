@@ -165,13 +165,20 @@ function copyAllMdFromSourceSection(sourceDirName, subDir = "") {
       copyAllMdFromSourceSection(sourceDirName, path.join(subDir, ent.name));
       continue;
     }
-    if (!ent.isFile() || !ent.name.endsWith(".md")) continue;
+    const isMd = ent.isFile() && ent.name.endsWith(".md");
+    const isMdx = ent.isFile() && ent.name.endsWith(".mdx");
+    if (!isMd && !isMdx) continue;
     const srcPath = path.join(srcDir, ent.name);
     const raw = fs.readFileSync(srcPath, "utf8");
-    let fb = extractTitle(raw);
-    if (fb === "Untitled") fb = ent.name.replace(/\.md$/, "").replace(/-/g, " ");
     const destDir = subDir ? path.join(contentDocs, destSection, subDir) : path.join(contentDocs, destSection);
     const destFile = path.join(destDir, ent.name);
+    if (isMdx) {
+      // MDX files manage their own frontmatter and imports — copy as-is.
+      writeIfChanged(destFile, raw);
+      continue;
+    }
+    let fb = extractTitle(raw);
+    if (fb === "Untitled") fb = ent.name.replace(/\.md$/, "").replace(/-/g, " ");
     const body = ensureFrontmatter(raw, fb, srcPath, destSection, destFile);
     writeIfChanged(destFile, body);
   }

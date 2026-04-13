@@ -236,7 +236,8 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 ### Deferred / remaining (see § Release Strategy)
 
 - NATS and other stream backends as needed
-- Additional **poll** drivers (beyond GitHub) and gateway **plugin** integrations (Kong, APISIX, …) as product priorities dictate
+- Additional **poll** drivers (beyond GitHub) as product priorities dictate
+- Additional gateway plugin targets (AWS API Gateway, Envoy, etc.) as needed — see **`gateway-plugins/`** for the shipped Kong, APISIX, and Azure APIM plugins
 
 ---
 
@@ -459,10 +460,10 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 
 ### v0.8.x — Connector & gateway integration track (toward v1.0.0)
 
-**Scope:** Implemented **from the v0.8.0 baseline** toward **v1.0.0**. You can describe this as the **“v0.9-era”** feature wave (streams, poll, gateway plugins) in planning docs; **git tags** stay **v0.8.1**, **v0.8.2**, … — **no v0.9.0 tag** — see § Release numbering.
+**Scope:** Implemented **from the v0.8.0 baseline** toward **v1.0.0**. You can describe this as the **”v0.9-era”** feature wave (streams, poll, gateway plugins) in planning docs; **git tags** stay **v0.8.1**, **v0.8.2**, … — **no v0.9.0 tag** — see § Release numbering.
 
 - Additional event stream / poll connectors (beyond Kafka, Redis, GitHub) and NATS where needed
-- Gateway **plugin** mode and integration kits (**Kong**, **APISIX**, **Azure API Management**, other API gateways / service meshes as needed)
+- **Gateway plugins — shipped:** Thin integration plugins for **Kong** (Lua), **Apache APISIX** (Lua), and **Azure API Management** (XML policy fragments + Bicep/Terraform/APIOps deployment). Located in **`gateway-plugins/`** at the repo root. Each plugin intercepts OpenAI-compatible `/chat/completions` requests and calls the standalone gateway for recall (pre-hook) and retain (post-hook). See **[`gateway-plugins/README.md`](../../gateway-plugins/README.md)**.
 - Hardening: CORS, body limits, admin auth, rate limits at the edge (as product requires)
 
 SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this track — **§ Stability: SPI, adapters, and config files**.
@@ -503,7 +504,8 @@ SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this tra
 
 **Primary engineering line — v0.8.x through v1.0.0**
 
-- **Streams, poll connectors, and gateway plugins** (Kong, APISIX, Azure API Management, others): implement on **v0.8.x** cadence per **§ v0.8.x — Connector & gateway integration track**.
+- **Streams and poll connectors** (Kafka, Redis, GitHub — shipped; NATS and others as needed): implement on **v0.8.x** cadence per **§ v0.8.x — Connector & gateway integration track**.
+  - **Gateway plugins** (Kong, APISIX, Azure APIM) **shipped** in **`gateway-plugins/`** — thin Lua/XML shims that call the standalone gateway for recall + retain.
 - **SPI, adapter, `astrocyte.yaml`, and `mip.yaml` stability:** follow **§ Stability**; encode deprecations before breaking changes.
 - **Gateway quality gates:** benchmark tooling and OpenAPI contract tests already exist in-repo; decide whether to promote them from optional/manual checks to required CI or environment-specific SLO gates.
 

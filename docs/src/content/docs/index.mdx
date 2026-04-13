@@ -37,33 +37,112 @@ import PypiInstall from "../../components/PypiInstall.astro";
 <span class="section-label" aria-hidden="true">⟩ Quick start</span>
 <h2 class="section-heading">Get started in seconds</h2>
 <div class="section-subheading">
-  Install extras for your stack, open a configured <code>Astrocyte</code>, then either call memory from your own code or wire
-  the same instance into an agent framework adapter — LangGraph, CrewAI, MCP, OpenAI/Claude agent SDKs, and{" "}
-  <a href="plugins/agent-framework-middleware/">others</a>. Optionally add{" "}
+  Pick a deployment model, then wire memory into your agent framework. Optionally add{" "}
   <a href="design/memory-intent-protocol/">MIP</a> (Memory Intent Protocol) to declare routing rules — Astrocyte
   decides which bank, tags, and compliance policies to apply, with zero routing code in your app.
 </div>
 
 <div class="quickstart-panel">
-  <Tabs syncKey="astrocyte-install">
-    <TabItem label="pip">
-      <PypiInstall manager="pip" />
+  <Tabs syncKey="deploy-mode">
+    <TabItem label="Library (in-process)">
+      <p class="quickstart-note">
+        Embed Astrocyte directly in your Python app. No separate server — memory operations run in-process.
+        Best for prototyping, single-process agents, notebooks.
+      </p>
+      <Tabs syncKey="astrocyte-install">
+        <TabItem label="pip">
+          <PypiInstall manager="pip" />
+        </TabItem>
+        <TabItem label="uv">
+          <div class="quickstart-block--uv">
+            <PypiInstall manager="uv" />
+          </div>
+        </TabItem>
+      </Tabs>
+
+```python
+from astrocyte import Astrocyte
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+
+await brain.retain("Calvin prefers dark mode", bank_id="user-123")
+hits = await brain.recall("What are Calvin's preferences?", bank_id="user-123")
+```
     </TabItem>
-    <TabItem label="uv">
-      <div class="quickstart-block--uv">
-        <PypiInstall manager="uv" />
-        <p class="quickstart-note">
-          In a uv-managed project, use{" "}
-          <code>uv add</code> instead to record dependencies in{" "}
-          <code>pyproject.toml</code>.
-        </p>
-      </div>
+    <TabItem label="Standalone Gateway">
+      <p class="quickstart-note">
+        Run Astrocyte as a REST API with Docker Compose. Agents call{" "}
+        <code>/v1/retain</code>, <code>/v1/recall</code>, <code>/v1/reflect</code> over HTTP.
+        Best for multi-agent deployments and shared memory services.
+      </p>
+
+```bash
+cd astrocyte-services-py
+cp .env.example .env        # edit ports / secrets as needed
+docker compose up --build
+```
+
+```bash
+# Retain a memory
+curl -X POST http://127.0.0.1:8080/v1/retain \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Calvin prefers dark mode.", "bank_id": "user-123"}'
+
+# Recall memories
+curl -X POST http://127.0.0.1:8080/v1/recall \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What theme does Calvin prefer?", "bank_id": "user-123"}'
+```
+
+      <p class="quickstart-note">
+        See <a href="end-user/production-grade-http-service/">Production-grade HTTP service</a> for auth, TLS, and observability.
+      </p>
+    </TabItem>
+    <TabItem label="Gateway Plugin">
+      <p class="quickstart-note">
+        Add memory to LLM calls routed through an existing API gateway — zero agent code changes.
+        Requires a running <a href="end-user/quick-start/">standalone gateway</a> that the plugin calls via HTTP.
+      </p>
+      <Tabs syncKey="gateway-plugin">
+        <TabItem label="Kong">
+
+```bash
+cp gateway-plugins/kong/handler.lua /path/to/kong/plugins/astrocyte/
+cp gateway-plugins/kong/schema.lua  /path/to/kong/plugins/astrocyte/
+
+curl -X POST http://localhost:8001/services/my-llm/plugins \
+  -d "name=astrocyte" \
+  -d "config.astrocyte_url=http://astrocyte-gateway:8900" \
+  -d "config.default_bank_id=shared"
+```
+
+        </TabItem>
+        <TabItem label="APISIX">
+
+```bash
+cp gateway-plugins/apisix/astrocyte.lua /path/to/apisix/plugins/
+
+curl -X PUT http://127.0.0.1:9180/apisix/admin/routes/1 \
+  -H "X-API-KEY: $APISIX_ADMIN_KEY" \
+  -d '{"uri":"/v1/chat/completions","plugins":{"astrocyte":{"astrocyte_url":"http://astrocyte-gateway:8900"}}}'
+```
+
+        </TabItem>
+        <TabItem label="Azure APIM">
+
+```bash
+cd gateway-plugins/azure-apim
+./deploy.sh   # interactive — Bicep, Terraform, APIOps, or portal
+```
+
+        </TabItem>
+      </Tabs>
+      <p class="quickstart-note">
+        Gateway plugins support recall + retain but not reflect or background tasks.
+        See <a href="end-user/gateway-edge-and-api-gateways/">Gateway edge & API gateways</a>.
+      </p>
     </TabItem>
   </Tabs>
-
-  <p class="quickstart-note">
-    Version resolved from <a href="https://pypi.org/project/astrocyte/">PyPI</a> at docs build time.
-  </p>
 
   <Tabs syncKey="astrocyte-quickstart-code">
     <TabItem label="MIP routing">
