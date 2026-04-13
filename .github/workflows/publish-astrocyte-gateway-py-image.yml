@@ -45,11 +45,42 @@ jobs:
       contents: read
     uses: ./.github/workflows/gateway-publish-test-gate.yml
 
-  build-and-push:
-    name: Build and push image
+  wait-for-pypi:
+    name: Wait for PyPI availability
     needs:
       - test-astrocyte-py
       - gateway-publish-test-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for astrocyte and astrocyte-pgvector on PyPI
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          for pkg in astrocyte astrocyte-pgvector; do
+            echo "Waiting for ${pkg}==${VERSION} on PyPI..."
+            for i in $(seq 1 30); do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/${pkg}/${VERSION}/json")
+              if [ "$STATUS" = "200" ]; then
+                echo "✓ ${pkg}==${VERSION} available on PyPI"
+                break
+              fi
+              if [ "$i" = "30" ]; then
+                echo "✗ ${pkg}==${VERSION} not found on PyPI after 5 minutes"
+                exit 1
+              fi
+              echo "  Attempt ${i}/30 — ${pkg}==${VERSION} not yet available (HTTP ${STATUS}), retrying in 10s..."
+              sleep 10
+            done
+          done
+
+  build-and-push:
+    name: Build and push image
+    needs:
+      - wait-for-pypi
     permissions:
       contents: read
       packages: write
