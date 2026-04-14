@@ -10,7 +10,7 @@ import re
 from typing import TYPE_CHECKING
 
 from astrocyte.mip.rule_engine import RuleEngineInput, RuleMatch, evaluate_rules, interpolate_template
-from astrocyte.mip.schema import MipConfig, PipelineSpec
+from astrocyte.mip.schema import ForgetSpec, MipConfig, PipelineSpec
 from astrocyte.types import RoutingDecision
 
 if TYPE_CHECKING:
@@ -144,6 +144,25 @@ class MipRouter:
         # No LLM available — passthrough
         return RoutingDecision(resolved_by="passthrough", reasoning="No mechanical match and no LLM available")
 
+    def resolve_forget_for_bank(self, bank_id: str) -> ForgetSpec | None:
+        """Resolve the highest-priority rule's ForgetSpec targeting ``bank_id`` (Phase 4).
+
+        At forget time the original RetainRequest context is gone, but forget
+        still needs to know the policy (mode/audit/legal_hold/min_age/max_per_call)
+        configured for the bank being purged. This walks rules in priority order
+        and returns the first ``action.forget`` whose ``action.bank`` resolves
+        to ``bank_id``. Bank templates (``"student-{id}"``) match concrete IDs.
+        """
+        for rule in self._rules:
+            if rule.action.forget is None:
+                continue
+            template = rule.action.bank
+            if not template:
+                continue
+            if _bank_matches(template, bank_id):
+                return rule.action.forget
+        return None
+
     def resolve_pipeline_for_bank(self, bank_id: str) -> PipelineSpec | None:
         """Resolve the highest-priority rule's PipelineSpec targeting ``bank_id`` (P3).
 
@@ -182,4 +201,5 @@ class MipRouter:
             rule_name=match.rule.name,
             confidence=match.confidence,
             pipeline=action.pipeline,
+            forget=action.forget,
         )

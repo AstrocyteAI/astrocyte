@@ -23,6 +23,7 @@ from astrocyte.config import AstrocyteConfig, load_config
 from astrocyte.errors import (
     AccessDenied,
     ConfigError,
+    MipRoutingError,
     ProviderUnavailable,
 )
 from astrocyte.identity import context_principal_label
@@ -688,8 +689,52 @@ class Astrocyte:
             # Legal hold check — compliance=True bypasses for right-to-forget.
             # Even when access_control is disabled, compliance bypass requires
             # explicit context (caller must identify themselves).
+            # MIP forget policy resolution (Phase 4) — runs BEFORE the existing
+            # legal-hold check so that a rule with respect_legal_hold=True wins
+            # over the caller's compliance bypass, and so audit logs fire even
+            # on policy refusal.
+            mip_forget = (
+                self._mip_router.resolve_forget_for_bank(bank_id) if self._mip_router else None
+            )
+            if mip_forget is not None:
+                # max_per_call: cap blast radius for selective deletes by id
+                if (
+                    mip_forget.max_per_call is not None
+                    and memory_ids is not None
+                    and len(memory_ids) > mip_forget.max_per_call
+                ):
+                    raise MipRoutingError(
+                        f"forget rejected: {len(memory_ids)} memory_ids exceeds "
+                        f"forget.max_per_call={mip_forget.max_per_call} for bank {bank_id!r}"
+                    )
+
+                # audit: emit a structured log line before any deletion occurs
+                if mip_forget.audit in ("required", "recommended"):
+                    self._logger.log(
+                        "astrocyte.mip.forget.audit",
+                        bank_id=bank_id,
+                        data={
+                            "mode": str(mip_forget.mode or "soft"),
+                            "audit": str(mip_forget.audit),
+                            "cascade": bool(mip_forget.cascade) if mip_forget.cascade is not None else True,
+                            "memory_ids_count": len(memory_ids) if memory_ids else 0,
+                            "scope": scope or "selective",
+                            "actor": context_principal_label(context) if context else "anonymous",
+                            "reason": str(reason) if reason else None,
+                        },
+                        level=logging.WARNING,
+                    )
+
+                # respect_legal_hold: when True, override the compliance bypass.
+                # The MIP rule is the source of truth; compliance flag cannot
+                # circumvent a rule that explicitly demands legal hold respect.
+                if mip_forget.respect_legal_hold:
+                    self._lifecycle.check_forget_allowed(bank_id)
+
             if not compliance:
-                self._lifecycle.check_forget_allowed(bank_id)
+                # Skip duplicate check if MIP already enforced legal hold above.
+                if mip_forget is None or not mip_forget.respect_legal_hold:
+                    self._lifecycle.check_forget_allowed(bank_id)
             else:
                 if context is None:
                     raise AccessDenied("anonymous", bank_id, "compliance_forget")

@@ -87,6 +87,25 @@ class PipelineSpec:
 
 
 @dataclass
+class ForgetSpec:
+    """Per-rule forget policy. Resolved at forget time, keyed by target bank.
+
+    All fields optional; absent fields fall back to caller-supplied arguments
+    or library defaults. ``version`` is required when any field is set (P2),
+    same semantics as :class:`PipelineSpec`.
+    """
+
+    version: int | None = None
+    preset: str | None = None  # "gdpr" | "student" | "audit-strict"
+    mode: str | None = None  # "soft" | "hard" | "tombstone"
+    audit: str | None = None  # "none" | "recommended" | "required"
+    cascade: bool | None = None  # cascade delete derived chunks/embeddings
+    respect_legal_hold: bool | None = None  # refuse forget if legal hold present
+    min_age_days: int | None = None  # refuse forget on records younger than N days
+    max_per_call: int | None = None  # cap on records per forget request
+
+
+@dataclass
 class ActionSpec:
     bank: str | None = None  # May contain templates: "student-{metadata.student_id}"
     tags: list[str] | None = None  # May contain templates
@@ -94,6 +113,7 @@ class ActionSpec:
     escalate: str | None = None  # "mip" or None
     confidence: float = 1.0
     pipeline: PipelineSpec | None = None  # Optional pipeline-shaping overrides
+    forget: ForgetSpec | None = None  # Optional forget-policy overrides (Phase 4)
 
 
 @dataclass

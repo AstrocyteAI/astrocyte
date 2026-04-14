@@ -17,6 +17,7 @@ from dataclasses import replace
 from astrocyte.mip.schema import (
     ChunkerSpec,
     DedupSpec,
+    ForgetSpec,
     PipelineSpec,
     ReflectSpec,
     RerankSpec,
@@ -57,6 +58,74 @@ def is_known_preset(name: str) -> bool:
 
 def list_presets() -> list[str]:
     return sorted(PRESETS.keys())
+
+
+# ---------------------------------------------------------------------------
+# Forget presets (Phase 4)
+# ---------------------------------------------------------------------------
+
+FORGET_PRESETS: dict[str, ForgetSpec] = {
+    # GDPR right-to-erasure: hard delete, audit required, cascade derived data,
+    # legal hold MUST be respected (compliance-mandated).
+    "gdpr": ForgetSpec(
+        mode="hard",
+        audit="required",
+        cascade=True,
+        respect_legal_hold=True,
+        min_age_days=0,
+    ),
+    # Student records (FERPA-style): soft delete with grace period, audit on,
+    # refuse on records < 7 days old to prevent accidents.
+    "student": ForgetSpec(
+        mode="soft",
+        audit="recommended",
+        cascade=True,
+        respect_legal_hold=True,
+        min_age_days=7,
+    ),
+    # Audit-strict: tombstone replacement (preserves cryptographic chain),
+    # audit required, cascade off (each tombstone tracked individually).
+    "audit-strict": ForgetSpec(
+        mode="tombstone",
+        audit="required",
+        cascade=False,
+        respect_legal_hold=True,
+        min_age_days=0,
+    ),
+}
+
+
+def is_known_forget_preset(name: str) -> bool:
+    return name in FORGET_PRESETS
+
+
+def list_forget_presets() -> list[str]:
+    return sorted(FORGET_PRESETS.keys())
+
+
+def expand_forget_preset(spec: ForgetSpec) -> ForgetSpec:
+    """Merge a forget preset (if named) with explicit overrides on the spec.
+
+    Explicit fields on ``spec`` take precedence over preset defaults. Returns
+    a new :class:`ForgetSpec` with ``preset`` cleared and all fields resolved.
+    Caller is responsible for raising on unknown presets.
+    """
+    if spec.preset is None:
+        return spec
+    base = FORGET_PRESETS[spec.preset]
+    return ForgetSpec(
+        version=spec.version,
+        preset=None,
+        mode=spec.mode if spec.mode is not None else base.mode,
+        audit=spec.audit if spec.audit is not None else base.audit,
+        cascade=spec.cascade if spec.cascade is not None else base.cascade,
+        respect_legal_hold=(
+            spec.respect_legal_hold if spec.respect_legal_hold is not None
+            else base.respect_legal_hold
+        ),
+        min_age_days=spec.min_age_days if spec.min_age_days is not None else base.min_age_days,
+        max_per_call=spec.max_per_call if spec.max_per_call is not None else base.max_per_call,
+    )
 
 
 def expand_preset(spec: PipelineSpec) -> PipelineSpec:
