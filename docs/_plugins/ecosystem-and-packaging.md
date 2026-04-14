@@ -772,3 +772,13 @@ llm_provider_config:
 - The conformance test suites are the contract - if your provider passes them, it works with Astrocyte.
 - SPI changes go through an RFC process with community input before implementation.
 - Provider authors are encouraged to open issues on the core repo for SPI feature requests.
+
+---
+
+## Further reading
+
+- [Provider SPI](provider-spi/) — Protocol definitions for VectorStore, GraphStore, DocumentStore, LLM, MemoryExportSink
+- [Outbound transport](outbound-transport/) — credential gateways and enterprise proxy wiring
+- [Agent framework middleware](agent-framework-middleware/) — integration patterns for 17+ agent frameworks
+- [Storage backend setup](../end-user/storage-backend-setup/) — operator guide for configuring storage adapters
+- [Configuration reference](../end-user/configuration-reference/) — full `astrocyte.yaml` schema
