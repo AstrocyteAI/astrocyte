@@ -166,3 +166,95 @@ class TestMipExplain:
                     "--metadata", "no_equals_sign",
                 ],
             )
+
+
+# ---------------------------------------------------------------------------
+# Forget guardrails surfaced through CLI (Phase 4 / item 2a)
+# ---------------------------------------------------------------------------
+
+
+_FORGET_INVALID_MIP = textwrap.dedent("""\
+    version: "1.0"
+    rules:
+      - name: bad-forget
+        priority: 10
+        match:
+          content_type: pii
+        action:
+          bank: vault
+          forget:
+            version: 1
+            mode: hard
+            # missing audit: required → discipline rule should fire
+""")
+
+_FORGET_VALID_MIP = textwrap.dedent("""\
+    version: "1.0"
+    rules:
+      - name: gdpr-erasure
+        priority: 1
+        match:
+          content_type: pii
+        action:
+          bank: vault
+          forget:
+            version: 1
+            preset: gdpr
+            max_per_call: 50
+""")
+
+
+class TestCliForgetGuardrails:
+    def test_lint_rejects_hard_mode_without_audit_required(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        path = tmp_path / "mip.yaml"
+        path.write_text(_FORGET_INVALID_MIP)
+        rc = main(["mip", "lint", str(path)])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "hard" in err.lower()
+        assert "audit" in err.lower()
+
+    def test_lint_accepts_gdpr_preset_forget_block(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        path = tmp_path / "mip.yaml"
+        path.write_text(_FORGET_VALID_MIP)
+        rc = main(["mip", "lint", str(path)])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "ok:" in out
+
+    def test_sample_code_preset_fixture_lints_clean(
+        self, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """examples/mip-code.yaml is the canonical sample for the `code` preset
+        and a forget-aware MIP config — it must always lint clean so it can be
+        copy-pasted by users without further edits."""
+        fixture = (
+            Path(__file__).resolve().parent.parent / "examples" / "mip-code.yaml"
+        )
+        rc = main(["mip", "lint", str(fixture)])
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert "ok:" in out
+        assert "4 rule(s)" in out
+        assert "2 bank(s)" in out
+
+    def test_explain_renders_forget_block(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        path = tmp_path / "mip.yaml"
+        path.write_text(_FORGET_VALID_MIP)
+        rc = main([
+            "mip", "explain", str(path),
+            "--content", "ssn 123",
+            "--content-type", "pii",
+        ])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "forget:" in out
+        assert "mode: hard" in out
+        assert "audit: required" in out
+        assert "max_per_call: 50" in out

@@ -708,6 +708,25 @@ class Astrocyte:
                         f"forget.max_per_call={mip_forget.max_per_call} for bank {bank_id!r}"
                     )
 
+                # min_age_days: refuse forget when any targeted record is younger.
+                # Best-effort: requires the engine to populate `_created_at` in
+                # metadata at retain time. Records lacking this stamp are skipped
+                # with a warning (degraded enforcement, not a hard failure).
+                if (
+                    mip_forget.min_age_days is not None
+                    and mip_forget.min_age_days > 0
+                    and memory_ids
+                ):
+                    too_young = await self._collect_too_young_ids(
+                        bank_id, memory_ids, mip_forget.min_age_days,
+                    )
+                    if too_young:
+                        raise MipRoutingError(
+                            f"forget rejected: {len(too_young)} record(s) in {bank_id!r} "
+                            f"younger than forget.min_age_days={mip_forget.min_age_days} "
+                            f"({sorted(too_young)[:5]}{'...' if len(too_young) > 5 else ''})"
+                        )
+
                 # audit: emit a structured log line before any deletion occurs
                 if mip_forget.audit in ("required", "recommended"):
                     self._logger.log(
@@ -755,6 +774,31 @@ class Astrocyte:
                 if self._config.access_control.enabled:
                     self._policy.check_access(bank_id, "admin", context)
 
+            # Soft-delete path (mip_forget.mode == "soft"): mark records with
+            # `_deleted: true` instead of physically removing. Recall is
+            # responsible for filtering them out. Falls through to hard delete
+            # with a warning if the engine doesn't expose `soft_delete`.
+            soft_mode = (
+                mip_forget is not None
+                and mip_forget.mode == "soft"
+                and memory_ids is not None
+            )
+            if soft_mode:
+                soft_fn = getattr(self._engine_provider, "soft_delete", None)
+                if soft_fn is not None:
+                    deleted = await soft_fn(bank_id, memory_ids)
+                    await self._hook_manager.fire(
+                        "on_forget",
+                        bank_id=bank_id,
+                        data={"deleted_count": deleted, "archived_count": 0, "soft": True},
+                    )
+                    return ForgetResult(deleted_count=deleted)
+                logging.getLogger("astrocyte.mip").warning(
+                    "forget.mode=soft requested for bank=%s but engine %s does not "
+                    "implement soft_delete(); falling back to hard delete",
+                    bank_id, type(self._engine_provider).__name__ if self._engine_provider else "pipeline",
+                )
+
             request = ForgetRequest(
                 bank_id=bank_id,
                 memory_ids=memory_ids,
@@ -772,6 +816,73 @@ class Astrocyte:
                 },
             )
             return result
+
+    async def _collect_too_young_ids(
+        self,
+        bank_id: str,
+        memory_ids: list[str],
+        min_age_days: int,
+    ) -> list[str]:
+        """Return the subset of ``memory_ids`` younger than ``min_age_days``.
+
+        Best-effort enforcement of ``forget.min_age_days``: relies on records
+        carrying a ``_created_at`` ISO timestamp in metadata (stamped by the
+        engine at retain time). Records lacking the stamp are skipped with a
+        warning — degraded enforcement, not a hard failure, since older data
+        predating the stamp shouldn't permanently block legitimate forgets.
+        """
+        from datetime import timedelta
+
+        wanted = set(memory_ids)
+        try:
+            result = await self._dispatcher.recall(
+                RecallRequest(query="*", bank_id=bank_id, max_results=10000),
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "min_age_days check skipped: recall failed for bank=%s: %s",
+                bank_id, exc,
+            )
+            return []
+
+        now = datetime.now(timezone.utc)
+        threshold = timedelta(days=min_age_days)
+        too_young: list[str] = []
+        seen: set[str] = set()
+        missing_stamp = 0
+
+        for hit in result.hits:
+            if hit.memory_id is None or hit.memory_id not in wanted:
+                continue
+            seen.add(hit.memory_id)
+            stamp = (hit.metadata or {}).get("_created_at")
+            if stamp is None:
+                missing_stamp += 1
+                continue
+            if isinstance(stamp, str):
+                try:
+                    created_at = datetime.fromisoformat(stamp)
+                except ValueError:
+                    missing_stamp += 1
+                    continue
+            elif isinstance(stamp, datetime):
+                created_at = stamp
+            else:
+                missing_stamp += 1
+                continue
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            if (now - created_at) < threshold:
+                too_young.append(hit.memory_id)
+
+        if missing_stamp:
+            mip_logger = logging.getLogger("astrocyte.mip")
+            mip_logger.warning(
+                "min_age_days enforcement degraded: %d/%d record(s) in bank=%s "
+                "lack `_created_at` metadata and were skipped",
+                missing_stamp, len(seen), bank_id,
+            )
+        return too_young
 
     async def health(self) -> HealthStatus:
         """Check system health."""

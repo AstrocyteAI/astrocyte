@@ -405,6 +405,255 @@ class TestForgetRespectLegalHold:
 
 
 @pytest.mark.asyncio
+class TestForgetMinAgeDays:
+    _YAML = textwrap.dedent("""\
+        version: "1.0"
+        rules:
+          - name: aged
+            priority: 10
+            match: { content_type: pii }
+            action:
+              bank: vault
+              forget:
+                version: 1
+                mode: soft
+                min_age_days: 7
+    """)
+
+    async def test_record_younger_than_min_age_is_refused(self, tmp_path: Path):
+        brain = _make_brain_with_router(tmp_path, self._YAML)
+        from astrocyte.types import RetainRequest
+
+        # InMemory engine stamps `_created_at` at retain time → just-stored
+        # records are 0 days old and must be refused.
+        result = await brain._engine_provider.retain(
+            RetainRequest(bank_id="vault", content="ssn 1", content_type="pii"),
+        )
+        with pytest.raises(MipRoutingError, match="min_age_days"):
+            await brain.forget("vault", memory_ids=[result.memory_id])
+
+    async def test_record_older_than_min_age_proceeds(self, tmp_path: Path):
+        from datetime import datetime, timedelta, timezone
+
+        from astrocyte.types import MemoryHit
+
+        brain = _make_brain_with_router(tmp_path, self._YAML)
+        # Inject a record with a backdated `_created_at` directly into the
+        # engine, bypassing retain() so we control the stamp.
+        old_iso = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        brain._engine_provider._memories["vault"] = [
+            MemoryHit(
+                text="old", score=1.0, fact_type="world",
+                metadata={"_created_at": old_iso},
+                memory_id="old-id", bank_id="vault",
+            )
+        ]
+        # No raise; deletion succeeds because the record is older than 7 days.
+        result = await brain.forget("vault", memory_ids=["old-id"])
+        assert result.deleted_count == 1
+
+    async def test_record_missing_created_at_is_skipped_with_warning(
+        self, tmp_path: Path, caplog,
+    ):
+        from astrocyte.types import MemoryHit
+
+        brain = _make_brain_with_router(tmp_path, self._YAML)
+        brain._engine_provider._memories["vault"] = [
+            MemoryHit(
+                text="undated", score=1.0, fact_type="world",
+                metadata={},  # no _created_at
+                memory_id="undated-id", bank_id="vault",
+            )
+        ]
+        with caplog.at_level(logging.WARNING, logger="astrocyte.mip"):
+            result = await brain.forget("vault", memory_ids=["undated-id"])
+        assert result.deleted_count == 1  # degraded enforcement → forget proceeds
+        assert any("min_age_days enforcement degraded" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+class TestForgetCascadeFlag:
+    """``cascade`` flag flows from yaml → ForgetSpec → audit log.
+
+    Cascade itself is an authoring signal for derived-data deletion (chunks,
+    embeddings, graph links). Today the runtime only surfaces it in the audit
+    log so operators can verify policy. These tests pin that contract.
+    """
+
+    async def test_cascade_true_surfaces_in_audit_log(self, tmp_path: Path, caplog):
+        yaml = textwrap.dedent("""\
+            version: "1.0"
+            rules:
+              - name: cascade-on
+                priority: 10
+                match: { content_type: pii }
+                action:
+                  bank: vault
+                  forget:
+                    version: 1
+                    mode: hard
+                    audit: required
+                    cascade: true
+        """)
+        brain = _make_brain_with_router(tmp_path, yaml)
+        with caplog.at_level(logging.WARNING):
+            await brain.forget(
+                "vault", memory_ids=["a"],
+                compliance=True, reason="rtbf",
+                context=AstrocyteContext(principal="user:test"),
+            )
+        audit = next(r for r in caplog.records if "mip.forget.audit" in r.getMessage())
+        assert '"cascade": true' in audit.getMessage()
+
+    async def test_cascade_false_surfaces_in_audit_log(self, tmp_path: Path, caplog):
+        yaml = textwrap.dedent("""\
+            version: "1.0"
+            rules:
+              - name: cascade-off
+                priority: 10
+                match: { content_type: pii }
+                action:
+                  bank: vault
+                  forget:
+                    version: 1
+                    mode: hard
+                    audit: required
+                    cascade: false
+        """)
+        brain = _make_brain_with_router(tmp_path, yaml)
+        with caplog.at_level(logging.WARNING):
+            await brain.forget(
+                "vault", memory_ids=["a"],
+                compliance=True, reason="rtbf",
+                context=AstrocyteContext(principal="user:test"),
+            )
+        audit = next(r for r in caplog.records if "mip.forget.audit" in r.getMessage())
+        assert '"cascade": false' in audit.getMessage()
+
+    async def test_cascade_omitted_defaults_true_in_audit(self, tmp_path: Path, caplog):
+        # gdpr preset implies cascade=true; no explicit override here.
+        yaml = textwrap.dedent("""\
+            version: "1.0"
+            rules:
+              - name: gdpr
+                priority: 10
+                match: { content_type: pii }
+                action:
+                  bank: vault
+                  forget: { version: 1, preset: gdpr }
+        """)
+        brain = _make_brain_with_router(tmp_path, yaml)
+        with caplog.at_level(logging.WARNING):
+            await brain.forget(
+                "vault", memory_ids=["a"],
+                compliance=True, reason="rtbf",
+                context=AstrocyteContext(principal="user:test"),
+            )
+        audit = next(r for r in caplog.records if "mip.forget.audit" in r.getMessage())
+        assert '"cascade": true' in audit.getMessage()
+
+    async def test_cascade_loader_round_trip(self):
+        """Loader preserves cascade=False (does not collapse to None default)."""
+        config = _parse_mip_config({
+            "version": "1.0",
+            "rules": [{
+                "name": "r",
+                "priority": 10,
+                "match": {"content_type": "pii"},
+                "action": {
+                    "bank": "vault",
+                    "forget": {"version": 1, "mode": "soft", "cascade": False},
+                },
+            }],
+        })
+        spec = config.rules[0].action.forget
+        assert spec.cascade is False  # explicit False, not None
+
+
+@pytest.mark.asyncio
+class TestForgetSoftDelete:
+    """``forget.mode=soft`` marks records with ``_deleted: true`` instead of
+    physically removing them, and recall must hide soft-deleted records."""
+
+    _SOFT_YAML = textwrap.dedent("""\
+        version: "1.0"
+        rules:
+          - name: soft-rule
+            priority: 10
+            match: { content_type: pii }
+            action:
+              bank: vault
+              forget: { version: 1, mode: soft }
+    """)
+
+    _HARD_YAML = textwrap.dedent("""\
+        version: "1.0"
+        rules:
+          - name: hard-rule
+            priority: 10
+            match: { content_type: pii }
+            action:
+              bank: vault
+              forget: { version: 1, mode: hard, audit: required }
+    """)
+
+    async def test_soft_delete_marks_metadata_and_hides_from_recall(self, tmp_path: Path):
+        from astrocyte.types import RecallRequest, RetainRequest
+
+        brain = _make_brain_with_router(tmp_path, self._SOFT_YAML)
+        r1 = await brain._engine_provider.retain(
+            RetainRequest(bank_id="vault", content="kept", content_type="pii"),
+        )
+        r2 = await brain._engine_provider.retain(
+            RetainRequest(bank_id="vault", content="forgotten", content_type="pii"),
+        )
+
+        result = await brain.forget("vault", memory_ids=[r2.memory_id])
+        assert result.deleted_count == 1
+
+        # Record still physically present, but flagged
+        all_mem = brain._engine_provider._memories["vault"]
+        assert len(all_mem) == 2
+        forgotten = next(m for m in all_mem if m.memory_id == r2.memory_id)
+        assert forgotten.metadata["_deleted"] is True
+
+        # Recall hides the soft-deleted record
+        recall = await brain._engine_provider.recall(
+            RecallRequest(query="kept forgotten", bank_id="vault", max_results=10),
+        )
+        ids = [h.memory_id for h in recall.hits]
+        assert r1.memory_id in ids
+        assert r2.memory_id not in ids
+
+    async def test_hard_mode_still_physically_deletes(self, tmp_path: Path):
+        from astrocyte.types import RetainRequest
+
+        brain = _make_brain_with_router(tmp_path, self._HARD_YAML)
+        r1 = await brain._engine_provider.retain(
+            RetainRequest(bank_id="vault", content="bye", content_type="pii"),
+        )
+        result = await brain.forget(
+            "vault", memory_ids=[r1.memory_id],
+            compliance=True, reason="rtbf",
+            context=AstrocyteContext(principal="user:test"),
+        )
+        assert result.deleted_count == 1
+        assert brain._engine_provider._memories["vault"] == []
+
+    async def test_soft_delete_is_idempotent(self, tmp_path: Path):
+        from astrocyte.types import RetainRequest
+
+        brain = _make_brain_with_router(tmp_path, self._SOFT_YAML)
+        r1 = await brain._engine_provider.retain(
+            RetainRequest(bank_id="vault", content="x", content_type="pii"),
+        )
+        first = await brain.forget("vault", memory_ids=[r1.memory_id])
+        second = await brain.forget("vault", memory_ids=[r1.memory_id])
+        assert first.deleted_count == 1
+        assert second.deleted_count == 0  # already soft-deleted, no-op
+
+
+@pytest.mark.asyncio
 class TestForgetNoRouterPreservesBehavior:
     async def test_forget_unchanged_when_no_mip_router(self, tmp_path: Path):
         """Without mip_config_path, forget behaves exactly as before Phase 4."""

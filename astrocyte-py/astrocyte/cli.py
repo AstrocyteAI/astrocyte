@@ -22,7 +22,7 @@ from typing import Sequence
 from astrocyte.errors import ConfigError
 from astrocyte.mip import MipRouter, load_mip_config
 from astrocyte.mip.rule_engine import RuleEngineInput, evaluate_rules
-from astrocyte.mip.schema import PipelineSpec
+from astrocyte.mip.schema import ForgetSpec, PipelineSpec
 from astrocyte.types import MetadataValue
 
 # ---------------------------------------------------------------------------
@@ -111,6 +111,21 @@ def _format_pipeline(pipeline: PipelineSpec | None) -> list[str]:
     return lines
 
 
+def _format_forget(forget: ForgetSpec | None) -> list[str]:
+    """Render a ForgetSpec as a list of indented printable lines."""
+    if forget is None:
+        return []
+    lines: list[str] = ["  forget:"]
+    set_fields = {
+        f.name: getattr(forget, f.name)
+        for f in dataclasses.fields(forget)
+        if getattr(forget, f.name) is not None
+    }
+    for k, v in set_fields.items():
+        lines.append(f"    {k}: {v}")
+    return lines
+
+
 def _cmd_mip_explain(args: argparse.Namespace) -> int:
     """Show which rule(s) match a hypothetical input and the resulting decision."""
     path = Path(args.path)
@@ -161,6 +176,8 @@ def _cmd_mip_explain(args: argparse.Namespace) -> int:
     print(f"  retain_policy: {decision.retain_policy}")
     print(f"  confidence:  {decision.confidence}")
     for line in _format_pipeline(decision.pipeline):
+        print(line)
+    for line in _format_forget(decision.forget):
         print(line)
     return 0
 
