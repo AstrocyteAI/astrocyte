@@ -35,12 +35,65 @@ class MatchBlock:
 
 
 @dataclass
+class ChunkerSpec:
+    """Per-rule chunker override. Absent fields fall back to ExtractionProfileConfig."""
+
+    strategy: str | None = None  # "sentence" | "dialogue" | "paragraph" | "fixed"
+    max_size: int | None = None
+    overlap: int | None = None
+
+
+@dataclass
+class DedupSpec:
+    """Per-rule dedup override. Absent fields fall back to DedupConfig."""
+
+    threshold: float | None = None  # 0.0–1.0
+    action: str | None = None  # "skip" | "skip_chunk" | "warn" | "update"
+
+
+@dataclass
+class RerankSpec:
+    """Per-rule reranker override. Resolved per-bank at recall time (P3)."""
+
+    keyword_weight: float | None = None
+    proper_noun_weight: float | None = None
+
+
+@dataclass
+class ReflectSpec:
+    """Per-rule reflect override. Resolved at synthesis time."""
+
+    prompt: str | None = None  # "default" | "temporal_aware" | "evidence_strict"
+    promote_metadata: list[str] | None = None  # capped at 5 fields (P4)
+
+
+@dataclass
+class PipelineSpec:
+    """Pipeline-shaping action vocabulary. All sub-blocks optional.
+
+    `version` is required when any pipeline field is set (P2). Persisted onto
+    each retained record so recall can warn on rule-version drift.
+
+    `preset` expands at load time into the explicit sub-block fields. Explicit
+    fields override preset defaults.
+    """
+
+    version: int | None = None
+    preset: str | None = None  # "conversational" | "document" | "code" | "evidence_strict"
+    chunker: ChunkerSpec | None = None
+    dedup: DedupSpec | None = None
+    rerank: RerankSpec | None = None
+    reflect: ReflectSpec | None = None
+
+
+@dataclass
 class ActionSpec:
     bank: str | None = None  # May contain templates: "student-{metadata.student_id}"
     tags: list[str] | None = None  # May contain templates
     retain_policy: str | None = None  # "default" | "redact_before_store" | "encrypt" | "reject"
     escalate: str | None = None  # "mip" or None
     confidence: float = 1.0
+    pipeline: PipelineSpec | None = None  # Optional pipeline-shaping overrides
 
 
 @dataclass
