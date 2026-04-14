@@ -267,6 +267,8 @@ class Astrocyte:
             self._policy.check_access(bank_id, "write", context)
 
             # MIP routing (before policy layer)
+            mip_pipeline = None
+            mip_rule_name = None
             if self._mip_router:
                 from astrocyte.mip.rule_engine import RuleEngineInput
 
@@ -288,6 +290,8 @@ class Astrocyte:
                     tags = routing.tags
                 if routing.retain_policy == "reject":
                     return RetainResult(stored=False, error="Rejected by MIP routing rule")
+                mip_pipeline = routing.pipeline
+                mip_rule_name = routing.rule_name
 
             # Rate limiting + quota (atomic to prevent TOCTOU)
             self._policy.check_rate_and_quota(bank_id, "retain")
@@ -333,6 +337,8 @@ class Astrocyte:
                 source=source,
                 content_type=content_type,
                 extraction_profile=extraction_profile,
+                mip_pipeline=mip_pipeline,
+                mip_rule_name=mip_rule_name,
             )
 
             # Route to provider

@@ -159,6 +159,13 @@ class RetainRequest:
     source: str | None = None
     content_type: str = "text"  # "text", "conversation", "document", "email", ...
     extraction_profile: str | None = None  # key in astrocyte.yml extraction_profiles (M3)
+    #: Optional pipeline overrides from a MIP RoutingDecision. When set, fields
+    #: take precedence over extraction profile and content_type defaults during
+    #: chunking and dedup. Persisted onto each stored chunk via ``_mip.*`` keys.
+    mip_pipeline: PipelineSpec | None = None
+    #: Name of the MIP rule whose action produced ``mip_pipeline``. Persisted on
+    #: stored chunks as ``_mip.rule`` so recall can warn on rule-version drift.
+    mip_rule_name: str | None = None
 
 
 @dataclass

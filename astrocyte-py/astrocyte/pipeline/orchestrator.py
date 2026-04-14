@@ -141,6 +141,16 @@ class PipelineOrchestrator:
         profile_table = merged_user_and_builtin_profiles(self.extraction_profiles)
         if name:
             profile = profile_table.get(name)
+
+        # MIP pipeline overrides (from RoutingDecision) — optional, no behavior
+        # change when absent. ``chunker`` and ``dedup`` are consumed here;
+        # ``rerank`` and ``reflect`` apply to recall/reflect (Phase 2).
+        mip_pipeline = request.mip_pipeline
+        mip_chunker = mip_pipeline.chunker if mip_pipeline else None
+        mip_dedup = mip_pipeline.dedup if mip_pipeline else None
+        dedup_threshold_override = mip_dedup.threshold if mip_dedup else None
+        dedup_action = (mip_dedup.action if mip_dedup else None) or "skip_chunk"
+
         prepared = prepare_retain_input(
             request,
             profile,
@@ -151,6 +161,7 @@ class PipelineOrchestrator:
             profile=profile,
             default_strategy=self.chunk_strategy,
             default_max_chunk_size=self.max_chunk_size,
+            mip_chunker=mip_chunker,
         )
         chunk_kwargs: dict[str, int] = {"max_chunk_size": chunking.max_size}
         if chunking.overlap is not None:
@@ -162,12 +173,24 @@ class PipelineOrchestrator:
         # 2. Generate embeddings for all chunks
         embeddings = await generate_embeddings(chunks, self.llm_provider)
 
-        # 2b. Per-chunk dedup — skip individual duplicate chunks, store the rest
+        # 2b. Per-chunk dedup — behavior depends on dedup_action:
+        #     "skip_chunk" (default): drop duplicate chunks, keep the rest
+        #     "skip":     if any chunk is a duplicate, reject the entire retain
+        #     "warn":     keep all chunks regardless of duplicates
+        #     "update":   not yet implemented; falls back to "skip_chunk"
         keep_indices: list[int] = []
+        any_duplicate = False
         for i, emb in enumerate(embeddings):
-            is_dup, _sim = self._dedup.is_duplicate(request.bank_id, emb)
-            if not is_dup:
+            is_dup, _sim = self._dedup.is_duplicate(
+                request.bank_id, emb, threshold_override=dedup_threshold_override,
+            )
+            if is_dup:
+                any_duplicate = True
+            if dedup_action == "warn" or not is_dup:
                 keep_indices.append(i)
+
+        if dedup_action == "skip" and any_duplicate:
+            return RetainResult(stored=False, deduplicated=True, error="Duplicate chunk(s) found; rule action=skip")
 
         if not keep_indices:
             return RetainResult(stored=False, deduplicated=True, error="All chunks are near-duplicates")
@@ -185,6 +208,14 @@ class PipelineOrchestrator:
             profile_authority_tier=profile_tier,
             recall_authority=self.recall_authority,
         )
+
+        # Persist MIP provenance so recall can warn on rule-version drift (P2).
+        if request.mip_rule_name or (mip_pipeline and mip_pipeline.version is not None):
+            chunk_metadata = dict(chunk_metadata or {})
+            if request.mip_rule_name:
+                chunk_metadata["_mip.rule"] = request.mip_rule_name
+            if mip_pipeline and mip_pipeline.version is not None:
+                chunk_metadata["_mip.pipeline_version"] = int(mip_pipeline.version)
 
         # 4. Store vectors
         memory_ids: list[str] = []
