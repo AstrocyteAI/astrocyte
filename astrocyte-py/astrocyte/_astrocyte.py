@@ -162,6 +162,8 @@ class Astrocyte:
         # Wire the LLM provider to the MIP router for intent-layer escalation
         if self._mip_router and hasattr(pipeline, "llm_provider"):
             self._mip_router._llm_provider = pipeline.llm_provider
+        # Expose router for per-bank MIP resolution at recall time (P3)
+        pipeline.mip_router = self._mip_router
         self._rebuild_tiered_retrieval()
         self._rebuild_multi_bank()
 

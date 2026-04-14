@@ -154,3 +154,93 @@ class TestMipProvenancePersistence:
         meta = next(iter(vs._vectors.values())).metadata or {}
         assert meta.get("_mip.rule") == "r2"
         assert "_mip.pipeline_version" not in meta
+
+
+# ---------------------------------------------------------------------------
+# Per-bank rerank resolution at recall time (Phase 2, Step 8b)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestMipRerankResolution:
+    async def test_recall_applies_per_bank_rerank_spec(self):
+        """When a rule targets the recall bank with a RerankSpec, scores reflect the override."""
+        from astrocyte.mip.router import MipRouter
+        from astrocyte.mip.schema import (
+            ActionSpec,
+            MatchBlock,
+            MatchSpec,
+            MipConfig,
+            PipelineSpec,
+            RerankSpec,
+            RoutingRule,
+        )
+        from astrocyte.types import RecallRequest
+
+        pipeline, vs = _orchestrator()
+
+        # Seed two memories: one matches the query terms, one does not
+        await pipeline.retain(RetainRequest(content="dark mode preference here.", bank_id="b1"))
+        await pipeline.retain(RetainRequest(content="completely unrelated topic.", bank_id="b1"))
+
+        # Record baseline recall — default rerank weights
+        baseline = await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=2))
+        baseline_top_score = baseline.hits[0].score
+
+        # Now attach a router with a rule that bumps keyword_weight aggressively for bank b1
+        rule = RoutingRule(
+            name="b1-strong-keywords",
+            priority=10,
+            match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="text")]),
+            action=ActionSpec(
+                bank="b1",
+                pipeline=PipelineSpec(version=1, rerank=RerankSpec(keyword_weight=1.0)),
+            ),
+        )
+        pipeline.mip_router = MipRouter(MipConfig(rules=[rule]))
+
+        boosted = await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=2))
+        # Top hit's score should be measurably higher with the override applied
+        assert boosted.hits[0].score > baseline_top_score
+
+    async def test_recall_unchanged_when_no_router_attached(self):
+        from astrocyte.types import RecallRequest
+
+        pipeline, vs = _orchestrator()
+        await pipeline.retain(RetainRequest(content="dark mode preference.", bank_id="b1"))
+
+        # mip_router is None by default → behavior identical to pre-Step 8b
+        result = await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=1))
+        assert pipeline.mip_router is None
+        assert len(result.hits) == 1
+
+    async def test_recall_unchanged_when_router_has_no_rule_for_bank(self):
+        from astrocyte.mip.router import MipRouter
+        from astrocyte.mip.schema import (
+            ActionSpec,
+            MatchBlock,
+            MatchSpec,
+            MipConfig,
+            PipelineSpec,
+            RerankSpec,
+            RoutingRule,
+        )
+        from astrocyte.types import RecallRequest
+
+        pipeline, vs = _orchestrator()
+        await pipeline.retain(RetainRequest(content="dark mode preference.", bank_id="b1"))
+        baseline = await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=1))
+
+        # Router with a rule targeting a different bank should not affect b1 recall
+        rule = RoutingRule(
+            name="other-bank",
+            priority=10,
+            match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="text")]),
+            action=ActionSpec(
+                bank="other-bank",
+                pipeline=PipelineSpec(version=1, rerank=RerankSpec(keyword_weight=1.0)),
+            ),
+        )
+        pipeline.mip_router = MipRouter(MipConfig(rules=[rule]))
+        unchanged = await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=1))
+        assert unchanged.hits[0].score == baseline.hits[0].score

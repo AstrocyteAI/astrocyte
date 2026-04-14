@@ -42,6 +42,7 @@ from astrocyte.types import (
 )
 
 if TYPE_CHECKING:
+    from astrocyte.mip.router import MipRouter
     from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore
 
 
@@ -123,6 +124,9 @@ class PipelineOrchestrator:
         self._dedup = DedupDetector(similarity_threshold=0.95)
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when ``recall_authority`` is configured.
         self.recall_authority: RecallAuthorityConfig | None = None
+        #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when MIP is configured.
+        #: Used by :meth:`recall` to resolve per-bank rerank/reflect overrides (P3).
+        self.mip_router: MipRouter | None = None
 
     @property
     def tokens_used(self) -> int:
@@ -316,8 +320,13 @@ class PipelineOrchestrator:
             ranked_lists.append(memory_hits_as_scored(request.external_context))
         fused = rrf_fusion(ranked_lists, k=self.rrf_k)
 
-        # 5. Reranking
-        reranked = basic_rerank(fused, request.query)
+        # 5. Reranking — apply per-bank MIP RerankSpec when a rule targets this bank (P3)
+        mip_rerank = None
+        if self.mip_router is not None:
+            bank_pipeline = self.mip_router.resolve_pipeline_for_bank(request.bank_id)
+            if bank_pipeline is not None:
+                mip_rerank = bank_pipeline.rerank
+        reranked = basic_rerank(fused, request.query, mip_rerank=mip_rerank)
 
         # 6. Trim to max_results
         trimmed = reranked[: request.max_results]

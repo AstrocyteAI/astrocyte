@@ -6,16 +6,33 @@ See docs/_design/memory-intent-protocol.md for the design specification.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from astrocyte.mip.rule_engine import RuleEngineInput, RuleMatch, evaluate_rules, interpolate_template
-from astrocyte.mip.schema import MipConfig
+from astrocyte.mip.schema import MipConfig, PipelineSpec
 from astrocyte.types import RoutingDecision
 
 if TYPE_CHECKING:
     from astrocyte.provider import LLMProvider
 
 logger = logging.getLogger("astrocyte.mip")
+
+
+_TEMPLATE_PLACEHOLDER = re.compile(r"\{[^}]+\}")
+
+
+def _bank_matches(template: str, bank_id: str) -> bool:
+    """Whether a templated bank pattern (``"student-{id}"``) matches a concrete bank_id.
+
+    Each ``{...}`` placeholder is treated as a non-greedy ``.+?`` wildcard;
+    surrounding literal text is regex-escaped.
+    """
+    if "{" not in template:
+        return template == bank_id
+    parts = _TEMPLATE_PLACEHOLDER.split(template)
+    pattern = "^" + ".+?".join(re.escape(p) for p in parts) + "$"
+    return re.match(pattern, bank_id) is not None
 
 
 class MipRouter:
@@ -126,6 +143,29 @@ class MipRouter:
 
         # No LLM available — passthrough
         return RoutingDecision(resolved_by="passthrough", reasoning="No mechanical match and no LLM available")
+
+    def resolve_pipeline_for_bank(self, bank_id: str) -> PipelineSpec | None:
+        """Resolve the highest-priority rule's PipelineSpec targeting ``bank_id`` (P3).
+
+        At recall time the original RetainRequest context (content, metadata)
+        is gone, but recall still needs to know the rerank/reflect overrides
+        configured for the bank being read. This walks rules in priority order
+        and returns the first ``action.pipeline`` whose ``action.bank``
+        resolves to ``bank_id``.
+
+        ``action.bank`` may contain ``{...}`` template placeholders. Each
+        placeholder is treated as a wildcard for matching purposes
+        (``"student-{id}"`` matches ``"student-42"``, ``"student-foo"``).
+        """
+        for rule in self._rules:
+            if rule.action.pipeline is None:
+                continue
+            template = rule.action.bank
+            if not template:
+                continue
+            if _bank_matches(template, bank_id):
+                return rule.action.pipeline
+        return None
 
     def _apply_action(self, match: RuleMatch, input_data: RuleEngineInput) -> RoutingDecision:
         """Convert a RuleMatch into a RoutingDecision, interpolating templates."""
