@@ -81,3 +81,59 @@ class TestDedupDetector:
         is_dup, sim = detector.is_duplicate("bank-1", [1.0, 2.0])
         assert is_dup is False
         assert sim == 0.0
+
+
+class TestDedupDetectorThresholdOverride:
+    """Per-call threshold override for MIP DedupSpec.threshold (Phase 1, Step 5)."""
+
+    def _near_but_not_identical(self) -> tuple[list[float], list[float]]:
+        # Two vectors with cosine similarity ~0.93 — between common thresholds
+        a = [1.0, 0.0, 0.0]
+        b = [0.93, 0.36764, 0.0]  # tuned to land around 0.93
+        return a, b
+
+    def test_override_below_default_finds_duplicate(self):
+        """Default threshold 0.95 misses; override 0.90 catches."""
+        detector = DedupDetector(similarity_threshold=0.95)
+        a, b = self._near_but_not_identical()
+        detector.add("bank-1", "m1", a)
+
+        # Without override: not a duplicate at 0.95
+        is_dup_default, sim = detector.is_duplicate("bank-1", b)
+        assert is_dup_default is False
+        assert 0.90 < sim < 0.95
+
+        # With override: is a duplicate at 0.90
+        is_dup_override, _ = detector.is_duplicate("bank-1", b, threshold_override=0.90)
+        assert is_dup_override is True
+
+    def test_override_above_default_misses_duplicate(self):
+        """Default threshold 0.90 catches; override 0.99 misses near-but-not-identical."""
+        detector = DedupDetector(similarity_threshold=0.90)
+        a, b = self._near_but_not_identical()
+        detector.add("bank-1", "m1", a)
+
+        is_dup_default, _ = detector.is_duplicate("bank-1", b)
+        assert is_dup_default is True
+
+        is_dup_override, _ = detector.is_duplicate("bank-1", b, threshold_override=0.99)
+        assert is_dup_override is False
+
+    def test_override_none_uses_instance_default(self):
+        detector = DedupDetector(similarity_threshold=0.95)
+        v = [1.0, 2.0, 3.0]
+        detector.add("bank-1", "m1", v)
+        is_dup, _ = detector.is_duplicate("bank-1", v, threshold_override=None)
+        assert is_dup is True
+
+    def test_override_does_not_mutate_instance_threshold(self):
+        detector = DedupDetector(similarity_threshold=0.95)
+        a, b = self._near_but_not_identical()
+        detector.add("bank-1", "m1", a)
+
+        detector.is_duplicate("bank-1", b, threshold_override=0.50)
+        assert detector.threshold == 0.95  # instance default unchanged
+
+        # Subsequent call without override still uses 0.95
+        is_dup, _ = detector.is_duplicate("bank-1", b)
+        assert is_dup is False
