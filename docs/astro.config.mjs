@@ -23,6 +23,7 @@ const topicItems = {
         { label: "Introduction", link: "/introduction/" },
         { label: "How it works", link: "/end-user/how-it-works/" },
         { label: "Quick Start", link: "/end-user/quick-start/" },
+        { label: "FAQ", link: "/end-user/faq/" },
       ],
     },
     // ── Reference ──
