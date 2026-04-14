@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -46,6 +47,7 @@ _FORGET_KEYS = {
 }
 _FORGET_MODES = {"soft", "hard", "tombstone"}
 _FORGET_AUDIT = {"none", "recommended", "required"}
+_TIE_BREAKERS = {"first", "error", "most_specific"}
 
 # P4: hard cap on metadata fields promoted into reflect prompt
 _PROMOTE_METADATA_MAX = 5
@@ -67,6 +69,14 @@ def load_mip_config(path: str | Path) -> MipConfig:
 def _parse_mip_config(data: dict) -> MipConfig:
     """Parse a YAML dict into MipConfig."""
     config = MipConfig(version=data.get("version", "1.0"))
+
+    # Phase 5: tie-breaker policy
+    tie_breaker = data.get("tie_breaker", "first")
+    if tie_breaker not in _TIE_BREAKERS:
+        raise ConfigError(
+            f"tie_breaker must be one of {sorted(_TIE_BREAKERS)} (got {tie_breaker!r})"
+        )
+    config.tie_breaker = tie_breaker
 
     # Banks
     if "banks" in data and data["banks"]:
@@ -118,13 +128,65 @@ def _parse_rule(data: dict) -> RoutingRule:
     action_data = data.get("action", {})
     rule_name = data.get("name", "<unnamed>")
 
+    # Phase 5 — shadow / activation window / observability tags
+    shadow = data.get("shadow", False)
+    if not isinstance(shadow, bool):
+        raise ConfigError(f"Rule '{rule_name}': shadow must be a boolean")
+
+    active_from = _parse_iso_datetime(data.get("active_from"), rule_name, "active_from")
+    active_until = _parse_iso_datetime(data.get("active_until"), rule_name, "active_until")
+    if active_from and active_until and active_until <= active_from:
+        raise ConfigError(
+            f"Rule '{rule_name}': active_until must be strictly after active_from"
+        )
+
+    obs_tags = data.get("observability_tags")
+    if obs_tags is not None:
+        if not isinstance(obs_tags, list) or not all(isinstance(t, str) for t in obs_tags):
+            raise ConfigError(
+                f"Rule '{rule_name}': observability_tags must be a list of strings"
+            )
+
     return RoutingRule(
         name=data["name"],
         priority=data.get("priority", 100),
         match=_parse_match_block(match_data),
         action=_parse_action(action_data, rule_name=rule_name, match_data=match_data),
         override=data.get("override", False),
+        shadow=shadow,
+        active_from=active_from,
+        active_until=active_until,
+        observability_tags=obs_tags,
     )
+
+
+def _parse_iso_datetime(value: object, rule_name: str, field: str) -> datetime | None:
+    """Parse an ISO 8601 datetime string into a datetime; passthrough None.
+
+    Naive timestamps are interpreted as UTC so comparisons are unambiguous.
+    """
+    from datetime import timezone
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ConfigError(
+                f"Rule '{rule_name}': {field} must be ISO 8601 datetime "
+                f"(got {value!r}): {exc}"
+            ) from exc
+    else:
+        raise ConfigError(
+            f"Rule '{rule_name}': {field} must be a datetime string "
+            f"(got {type(value).__name__})"
+        )
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _parse_match_block(data: dict) -> MatchBlock:

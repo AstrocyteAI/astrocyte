@@ -7,10 +7,18 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from astrocyte.mip.rule_engine import RuleEngineInput, RuleMatch, evaluate_rules, interpolate_template
-from astrocyte.mip.schema import ForgetSpec, MipConfig, PipelineSpec
+from astrocyte.errors import MipRoutingError
+from astrocyte.mip.rule_engine import (
+    RuleEngineInput,
+    RuleMatch,
+    evaluate_match_block,
+    evaluate_rules,
+    interpolate_template,
+)
+from astrocyte.mip.schema import ForgetSpec, MipConfig, PipelineSpec, RoutingRule
 from astrocyte.types import RoutingDecision
 
 if TYPE_CHECKING:
@@ -49,11 +57,35 @@ class MipRouter:
         Returns RoutingDecision if a confident match is found.
         Returns None if escalation to intent layer is needed.
         """
-        matches = evaluate_rules(self._rules, input_data)
+        # Phase 5 — filter rules outside their activation window.
+        eligible = [r for r in self._rules if _is_active(r)]
+
+        # Phase 5 — shadow rules: evaluate them off to the side, log the match
+        # for observability, then exclude them from real routing.
+        shadow_rules = [r for r in eligible if r.shadow]
+        live_rules = [r for r in eligible if not r.shadow]
+        for rule in shadow_rules:
+            if evaluate_match_block(rule.match, input_data):
+                logger.info(
+                    "mip shadow match (no action taken): rule=%s priority=%d tags=%s",
+                    rule.name, rule.priority, rule.observability_tags,
+                )
+
+        matches = evaluate_rules(live_rules, input_data)
 
         if not matches:
             return None
 
+        # Phase 5 — tie-breaking when multiple non-override rules match at the
+        # same top priority. Override rules already short-circuit in
+        # evaluate_rules (returns a single match). When a tie is resolved
+        # explicitly by tie_breaker, bypass escalation — the author has
+        # declared deterministic intent for the priority collision.
+        top_priority = matches[0].rule.priority
+        tied = [m for m in matches if m.rule.priority == top_priority]
+        if len(tied) > 1 and not matches[0].rule.override:
+            top = self._resolve_top(matches)
+            return self._apply_action(top, input_data)
         top = matches[0]
 
         # Override rule — compliance lock, always return
@@ -74,6 +106,29 @@ class MipRouter:
 
         # Escalation policy says don't escalate — use highest priority match
         return self._apply_action(top, input_data)
+
+    def _resolve_top(self, matches: list[RuleMatch]) -> RuleMatch:
+        """Apply tie_breaker policy when multiple matches share the top priority.
+
+        ``matches`` is already sorted ascending by priority.
+        """
+        top_priority = matches[0].rule.priority
+        tied = [m for m in matches if m.rule.priority == top_priority]
+        if len(tied) <= 1:
+            return tied[0]
+
+        policy = self._config.tie_breaker
+        if policy == "first":
+            return tied[0]
+        if policy == "error":
+            names = ", ".join(m.rule.name for m in tied)
+            raise MipRoutingError(
+                f"MIP tie_breaker=error: {len(tied)} rules matched at priority "
+                f"{top_priority}: {names}"
+            )
+        if policy == "most_specific":
+            return max(tied, key=lambda m: _condition_count(m.rule))
+        return tied[0]  # defensive fallback
 
     def _should_escalate(self, matches: list[RuleMatch]) -> bool:
         """Check escalation conditions from intent_policy.escalate_when."""
@@ -202,4 +257,35 @@ class MipRouter:
             confidence=match.confidence,
             pipeline=action.pipeline,
             forget=action.forget,
+            observability_tags=match.rule.observability_tags,
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_active(rule: RoutingRule) -> bool:
+    """Whether ``rule`` is within its ``active_from``/``active_until`` window."""
+    if rule.active_from is None and rule.active_until is None:
+        return True
+    now = datetime.now(timezone.utc)
+    if rule.active_from is not None and now < rule.active_from:
+        return False
+    if rule.active_until is not None and now > rule.active_until:
+        return False
+    return True
+
+
+def _condition_count(rule: RoutingRule) -> int:
+    """Count match conditions (used by tie_breaker=most_specific)."""
+    block = rule.match
+    count = 0
+    if block.all_conditions:
+        count += len(block.all_conditions)
+    if block.any_conditions:
+        count += len(block.any_conditions)
+    if block.none_conditions:
+        count += len(block.none_conditions)
+    return count

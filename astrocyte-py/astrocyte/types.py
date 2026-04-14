@@ -658,6 +658,7 @@ class RoutingDecision:
     reasoning: str | None = None  # LLM justification if intent layer used
     pipeline: PipelineSpec | None = None  # Optional pipeline-shaping overrides from rule
     forget: ForgetSpec | None = None  # Optional forget-policy overrides from rule (Phase 4)
+    observability_tags: list[str] | None = None  # Per-rule operator labels (Phase 5)
 
 
 # ---------------------------------------------------------------------------

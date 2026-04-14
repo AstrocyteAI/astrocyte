@@ -6,6 +6,7 @@ FFI-safe: no Any, no callables.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass
@@ -123,6 +124,17 @@ class RoutingRule:
     match: MatchBlock
     action: ActionSpec
     override: bool = False  # Compliance-mandatory, cannot be overridden by intent
+    # Phase 5 — operator ergonomics
+    #: Shadow mode: rule is evaluated and logged but its action is NOT applied.
+    #: Used to canary-test new rules with zero behavioral impact.
+    shadow: bool = False
+    #: Activation window. If now < active_from or now > active_until the rule
+    #: is skipped (treated as not present). Useful for staged rollouts.
+    active_from: datetime | None = None
+    active_until: datetime | None = None
+    #: Free-form labels surfaced on RoutingDecision and structured logs so
+    #: operators can group metrics by rule purpose ("compliance", "experiment").
+    observability_tags: list[str] | None = None
 
 
 @dataclass
@@ -146,3 +158,8 @@ class MipConfig:
     banks: list[BankDefinition] | None = None
     rules: list[RoutingRule] | None = None
     intent_policy: IntentPolicy | None = None
+    #: Phase 5 — how to resolve multiple matches at the same priority.
+    #: ``"first"`` (default) preserves declaration order; ``"error"`` raises
+    #: MipRoutingError so authoring conflicts surface loudly; ``"most_specific"``
+    #: picks the rule with the most match conditions.
+    tie_breaker: str = "first"
