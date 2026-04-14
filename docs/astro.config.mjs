@@ -181,7 +181,46 @@ const topicItems = {
     },
   ],
   tutorials: [
-    { label: "100 Agents in 100 Days", link: "/tutorials/100-agents-in-100-days/" },
+    // ── Getting Started ──
+    {
+      label: "Getting Started",
+      items: [
+        { label: "100 Agents in 100 Days", link: "/tutorials/100-agents-in-100-days/" },
+      ],
+    },
+    // ── Consumer Agents ──
+    {
+      label: "Consumer Agents",
+      collapsed: true,
+      items: [
+        { label: "Productivity & communication", badge: "1–9", link: "/tutorials/100-agents-in-100-days/#productivity--communication" },
+        { label: "Money & subscriptions", badge: "10–14", link: "/tutorials/100-agents-in-100-days/#money-shopping-subscriptions" },
+        { label: "Home & logistics", badge: "15–20", link: "/tutorials/100-agents-in-100-days/#home-mobility-logistics" },
+        { label: "Food & wellness", badge: "21–26", link: "/tutorials/100-agents-in-100-days/#food-health-adjacent-wellness" },
+        { label: "Learning & career", badge: "27–34", link: "/tutorials/100-agents-in-100-days/#learning-career-creativity" },
+        { label: "Family & social", badge: "35–40", link: "/tutorials/100-agents-in-100-days/#family-social-local-life" },
+        { label: "Hobbies", badge: "41–45", link: "/tutorials/100-agents-in-100-days/#hobbies--specialized-leisure" },
+        { label: "Life admin", badge: "46–49", link: "/tutorials/100-agents-in-100-days/#accessibility--life-admin" },
+      ],
+    },
+    // ── Enterprise Agents ──
+    {
+      label: "Enterprise Agents",
+      collapsed: true,
+      items: [
+        { label: "Support & sales", badge: "50–55", link: "/tutorials/100-agents-in-100-days/#customer-facing-support-success-sales" },
+        { label: "IT & workplace", badge: "56–61", link: "/tutorials/100-agents-in-100-days/#internal-it-workplace-hr" },
+        { label: "Engineering & platform", badge: "62–68", link: "/tutorials/100-agents-in-100-days/#engineering-quality-platform" },
+        { label: "Security & compliance", badge: "69–74", link: "/tutorials/100-agents-in-100-days/#security-risk-compliance" },
+        { label: "Finance & procurement", badge: "75–77", link: "/tutorials/100-agents-in-100-days/#finance--procurement" },
+        { label: "Legal operations", badge: "78–96", link: "/tutorials/100-agents-in-100-days/#legal-department--legal-operations" },
+        { label: "Operations & supply chain", badge: "97–102", link: "/tutorials/100-agents-in-100-days/#operations-supply-chain-field" },
+        { label: "Data & product", badge: "103–107", link: "/tutorials/100-agents-in-100-days/#data-analytics-product" },
+        { label: "Industry-specific", badge: "108–112", link: "/tutorials/100-agents-in-100-days/#industry-flavored" },
+        { label: "Marketing & comms", badge: "113–116", link: "/tutorials/100-agents-in-100-days/#marketing-comms-design-systems" },
+        { label: "Strategy & leadership", badge: "117–120", link: "/tutorials/100-agents-in-100-days/#strategy--leadership" },
+      ],
+    },
   ],
 };
 
