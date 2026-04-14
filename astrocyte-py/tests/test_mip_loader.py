@@ -132,3 +132,205 @@ rules:
         p.write_text(content)
         with pytest.raises(ConfigError, match="override=true and escalate=mip"):
             load_mip_config(p)
+
+
+class TestPipelineBlockLoader:
+    """Tests for the optional `pipeline:` action sub-block (Phase 1, Step 2)."""
+
+    def _write(self, tmp_path: Path, body: str) -> Path:
+        p = tmp_path / "mip.yaml"
+        p.write_text(body)
+        return p
+
+    def test_no_pipeline_block_keeps_action_pipeline_none(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: chat }
+    action: { bank: b }
+""")
+        config = load_mip_config(p)
+        assert config.rules[0].action.pipeline is None
+
+    def test_preset_only_expands_at_load(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: conversation }
+    action:
+      bank: b
+      pipeline:
+        version: 1
+        preset: conversational
+""")
+        config = load_mip_config(p)
+        pipeline = config.rules[0].action.pipeline
+        assert pipeline is not None
+        # preset cleared post-expansion
+        assert pipeline.preset is None
+        # chunker resolved from preset
+        assert pipeline.chunker is not None
+        assert pipeline.chunker.strategy == "dialogue"
+        assert pipeline.dedup is not None
+        assert pipeline.dedup.threshold == 0.92
+
+    def test_explicit_overrides_win_over_preset(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: conversation }
+    action:
+      pipeline:
+        version: 1
+        preset: conversational
+        chunker: { max_size: 400 }
+""")
+        config = load_mip_config(p)
+        chunker = config.rules[0].action.pipeline.chunker
+        assert chunker.strategy == "dialogue"  # from preset
+        assert chunker.max_size == 400  # override
+
+    def test_raw_overrides_only(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: doc }
+    action:
+      pipeline:
+        version: 1
+        chunker: { strategy: paragraph, max_size: 1000 }
+        dedup: { threshold: 0.97, action: skip }
+""")
+        config = load_mip_config(p)
+        pipeline = config.rules[0].action.pipeline
+        assert pipeline.chunker.strategy == "paragraph"
+        assert pipeline.dedup.threshold == 0.97
+        assert pipeline.rerank is None
+        assert pipeline.reflect is None
+
+    # P2: version required when pipeline block is present
+    def test_missing_version_raises(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: chat }
+    action:
+      pipeline:
+        preset: conversational
+""")
+        with pytest.raises(ConfigError, match="pipeline.version is required"):
+            load_mip_config(p)
+
+    def test_non_integer_version_raises(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: chat }
+    action:
+      pipeline:
+        version: "1"
+        preset: conversational
+""")
+        with pytest.raises(ConfigError, match="pipeline.version must be an integer"):
+            load_mip_config(p)
+
+    # P5: pipeline requires content_type in match
+    def test_pipeline_without_content_type_match_raises(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { source: agent-x }
+    action:
+      pipeline:
+        version: 1
+        preset: conversational
+""")
+        with pytest.raises(ConfigError, match="content_type"):
+            load_mip_config(p)
+
+    def test_content_type_inside_all_block_satisfies_p5(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match:
+      all:
+        - content_type: chat
+        - source: agent-x
+    action:
+      pipeline:
+        version: 1
+        preset: conversational
+""")
+        config = load_mip_config(p)
+        assert config.rules[0].action.pipeline is not None
+
+    # P4: promote_metadata cap
+    def test_promote_metadata_over_cap_raises(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: chat }
+    action:
+      pipeline:
+        version: 1
+        reflect:
+          promote_metadata: [a, b, c, d, e, f]
+""")
+        with pytest.raises(ConfigError, match="capped at 5"):
+            load_mip_config(p)
+
+    def test_promote_metadata_at_cap_ok(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: chat }
+    action:
+      pipeline:
+        version: 1
+        reflect:
+          promote_metadata: [a, b, c, d, e]
+""")
+        config = load_mip_config(p)
+        assert len(config.rules[0].action.pipeline.reflect.promote_metadata) == 5
+
+    def test_unknown_preset_raises(self, tmp_path: Path) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: chat }
+    action:
+      pipeline:
+        version: 1
+        preset: nonexistent
+""")
+        with pytest.raises(ConfigError, match="unknown preset"):
+            load_mip_config(p)
+
+    def test_unknown_pipeline_key_warns(self, tmp_path: Path, recwarn: pytest.WarningsRecorder) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: chat }
+    action:
+      pipeline:
+        version: 1
+        preset: conversational
+        future_field: surprise
+""")
+        load_mip_config(p)
+        messages = [str(w.message) for w in recwarn.list]
+        assert any("future_field" in m for m in messages)
+
+    def test_unknown_chunker_key_warns(self, tmp_path: Path, recwarn: pytest.WarningsRecorder) -> None:
+        p = self._write(tmp_path, """
+rules:
+  - name: r
+    match: { content_type: chat }
+    action:
+      pipeline:
+        version: 1
+        chunker: { strategy: dialogue, mystery: 7 }
+""")
+        load_mip_config(p)
+        messages = [str(w.message) for w in recwarn.list]
+        assert any("mystery" in m for m in messages)

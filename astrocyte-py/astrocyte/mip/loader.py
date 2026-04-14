@@ -8,16 +8,33 @@ import yaml
 
 from astrocyte.config import _substitute_env_recursive
 from astrocyte.errors import ConfigError
+from astrocyte.mip.presets import expand_preset, is_known_preset, list_presets
 from astrocyte.mip.schema import (
     ActionSpec,
     BankDefinition,
+    ChunkerSpec,
+    DedupSpec,
     EscalationCondition,
     IntentPolicy,
     MatchBlock,
     MatchSpec,
     MipConfig,
+    PipelineSpec,
+    ReflectSpec,
+    RerankSpec,
     RoutingRule,
 )
+
+# Recognised sub-keys for the pipeline block. Unknown keys at any level emit
+# warnings during load (forward-compat: vocabulary may grow).
+_PIPELINE_KEYS = {"version", "preset", "chunker", "dedup", "rerank", "reflect"}
+_CHUNKER_KEYS = {"strategy", "max_size", "overlap"}
+_DEDUP_KEYS = {"threshold", "action"}
+_RERANK_KEYS = {"keyword_weight", "proper_noun_weight"}
+_REFLECT_KEYS = {"prompt", "promote_metadata"}
+
+# P4: hard cap on metadata fields promoted into reflect prompt
+_PROMOTE_METADATA_MAX = 5
 
 
 def load_mip_config(path: str | Path) -> MipConfig:
@@ -85,12 +102,13 @@ def _parse_rule(data: dict) -> RoutingRule:
     """Parse a single rule dict into RoutingRule."""
     match_data = data.get("match", {})
     action_data = data.get("action", {})
+    rule_name = data.get("name", "<unnamed>")
 
     return RoutingRule(
         name=data["name"],
         priority=data.get("priority", 100),
         match=_parse_match_block(match_data),
-        action=_parse_action(action_data),
+        action=_parse_action(action_data, rule_name=rule_name, match_data=match_data),
         override=data.get("override", False),
     )
 
@@ -142,15 +160,173 @@ def _parse_match_spec(data: dict) -> MatchSpec:
     raise ConfigError("Empty match spec")
 
 
-def _parse_action(data: dict) -> ActionSpec:
-    """Parse a YAML action block into ActionSpec."""
+def _parse_action(
+    data: dict,
+    rule_name: str = "<unnamed>",
+    match_data: dict | None = None,
+) -> ActionSpec:
+    """Parse a YAML action block into ActionSpec.
+
+    `rule_name` and `match_data` are used for guardrail diagnostics on the
+    optional `pipeline:` sub-block (P2/P4/P5).
+    """
+    pipeline_data = data.get("pipeline")
+    pipeline = (
+        _parse_pipeline(pipeline_data, rule_name=rule_name, match_data=match_data or {})
+        if pipeline_data is not None
+        else None
+    )
+
     return ActionSpec(
         bank=data.get("bank"),
         tags=data.get("tags"),
         retain_policy=data.get("retain_policy"),
         escalate=data.get("escalate"),
         confidence=data.get("confidence", 1.0),
+        pipeline=pipeline,
     )
+
+
+def _parse_pipeline(
+    data: dict,
+    rule_name: str,
+    match_data: dict,
+) -> PipelineSpec:
+    """Parse and validate a pipeline action sub-block.
+
+    Enforces guardrails:
+    - P2: version is required when any pipeline field is set
+    - P4: reflect.promote_metadata capped at 5 fields
+    - P5: pipeline fields require content_type in match block
+
+    Unknown keys at any level emit warnings (forward-compatible vocabulary).
+    Presets are expanded at load time so downstream code never sees `preset`.
+    """
+    if not isinstance(data, dict):
+        raise ConfigError(f"Rule '{rule_name}': pipeline must be a mapping")
+
+    _warn_unknown_keys(data, _PIPELINE_KEYS, f"rule '{rule_name}' pipeline")
+
+    # P2: version required
+    version = data.get("version")
+    if version is None:
+        raise ConfigError(
+            f"Rule '{rule_name}': pipeline.version is required when pipeline block is set"
+        )
+    if not isinstance(version, int):
+        raise ConfigError(
+            f"Rule '{rule_name}': pipeline.version must be an integer (got {type(version).__name__})"
+        )
+
+    # P5: content_type must be referenced in match block
+    if not _match_references_content_type(match_data):
+        raise ConfigError(
+            f"Rule '{rule_name}': pipeline fields require 'content_type' in the match block"
+        )
+
+    preset = data.get("preset")
+    if preset is not None and not is_known_preset(preset):
+        raise ConfigError(
+            f"Rule '{rule_name}': unknown preset '{preset}' "
+            f"(known: {', '.join(list_presets())})"
+        )
+
+    spec = PipelineSpec(
+        version=version,
+        preset=preset,
+        chunker=_parse_chunker(data.get("chunker"), rule_name),
+        dedup=_parse_dedup(data.get("dedup"), rule_name),
+        rerank=_parse_rerank(data.get("rerank"), rule_name),
+        reflect=_parse_reflect(data.get("reflect"), rule_name),
+    )
+
+    return expand_preset(spec)
+
+
+def _parse_chunker(data: dict | None, rule_name: str) -> ChunkerSpec | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise ConfigError(f"Rule '{rule_name}': pipeline.chunker must be a mapping")
+    _warn_unknown_keys(data, _CHUNKER_KEYS, f"rule '{rule_name}' pipeline.chunker")
+    return ChunkerSpec(
+        strategy=data.get("strategy"),
+        max_size=data.get("max_size"),
+        overlap=data.get("overlap"),
+    )
+
+
+def _parse_dedup(data: dict | None, rule_name: str) -> DedupSpec | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise ConfigError(f"Rule '{rule_name}': pipeline.dedup must be a mapping")
+    _warn_unknown_keys(data, _DEDUP_KEYS, f"rule '{rule_name}' pipeline.dedup")
+    return DedupSpec(
+        threshold=data.get("threshold"),
+        action=data.get("action"),
+    )
+
+
+def _parse_rerank(data: dict | None, rule_name: str) -> RerankSpec | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise ConfigError(f"Rule '{rule_name}': pipeline.rerank must be a mapping")
+    _warn_unknown_keys(data, _RERANK_KEYS, f"rule '{rule_name}' pipeline.rerank")
+    return RerankSpec(
+        keyword_weight=data.get("keyword_weight"),
+        proper_noun_weight=data.get("proper_noun_weight"),
+    )
+
+
+def _parse_reflect(data: dict | None, rule_name: str) -> ReflectSpec | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise ConfigError(f"Rule '{rule_name}': pipeline.reflect must be a mapping")
+    _warn_unknown_keys(data, _REFLECT_KEYS, f"rule '{rule_name}' pipeline.reflect")
+    promote = data.get("promote_metadata")
+    if promote is not None:
+        if not isinstance(promote, list):
+            raise ConfigError(
+                f"Rule '{rule_name}': pipeline.reflect.promote_metadata must be a list"
+            )
+        # P4: hard cap
+        if len(promote) > _PROMOTE_METADATA_MAX:
+            raise ConfigError(
+                f"Rule '{rule_name}': pipeline.reflect.promote_metadata "
+                f"capped at {_PROMOTE_METADATA_MAX} fields (got {len(promote)})"
+            )
+    return ReflectSpec(
+        prompt=data.get("prompt"),
+        promote_metadata=promote,
+    )
+
+
+def _match_references_content_type(match_data: dict) -> bool:
+    """True if the match block references content_type at any level."""
+    if not match_data:
+        return False
+    if "content_type" in match_data:
+        return True
+    for key in ("all", "any", "none"):
+        block = match_data.get(key) or []
+        for spec in block:
+            if isinstance(spec, dict) and "content_type" in spec:
+                return True
+    return False
+
+
+def _warn_unknown_keys(data: dict, known: set[str], context: str) -> None:
+    import warnings
+
+    unknown = set(data.keys()) - known
+    if unknown:
+        warnings.warn(
+            f"MIP loader: unknown keys in {context}: {sorted(unknown)}",
+            stacklevel=3,
+        )
 
 
 def _validate_mip_config(config: MipConfig) -> list[str]:
