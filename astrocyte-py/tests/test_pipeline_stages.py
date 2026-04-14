@@ -1,5 +1,7 @@
 """Tests for individual pipeline stages — embedding, entity extraction, reflect, reranking, retrieval."""
 
+import pytest
+
 from astrocyte.pipeline.embedding import _pseudo_embedding, generate_embeddings
 from astrocyte.pipeline.entity_extraction import _parse_entities, extract_entities
 from astrocyte.pipeline.fusion import ScoredItem
@@ -170,6 +172,44 @@ class TestBasicRerank:
         items = [ScoredItem(id="a", text="hello", score=0.5)]
         result = basic_rerank(items, "")
         assert len(result) == 1
+
+
+class TestBasicRerankMipOverride:
+    """Per-call override for MIP RerankSpec (Phase 2, Step 8a)."""
+
+    def test_override_keyword_weight_inflates_score(self):
+        from astrocyte.mip.schema import RerankSpec
+
+        items = [ScoredItem(id="a", text="dark mode preference", score=0.5)]
+        # Default keyword weight is 0.05; bump it to 0.50 — score gain visible
+        with_default = basic_rerank(items, "dark mode")[0].score
+        with_override = basic_rerank(items, "dark mode", mip_rerank=RerankSpec(keyword_weight=0.50))[0].score
+        assert with_override > with_default
+        # Two matching terms × (0.50 - 0.05) = 0.90 expected delta
+        assert with_override - with_default == pytest.approx(0.90, abs=1e-9)
+
+    def test_override_proper_noun_weight(self):
+        from astrocyte.mip.schema import RerankSpec
+
+        items = [ScoredItem(id="a", text="Alice talked to Bob", score=0.5)]
+        with_default = basic_rerank(items, "What did Alice say?")[0].score
+        with_override = basic_rerank(items, "What did Alice say?", mip_rerank=RerankSpec(proper_noun_weight=1.0))[0].score
+        assert with_override > with_default
+
+    def test_partial_override_lets_other_weight_default(self):
+        from astrocyte.mip.schema import RerankSpec
+
+        items = [ScoredItem(id="a", text="Alice on dark mode", score=0.5)]
+        # Only keyword_weight is overridden — proper_noun_weight stays at default
+        scored = basic_rerank(items, "Alice dark mode", mip_rerank=RerankSpec(keyword_weight=0.0))[0].score
+        # keyword contribution is 0, proper-noun contribution is default 0.10 for "Alice"
+        assert scored == pytest.approx(0.5 + 0.10, abs=1e-9)
+
+    def test_none_override_is_equivalent_to_omitted(self):
+        items = [ScoredItem(id="a", text="dark mode", score=0.5)]
+        a = basic_rerank(items, "dark mode")[0].score
+        b = basic_rerank(items, "dark mode", mip_rerank=None)[0].score
+        assert a == b
 
 
 # ---------------------------------------------------------------------------
