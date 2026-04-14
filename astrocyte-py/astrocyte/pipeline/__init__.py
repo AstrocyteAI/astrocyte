@@ -6,6 +6,7 @@ See docs/_design/built-in-pipeline.md.
 
 from astrocyte.pipeline.extraction import (
     BUILTIN_EXTRACTION_PROFILES,
+    ChunkingDecision,
     PreparedRetainInput,
     extraction_profile_for_source,
     merged_extraction_profiles,
@@ -17,6 +18,7 @@ from astrocyte.pipeline.extraction import (
 
 __all__ = [
     "BUILTIN_EXTRACTION_PROFILES",
+    "ChunkingDecision",
     "PreparedRetainInput",
     "extraction_profile_for_source",
     "merged_extraction_profiles",

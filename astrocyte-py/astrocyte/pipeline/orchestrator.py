@@ -146,13 +146,16 @@ class PipelineOrchestrator:
             profile,
             graph_store_configured=self.graph_store is not None,
         )
-        strategy, max_chunk = resolve_retain_chunking(
+        chunking = resolve_retain_chunking(
             prepared.effective_content_type,
             profile=profile,
             default_strategy=self.chunk_strategy,
             default_max_chunk_size=self.max_chunk_size,
         )
-        chunks = chunk_text(prepared.text, strategy=strategy, max_chunk_size=max_chunk)
+        chunk_kwargs: dict[str, int] = {"max_chunk_size": chunking.max_size}
+        if chunking.overlap is not None:
+            chunk_kwargs["overlap"] = chunking.overlap
+        chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
         if not chunks:
             return RetainResult(stored=False, error="No content after chunking")
 
