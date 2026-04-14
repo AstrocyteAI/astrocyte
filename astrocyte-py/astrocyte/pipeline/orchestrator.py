@@ -5,6 +5,7 @@ Async (coordinates I/O stages). See docs/_design/built-in-pipeline.md.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -43,7 +44,46 @@ from astrocyte.types import (
 
 if TYPE_CHECKING:
     from astrocyte.mip.router import MipRouter
+    from astrocyte.mip.schema import PipelineSpec
     from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore
+
+
+_logger = logging.getLogger("astrocyte.mip")
+
+
+def _warn_on_version_drift(
+    bank_pipeline: PipelineSpec | None,
+    hits: list[MemoryHit],
+    bank_id: str,
+) -> None:
+    """Emit a single warning when retrieved hits were retained under a different MIP version.
+
+    Soft signal — does not affect recall results. Hits without a persisted
+    ``_mip.pipeline_version`` are ignored (they were retained before MIP, by a
+    rule with no version, or by a different rule).
+    """
+    if bank_pipeline is None or bank_pipeline.version is None:
+        return
+    current_version = int(bank_pipeline.version)
+    seen: set[int] = set()
+    for hit in hits:
+        if not hit.metadata:
+            continue
+        v = hit.metadata.get("_mip.pipeline_version")
+        if v is None:
+            continue
+        try:
+            v_int = int(v)
+        except (TypeError, ValueError):
+            continue
+        if v_int != current_version:
+            seen.add(v_int)
+    if seen:
+        _logger.warning(
+            "MIP pipeline version drift in bank %r: current=%d, hits retained under versions %s. "
+            "Consider re-indexing or accepting the drift.",
+            bank_id, current_version, sorted(seen),
+        )
 
 
 class _TrackingLLMProvider:
@@ -320,12 +360,13 @@ class PipelineOrchestrator:
             ranked_lists.append(memory_hits_as_scored(request.external_context))
         fused = rrf_fusion(ranked_lists, k=self.rrf_k)
 
-        # 5. Reranking — apply per-bank MIP RerankSpec when a rule targets this bank (P3)
-        mip_rerank = None
+        # Resolve per-bank MIP PipelineSpec once (reused for rerank + version check)
+        bank_pipeline = None
         if self.mip_router is not None:
             bank_pipeline = self.mip_router.resolve_pipeline_for_bank(request.bank_id)
-            if bank_pipeline is not None:
-                mip_rerank = bank_pipeline.rerank
+
+        # 5. Reranking — apply per-bank MIP RerankSpec when a rule targets this bank (P3)
+        mip_rerank = bank_pipeline.rerank if bank_pipeline is not None else None
         reranked = basic_rerank(fused, request.query, mip_rerank=mip_rerank)
 
         # 6. Trim to max_results
@@ -344,6 +385,12 @@ class PipelineOrchestrator:
             )
             for item in trimmed
         ]
+
+        # 7b. Version-drift warning (Phase 2, Step 10)
+        # Compare each hit's persisted ``_mip.pipeline_version`` against the
+        # version currently configured for this bank's rule. Stale hits indicate
+        # rule changes since retain — operator should re-index or accept drift.
+        _warn_on_version_drift(bank_pipeline, hits, request.bank_id)
 
         # 8. Token budget
         truncated = False

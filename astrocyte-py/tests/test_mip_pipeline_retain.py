@@ -244,3 +244,145 @@ class TestMipRerankResolution:
         pipeline.mip_router = MipRouter(MipConfig(rules=[rule]))
         unchanged = await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=1))
         assert unchanged.hits[0].score == baseline.hits[0].score
+
+
+# ---------------------------------------------------------------------------
+# Version-drift warning at recall (Phase 2, Step 10)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestMipVersionDriftWarning:
+    async def test_warns_when_hit_version_differs_from_current(self, caplog):
+        import logging
+
+        from astrocyte.mip.router import MipRouter
+        from astrocyte.mip.schema import (
+            ActionSpec,
+            MatchBlock,
+            MatchSpec,
+            MipConfig,
+            PipelineSpec,
+            RoutingRule,
+        )
+        from astrocyte.types import RecallRequest
+
+        pipeline, vs = _orchestrator()
+
+        # Retain a memory under MIP pipeline version 1
+        await pipeline.retain(
+            RetainRequest(
+                content="dark mode preference here.",
+                bank_id="b1",
+                mip_pipeline=PipelineSpec(version=1),
+                mip_rule_name="b1-rule",
+            ),
+        )
+
+        # Now wire a router whose rule for bank b1 advertises version 2 (drift)
+        rule = RoutingRule(
+            name="b1-rule",
+            priority=10,
+            match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="text")]),
+            action=ActionSpec(bank="b1", pipeline=PipelineSpec(version=2)),
+        )
+        pipeline.mip_router = MipRouter(MipConfig(rules=[rule]))
+
+        with caplog.at_level(logging.WARNING, logger="astrocyte.mip"):
+            await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=5))
+
+        # Expect a single warning mentioning current version, drifted version, and the bank
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("version drift" in r.message.lower() for r in warnings)
+        msg = next(r.getMessage() for r in warnings if "drift" in r.getMessage().lower())
+        assert "b1" in msg
+        assert "current=2" in msg
+        assert "[1]" in msg
+
+    async def test_no_warning_when_versions_match(self, caplog):
+        import logging
+
+        from astrocyte.mip.router import MipRouter
+        from astrocyte.mip.schema import (
+            ActionSpec,
+            MatchBlock,
+            MatchSpec,
+            MipConfig,
+            PipelineSpec,
+            RoutingRule,
+        )
+        from astrocyte.types import RecallRequest
+
+        pipeline, vs = _orchestrator()
+        await pipeline.retain(
+            RetainRequest(
+                content="dark mode preference here.",
+                bank_id="b1",
+                mip_pipeline=PipelineSpec(version=3),
+                mip_rule_name="r",
+            ),
+        )
+
+        rule = RoutingRule(
+            name="r",
+            priority=10,
+            match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="text")]),
+            action=ActionSpec(bank="b1", pipeline=PipelineSpec(version=3)),
+        )
+        pipeline.mip_router = MipRouter(MipConfig(rules=[rule]))
+
+        with caplog.at_level(logging.WARNING, logger="astrocyte.mip"):
+            await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=5))
+
+        assert not any("drift" in r.getMessage().lower() for r in caplog.records)
+
+    async def test_no_warning_when_no_router_attached(self, caplog):
+        import logging
+
+        from astrocyte.types import RecallRequest
+
+        pipeline, vs = _orchestrator()
+        await pipeline.retain(
+            RetainRequest(
+                content="dark mode preference.",
+                bank_id="b1",
+                mip_pipeline=PipelineSpec(version=99),
+                mip_rule_name="r",
+            ),
+        )
+        # No router → no resolved version → no comparison → no warning
+        with caplog.at_level(logging.WARNING, logger="astrocyte.mip"):
+            await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=5))
+        assert not any("drift" in r.getMessage().lower() for r in caplog.records)
+
+    async def test_hits_without_version_are_silently_ignored(self, caplog):
+        import logging
+
+        from astrocyte.mip.router import MipRouter
+        from astrocyte.mip.schema import (
+            ActionSpec,
+            MatchBlock,
+            MatchSpec,
+            MipConfig,
+            PipelineSpec,
+            RoutingRule,
+        )
+        from astrocyte.types import RecallRequest
+
+        pipeline, vs = _orchestrator()
+        # Retain WITHOUT MIP — no _mip.pipeline_version on the chunk
+        await pipeline.retain(RetainRequest(content="dark mode preference.", bank_id="b1"))
+
+        rule = RoutingRule(
+            name="r",
+            priority=10,
+            match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="text")]),
+            action=ActionSpec(bank="b1", pipeline=PipelineSpec(version=5)),
+        )
+        pipeline.mip_router = MipRouter(MipConfig(rules=[rule]))
+
+        with caplog.at_level(logging.WARNING, logger="astrocyte.mip"):
+            await pipeline.recall(RecallRequest(query="dark mode", bank_id="b1", max_results=5))
+
+        # No persisted version on the hit → nothing to compare → no warning
+        assert not any("drift" in r.getMessage().lower() for r in caplog.records)
