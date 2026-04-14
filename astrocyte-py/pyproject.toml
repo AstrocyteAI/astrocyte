@@ -84,6 +84,7 @@ all = [
 ]
 
 [project.scripts]
+astrocyte = "astrocyte.cli:main"
 astrocyte-mcp = "astrocyte.mcp:main"
 
 # Built-in dev / test providers (see `astrocyte._discovery` and `ecosystem-and-packaging.md`)
