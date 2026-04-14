@@ -384,7 +384,14 @@ class PipelineOrchestrator:
             recall_result = apply_recall_authority(recall_result, ra)
             auth_ctx = recall_result.authority_context
 
-        # 2. Synthesize via LLM
+        # 2. Resolve per-bank ReflectSpec from MIP (Phase 2, Step 9)
+        mip_reflect = None
+        if self.mip_router is not None:
+            bank_pipeline = self.mip_router.resolve_pipeline_for_bank(request.bank_id)
+            if bank_pipeline is not None:
+                mip_reflect = bank_pipeline.reflect
+
+        # 3. Synthesize via LLM
         return await synthesize(
             query=request.query,
             hits=recall_result.hits,
@@ -392,4 +399,5 @@ class PipelineOrchestrator:
             dispositions=request.dispositions,
             max_tokens=request.max_tokens or 2048,
             authority_context=auth_ctx,
+            mip_reflect=mip_reflect,
         )
