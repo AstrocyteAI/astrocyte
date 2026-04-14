@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from typing import Literal
 
+from astrocyte.mip.schema import PipelineSpec
+
 # ---------------------------------------------------------------------------
 # Metadata value type — recursive union replacing Any for FFI safety
 # ---------------------------------------------------------------------------
@@ -647,6 +649,7 @@ class RoutingDecision:
     rule_name: str | None = None
     confidence: float = 1.0
     reasoning: str | None = None  # LLM justification if intent layer used
+    pipeline: PipelineSpec | None = None  # Optional pipeline-shaping overrides from rule
 
 
 # ---------------------------------------------------------------------------

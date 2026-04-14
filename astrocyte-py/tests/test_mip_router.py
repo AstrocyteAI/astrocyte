@@ -174,3 +174,74 @@ class TestRejectPolicy:
         decision = router.route_sync(RuleEngineInput(content="binary data", content_type="binary"))
         assert decision is not None
         assert decision.retain_policy == "reject"
+
+
+class TestPipelinePropagation:
+    """RoutingDecision must carry the rule's PipelineSpec when set (Phase 1, Step 3)."""
+
+    def test_pipeline_absent_decision_pipeline_none(self) -> None:
+        rules = [
+            RoutingRule(
+                name="r",
+                priority=1,
+                match=MatchBlock(
+                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="chat")]
+                ),
+                action=ActionSpec(bank="b"),
+            ),
+        ]
+        router = MipRouter(MipConfig(rules=rules))
+        decision = router.route_sync(RuleEngineInput(content="hi", content_type="chat"))
+        assert decision is not None
+        assert decision.pipeline is None
+
+    def test_pipeline_propagates_into_decision(self) -> None:
+        from astrocyte.mip.schema import ChunkerSpec, DedupSpec, PipelineSpec
+
+        pipeline = PipelineSpec(
+            version=1,
+            chunker=ChunkerSpec(strategy="dialogue", max_size=800),
+            dedup=DedupSpec(threshold=0.92, action="skip_chunk"),
+        )
+        rules = [
+            RoutingRule(
+                name="conv",
+                priority=1,
+                match=MatchBlock(
+                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="conversation")]
+                ),
+                action=ActionSpec(bank="b", pipeline=pipeline),
+            ),
+        ]
+        router = MipRouter(MipConfig(rules=rules))
+        decision = router.route_sync(
+            RuleEngineInput(content="hi", content_type="conversation")
+        )
+        assert decision is not None
+        assert decision.pipeline is pipeline
+        assert decision.pipeline.chunker.strategy == "dialogue"
+        assert decision.pipeline.dedup.threshold == 0.92
+
+    def test_pipeline_propagates_through_override_rule(self) -> None:
+        from astrocyte.mip.schema import PipelineSpec, ReflectSpec
+
+        pipeline = PipelineSpec(
+            version=1,
+            reflect=ReflectSpec(prompt="evidence_strict"),
+        )
+        rules = [
+            RoutingRule(
+                name="lock",
+                priority=1,
+                override=True,
+                match=MatchBlock(
+                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="legal")]
+                ),
+                action=ActionSpec(bank="locked", pipeline=pipeline),
+            ),
+        ]
+        router = MipRouter(MipConfig(rules=rules))
+        decision = router.route_sync(RuleEngineInput(content="x", content_type="legal"))
+        assert decision is not None
+        assert decision.pipeline is pipeline
+        assert decision.pipeline.reflect.prompt == "evidence_strict"

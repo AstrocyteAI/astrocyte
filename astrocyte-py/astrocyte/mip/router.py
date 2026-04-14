@@ -141,4 +141,5 @@ class MipRouter:
             resolved_by="mechanical",
             rule_name=match.rule.name,
             confidence=match.confidence,
+            pipeline=action.pipeline,
         )
