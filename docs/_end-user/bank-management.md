@@ -83,7 +83,7 @@ curl -H "X-Admin-Token: $ADMIN_TOKEN" \
 }
 ```
 
-Requires `X-Admin-Token` header. See [Authentication setup](authentication-setup.md) for token configuration.
+Requires `X-Admin-Token` header. See [Authentication setup](authentication-setup/) for token configuration.
 
 ---
 
@@ -322,7 +322,7 @@ Key metrics exposed per bank:
 | `astrocyte_bank_recall_total` | Cumulative recall operations |
 | `astrocyte_bank_recall_latency_seconds` | Recall latency histogram |
 
-See [Monitoring & observability](monitoring-and-observability.md) for dashboard setup and alerting.
+See [Monitoring & observability](monitoring-and-observability/) for dashboard setup and alerting.
 
 ---
 

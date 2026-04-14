@@ -21,6 +21,7 @@ const topicItems = {
       label: "Getting Started",
       items: [
         { label: "Introduction", link: "/introduction/" },
+        { label: "How it works", link: "/end-user/how-it-works/" },
         { label: "Quick Start", link: "/end-user/quick-start/" },
       ],
     },
@@ -139,7 +140,7 @@ const topicItems = {
         { label: "Memory Intent Protocol (MIP)", link: "/design/memory-intent-protocol/" },
         { label: "Multi-bank orchestration", link: "/design/multi-bank-orchestration/" },
         { label: "Storage and data planes", link: "/design/storage-and-data-planes/" },
-        { label: "Storage adapter packages", link: "/design/adapter-packages/" },
+        { label: "Storage adapter packages", link: "/plugins/ecosystem-and-packaging/#22-tier-1-retrieval-providers" },
       ],
     },
     // ── Integrations & Extensibility ──

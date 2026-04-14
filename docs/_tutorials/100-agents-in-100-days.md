@@ -1,8 +1,10 @@
 # 100 Agents in 100 Days
 
-_Planned series — implementing AI agents and AI-enabled applications with Astrocyte._
+:::caution[Series in progress]
+This page is the **planning catalog** for the series. Daily tutorials are being written and will be linked here as they publish. Browse the use cases below to see what's coming.
+:::
 
-Each day adds **one** focused tutorial or example: runnable demos, integration patterns, and production-minded snippets. **First** we maintain a working catalog of **use cases** (consumer and enterprise). Daily tutorials will be chosen from this list and linked below as they ship.
+Each day adds **one** focused tutorial or example: runnable demos, integration patterns, and production-minded snippets. The catalog below is the **backlog** — daily tutorials will be chosen from this list and linked here as they ship.
 
 **Stack context:** The **v0.8.x** line (latest shipped tag: **`v0.8.0`**) includes Tier 1 storage adapters, optional **`astrocyte-gateway-py`**, optional **`recall_authority`**, and ingest connectors (Kafka, Redis, GitHub poll). See [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
 

@@ -299,7 +299,7 @@ outbound_transport:
   config:
     gateway_url: http://localhost:10255
 
-# Access control (implemented today — see [production-grade HTTP service](../_end-user/production-grade-http-service.md))
+# Access control (implemented today — see [production-grade HTTP service](/end-user/production-grade-http-service/))
 access_control:
   enabled: true
   default_policy: owner_only

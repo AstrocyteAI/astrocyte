@@ -86,15 +86,15 @@ See **[`gateway-plugins/README.md`](../../gateway-plugins/README.md)** for archi
 - **Additional poll drivers** (ticketing, CRM APIs) — same pattern as GitHub Issues
 - **Additional gateway plugins** (AWS API Gateway, Envoy, etc.) — same thin-shim pattern
 
-See **[`product-roadmap-v1.md`](../_design/product-roadmap-v1.md)** § **v0.8.x — Connector & gateway integration track** and **[`adapters-ingestion-py/README.md`](../../adapters-ingestion-py/README.md)**.
+See **[Product roadmap](/design/product-roadmap-v1/)** § **v0.8.x — Connector & gateway integration track** and **[`adapters-ingestion-py/README.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/adapters-ingestion-py/README.md)**.
 
 ---
 
 ## 5. Further reading
 
-- **[Production-grade HTTP service](./production-grade-http-service.md)** — full checklist
-- **[Authentication setup](./authentication-setup.md)** — auth modes, OIDC providers, JWT claim mapping
-- **[Access control setup](./access-control-setup.md)** — grants, principals, per-bank permissions
-- **[`astrocyte-gateway-py` README](../../astrocyte-services-py/astrocyte-gateway-py/README.md)** — env, auth, Compose
-- **[Gateway plugins](../../gateway-plugins/README.md)** — Kong, APISIX, and Azure APIM integration plugins
-- **[ADR-001](../_design/adr/adr-001-deployment-models.md)** — library vs standalone gateway
+- **[Production-grade HTTP service](production-grade-http-service/)** — full checklist
+- **[Authentication setup](authentication-setup/)** — auth modes, OIDC providers, JWT claim mapping
+- **[Access control setup](access-control-setup/)** — grants, principals, per-bank permissions
+- **[`astrocyte-gateway-py` README](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-services-py/astrocyte-gateway-py/README.md)** — env, auth, Compose
+- **[Gateway plugins](https://github.com/AstrocyteAI/astrocyte/blob/main/gateway-plugins/README.md)** — Kong, APISIX, and Azure APIM integration plugins
+- **[ADR-001](/design/adr/adr-001-deployment-models/)** — library vs standalone gateway

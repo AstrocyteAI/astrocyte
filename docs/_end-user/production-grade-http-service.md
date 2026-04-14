@@ -77,7 +77,7 @@ Track completion in your issue tracker or PRs as needed.
 - [ ] **Private networking:** Prefer private subnets / mesh; no public exposure without WAF/rate limits as needed.
 - [ ] **Request limits:** Max body size, header size, URL length; **timeouts** on client and server.
 - [ ] **CORS:** If browser clients exist, **restrict** origins; avoid `*` in production.
-- [ ] **Rate limiting:** Edge (API gateway) + align with Astrocyte **homeostasis** / quotas in config (`policy-layer.md`). Optional in-process **`ASTROCYTE_RATE_LIMIT_PER_SECOND`** on **`astrocyte-gateway-py`** (see **[Gateway edge & API gateways](./gateway-edge-and-api-gateways.md)**).
+- [ ] **Rate limiting:** Edge (API gateway) + align with Astrocyte **homeostasis** / quotas in config (`policy-layer.md`). Optional in-process **`ASTROCYTE_RATE_LIMIT_PER_SECOND`** on **`astrocyte-gateway-py`** (see **[Gateway edge & API gateways](gateway-edge-and-api-gateways/)**).
 
 ### 3.5 API design and contract
 

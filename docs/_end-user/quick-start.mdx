@@ -236,32 +236,10 @@ Per-framework guides live under **[Integrations](/plugins/integrations/langgraph
 
 The **Memory Intent Protocol (MIP)** lets you declare routing rules so Astrocyte decides which bank, tags, and policies to apply — without routing logic in your application code.
 
-Create a `mip.yaml` alongside your `astrocyte.yaml`:
-
 ```yaml
-# mip.yaml
-version: "1.0"
-
-banks:
-  - id: "student-{student_id}"
-    description: Per-student academic memory
-    compliance: pdpa
-
+# mip.yaml — route student answers to per-student banks
 rules:
-  # Compliance — PII always goes to encrypted bank, cannot be overridden
-  - name: pii-lockdown
-    priority: 1
-    override: true
-    match:
-      pii_detected: true
-    action:
-      bank: private-encrypted
-      tags: [pii, compliance]
-      retain_policy: redact_before_store
-
-  # Student answers route to per-student banks automatically
   - name: student-answer
-    priority: 10
     match:
       all:
         - content_type: student_answer
@@ -270,26 +248,6 @@ rules:
       bank: "student-{metadata.student_id}"
       tags: ["{metadata.topic}"]
 ```
-
-Reference it from `astrocyte.yaml` — also configure PII detection for your region:
-
-```yaml
-# astrocyte.yaml
-profile: personal
-compliance_profile: pdpa          # Pre-built GDPR, HIPAA, or PDPA defaults
-
-barriers:
-  pii:
-    mode: rules_then_llm          # Regex first, LLM fallback for context-dependent PII
-    countries: [SG, IN, AU]       # Enable NRIC, Aadhaar, TFN patterns
-    type_overrides:
-      credit_card: { action: reject }   # Block credit cards outright
-      name: { action: warn }            # Log names but don't redact
-
-mip_config_path: ./mip.yaml
-```
-
-Now routing happens automatically:
 
 ```python
 brain = Astrocyte.from_config("astrocyte.yaml")
@@ -303,7 +261,7 @@ await brain.retain(
 )
 ```
 
-Mechanical rules resolve deterministically with zero LLM cost. When no rule matches, the intent layer can optionally ask an LLM to decide. See the full [MIP design doc](/design/memory-intent-protocol/) for the match DSL, override hierarchy, and intent policy.
+Mechanical rules resolve deterministically with zero LLM cost. When no rule matches, an optional intent layer can ask an LLM to decide. See the [MIP developer guide](/plugins/mip-developer-guide/) for the full match DSL, PII lockdown rules, compliance profiles, and testing recipes.
 
 ## Next steps
 

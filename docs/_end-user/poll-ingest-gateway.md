@@ -63,5 +63,5 @@ mcp:
 
 ## Further reading
 
-- Design: **[`built-in-pipeline.md`](../_design/built-in-pipeline.md)** (poll ingest section).
-- Adapter: **[`adapters-ingestion-py/astrocyte-ingestion-github/README.md`](../../adapters-ingestion-py/astrocyte-ingestion-github/README.md)**.
+- Design: **[Built-in pipeline](/design/built-in-pipeline/)** (poll ingest section).
+- Adapter: **[`astrocyte-ingestion-github`](https://github.com/AstrocyteAI/astrocyte/blob/main/adapters-ingestion-py/astrocyte-ingestion-github/README.md)**.

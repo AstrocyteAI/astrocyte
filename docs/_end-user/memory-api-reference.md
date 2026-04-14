@@ -475,7 +475,7 @@ from astrocyte import Astrocyte
 ast = Astrocyte.from_config("astrocyte.yaml")
 ```
 
-The YAML file defines storage backends, memory banks, extraction profiles, and gateway settings. See [Configuration reference](configuration-reference.md) for the full schema.
+The YAML file defines storage backends, memory banks, extraction profiles, and gateway settings. See [Configuration reference](configuration-reference/) for the full schema.
 
 ### Programmatic construction
 
@@ -512,7 +512,7 @@ result = await ast.retain(
 
 The context is used for access control enforcement and audit logging. When omitted, the operation runs with the default identity configured in `astrocyte.yaml`.
 
-See [Access control setup](access-control-setup.md) for role-based and attribute-based access policies.
+See [Access control setup](access-control-setup/) for role-based and attribute-based access policies.
 
 ---
 
