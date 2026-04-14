@@ -94,8 +94,8 @@ pip install crewai                     # etc.
 
 ## Further reading
 
-- [Memory API reference](../end-user/memory-api-reference/) — retain/recall/reflect/forget signatures
+- [Memory API reference](/end-user/memory-api-reference/) — retain/recall/reflect/forget signatures
 - [MIP developer guide](mip-developer-guide/) — declarative routing rules for retain operations
-- [Bank management](../end-user/bank-management/) — multi-bank patterns for multi-agent setups
+- [Bank management](/end-user/bank-management/) — multi-bank patterns for multi-agent setups
 - [Provider SPI](provider-spi/) — build your own storage or LLM adapter
 - [Ecosystem & packaging](ecosystem-and-packaging/) — distribution model and entry point conventions

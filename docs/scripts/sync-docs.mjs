@@ -85,9 +85,10 @@ function docsMarkdownLinksToRoutes(content, sourceFileAbs, destFileAbs) {
       ? `${targetSection}/${targetSubDir}/${slug}`
       : `${targetSection}/${slug}`;
 
-    // Compute relative path from the destination file's directory to the target route
-    const destDir = path.dirname(destFileAbs);
-    const destRelToContent = path.relative(contentDocs, destDir).replace(/\\/g, "/");
+    // Starlight serves pages at trailing-slash URLs, so the browser resolves
+    // relative links as if the page were a directory.  Use the file path
+    // without .md extension as the "directory" base.
+    const destDir = destFileAbs.replace(/\.mdx?$/, "");
     const targetFull = path.join(contentDocs, targetRoute);
     const relPath = path.relative(destDir, targetFull).replace(/\\/g, "/");
 
@@ -110,7 +111,10 @@ function rootRelativeToRelative(content, destFileAbs) {
     if (!PUBLIC_SECTIONS.has(topSegment)) return full;
     // Strip trailing slash for path computation, then re-add
     const cleanRoute = route.replace(/\/$/, "");
-    const destDir = path.dirname(destFileAbs);
+    // Starlight serves pages at trailing-slash URLs (e.g. /tutorials/foo/),
+    // so the browser resolves relative links as if the page were a directory.
+    // Use the file path without .md extension as the "directory" base.
+    const destDir = destFileAbs.replace(/\.mdx?$/, "");
     const targetFull = path.join(contentDocs, cleanRoute);
     const relPath = path.relative(destDir, targetFull).replace(/\\/g, "/");
     return `](${relPath}/)`;

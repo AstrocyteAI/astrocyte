@@ -634,7 +634,7 @@ Beyond intelligence and governance, the framework provides capabilities that no 
 | Evaluation | Benchmark suites, provider comparison, regression detection | `evaluation.md` |
 | Data governance | Classification, PII taxonomy, residency, encryption, DLP, compliance profiles (GDPR/HIPAA/PDPA) | `data-governance.md` |
 | Outbound transport | Optional plugins for credential gateways and enterprise HTTP/TLS; env-only path without plugins | `outbound-transport.md` |
-| AuthN wiring + external AuthZ | Map IdP claims to principals / `AstrocyteContext`; optional PDP/Casbin adapters beyond config grants | [ADR-002](./adr/adr-002-identity-model.md); see [access control setup](../end-user/access-control-setup.md) |
+| AuthN wiring + external AuthZ | Map IdP claims to principals / `AstrocyteContext`; optional PDP/Casbin adapters beyond config grants | [ADR-002](./adr/adr-002-identity-model.md); see [access control setup](/end-user/access-control-setup/) |
 | Presentation / multimodal (non-LLM API) | How Tavus-class video, voice (e.g. ElevenLabs), and related APIs compose **beside** the LLM SPI | `presentation-layer-and-multimodal-services.md` |
 | Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for multi-provider gateways (LiteLLM / OpenRouter–class and similar) | `multimodal-llm-spi.md` |
 

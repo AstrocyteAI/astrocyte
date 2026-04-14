@@ -562,4 +562,4 @@ Error responses follow a consistent JSON structure:
 - [Authentication setup](authentication-setup/) — token issuance, API keys, and OIDC integration
 - [Access control setup](access-control-setup/) — role-based and attribute-based policies
 - [Storage backend setup](storage-backend-setup/) — pgvector, Qdrant, Neo4j, Elasticsearch
-- [MIP developer guide](../plugins/mip-developer-guide/) — declarative routing rules for retain operations
+- [MIP developer guide](/plugins/mip-developer-guide/) — declarative routing rules for retain operations

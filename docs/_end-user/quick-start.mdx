@@ -30,7 +30,7 @@ await brain.retain("Calvin prefers dark mode.", bank_id="user-123")
 hits = await brain.recall("What theme does Calvin prefer?", bank_id="user-123")
 ```
 
-The library alone does **not** start an HTTP server. See the [architecture overview](../design/architecture/) and [provider SPI](../plugins/provider-spi/) for wiring storage backends and LLM providers.
+The library alone does **not** start an HTTP server. See the [architecture overview](/design/architecture/) and [provider SPI](/plugins/provider-spi/) for wiring storage backends and LLM providers.
 
 </TabItem>
 <TabItem label="Standalone Gateway">
@@ -180,7 +180,7 @@ See [`gateway-plugins/azure-apim/README.md`](https://github.com/AstrocyteAI/astr
 
 ## Wire an AI agent
 
-Astrocyte does **not** run the agent loop (tools, checkpoints, multi-step graphs). Your framework does. Integrations map each framework's memory hooks to `retain` / `recall` / `reflect` through the same policy layer — see **[agent framework middleware](../plugins/agent-framework-middleware/)** for the full matrix.
+Astrocyte does **not** run the agent loop (tools, checkpoints, multi-step graphs). Your framework does. Integrations map each framework's memory hooks to `retain` / `recall` / `reflect` through the same policy layer — see **[agent framework middleware](/plugins/agent-framework-middleware/)** for the full matrix.
 
 <Tabs syncKey="agent-framework">
 <TabItem label="LangGraph">
@@ -230,7 +230,7 @@ crew = Crew(agents=[support_agent], memory=memory)
 </TabItem>
 </Tabs>
 
-Per-framework guides live under **[Integrations](../plugins/integrations/langgraph/)** (LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, Claude Agent SDK, MCP, and 12 more).
+Per-framework guides live under **[Integrations](/plugins/integrations/langgraph/)** (LangGraph, CrewAI, Pydantic AI, OpenAI Agents SDK, Claude Agent SDK, MCP, and 12 more).
 
 ## Declarative routing with MIP
 
@@ -303,16 +303,16 @@ await brain.retain(
 )
 ```
 
-Mechanical rules resolve deterministically with zero LLM cost. When no rule matches, the intent layer can optionally ask an LLM to decide. See the full [MIP design doc](../design/memory-intent-protocol/) for the match DSL, override hierarchy, and intent policy.
+Mechanical rules resolve deterministically with zero LLM cost. When no rule matches, the intent layer can optionally ask an LLM to decide. See the full [MIP design doc](/design/memory-intent-protocol/) for the match DSL, override hierarchy, and intent policy.
 
 ## Next steps
 
 - **API reference:** [Memory API reference](memory-api-reference/) — full retain/recall/reflect/forget signatures and examples.
 - **Configure everything:** [Configuration reference](configuration-reference/) — complete `astrocyte.yaml` schema.
 - **Organize banks:** [Bank management](bank-management/) — multi-bank queries, tenant patterns, lifecycle.
-- **MIP routing rules:** [MIP developer guide](../plugins/mip-developer-guide/) — write, test, and debug routing rules.
-- **Agent + memory patterns:** [100 Agents in 100 Days](../tutorials/100-agents-in-100-days/).
+- **MIP routing rules:** [MIP developer guide](/plugins/mip-developer-guide/) — write, test, and debug routing rules.
+- **Agent + memory patterns:** [100 Agents in 100 Days](/tutorials/100-agents-in-100-days/).
 - **Operate and harden HTTP:** [Production-grade HTTP service](production-grade-http-service/) (security, auth, grants, observability).
 - **Gateway edge patterns:** [Gateway edge & API gateways](gateway-edge-and-api-gateways/) (reverse proxy, gateway plugins, connector track).
-- **Implement a provider or transport:** [Plugin developer docs](../plugins/provider-spi/) (SPI, entry points, packaging).
-- **Understand the design:** start with [Neuroscience & vocabulary](../design/neuroscience-astrocyte/) and [Architecture](../design/architecture/).
+- **Implement a provider or transport:** [Plugin developer docs](/plugins/provider-spi/) (SPI, entry points, packaging).
+- **Understand the design:** start with [Neuroscience & vocabulary](/design/neuroscience-astrocyte/) and [Architecture](/design/architecture/).

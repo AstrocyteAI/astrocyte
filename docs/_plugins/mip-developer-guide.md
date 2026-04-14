@@ -293,7 +293,7 @@ Validation errors raise `ConfigError` at load time (duplicate rule names, invali
 
 ## 9. Further reading
 
-- [Memory Intent Protocol](../design/memory-intent-protocol/) — full architecture and rationale
-- [Configuration reference](../end-user/configuration-reference/) — `mip_config_path` in `astrocyte.yaml`
-- [Architecture](../design/architecture/) — how MIP fits into the Astrocyte retain pipeline
-- [Memory API reference](../end-user/memory-api-reference/) — retain/recall/reflect/forget signatures
+- [Memory Intent Protocol](/design/memory-intent-protocol/) — full architecture and rationale
+- [Configuration reference](/end-user/configuration-reference/) — `mip_config_path` in `astrocyte.yaml`
+- [Architecture](/design/architecture/) — how MIP fits into the Astrocyte retain pipeline
+- [Memory API reference](/end-user/memory-api-reference/) — retain/recall/reflect/forget signatures

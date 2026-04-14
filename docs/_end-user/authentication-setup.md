@@ -350,5 +350,5 @@ If `ASTROCYTE_ADMIN_TOKEN` is not set, admin routes are unprotected.
 - [Access control setup](access-control-setup/) — grants, OBO, common patterns
 - [Memory API reference](memory-api-reference/) — how `AstrocyteContext` is passed to retain/recall/reflect/forget
 - [Production-grade HTTP service](production-grade-http-service/) — TLS, rate limits, CORS, observability checklist
-- [ADR-002 Identity model](../design/adr/adr-002-identity-model/) — design rationale for structured identity
-- [Access control](../design/access-control/) — design doc for permissions, grants, and policy enforcement
+- [ADR-002 Identity model](/design/adr/adr-002-identity-model/) — design rationale for structured identity
+- [Access control](/design/access-control/) — design doc for permissions, grants, and policy enforcement

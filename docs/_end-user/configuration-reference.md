@@ -411,7 +411,7 @@ MCP (Model Context Protocol) server settings — used by `astrocyte.integrations
 |-----|------|---------|-------------|
 | `mip_config_path` | string \| null | `null` | Path to MIP routing rules file (`./mip.yaml`) |
 
-See [Memory Intent Protocol](../design/memory-intent-protocol/) for the full MIP DSL — match operators, actions, override hierarchy, and intent policy.
+See [Memory Intent Protocol](/design/memory-intent-protocol/) for the full MIP DSL — match operators, actions, override hierarchy, and intent policy.
 
 ---
 
@@ -679,5 +679,5 @@ access_control:
 - [Monitoring & observability](monitoring-and-observability/) — health endpoints, logging, tracing, metrics
 - [Access control setup](access-control-setup/) — grants, OBO, common patterns
 - [Bank management](bank-management/) — bank creation, multi-bank queries, lifecycle recipes
-- [MIP developer guide](../plugins/mip-developer-guide/) — writing and testing MIP routing rules
+- [MIP developer guide](/plugins/mip-developer-guide/) — writing and testing MIP routing rules
 - [Production-grade HTTP service](production-grade-http-service/) — full production checklist
