@@ -1,0 +1,46 @@
+{
+  "locomo": {
+    "provider": "openai",
+    "overall_accuracy": 0.875,
+    "category_accuracy": {
+      "multi-hop": 0.8158,
+      "open-domain": 0.6154,
+      "single-hop": 0.8438,
+      "temporal": 0.8857,
+      "adversarial": 1.0
+    },
+    "metrics": {
+      "recall_precision": 0.339,
+      "recall_hit_rate": 0.685,
+      "recall_mrr": 0.5613,
+      "recall_ndcg": 0.0,
+      "retain_latency_p50_ms": 762.2861,
+      "retain_latency_p95_ms": 1399.462,
+      "recall_latency_p50_ms": 378.5009,
+      "recall_latency_p95_ms": 771.0975,
+      "reflect_accuracy": 0.875,
+      "total_duration_seconds": 713.448
+    },
+    "notes": "Promoted from results-20260421T194951Z.json. Suite: openai. Real-provider runs are noisier than mock; consider looser tolerances in CI (e.g. --overall-tolerance 0.04)."
+  },
+  "longmemeval": {
+    "provider": "openai",
+    "overall_accuracy": 0.8,
+    "category_accuracy": {
+      "extraction": 0.8
+    },
+    "metrics": {
+      "recall_precision": 0.126,
+      "recall_hit_rate": 0.76,
+      "recall_mrr": 0.4946,
+      "recall_ndcg": 0.0,
+      "retain_latency_p50_ms": 2573.7978,
+      "retain_latency_p95_ms": 4379.7171,
+      "recall_latency_p50_ms": 5237.8206,
+      "recall_latency_p95_ms": 5814.6155,
+      "reflect_accuracy": 0.8,
+      "total_duration_seconds": 6616.1259
+    },
+    "notes": "Promoted from results-20260421T213021Z.json. Suite: openai. Real-provider runs are noisier than mock; consider looser tolerances in CI (e.g. --overall-tolerance 0.04)."
+  }
+}
