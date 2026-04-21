@@ -419,17 +419,28 @@ def load_longmemeval_dataset(
                         if sess_idx < len(haystack_dates_list)
                         else None
                     )
+                    # Concatenate all turns of a session into a single memory
+                    # entry. Previously we emitted one entry per turn and the
+                    # retain loop deduped by session_id — storing the FIRST
+                    # turn and discarding the rest, effectively losing 90%+
+                    # of the haystack content. See
+                    # docs/_design/platform-positioning.md §LongMemEval-root-causes
+                    # for the full writeup.
                     if isinstance(session_turns, list):
+                        turn_texts: list[str] = []
                         for turn in session_turns:
                             if isinstance(turn, dict) and turn.get("content"):
-                                entry: dict[str, str] = {
-                                    "role": turn.get("role", "user"),
-                                    "content": str(turn["content"]),
-                                    "session_id": str(sess_id),
-                                }
-                                if sess_date:
-                                    entry["session_date"] = str(sess_date)
-                                conversation_context.append(entry)
+                                role = turn.get("role", "user")
+                                turn_texts.append(f"{role}: {turn['content']}")
+                        if turn_texts:
+                            entry: dict[str, str] = {
+                                "role": "session",
+                                "content": "\n".join(turn_texts),
+                                "session_id": str(sess_id),
+                            }
+                            if sess_date:
+                                entry["session_date"] = str(sess_date)
+                            conversation_context.append(entry)
 
             # Fallback: try older field names if haystack_sessions wasn't found
             if not conversation_context:

@@ -44,20 +44,28 @@ class BenchmarkRunOutcome:
 def _build_test_brain():
     """Create an Astrocyte instance with in-memory pipeline (no API keys needed).
 
-    Uses InMemoryVectorStore + MockLLMProvider with bag-of-words embeddings
-    so the full pipeline path (chunk → embed → store → recall → reflect) is
-    exercised with meaningful semantic retrieval.
+    Uses InMemoryVectorStore + InMemoryDocumentStore + MockLLMProvider with
+    bag-of-words embeddings so the full pipeline path (chunk → embed →
+    store → 4-way retrieve → fuse → rerank) is exercised. The document
+    store is included so RRF has keyword/BM25 as a fusion input alongside
+    semantic + temporal — see Session 1 Item 2 of the platform-positioning
+    LongMemEval root-causes writeup.
     """
     from astrocyte._astrocyte import Astrocyte
     from astrocyte.config import AstrocyteConfig
     from astrocyte.pipeline.orchestrator import PipelineOrchestrator
-    from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
+    from astrocyte.testing.in_memory import (
+        InMemoryDocumentStore,
+        InMemoryVectorStore,
+        MockLLMProvider,
+    )
 
     config = AstrocyteConfig()
     config.barriers.pii.mode = "disabled"
     brain = Astrocyte(config)
     pipeline = PipelineOrchestrator(
         vector_store=InMemoryVectorStore(),
+        document_store=InMemoryDocumentStore(),
         llm_provider=MockLLMProvider(),
     )
     brain.set_pipeline(pipeline)
@@ -96,6 +104,15 @@ def _build_pipeline_brain(config_path: str):
     if config.document_store:
         ds_cls = resolve_provider(config.document_store, "document_stores")
         document_store = ds_cls(**(config.document_store_config or {}))
+    else:
+        # Default to in-memory document store so keyword/BM25 retrieval
+        # fires for benchmark runs even when the user's config doesn't
+        # explicitly name a document_store provider. Production
+        # deployments should configure a real one (Elasticsearch, etc.)
+        # via config.document_store.
+        from astrocyte.testing.in_memory import InMemoryDocumentStore
+
+        document_store = InMemoryDocumentStore()
 
     if config.llm_provider:
         llm_cls = resolve_provider(config.llm_provider, "llm_providers")
