@@ -77,6 +77,60 @@ def rrf_fusion(
     return result
 
 
+def weighted_rrf_fusion(
+    ranked_lists_with_weights: list[tuple[list[ScoredItem], float]],
+    k: int = DEFAULT_RRF_K,
+) -> list[ScoredItem]:
+    """RRF fusion where each input list contributes a scaled reciprocal rank.
+
+    Standard RRF adds ``1 / (k + rank)`` for each list an item appears in.
+    Weighted RRF adds ``weight / (k + rank)`` — a list with weight 1.5
+    counts 50% more per rank slot than a list with weight 1.0.
+
+    Used for intent-aware retrieval (see
+    :mod:`astrocyte.pipeline.query_intent`): when a query's intent biases
+    a strategy (e.g. TEMPORAL → boost temporal strategy weight to 1.5),
+    pass the strategy weights here so the biased strategy pulls items
+    up more aggressively.
+
+    A weight of 0.0 mutes a strategy (it contributes nothing). Negative
+    weights are clamped to 0.0 — we never want a strategy to push items
+    *down* (that's a bug in the caller's weighting, not a feature).
+
+    Sync, pure computation — Rust migration candidate.
+    """
+    if not ranked_lists_with_weights:
+        return []
+
+    scores: dict[str, float] = {}
+    items: dict[str, ScoredItem] = {}
+
+    for ranked_list, weight in ranked_lists_with_weights:
+        effective_weight = max(weight, 0.0)
+        if effective_weight == 0.0:
+            continue
+        for rank, item in enumerate(ranked_list):
+            rrf_contribution = effective_weight / (k + rank + 1)
+            scores[item.id] = scores.get(item.id, 0.0) + rrf_contribution
+            if item.id not in items or item.score > items[item.id].score:
+                items[item.id] = item
+
+    sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+
+    return [
+        ScoredItem(
+            id=items[iid].id,
+            text=items[iid].text,
+            score=scores[iid],
+            fact_type=items[iid].fact_type,
+            metadata=items[iid].metadata,
+            tags=items[iid].tags,
+            memory_layer=items[iid].memory_layer,
+        )
+        for iid in sorted_ids
+    ]
+
+
 def layer_weighted_rrf_fusion(
     ranked_lists: list[list[ScoredItem]],
     k: int = 60,
