@@ -2,23 +2,23 @@
   "suite": "basic",
   "provider": "pipeline",
   "provider_tier": "storage",
-  "timestamp": "2026-04-20T07:12:24.536803+00:00",
+  "timestamp": "2026-04-21T06:53:44.371096+00:00",
   "metrics": {
     "recall_precision": 0.11000000000000001,
     "recall_hit_rate": 1.0,
     "recall_mrr": 1.0,
     "recall_ndcg": 1.0,
-    "retain_latency_p50_ms": 354.8927909999975,
-    "retain_latency_p95_ms": 1505.5011657999985,
-    "recall_latency_p50_ms": 195.4484819999962,
-    "recall_latency_p95_ms": 453.7278797000104,
-    "total_tokens_used": 431,
-    "total_duration_seconds": 10.612235490000003,
+    "retain_latency_p50_ms": 380.0362019999852,
+    "retain_latency_p95_ms": 1258.4606377999817,
+    "recall_latency_p50_ms": 252.1236870000223,
+    "recall_latency_p95_ms": 805.9469670499964,
+    "total_tokens_used": 444,
+    "total_duration_seconds": 11.087445295999999,
     "reflect_accuracy": 0.5,
     "reflect_completeness": null,
     "reflect_hallucination_rate": null,
-    "reflect_latency_p50_ms": 1093.8419135000004,
-    "reflect_latency_p95_ms": 1690.4921565500003
+    "reflect_latency_p50_ms": 1121.8820295000285,
+    "reflect_latency_p95_ms": 1750.2996283500265
   },
   "config_snapshot": {
     "judge": "keyword"
