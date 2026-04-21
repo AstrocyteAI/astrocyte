@@ -76,10 +76,17 @@ jobs:
         working-directory: astrocyte-py
         run: uv sync --extra dev
 
+      - name: Install Doppler CLI
+        # Doppler is the source of truth for secrets (see astrocyte prd
+        # environment). The Astrocyte pattern is to run commands via
+        # ``doppler run --`` locally and in CI — keeps secrets out of
+        # workflow env blocks and under a single rotation story.
+        uses: dopplerhq/cli-action@v3
+
       - name: Run ${{ matrix.benchmark }} benchmark
         working-directory: astrocyte-py
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_BENCHMARK_TOKEN }}
         run: |
           ARGS="--config benchmarks/config.yaml"
           ARGS="$ARGS --output-dir benchmark-results"
@@ -99,7 +106,10 @@ jobs:
             ARGS="$ARGS --max-questions $MAX_Q"
           fi
 
-          uv run python scripts/run_benchmarks.py $ARGS
+          # DOPPLER_TOKEN selects the prd config automatically; no need
+          # to pass --config prd. Service token should be scoped to the
+          # benchmark-read role.
+          doppler run -- uv run python scripts/run_benchmarks.py $ARGS
 
       - name: Upload results
         if: always()
