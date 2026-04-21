@@ -47,6 +47,29 @@ _CATEGORY_MAP: dict[str, str] = {
 }
 
 
+def _parse_longmemeval_date(raw: str | None) -> datetime | None:
+    """Parse a LongMemEval session date string to a UTC datetime.
+
+    The dataset uses the literal form ``"2023/05/20 (Sat) 02:21"`` — a
+    ``YYYY/MM/DD (DDD) HH:MM`` pattern with a parenthesised weekday in
+    the middle. strptime can't handle the weekday token directly, so
+    strip it and parse the rest. Returns None on any failure so the
+    benchmark falls back to retain-time clock rather than crashing.
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    # Drop the parenthesised weekday: "(Sat) " → ""
+    parts = raw.split()
+    cleaned_parts = [p for p in parts if not (p.startswith("(") and p.endswith(")"))]
+    cleaned = " ".join(cleaned_parts)
+    for fmt in ("%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M", "%Y/%m/%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(cleaned, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
 def _classify_question_type(question_type: str) -> str:
     """Map a LongMemEval question_type to a high-level category."""
     if question_type.endswith("_abs"):
@@ -155,12 +178,23 @@ class LongMemEvalBenchmark:
                 if not content.strip():
                     continue
 
+                # Parse the session timestamp so the temporal retrieval
+                # strategy has a real signal. Without this, every memory
+                # gets the same retain-time timestamp and recency decay
+                # is meaningless.
+                occurred_at = _parse_longmemeval_date(msg.get("session_date"))
+
                 t0 = time.monotonic()
                 await self.brain.retain(
                     content,
                     bank_id=bank_id,
                     tags=[msg.get("role", "user"), q.category],
-                    metadata={"session_id": msg.get("session_id", ""), "source": "longmemeval"},
+                    metadata={
+                        "session_id": msg.get("session_id", ""),
+                        "source": "longmemeval",
+                        "session_date": msg.get("session_date", ""),
+                    },
+                    occurred_at=occurred_at,
                 )
                 retain_latencies.append((time.monotonic() - t0) * 1000)
                 retain_count += 1
@@ -366,6 +400,12 @@ def load_longmemeval_dataset(
             conversation_context: list[dict[str, str]] = []
             haystack_sessions = item.get("haystack_sessions", [])
             haystack_session_id_list = item.get("haystack_session_ids", [])
+            # haystack_dates: one date per session in LongMemEval — e.g.
+            # "2023/05/20 (Sat) 02:21". Used as ``occurred_at`` so the
+            # temporal retrieval strategy can rank by real recency rather
+            # than retain-time clock (which would flatten all memories
+            # into the same second).
+            haystack_dates_list = item.get("haystack_dates", [])
 
             if isinstance(haystack_sessions, list):
                 for sess_idx, session_turns in enumerate(haystack_sessions):
@@ -374,16 +414,22 @@ def load_longmemeval_dataset(
                         if sess_idx < len(haystack_session_id_list)
                         else f"session_{sess_idx}"
                     )
+                    sess_date = (
+                        haystack_dates_list[sess_idx]
+                        if sess_idx < len(haystack_dates_list)
+                        else None
+                    )
                     if isinstance(session_turns, list):
                         for turn in session_turns:
                             if isinstance(turn, dict) and turn.get("content"):
-                                conversation_context.append(
-                                    {
-                                        "role": turn.get("role", "user"),
-                                        "content": str(turn["content"]),
-                                        "session_id": str(sess_id),
-                                    }
-                                )
+                                entry: dict[str, str] = {
+                                    "role": turn.get("role", "user"),
+                                    "content": str(turn["content"]),
+                                    "session_id": str(sess_id),
+                                }
+                                if sess_date:
+                                    entry["session_date"] = str(sess_date)
+                                conversation_context.append(entry)
 
             # Fallback: try older field names if haystack_sessions wasn't found
             if not conversation_context:

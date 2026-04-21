@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from astrocyte.config import ExtractionProfileConfig, RecallAuthorityConfig
@@ -18,7 +19,17 @@ from astrocyte.pipeline.extraction import (
     prepare_retain_input,
     resolve_retain_chunking,
 )
-from astrocyte.pipeline.fusion import DEFAULT_RRF_K, memory_hits_as_scored, rrf_fusion
+from astrocyte.pipeline.fusion import (
+    DEFAULT_RRF_K,
+    memory_hits_as_scored,
+    rrf_fusion,
+    weighted_rrf_fusion,
+)
+from astrocyte.pipeline.query_intent import (
+    QueryIntent,
+    classify_query_intent,
+    weights_for_intent,
+)
 from astrocyte.pipeline.reflect import synthesize
 from astrocyte.pipeline.reranking import basic_rerank
 from astrocyte.pipeline.retrieval import parallel_retrieve
@@ -150,6 +161,11 @@ class PipelineOrchestrator:
         rrf_k: int = DEFAULT_RRF_K,
         semantic_overfetch: int = 5,
         extraction_profiles: dict[str, ExtractionProfileConfig] | None = None,
+        *,
+        enable_temporal_retrieval: bool = True,
+        temporal_scan_cap: int = 500,
+        temporal_half_life_days: float = 7.0,
+        enable_intent_aware_recall: bool = True,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -161,6 +177,17 @@ class PipelineOrchestrator:
         self.extraction_profiles = extraction_profiles
         self.rrf_k = rrf_k
         self.semantic_overfetch = semantic_overfetch
+        # Temporal retrieval knobs — see astrocyte.pipeline.retrieval for full
+        # semantics. Enabled by default: the strategy no-ops gracefully on
+        # banks whose vectors have no timestamps, so enabling it is safe.
+        self.enable_temporal_retrieval = enable_temporal_retrieval
+        self.temporal_scan_cap = temporal_scan_cap
+        self.temporal_half_life_days = temporal_half_life_days
+        # Intent-aware recall: heuristic query classifier biases RRF
+        # weights per strategy. Conservative (always fuses all strategies
+        # even under bias), so enabling is safe — a misclassification
+        # degrades to a soft lean rather than a strategy drop.
+        self.enable_intent_aware_recall = enable_intent_aware_recall
         self._dedup = DedupDetector(similarity_threshold=0.95)
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when ``recall_authority`` is configured.
         self.recall_authority: RecallAuthorityConfig | None = None
@@ -261,6 +288,17 @@ class PipelineOrchestrator:
             if mip_pipeline and mip_pipeline.version is not None:
                 chunk_metadata["_mip.pipeline_version"] = int(mip_pipeline.version)
 
+        # Stamp ``_created_at`` so (1) temporal retrieval can rank by
+        # recency, (2) MIP forget.min_age_days can enforce age guards, and
+        # (3) lifecycle TTL has a consistent retain timestamp. Callers that
+        # already set ``_created_at`` (imports / replay) win via setdefault.
+        # Mirrors InMemoryEngineProvider.retain so pipeline- and engine-
+        # backed deployments share the same observability contract.
+        chunk_metadata = dict(chunk_metadata or {})
+        chunk_metadata.setdefault(
+            "_created_at", datetime.now(timezone.utc).isoformat(),
+        )
+
         # 4. Store vectors
         memory_ids: list[str] = []
         items: list[VectorItem] = []
@@ -352,13 +390,42 @@ class PipelineOrchestrator:
             entity_ids=entity_ids,
             limit=overfetch_limit,
             filters=filters,
+            enable_temporal=self.enable_temporal_retrieval,
+            temporal_scan_cap=self.temporal_scan_cap,
+            temporal_half_life_days=self.temporal_half_life_days,
         )
 
         # 4. RRF fusion (local strategies + optional federated / manual external_context)
-        ranked_lists = [results for results in strategy_results.values() if results]
+        # When intent-aware recall is enabled, weight each strategy's RRF
+        # contribution by a bias derived from the query's classified
+        # intent. UNKNOWN intents pass through with neutral 1.0 weights,
+        # so enabling the feature never *hurts* baseline behavior — it
+        # either kicks in on a confident classification or no-ops.
+        query_intent = QueryIntent.UNKNOWN
+        if self.enable_intent_aware_recall:
+            query_intent = classify_query_intent(request.query).intent
+        intent_weights = weights_for_intent(query_intent)
+
+        weighted_inputs: list[tuple[list[Any], float]] = []
+        for strategy, results in strategy_results.items():
+            if not results:
+                continue
+            # Map strategy name → weight. External/proxy results use
+            # semantic weight (they're typically semantic fusions upstream).
+            weight = getattr(intent_weights, strategy, 1.0)
+            weighted_inputs.append((results, weight))
         if request.external_context:
-            ranked_lists.append(memory_hits_as_scored(request.external_context))
-        fused = rrf_fusion(ranked_lists, k=self.rrf_k)
+            weighted_inputs.append(
+                (memory_hits_as_scored(request.external_context), intent_weights.semantic),
+            )
+
+        # Short-circuit to plain RRF when all weights are 1.0 — keeps the
+        # baseline path bit-identical for deployments that disable
+        # intent-aware recall.
+        if all(w == 1.0 for _, w in weighted_inputs):
+            fused = rrf_fusion([r for r, _ in weighted_inputs], k=self.rrf_k)
+        else:
+            fused = weighted_rrf_fusion(weighted_inputs, k=self.rrf_k)
 
         # Resolve per-bank MIP PipelineSpec once (reused for rerank + version check)
         bank_pipeline = None
