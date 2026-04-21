@@ -1,0 +1,160 @@
+# Enterprise identity-aware MIP routing.
+#
+# Demonstrates the three caller patterns from the Astrocyte identity spec
+# (docs/_design/astrocyte_identity_spec.md):
+#
+#   m2u        — agent acts on behalf of a human user via delegated token
+#   m2m        — background job / batch / integration with service credential
+#   m2m-proxied — agent acts on behalf of a user but downstream system does
+#                 not support delegated tokens; calling layer declares the
+#                 beneficiary via metadata.beneficiary_user_id
+#
+# Prerequisites:
+#
+# - JWT identity middleware enabled in astrocyte-mcp (see
+#   docs/_plugins/jwt-identity-middleware.md). The middleware classifies
+#   inbound tokens into user / service identities and populates the
+#   AstrocyteContext.actor so the rules below can branch on
+#   principal_type / principal_id.
+# - For m2m-proxied flows, the calling orchestration layer MUST set
+#   metadata.beneficiary_user_id to the user's stable subject identifier
+#   (oid / sub). See docs/_plugins/proxied-user-identity.md.
+#
+# Compliance anchor: per-user attribution is required by PDPA, GDPR, HIPAA,
+# MAS TRM/626, IM8. Routing rules below implement that attribution; removing
+# the beneficiary rule would silently leak personal data into machine banks.
+
+version: "1.0"
+
+# Multiple rules may match at the top priority when a request is ambiguous.
+# ``error`` forces declarative intent to be explicit — two live rules at
+# the same priority surface as a MipRoutingError instead of silently
+# picking one. Swap to ``most_specific`` if you prefer resolving on
+# number of match conditions.
+tie_breaker: error
+
+# ── COMPLIANCE OVERRIDES ──────────────────────────────────────────────────
+# Fire before any identity-based routing. ``override: true`` makes these
+# compliance locks — even the intent layer cannot re-route them.
+
+rules:
+
+  - name: pii-lockdown
+    priority: 1
+    override: true
+    match:
+      pii_detected: true
+    action:
+      # Encrypted per-principal vault. Uses {principal.oid_or_app_id} so
+      # users and service accounts each get an isolated PII bank.
+      bank: "private-encrypted-{principal.oid_or_app_id}"
+      tags: [pii, compliance]
+      retain_policy: redact_before_store
+      forget:
+        version: 1
+        preset: gdpr  # hard / audit=required / cascade / respect_legal_hold
+
+  # ── M2U: Delegated user tokens ─────────────────────────────────────────
+  # Agent is acting on behalf of a specific human user.
+  # Bank key is the user's immutable subject identifier (oid/sub) —
+  # NEVER email/UPN, because those mutate.
+
+  - name: user-personal-memory
+    priority: 10
+    observability_tags: [m2u, personal, compliance:pdpa]
+    match:
+      all:
+        - principal_type: user
+        - content_type: conversation
+    action:
+      bank: "user-{principal.oid_or_app_id}"
+      tags: [user, m2u, "actor:{principal.upn}"]
+      forget:
+        version: 1
+        preset: student  # soft delete, 7-day grace, audit on, respect holds
+
+  # ── M2M-PROXIED: Service credential acting for a user ─────────────────
+  # Downstream system does not accept delegated tokens (HR, ITSM, finance,
+  # legacy systems). Calling orchestration layer MUST set beneficiary.
+  # ``none`` block makes this rule structurally exclusive with the
+  # machine-default rule — removes the need for tie_breaker on this path.
+
+  - name: proxied-user-data
+    priority: 20
+    observability_tags: [m2m-proxied, personal, compliance:pdpa]
+    match:
+      all:
+        - principal_type: service
+        - content_type: conversation
+        - metadata.beneficiary_user_id: present
+    action:
+      # Route into the user's bank so this memory surfaces on the user's
+      # DSAR, recall, and right-to-erasure requests.
+      bank: "user-{metadata.beneficiary_user_id}"
+      tags: [proxied, m2m-on-behalf, "via:{principal.app_id}"]
+      # Same lifecycle as direct m2u — this IS user data.
+      forget:
+        version: 1
+        preset: student
+
+  # ── M2M: Service account / batch ──────────────────────────────────────
+  # No human user in the chain. Shorter retention, no personal attribution.
+  # ``none_conditions`` prevents overlap with the proxy rule above — if
+  # beneficiary is set, this rule refuses to match.
+
+  - name: machine-default
+    priority: 30
+    observability_tags: [m2m, operational]
+    match:
+      all:
+        - principal_type: service
+        - content_type: conversation
+      none:
+        - metadata.beneficiary_user_id: present
+    action:
+      bank: "svc-{principal.app_id}"
+      tags: [m2m, operational]
+      forget:
+        # Operational data: soft delete is fine; machine-default is not a
+        # GDPR concern unless beneficiary was declared (and then proxy
+        # rule handles it).
+        version: 1
+        mode: soft
+        audit: recommended
+
+  # ── Fallback ──────────────────────────────────────────────────────────
+  # No identity resolved AND no other rule matched. In production this
+  # should be rare — only legacy / pre-middleware integrations hit here.
+
+  - name: unattributed-fallback
+    priority: 999
+    observability_tags: [unattributed, legacy]
+    match:
+      all: []
+    action:
+      # Unattributed data lands in a clearly-named bank so operators can
+      # see it in audits and investigate.
+      bank: "unattributed"
+      tags: [unattributed, legacy]
+
+# ── Intent policy ─────────────────────────────────────────────────────────
+# LLM judgment only fires when NO mechanical rule matched, or when
+# confidence is low. Compliance rules cannot be overridden.
+
+intent_policy:
+  escalate_when:
+    - matched_rules: 0
+    - confidence:
+        lt: 0.8
+
+  model_context: |
+    You are a memory routing agent for an enterprise deployment.
+    The caller's identity (user vs service account vs proxy-with-beneficiary)
+    has already been resolved by mechanical rules. You only see cases where
+    those rules did not produce a confident match. Never override
+    pii-lockdown or the proxied-user-data rule.
+
+  constraints:
+    cannot_override: [pii-lockdown, proxied-user-data]
+    must_justify: true
+    max_tokens: 200

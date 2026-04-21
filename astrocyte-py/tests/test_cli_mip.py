@@ -226,6 +226,23 @@ class TestCliForgetGuardrails:
         out = capsys.readouterr().out
         assert "ok:" in out
 
+    def test_sample_enterprise_identity_fixture_lints_clean(
+        self, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """examples/mip-enterprise-identity.yaml is the canonical sample
+        for identity-aware routing (m2u / m2m / m2m-proxied from the
+        Astrocyte identity spec). Must lint clean so it can be copy-pasted
+        into enterprise deployments without further edits."""
+        fixture = (
+            Path(__file__).resolve().parent.parent
+            / "examples" / "mip-enterprise-identity.yaml"
+        )
+        rc = main(["mip", "lint", str(fixture)])
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert "ok:" in out
+        assert "5 rule(s)" in out
+
     def test_sample_code_preset_fixture_lints_clean(
         self, capsys: pytest.CaptureFixture[str],
     ) -> None:

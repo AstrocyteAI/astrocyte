@@ -273,7 +273,14 @@ class Astrocyte:
             mip_pipeline = None
             mip_rule_name = None
             if self._mip_router:
+                from astrocyte.identity import resolve_actor
                 from astrocyte.mip.rule_engine import RuleEngineInput
+
+                # Identity spec §3 Gap 2: resolved actor flows into MIP so
+                # rules can branch on principal_type / principal_id / etc.
+                # When no context is supplied (legacy callers), actor is
+                # None and principal_* match conditions simply never fire.
+                actor_identity = resolve_actor(context) if context else None
 
                 mip_input = RuleEngineInput(
                     content=content,
@@ -282,6 +289,7 @@ class Astrocyte:
                     tags=tags,
                     pii_detected=pii_detected,
                     source=source,
+                    actor_identity=actor_identity,
                 )
                 routing = await self._mip_router.route(mip_input)
                 if routing.bank_id:
