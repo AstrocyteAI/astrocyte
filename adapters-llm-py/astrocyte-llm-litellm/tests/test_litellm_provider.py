@@ -244,6 +244,46 @@ class TestEmbed:
         sent_text = mock_call.call_args.kwargs["input"][0]
         assert len(sent_text) <= 24_576  # _MAX_EMBED_CHARS
 
+    @pytest.mark.asyncio
+    async def test_truncation_emits_warning(
+        self, provider: LiteLLMProvider, caplog: "pytest.LogCaptureFixture",
+    ) -> None:
+        """Silent truncation is a correctness hazard — every clip event
+        must produce a warning on ``astrocyte_llm_litellm`` so operators
+        can detect upstream chunking gaps."""
+        import logging
+
+        long_text = "x" * 50_000
+        short_text = "fine"
+        mock_resp = _mock_embedding_response([[0.1], [0.2]])
+        with (
+            caplog.at_level(logging.WARNING, logger="astrocyte_llm_litellm"),
+            patch("litellm.aembedding", new_callable=AsyncMock, return_value=mock_resp),
+        ):
+            await provider.embed([long_text, short_text])
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("truncated 1 of 2" in m for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_no_warning_when_all_inputs_fit(
+        self, provider: LiteLLMProvider, caplog: "pytest.LogCaptureFixture",
+    ) -> None:
+        """Don't spam the log on the common case — warning fires only
+        when at least one input was actually clipped."""
+        import logging
+
+        mock_resp = _mock_embedding_response([[0.1]])
+        with (
+            caplog.at_level(logging.WARNING, logger="astrocyte_llm_litellm"),
+            patch("litellm.aembedding", new_callable=AsyncMock, return_value=mock_resp),
+        ):
+            await provider.embed(["short input"])
+
+        assert not any(
+            "truncated" in r.getMessage() for r in caplog.records
+        )
+
 
 # ---------------------------------------------------------------------------
 # Message conversion
