@@ -149,7 +149,8 @@ class JwtIdentityMiddleware:
 
 
 class _JWKSClient(Protocol):
-    def get_signing_key_from_jwt(self, token: str) -> Any: ...  # pragma: no cover
+    def get_signing_key_from_jwt(self, token: str) -> Any:  # pragma: no cover
+        """Return the signing key for ``token`` (PyJWT-compatible shape)."""
 
 
 @dataclass

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from typing import Protocol
 
 _logger = logging.getLogger(__name__)
 
@@ -35,8 +36,9 @@ def _get_stemmer() -> "_Stemmer | None":
     return snowballstemmer.stemmer("english")
 
 
-class _Stemmer:  # protocol stub for type hints
-    def stemWord(self, word: str) -> str: ...  # pragma: no cover
+class _Stemmer(Protocol):  # protocol stub for type hints
+    def stemWord(self, word: str) -> str:  # pragma: no cover
+        """Stem ``word`` and return the stem."""
 
 
 def porter_stem(word: str) -> str:

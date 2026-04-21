@@ -375,8 +375,10 @@ class TestLongMemEvalJudgeEndToEnd:
                     text="yes", model="fake",
                     usage=TokenUsage(input_tokens=1, output_tokens=1),
                 )
-            def capabilities(self): ...  # pragma: no cover
-            async def embed(self, texts, **kw): ...  # pragma: no cover
+            def capabilities(self):  # pragma: no cover
+                """Unused — only ``complete`` is exercised."""
+            async def embed(self, texts, **kw):  # pragma: no cover
+                """Unused — only ``complete`` is exercised."""
 
         judge = LongMemEvalJudge(FakeLLM())  # type: ignore[arg-type]
         score = await judge.score(
@@ -395,8 +397,10 @@ class TestLongMemEvalJudgeEndToEnd:
                     text="no", model="fake",
                     usage=TokenUsage(input_tokens=1, output_tokens=1),
                 )
-            def capabilities(self): ...  # pragma: no cover
-            async def embed(self, texts, **kw): ...  # pragma: no cover
+            def capabilities(self):  # pragma: no cover
+                """Unused — only ``complete`` is exercised."""
+            async def embed(self, texts, **kw):  # pragma: no cover
+                """Unused — only ``complete`` is exercised."""
 
         judge = LongMemEvalJudge(FakeLLM())  # type: ignore[arg-type]
         assert await judge.score("single-session-user", "q", "a", "r") == 0.0
@@ -418,8 +422,10 @@ class TestLongMemEvalJudgeEndToEnd:
                     text="yes", model="fake",
                     usage=TokenUsage(input_tokens=1, output_tokens=1),
                 )
-            def capabilities(self): ...  # pragma: no cover
-            async def embed(self, texts, **kw): ...  # pragma: no cover
+            def capabilities(self):  # pragma: no cover
+                """Unused — only ``complete`` is exercised."""
+            async def embed(self, texts, **kw):  # pragma: no cover
+                """Unused — only ``complete`` is exercised."""
 
         judge = LongMemEvalJudge(CapturingLLM())  # type: ignore[arg-type]
         await judge.score("temporal-reasoning", "Q?", "A.", "R.")
@@ -434,8 +440,10 @@ class TestLongMemEvalJudgeEndToEnd:
             SPI_VERSION = 1
             async def complete(self, messages, **kw):  # type: ignore[no-untyped-def]
                 raise RuntimeError("provider down")
-            def capabilities(self): ...  # pragma: no cover
-            async def embed(self, texts, **kw): ...  # pragma: no cover
+            def capabilities(self):  # pragma: no cover
+                """Unused — only ``complete`` is exercised."""
+            async def embed(self, texts, **kw):  # pragma: no cover
+                """Unused — only ``complete`` is exercised."""
 
         judge = LongMemEvalJudge(FailingLLM())  # type: ignore[arg-type]
         with pytest.raises(RuntimeError, match="provider down"):
