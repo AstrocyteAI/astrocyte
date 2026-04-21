@@ -1,0 +1,38 @@
+{
+  "locomo": {
+    "benchmark": "locomo",
+    "timestamp": "2026-04-18T00:50:44.086629+00:00",
+    "overall_accuracy": 0.6062437059415912,
+    "category_accuracy": {
+      "multi-hop": 0.1557632398753894,
+      "open-domain": 0.20833333333333334,
+      "single-hop": 0.425531914893617,
+      "temporal": 0.6753864447086801,
+      "adversarial": 1.0
+    },
+    "total_questions": 1986,
+    "correct": 1204,
+    "metrics": {
+      "recall_precision": 0.2870594159113797,
+      "recall_hit_rate": 0.5443101711983888,
+      "recall_mrr": 0.4546933694592305,
+      "recall_ndcg": 0.0,
+      "retain_latency_p50_ms": 36.23835451435298,
+      "retain_latency_p95_ms": 70.64213966659736,
+      "recall_latency_p50_ms": 14.15247900877148,
+      "recall_latency_p95_ms": 14.85847904405091,
+      "reflect_accuracy": 0.6062437059415912,
+      "total_duration_seconds": 70.16909441596363
+    },
+    "provider": "pipeline",
+    "provider_tier": "engine"
+  },
+  "_meta": {
+    "timestamp": "2026-04-18T00:50:44.087838+00:00",
+    "wall_time_seconds": 70.1842883329955,
+    "provider": "pipeline",
+    "provider_tier": "engine",
+    "max_questions": null,
+    "config": null
+  }
+}

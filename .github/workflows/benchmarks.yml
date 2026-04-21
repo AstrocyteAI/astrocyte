@@ -166,11 +166,47 @@ jobs:
               print(json.dumps(summary, indent=2, default=str))
           " > summary.json
 
+          # Also produce the merged file the regression gate consumes
+          # (unwrapped "combined" dict, not the summary-only version).
+          python3 -c "
+          import json, glob, os
+          combined = {}
+          for f in sorted(glob.glob('all-results/*.json')):
+              if os.path.basename(f) == 'latest.json':
+                  continue
+              with open(f) as fh:
+                  data = json.load(fh)
+              for key, val in data.items():
+                  if key != '_meta':
+                      combined[key] = val
+                  elif '_meta' not in combined:
+                      combined['_meta'] = val
+          with open('combined-latest.json', 'w') as fh:
+              json.dump(combined, fh, indent=2)
+          "
+
           echo '```json' >> $GITHUB_STEP_SUMMARY
           cat summary.json >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
+      - name: Checkout for baseline
+        uses: actions/checkout@v6
+        with:
+          path: repo
+
+      - name: Regression gate — fail on score drop beyond tolerance
+        # Does not block the matrix jobs; only surfaces in the summarize
+        # step so the benchmark runs themselves always complete and
+        # upload artifacts. The exit code here decides overall success.
+        run: |
+          cd repo/astrocyte-py
+          uv sync --extra dev
+          uv run python scripts/check_benchmark_regression.py \
+              --baseline benchmarks/baselines-test-provider.json \
+              --results ../../combined-latest.json
+
       - name: Upload combined results
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-results-combined
