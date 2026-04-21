@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import uuid
+from datetime import datetime
 from typing import ClassVar
 
 from astrocyte.types import HealthStatus, VectorFilters, VectorHit, VectorItem
@@ -142,6 +143,8 @@ class QdrantVectorStore:
                     meta = json.loads(mj)
                 except json.JSONDecodeError:
                     meta = None
+            occ_raw = pl.get("occurred_at")
+            occ = datetime.fromisoformat(occ_raw) if isinstance(occ_raw, str) else None
             hits.append(
                 VectorHit(
                     id=mid,
@@ -150,6 +153,7 @@ class QdrantVectorStore:
                     metadata=meta,
                     tags=list(pl.get("tags") or []) if pl.get("tags") is not None else None,
                     fact_type=str(pl["fact_type"]) if pl.get("fact_type") else None,
+                    occurred_at=occ,
                     memory_layer=str(pl["memory_layer"]) if pl.get("memory_layer") else None,
                 ),
             )
@@ -210,15 +214,19 @@ class QdrantVectorStore:
                         meta = json.loads(mj)
                     except json.JSONDecodeError:
                         meta = None
+                occ_raw = pl.get("occurred_at")
+                occ = datetime.fromisoformat(occ_raw) if isinstance(occ_raw, str) else None
+                item_text = str(pl.get("text") or "") or "(empty)"
                 out.append(
                     VectorItem(
                         id=mid,
                         bank_id=bank_id,
                         vector=list(vec) if vec is not None else [],
-                        text=str(pl.get("text") or ""),
+                        text=item_text,
                         metadata=meta,
                         tags=list(pl.get("tags") or []) if pl.get("tags") is not None else None,
                         fact_type=str(pl["fact_type"]) if pl.get("fact_type") else None,
+                        occurred_at=occ,
                         memory_layer=str(pl["memory_layer"]) if pl.get("memory_layer") else None,
                     ),
                 )

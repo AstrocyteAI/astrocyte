@@ -142,6 +142,8 @@ class LiteLLMProvider:
 
         response = await litellm.acompletion(**kwargs)
 
+        if not response.choices:
+            raise RuntimeError(f"LiteLLM returned empty choices for model {use_model}")
         choice = response.choices[0]
         usage = None
         if response.usage:
