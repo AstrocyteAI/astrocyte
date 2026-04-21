@@ -189,7 +189,8 @@ def _print_result(result, benchmark_name: str) -> None:
 
 
 async def run_longmemeval(
-    brain, data_path: str | None, max_questions: int | None
+    brain, data_path: str | None, max_questions: int | None,
+    *, use_canonical_judge: bool = False,
 ) -> BenchmarkRunOutcome:
     """Run LongMemEval benchmark."""
     from astrocyte.eval.benchmarks.longmemeval import (
@@ -214,6 +215,7 @@ async def run_longmemeval(
             data_path=data_path,
             bank_id="bench-longmemeval",
             max_questions=max_questions,
+            use_canonical_judge=use_canonical_judge,
         )
     else:
         if data_path:
@@ -259,6 +261,7 @@ async def run_longmemeval(
             questions=questions,
             bank_id="bench-longmemeval",
             max_questions=max_questions,
+            use_canonical_judge=use_canonical_judge,
         )
 
     _print_result(result, "LongMemEval")
@@ -266,7 +269,8 @@ async def run_longmemeval(
 
 
 async def run_locomo(
-    brain, data_path: str | None, max_questions: int | None
+    brain, data_path: str | None, max_questions: int | None,
+    *, use_canonical_judge: bool = False,
 ) -> BenchmarkRunOutcome:
     """Run LoCoMo benchmark."""
     from astrocyte.eval.benchmarks.locomo import (
@@ -293,6 +297,7 @@ async def run_locomo(
             data_path=data_path,
             bank_id="bench-locomo",
             max_questions=max_questions,
+            use_canonical_judge=use_canonical_judge,
         )
     else:
         if data_path:
@@ -399,6 +404,7 @@ async def run_locomo(
             conversations=conversations,
             bank_id="bench-locomo",
             max_questions=max_questions,
+            use_canonical_judge=use_canonical_judge,
         )
 
     _print_result(result, "LoCoMo")
@@ -488,6 +494,19 @@ async def main() -> None:
         default=None,
         help="Output directory for results JSON (default: benchmark-results/)",
     )
+    parser.add_argument(
+        "--canonical-judge",
+        action="store_true",
+        help=(
+            "Score with each benchmark's canonical judge instead of the "
+            "legacy word/text-overlap scorer. LoCoMo uses stemmed token "
+            "F1 (astrocyte.eval.judges.locomo_judge); LongMemEval uses "
+            "the paper's LLM-judge (one extra LLM call per question). "
+            "REQUIRED for scores comparable to published numbers (paper, "
+            "Mem0, Zep, Hindsight). Legacy scorer kept for internal "
+            "delta-tracking."
+        ),
+    )
     args = parser.parse_args()
 
     # Build brain
@@ -507,13 +526,19 @@ async def main() -> None:
         all_results["builtin"] = await run_builtin_suites(brain)
 
     if "longmemeval" in args.benchmarks:
-        outcome = await run_longmemeval(brain, args.longmemeval_path, args.max_questions)
+        outcome = await run_longmemeval(
+            brain, args.longmemeval_path, args.max_questions,
+            use_canonical_judge=args.canonical_judge,
+        )
         if outcome.result:
             all_results["longmemeval"] = outcome.result
         used_real_data["longmemeval"] = outcome.used_real_data
 
     if "locomo" in args.benchmarks:
-        outcome = await run_locomo(brain, args.locomo_path, args.max_questions)
+        outcome = await run_locomo(
+            brain, args.locomo_path, args.max_questions,
+            use_canonical_judge=args.canonical_judge,
+        )
         if outcome.result:
             all_results["locomo"] = outcome.result
         used_real_data["locomo"] = outcome.used_real_data

@@ -48,6 +48,11 @@ mcp = [
 ]
 eval = [
     "deepeval>=2.0",
+    # Porter stemmer used by the canonical LoCoMo judge
+    # (astrocyte.eval.judges.locomo_judge). ~100 KB, pure-Python core
+    # with optional C acceleration, stable API. Scoped to the `eval`
+    # extra so runtime users don't pay for a benchmark-only dep.
+    "snowballstemmer>=2.2",
 ]
 openai = [
     "openai>=1.0",
@@ -78,6 +83,7 @@ dev = [
     "astrocyte-ingestion-kafka>=0.1.0,<1",
     "astrocyte-ingestion-redis>=0.1.0,<1",
     "astrocyte-ingestion-github>=0.1.0,<1",
+    "snowballstemmer>=2.2",
 ]
 all = [
     "astrocyte[otel,prometheus,mcp,eval,openai,gateway,stream,poll]",

@@ -99,6 +99,12 @@ class LongMemEvalQuestion:
     answer: str
     session_ids: list[str]
     conversation_context: list[dict[str, str]]  # Chat history
+    #: Raw upstream question_type, e.g. "single-session-user",
+    #: "temporal-reasoning", "knowledge-update_abs". Required by the
+    #: canonical LLM-judge to pick the right prompt template;
+    #: ``category`` above is the lossy Astrocyte-side summary and
+    #: cannot round-trip to the template choice.
+    question_type: str = ""
 
 
 class LongMemEvalBenchmark:
@@ -119,6 +125,7 @@ class LongMemEvalBenchmark:
         *,
         clean_after: bool = True,
         max_questions: int | None = None,
+        use_canonical_judge: bool = False,
     ) -> LongMemEvalResult:
         """Run the LongMemEval benchmark.
 
@@ -129,6 +136,13 @@ class LongMemEvalBenchmark:
             bank_id: Dedicated bank for the benchmark.
             clean_after: Delete the bank after running.
             max_questions: Limit number of questions (for quick testing).
+            use_canonical_judge: When True, score each reflect answer
+                with the canonical LongMemEval LLM-judge
+                (``astrocyte.eval.judges.longmemeval_judge``) using the
+                paper's task-specific prompts. Requires an LLM provider
+                on ``brain._pipeline.llm_provider`` (raises if absent).
+                When False (default), uses the legacy
+                ``text_overlap_score`` scorer.
 
         Returns:
             LongMemEvalResult with accuracy breakdown by category.
@@ -217,6 +231,21 @@ class LongMemEvalBenchmark:
         per_question: list[dict[str, Any]] = []
         query_results: list[QueryResult] = []
 
+        # Build the canonical LLM-judge once when requested. Reuses the
+        # same LLM provider the reflect stage uses — consistent tier,
+        # shared rate-limit pool, same Doppler-injected API key.
+        canonical_judge = None
+        if use_canonical_judge:
+            from astrocyte.eval.judges import LongMemEvalJudge
+
+            if self.brain._pipeline is None or self.brain._pipeline.llm_provider is None:
+                raise RuntimeError(
+                    "use_canonical_judge=True requires brain._pipeline.llm_provider "
+                    "to be configured (the judge sends one LLM call per question). "
+                    "Either provide an LLM or run with use_canonical_judge=False.",
+                )
+            canonical_judge = LongMemEvalJudge(self.brain._pipeline.llm_provider)
+
         print(f"  [LongMemEval] Evaluating {total_questions} questions...")
         eval_phase_start = time.monotonic()
         for qi, q in enumerate(questions, 1):
@@ -227,18 +256,39 @@ class LongMemEvalBenchmark:
             elapsed = (time.monotonic() - t0) * 1000
             recall_latencies.append(elapsed)
 
-            # Check if the expected answer appears in any recall hit
-            answer_found = any(
-                text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD for h in result.hits
-            )
-
-            # Also try reflect for a more thorough check
+            # Always run reflect so canonical-judge path has an answer.
             reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
-            answer_in_reflect = (
-                text_overlap_score([q.answer], reflect_result.answer) > ANSWER_MATCH_THRESHOLD
-            )
 
-            is_correct = answer_found or answer_in_reflect
+            if canonical_judge is not None:
+                # Canonical LLM-judge against reflect answer. Uses the
+                # raw upstream question_type (not the Astrocyte-side
+                # lossy category) so the prompt template matches the
+                # paper's per-task rubric.
+                try:
+                    score = await canonical_judge.score(
+                        question_type=q.question_type or q.category,
+                        question=q.question,
+                        answer=q.answer,
+                        response=reflect_result.answer,
+                    )
+                    is_correct = score >= 1.0
+                except Exception as exc:
+                    logging.getLogger("astrocyte.eval.longmemeval").warning(
+                        "canonical judge failed for q=%s: %s (counted as incorrect)",
+                        q.question_id, exc,
+                    )
+                    is_correct = False
+            else:
+                # Legacy scorer — loose but historically comparable.
+                answer_found = any(
+                    text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD
+                    for h in result.hits
+                )
+                answer_in_reflect = (
+                    text_overlap_score([q.answer], reflect_result.answer)
+                    > ANSWER_MATCH_THRESHOLD
+                )
+                is_correct = answer_found or answer_in_reflect
             if is_correct:
                 correct += 1
                 category_correct[q.category] = category_correct.get(q.category, 0) + 1
@@ -463,6 +513,7 @@ def load_longmemeval_dataset(
                 answer=answer_text,
                 session_ids=[str(s) for s in session_ids] if isinstance(session_ids, list) else [],
                 conversation_context=conversation_context,
+                question_type=str(question_type),
             )
             if q.question and q.answer:
                 questions.append(q)

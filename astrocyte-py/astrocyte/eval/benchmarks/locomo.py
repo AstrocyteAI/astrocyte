@@ -98,6 +98,7 @@ class LoComoBenchmark:
         *,
         clean_after: bool = True,
         max_questions: int | None = None,
+        use_canonical_judge: bool = False,
     ) -> LoCoMoResult:
         """Run the LoCoMo benchmark.
 
@@ -107,6 +108,17 @@ class LoComoBenchmark:
             bank_id: Dedicated bank for the benchmark.
             clean_after: Delete the bank after running.
             max_questions: Limit number of questions.
+            use_canonical_judge: When True, score each question with the
+                canonical LoCoMo stemmed-token-F1 judge
+                (``astrocyte.eval.judges.locomo_judge``) against reflect
+                output only, matching published comparisons (paper,
+                Mem0, Zep, Hindsight). When False (default), uses the
+                legacy ``word_overlap_score > 0.3`` scorer on both
+                recall hits and reflect output — looser, useful for
+                internal delta-tracking but NOT cross-competitor
+                comparable. A question counts "correct" under the
+                canonical judge when its F1 score crosses 0.3 (the
+                paper's de-facto threshold in reported accuracy).
 
         Returns:
             LoCoMoResult with accuracy breakdown by category.
@@ -220,16 +232,36 @@ class LoComoBenchmark:
             elapsed = (time.monotonic() - t0) * 1000
             recall_latencies.append(elapsed)
 
-            # Check if answer appears in recall hits (word overlap handles paraphrasing)
-            answer_in_recall = any(
-                word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD for h in result.hits
-            )
-
-            # Also try reflect
+            # Synthesis path — always run reflect so we have the model's
+            # answer to score. Legacy scorer also peeks at recall hits
+            # directly; canonical LoCoMo scorer looks at reflect only
+            # (the paper compares models by their synthesized answers).
             reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
-            answer_in_reflect = word_overlap_score(q.answer, reflect_result.answer) > ANSWER_OVERLAP_THRESHOLD
 
-            is_correct = answer_in_recall or answer_in_reflect
+            if use_canonical_judge:
+                # Canonical F1 against reflect answer only. Threshold 0.3
+                # chosen to match the paper's reported-accuracy convention
+                # (it's the minimum F1 at which the paper's tables treat
+                # an answer as recovered).
+                from astrocyte.eval.judges import locomo_score_qa
+
+                canonical_f1 = locomo_score_qa(
+                    prediction=reflect_result.answer,
+                    ground_truth=q.answer,
+                    category=q.category,
+                )
+                is_correct = canonical_f1 > 0.3
+            else:
+                # Legacy scorer — loose but historically comparable.
+                answer_in_recall = any(
+                    word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD
+                    for h in result.hits
+                )
+                answer_in_reflect = (
+                    word_overlap_score(q.answer, reflect_result.answer)
+                    > ANSWER_OVERLAP_THRESHOLD
+                )
+                is_correct = answer_in_recall or answer_in_reflect
             if is_correct:
                 correct += 1
                 category_correct[q.category] = category_correct.get(q.category, 0) + 1
