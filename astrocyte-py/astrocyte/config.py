@@ -197,6 +197,42 @@ class AccessControlConfig:
 
 
 @dataclass
+class JwtMiddlewareConfig:
+    """JWT identity middleware (identity spec §3 Gap 1 wiring).
+
+    When ``enabled``, the MCP server extracts the ``Authorization: Bearer``
+    token from each inbound request, validates it against the configured
+    JWKS, classifies the claims via :mod:`astrocyte.identity_jwt`, and
+    populates :attr:`AstrocyteContext.actor` with a resolved
+    :class:`ActorIdentity` for the call. See
+    ``docs/_plugins/jwt-identity-middleware.md`` for the operator guide.
+
+    When ``enabled=False`` (default), the MCP server preserves pre-middleware
+    behavior: a single static ``AstrocyteContext`` is used for all calls.
+    """
+
+    enabled: bool = False
+    #: JWKS endpoint for signature key retrieval. Required when enabled.
+    jwks_uri: str | None = None
+    #: Expected token ``aud`` claim. Required when enabled — unset audience
+    #: is a common misconfiguration that can result in cross-tenant accepts.
+    token_audience: str | None = None
+    #: Expected token ``iss`` claim. Validated when set; left unchecked when
+    #: None (some IdPs rotate issuers).
+    token_issuer: str | None = None
+    #: Signing algorithms accepted. Defaults to asymmetric only so HS* keys
+    #: stolen from misconfigured deployments can't forge tokens.
+    algorithms: list[str] = field(default_factory=lambda: ["RS256", "ES256"])
+    #: When True, a missing or malformed Authorization header raises.
+    #: When False (with ``allow_anonymous=True``), falls through to anonymous.
+    fail_closed: bool = True
+    #: Permit calls with no Authorization header. Ignored when fail_closed=True.
+    allow_anonymous: bool = False
+    #: JWKS cache refresh interval. Most JWKS endpoints rotate every 24h.
+    jwks_refresh_interval_hours: int = 24
+
+
+@dataclass
 class IdentityConfig:
     """Identity-driven bank resolution and ACL helpers (M1–M2 / v0.5.0)."""
 
@@ -206,6 +242,8 @@ class IdentityConfig:
     service_bank_prefix: str = "service-"
     resolver: Literal["convention", "config", "custom"] | None = None
     obo_enabled: bool = False
+    #: JWT identity middleware wiring (identity spec §3 Gap 1).
+    jwt_middleware: JwtMiddlewareConfig = field(default_factory=JwtMiddlewareConfig)
 
 
 # ---------------------------------------------------------------------------

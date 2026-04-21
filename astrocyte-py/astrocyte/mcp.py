@@ -24,6 +24,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from astrocyte._astrocyte import Astrocyte
+from astrocyte._mcp_identity import JwtIdentityMiddleware, build_jwt_middleware
 from astrocyte.config import AstrocyteConfig, access_grants_for_astrocyte, load_config
 from astrocyte.types import AstrocyteContext
 
@@ -39,12 +40,29 @@ def create_mcp_server(
     config: AstrocyteConfig,
     *,
     astrocyte_context: AstrocyteContext | None = None,
+    jwt_middleware: JwtIdentityMiddleware | None = None,
 ) -> FastMCP:
     """Create a FastMCP server wired to an Astrocyte instance.
 
-    If ``astrocyte_context`` is set, it is used for all tool calls (access control,
-    OBO, etc.). Otherwise the context is built from ``mcp.principal`` (default
-    ``agent:mcp``).
+    Identity resolution order (per call):
+
+    1. If ``astrocyte_context`` was passed at server-creation time, it is
+       used as-is (legacy embedding pattern). This takes precedence over
+       all header-based resolution so tests and embedded deployments that
+       pre-bind identity are unaffected.
+    2. Else if ``jwt_middleware`` is set OR
+       ``config.identity.jwt_middleware.enabled`` is true, per-call
+       identity is resolved from the inbound request's Authorization
+       header (identity spec §3 Gap 1 wiring). See
+       ``docs/_plugins/jwt-identity-middleware.md`` for operator setup.
+    3. Else the server falls back to the static ``mcp.principal`` label
+       (default ``agent:mcp``) — the pre-middleware behavior.
+
+    Args:
+        jwt_middleware: Optional pre-built middleware. When None but the
+            config enables JWT middleware, the server constructs one via
+            :func:`build_jwt_middleware`. Pass explicitly to inject a
+            test decoder or bypass PyJWT.
     """
 
     mcp_cfg = config.mcp
@@ -57,8 +75,42 @@ def create_mcp_server(
         ),
     )
 
-    # Build context for access control
-    ctx = astrocyte_context or AstrocyteContext(principal=mcp_cfg.principal or "agent:mcp")
+    # Static context — still built for the pre-middleware path (legacy
+    # deployments that don't enable JWT middleware). When middleware is
+    # enabled, this is only used if header resolution is somehow bypassed.
+    static_ctx = astrocyte_context or AstrocyteContext(
+        principal=mcp_cfg.principal or "agent:mcp",
+    )
+
+    # Build or accept JWT middleware. Explicit > config > none.
+    if jwt_middleware is None and config.identity.jwt_middleware.enabled:
+        jwt_middleware = build_jwt_middleware(config.identity.jwt_middleware)
+
+    def _resolve_context() -> AstrocyteContext:
+        """Resolve the AstrocyteContext for the current request.
+
+        Called on every tool invocation so the middleware sees each call's
+        headers. Static ``astrocyte_context`` (when set at server creation)
+        always wins — that preserves backward compatibility for embedded
+        hosts that pre-bind identity.
+        """
+        # An explicit pre-bound context always wins (embedded / test use).
+        if astrocyte_context is not None:
+            return astrocyte_context
+        # Middleware path — pull headers, resolve identity, build ctx.
+        if jwt_middleware is not None:
+            try:
+                from fastmcp.server.dependencies import get_http_headers
+
+                headers = get_http_headers(include={"authorization"})
+            except Exception:
+                # stdio transport or pre-request context — no headers.
+                # Middleware policy decides how to treat the missing
+                # header (fail-closed vs anonymous).
+                headers = {}
+            return jwt_middleware.resolve(headers)
+        # No middleware, no pre-bound ctx — fall through to static.
+        return static_ctx
 
     # Default bank
     default_bank = mcp_cfg.default_bank_id
@@ -116,7 +168,7 @@ def create_mcp_server(
                 bank_id=bid,
                 tags=tags,
                 metadata=metadata,
-                context=ctx,
+                context=_resolve_context(),
                 **kwargs,
             )
             if result.stored:
@@ -158,7 +210,7 @@ def create_mcp_server(
                     strategy=strategy,
                     max_results=max_results,
                     tags=tags,
-                    context=ctx,
+                    context=_resolve_context(),
                 )
             else:
                 bid = _resolve_bank(bank_id)
@@ -167,7 +219,7 @@ def create_mcp_server(
                     bank_id=bid,
                     max_results=max_results,
                     tags=tags,
-                    context=ctx,
+                    context=_resolve_context(),
                 )
 
             hits = [
@@ -221,7 +273,7 @@ def create_mcp_server(
                         banks=banks,
                         strategy=strategy,
                         max_tokens=max_tokens,
-                        context=ctx,
+                        context=_resolve_context(),
                         include_sources=include_sources,
                     )
                 else:
@@ -230,7 +282,7 @@ def create_mcp_server(
                         query,
                         bank_id=bid,
                         max_tokens=max_tokens,
-                        context=ctx,
+                        context=_resolve_context(),
                         include_sources=include_sources,
                     )
 
@@ -268,7 +320,7 @@ def create_mcp_server(
                     bid,
                     memory_ids=memory_ids,
                     tags=tags,
-                    context=ctx,
+                    context=_resolve_context(),
                 )
                 return json.dumps(
                     {
