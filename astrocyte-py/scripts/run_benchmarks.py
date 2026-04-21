@@ -28,8 +28,17 @@ import asyncio
 import json
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+@dataclass
+class BenchmarkRunOutcome:
+    """Result of running a benchmark: serialized payload plus dataset provenance."""
+
+    result: dict | None
+    used_real_data: bool
 
 
 def _build_test_brain():
@@ -162,8 +171,10 @@ def _print_result(result, benchmark_name: str) -> None:
     print(f"{'=' * 60}")
 
 
-async def run_longmemeval(brain, data_path: str | None, max_questions: int | None) -> tuple[dict | None, bool]:
-    """Run LongMemEval benchmark. Returns (result_dict, used_real_data)."""
+async def run_longmemeval(
+    brain, data_path: str | None, max_questions: int | None
+) -> BenchmarkRunOutcome:
+    """Run LongMemEval benchmark."""
     from astrocyte.eval.benchmarks.longmemeval import (
         LongMemEvalBenchmark,
         LongMemEvalQuestion,
@@ -234,11 +245,13 @@ async def run_longmemeval(brain, data_path: str | None, max_questions: int | Non
         )
 
     _print_result(result, "LongMemEval")
-    return _serialize_result(result, "longmemeval"), has_dataset
+    return BenchmarkRunOutcome(_serialize_result(result, "longmemeval"), has_dataset)
 
 
-async def run_locomo(brain, data_path: str | None, max_questions: int | None) -> tuple[dict | None, bool]:
-    """Run LoCoMo benchmark. Returns (result_dict, used_real_data)."""
+async def run_locomo(
+    brain, data_path: str | None, max_questions: int | None
+) -> BenchmarkRunOutcome:
+    """Run LoCoMo benchmark."""
     from astrocyte.eval.benchmarks.locomo import (
         LoComoBenchmark,
         LoCoMoConversation,
@@ -372,7 +385,7 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
         )
 
     _print_result(result, "LoCoMo")
-    return _serialize_result(result, "locomo"), has_dataset
+    return BenchmarkRunOutcome(_serialize_result(result, "locomo"), has_dataset)
 
 
 async def run_builtin_suites(brain) -> dict:
@@ -477,16 +490,16 @@ async def main() -> None:
         all_results["builtin"] = await run_builtin_suites(brain)
 
     if "longmemeval" in args.benchmarks:
-        result, real = await run_longmemeval(brain, args.longmemeval_path, args.max_questions)
-        if result:
-            all_results["longmemeval"] = result
-        used_real_data["longmemeval"] = real
+        outcome = await run_longmemeval(brain, args.longmemeval_path, args.max_questions)
+        if outcome.result:
+            all_results["longmemeval"] = outcome.result
+        used_real_data["longmemeval"] = outcome.used_real_data
 
     if "locomo" in args.benchmarks:
-        result, real = await run_locomo(brain, args.locomo_path, args.max_questions)
-        if result:
-            all_results["locomo"] = result
-        used_real_data["locomo"] = real
+        outcome = await run_locomo(brain, args.locomo_path, args.max_questions)
+        if outcome.result:
+            all_results["locomo"] = outcome.result
+        used_real_data["locomo"] = outcome.used_real_data
 
     wall_elapsed = time.monotonic() - wall_start
 

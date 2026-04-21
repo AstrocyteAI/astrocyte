@@ -71,9 +71,6 @@ _IDTYP_APP_SIGNAL: str = "app"
 
 def classify_jwt_claims(
     claims: dict[str, Any],
-    *,
-    service_bank_prefix: str = "service-",
-    user_bank_prefix: str = "user-",
 ) -> ActorIdentity:
     """Classify a decoded JWT claim dict into an :class:`ActorIdentity`.
 
@@ -100,12 +97,6 @@ def classify_jwt_claims(
         claims: A decoded and signature-validated claim dict. Caller is
             responsible for signature verification, expiry, audience, and
             issuer — those are deployment-specific.
-        service_bank_prefix: Prefix used when deriving the bank id for a
-            service account. Defaults to ``"service-"`` to match the
-            existing :class:`BankResolver` convention. Some deployments
-            prefer ``"svc-"``; pass it here.
-        user_bank_prefix: Prefix used when deriving the bank id for a
-            delegated user token. Defaults to ``"user-"``.
 
     Returns:
         :class:`ActorIdentity` whose ``type`` is ``"user"`` or ``"service"``

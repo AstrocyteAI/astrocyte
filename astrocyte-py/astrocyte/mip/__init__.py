@@ -14,12 +14,14 @@ astrocyte.mip import MipRouter`` still works — Python's attribute lookup
 falls through to ``__getattr__``.
 """
 
+from typing import Any
+
 from astrocyte.mip.schema import MipConfig
 
 __all__ = ["MipConfig"]  # Lazy names: MipRouter, load_mip_config (see __getattr__)
 
 
-def __getattr__(name: str):  # noqa: ANN202
+def __getattr__(name: str) -> Any:
     if name == "MipRouter":
         from astrocyte.mip.router import MipRouter
 
@@ -28,4 +30,4 @@ def __getattr__(name: str):  # noqa: ANN202
         from astrocyte.mip.loader import load_mip_config
 
         return load_mip_config
-    raise AttributeError(f"module 'astrocyte.mip' has no attribute {name!r}")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

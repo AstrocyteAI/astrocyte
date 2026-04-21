@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
 
+ANSWER_MATCH_THRESHOLD = 0.3
+
 # Map question_type to high-level category for reporting
 _CATEGORY_MAP: dict[str, str] = {
     "single-session-user": "extraction",
@@ -192,11 +194,15 @@ class LongMemEvalBenchmark:
             recall_latencies.append(elapsed)
 
             # Check if the expected answer appears in any recall hit
-            answer_found = any(text_overlap_score([q.answer], h.text) > 0.3 for h in result.hits)
+            answer_found = any(
+                text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD for h in result.hits
+            )
 
             # Also try reflect for a more thorough check
             reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
-            answer_in_reflect = text_overlap_score([q.answer], reflect_result.answer) > 0.3
+            answer_in_reflect = (
+                text_overlap_score([q.answer], reflect_result.answer) > ANSWER_MATCH_THRESHOLD
+            )
 
             is_correct = answer_found or answer_in_reflect
             if is_correct:
@@ -230,7 +236,7 @@ class LongMemEvalBenchmark:
             # Build QueryResult for standard metrics
             relevant_ids: set[str] = set()
             for h in result.hits:
-                if h.memory_id and text_overlap_score([q.answer], h.text) > 0.3:
+                if h.memory_id and text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD:
                     relevant_ids.add(h.memory_id)
             retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
 
