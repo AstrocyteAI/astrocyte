@@ -150,6 +150,14 @@ def expand_preset(spec: PipelineSpec) -> PipelineSpec:
         dedup=_merge_dedup(base.dedup, spec.dedup),
         rerank=_merge_rerank(base.rerank, spec.rerank),
         reflect=_merge_reflect(base.reflect, spec.reflect),
+        # Explicit override wins over preset default; preset defaults
+        # don't currently set half-life but the field is forward-compatible
+        # if a future preset does.
+        temporal_half_life_days=(
+            spec.temporal_half_life_days
+            if spec.temporal_half_life_days is not None
+            else base.temporal_half_life_days
+        ),
     )
 
 

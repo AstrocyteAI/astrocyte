@@ -85,6 +85,14 @@ class PipelineSpec:
     dedup: DedupSpec | None = None
     rerank: RerankSpec | None = None
     reflect: ReflectSpec | None = None
+    #: Exponential half-life (days) for the temporal retrieval strategy.
+    #: When set, overrides the orchestrator's default at recall time for
+    #: memories stored under this bank. Shorter (e.g. 1.0) for fast-moving
+    #: chat workloads; longer (e.g. 90.0) for long-term knowledge bases
+    #: where answers legitimately live months back. See
+    #: :mod:`astrocyte.pipeline.retrieval` and
+    #: ``docs/_design/platform-positioning.md`` §LongMemEval root causes.
+    temporal_half_life_days: float | None = None
 
 
 @dataclass

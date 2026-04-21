@@ -320,6 +320,35 @@ class PipelineOrchestrator:
 
         await self.vector_store.store_vectors(items)
 
+        # 4b. Mirror chunks into the document store so keyword (BM25) search
+        # has content to retrieve from. Previously recall.parallel_retrieve
+        # ran a keyword strategy when ``document_store`` was configured —
+        # but nothing was ever stored there. Fixed here: every chunk that
+        # lands in the vector store also lands in the document store, with
+        # the same memory_id so RRF fusion can dedupe across strategies.
+        # Failures don't abort the retain — degrading to semantic-only
+        # retrieval is preferable to losing the whole memory.
+        if self.document_store is not None:
+            from astrocyte.types import Document
+
+            for item in items:
+                try:
+                    await self.document_store.store_document(
+                        Document(
+                            id=item.id,
+                            text=item.text,
+                            metadata=item.metadata,
+                            tags=item.tags,
+                        ),
+                        request.bank_id,
+                    )
+                except Exception as exc:
+                    _logger.warning(
+                        "document_store.store_document failed for chunk %s: %s "
+                        "(keyword retrieval will miss this chunk)",
+                        item.id, exc,
+                    )
+
         # 5. Store entities and links (if graph store configured)
         if self.graph_store and entities:
             entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
@@ -378,6 +407,23 @@ class PipelineOrchestrator:
                     found.extend(m.id for m in matches)
                 entity_ids = found or None
 
+        # Resolve per-bank MIP PipelineSpec once (reused for temporal
+        # half-life override at retrieval time AND for rerank + version
+        # check further down). Previously resolved after retrieval — moved
+        # earlier so temporal_half_life_days can flow into parallel_retrieve.
+        bank_pipeline = None
+        if self.mip_router is not None:
+            bank_pipeline = self.mip_router.resolve_pipeline_for_bank(request.bank_id)
+
+        # Per-bank half-life override beats the orchestrator default.
+        # Long-term knowledge banks (e.g. LongMemEval-style corpora with
+        # months-old answers) set this to 90+; chat banks leave it at 7.
+        effective_half_life = (
+            bank_pipeline.temporal_half_life_days
+            if bank_pipeline is not None and bank_pipeline.temporal_half_life_days is not None
+            else self.temporal_half_life_days
+        )
+
         # 3. Parallel retrieval
         overfetch_limit = request.max_results * self.semantic_overfetch
         strategy_results = await parallel_retrieve(
@@ -392,7 +438,7 @@ class PipelineOrchestrator:
             filters=filters,
             enable_temporal=self.enable_temporal_retrieval,
             temporal_scan_cap=self.temporal_scan_cap,
-            temporal_half_life_days=self.temporal_half_life_days,
+            temporal_half_life_days=effective_half_life,
         )
 
         # 4. RRF fusion (local strategies + optional federated / manual external_context)
@@ -427,12 +473,8 @@ class PipelineOrchestrator:
         else:
             fused = weighted_rrf_fusion(weighted_inputs, k=self.rrf_k)
 
-        # Resolve per-bank MIP PipelineSpec once (reused for rerank + version check)
-        bank_pipeline = None
-        if self.mip_router is not None:
-            bank_pipeline = self.mip_router.resolve_pipeline_for_bank(request.bank_id)
-
         # 5. Reranking — apply per-bank MIP RerankSpec when a rule targets this bank (P3)
+        # (bank_pipeline already resolved above for temporal half-life override)
         mip_rerank = bank_pipeline.rerank if bank_pipeline is not None else None
         reranked = basic_rerank(fused, request.query, mip_rerank=mip_rerank)
 

@@ -36,7 +36,10 @@ from astrocyte.mip.schema import (
 
 # Recognised sub-keys for the pipeline block. Unknown keys at any level emit
 # warnings during load (forward-compat: vocabulary may grow).
-_PIPELINE_KEYS = {"version", "preset", "chunker", "dedup", "rerank", "reflect"}
+_PIPELINE_KEYS = {
+    "version", "preset", "chunker", "dedup", "rerank", "reflect",
+    "temporal_half_life_days",
+}
 _CHUNKER_KEYS = {"strategy", "max_size", "overlap"}
 _DEDUP_KEYS = {"threshold", "action"}
 _RERANK_KEYS = {"keyword_weight", "proper_noun_weight"}
@@ -394,6 +397,14 @@ def _parse_pipeline(
             f"(known: {', '.join(list_presets())})"
         )
 
+    half_life = data.get("temporal_half_life_days")
+    if half_life is not None:
+        if not isinstance(half_life, (int, float)) or half_life <= 0:
+            raise ConfigError(
+                f"Rule '{rule_name}': pipeline.temporal_half_life_days must "
+                f"be a positive number (got {half_life!r})",
+            )
+
     spec = PipelineSpec(
         version=version,
         preset=preset,
@@ -401,6 +412,7 @@ def _parse_pipeline(
         dedup=_parse_dedup(data.get("dedup"), rule_name),
         rerank=_parse_rerank(data.get("rerank"), rule_name),
         reflect=_parse_reflect(data.get("reflect"), rule_name),
+        temporal_half_life_days=float(half_life) if half_life is not None else None,
     )
 
     return expand_preset(spec)
