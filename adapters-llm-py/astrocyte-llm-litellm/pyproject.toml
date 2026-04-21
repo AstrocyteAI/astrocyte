@@ -12,6 +12,11 @@ requires-python = ">=3.11"
 dependencies = [
     "astrocyte>=0.7.0,<0.9",
     "litellm>=1.40",
+    # Security floor for aiohttp — litellm pulls it transitively. Pinned
+    # here (not left to transitive resolution) because several GHSA
+    # advisories affect versions <3.13.5 (header smuggling, SSRF, DoS).
+    # Revisit on every Dependabot aiohttp alert; bump this floor.
+    "aiohttp>=3.13.5",
 ]
 
 [project.optional-dependencies]
