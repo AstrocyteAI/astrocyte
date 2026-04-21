@@ -171,7 +171,15 @@ async def run_longmemeval(brain, data_path: str | None, max_questions: int | Non
 
     bench = LongMemEvalBenchmark(brain)
 
-    has_dataset = data_path and any(Path(data_path).glob("*.json")) if data_path else False
+    dp = Path(data_path) if data_path else None
+    if dp is None:
+        has_dataset = False
+    elif dp.is_file():
+        has_dataset = True
+    elif dp.is_dir():
+        has_dataset = any(dp.glob("*.json"))
+    else:
+        has_dataset = False
 
     if has_dataset:
         result = await bench.run(
@@ -241,7 +249,14 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
     bench = LoComoBenchmark(brain)
 
     dp = Path(data_path) if data_path else None
-    has_dataset = dp and (list(dp.glob("locomo*.json")) or list(dp.glob("*.json"))) if dp else False
+    if dp is None:
+        has_dataset = False
+    elif dp.is_file():
+        has_dataset = True
+    elif dp.is_dir():
+        has_dataset = bool(list(dp.glob("locomo*.json")) or list(dp.glob("*.json")))
+    else:
+        has_dataset = False
 
     if has_dataset:
         result = await bench.run(
@@ -251,7 +266,7 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
         )
     else:
         if data_path:
-            print(f"  WARNING: No JSON files found in {data_path}, using synthetic data.")
+            print(f"  WARNING: dataset not found at {data_path}, using synthetic data.")
         # Synthetic smoke test when no dataset is available
         conversations = [
             LoCoMoConversation(

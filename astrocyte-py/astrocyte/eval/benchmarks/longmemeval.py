@@ -320,9 +320,14 @@ def load_longmemeval_dataset(
     data_path = Path(data_path)
     questions: list[LongMemEvalQuestion] = []
 
-    json_files = list(data_path.glob("*.json"))
-    if not json_files:
-        raise FileNotFoundError(f"No JSON files found in {data_path}")
+    if data_path.is_file():
+        json_files = [data_path]
+    elif data_path.is_dir():
+        json_files = list(data_path.glob("*.json"))
+        if not json_files:
+            raise FileNotFoundError(f"No JSON files found in {data_path}")
+    else:
+        raise FileNotFoundError(f"LongMemEval path does not exist: {data_path}")
 
     for json_file in json_files:
         try:
