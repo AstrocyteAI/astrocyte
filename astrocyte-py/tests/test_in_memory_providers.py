@@ -556,7 +556,11 @@ class TestInMemoryEngineProvider:
         ))
         recall = await ep.recall(RecallRequest(query="test", bank_id="b1"))
         hit = recall.hits[0]
-        assert hit.metadata == {"k": "v"}
+        # InMemoryEngineProvider auto-stamps `_created_at` so MIP forget
+        # min_age_days can be enforced. Caller-provided keys are preserved.
+        assert hit.metadata is not None
+        assert hit.metadata["k"] == "v"
+        assert "_created_at" in hit.metadata
         assert hit.tags == ["t1"]
         assert hit.occurred_at == now
         assert hit.source == "test-source"

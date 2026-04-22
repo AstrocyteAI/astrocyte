@@ -23,6 +23,7 @@ from astrocyte.config import AstrocyteConfig, load_config
 from astrocyte.errors import (
     AccessDenied,
     ConfigError,
+    MipRoutingError,
     ProviderUnavailable,
 )
 from astrocyte.identity import context_principal_label
@@ -162,6 +163,8 @@ class Astrocyte:
         # Wire the LLM provider to the MIP router for intent-layer escalation
         if self._mip_router and hasattr(pipeline, "llm_provider"):
             self._mip_router._llm_provider = pipeline.llm_provider
+        # Expose router for per-bank MIP resolution at recall time (P3)
+        pipeline.mip_router = self._mip_router
         self._rebuild_tiered_retrieval()
         self._rebuild_multi_bank()
 
@@ -267,8 +270,17 @@ class Astrocyte:
             self._policy.check_access(bank_id, "write", context)
 
             # MIP routing (before policy layer)
+            mip_pipeline = None
+            mip_rule_name = None
             if self._mip_router:
+                from astrocyte.identity import resolve_actor
                 from astrocyte.mip.rule_engine import RuleEngineInput
+
+                # Identity spec §3 Gap 2: resolved actor flows into MIP so
+                # rules can branch on principal_type / principal_id / etc.
+                # When no context is supplied (legacy callers), actor is
+                # None and principal_* match conditions simply never fire.
+                actor_identity = resolve_actor(context) if context else None
 
                 mip_input = RuleEngineInput(
                     content=content,
@@ -277,6 +289,7 @@ class Astrocyte:
                     tags=tags,
                     pii_detected=pii_detected,
                     source=source,
+                    actor_identity=actor_identity,
                 )
                 routing = await self._mip_router.route(mip_input)
                 if routing.bank_id:
@@ -288,6 +301,8 @@ class Astrocyte:
                     tags = routing.tags
                 if routing.retain_policy == "reject":
                     return RetainResult(stored=False, error="Rejected by MIP routing rule")
+                mip_pipeline = routing.pipeline
+                mip_rule_name = routing.rule_name
 
             # Rate limiting + quota (atomic to prevent TOCTOU)
             self._policy.check_rate_and_quota(bank_id, "retain")
@@ -333,6 +348,8 @@ class Astrocyte:
                 source=source,
                 content_type=content_type,
                 extraction_profile=extraction_profile,
+                mip_pipeline=mip_pipeline,
+                mip_rule_name=mip_rule_name,
             )
 
             # Route to provider
@@ -680,8 +697,71 @@ class Astrocyte:
             # Legal hold check — compliance=True bypasses for right-to-forget.
             # Even when access_control is disabled, compliance bypass requires
             # explicit context (caller must identify themselves).
+            # MIP forget policy resolution (Phase 4) — runs BEFORE the existing
+            # legal-hold check so that a rule with respect_legal_hold=True wins
+            # over the caller's compliance bypass, and so audit logs fire even
+            # on policy refusal.
+            mip_forget = (
+                self._mip_router.resolve_forget_for_bank(bank_id) if self._mip_router else None
+            )
+            if mip_forget is not None:
+                # max_per_call: cap blast radius for selective deletes by id
+                if (
+                    mip_forget.max_per_call is not None
+                    and memory_ids is not None
+                    and len(memory_ids) > mip_forget.max_per_call
+                ):
+                    raise MipRoutingError(
+                        f"forget rejected: {len(memory_ids)} memory_ids exceeds "
+                        f"forget.max_per_call={mip_forget.max_per_call} for bank {bank_id!r}"
+                    )
+
+                # min_age_days: refuse forget when any targeted record is younger.
+                # Best-effort: requires the engine to populate `_created_at` in
+                # metadata at retain time. Records lacking this stamp are skipped
+                # with a warning (degraded enforcement, not a hard failure).
+                if (
+                    mip_forget.min_age_days is not None
+                    and mip_forget.min_age_days > 0
+                    and memory_ids
+                ):
+                    too_young = await self._collect_too_young_ids(
+                        bank_id, memory_ids, mip_forget.min_age_days,
+                    )
+                    if too_young:
+                        raise MipRoutingError(
+                            f"forget rejected: {len(too_young)} record(s) in {bank_id!r} "
+                            f"younger than forget.min_age_days={mip_forget.min_age_days} "
+                            f"({sorted(too_young)[:5]}{'...' if len(too_young) > 5 else ''})"
+                        )
+
+                # audit: emit a structured log line before any deletion occurs
+                if mip_forget.audit in ("required", "recommended"):
+                    self._logger.log(
+                        "astrocyte.mip.forget.audit",
+                        bank_id=bank_id,
+                        data={
+                            "mode": str(mip_forget.mode or "soft"),
+                            "audit": str(mip_forget.audit),
+                            "cascade": bool(mip_forget.cascade) if mip_forget.cascade is not None else True,
+                            "memory_ids_count": len(memory_ids) if memory_ids else 0,
+                            "scope": scope or "selective",
+                            "actor": context_principal_label(context) if context else "anonymous",
+                            "reason": str(reason) if reason else None,
+                        },
+                        level=logging.WARNING,
+                    )
+
+                # respect_legal_hold: when True, override the compliance bypass.
+                # The MIP rule is the source of truth; compliance flag cannot
+                # circumvent a rule that explicitly demands legal hold respect.
+                if mip_forget.respect_legal_hold:
+                    self._lifecycle.check_forget_allowed(bank_id)
+
             if not compliance:
-                self._lifecycle.check_forget_allowed(bank_id)
+                # Skip duplicate check if MIP already enforced legal hold above.
+                if mip_forget is None or not mip_forget.respect_legal_hold:
+                    self._lifecycle.check_forget_allowed(bank_id)
             else:
                 if context is None:
                     raise AccessDenied("anonymous", bank_id, "compliance_forget")
@@ -702,6 +782,31 @@ class Astrocyte:
                 if self._config.access_control.enabled:
                     self._policy.check_access(bank_id, "admin", context)
 
+            # Soft-delete path (mip_forget.mode == "soft"): mark records with
+            # `_deleted: true` instead of physically removing. Recall is
+            # responsible for filtering them out. Falls through to hard delete
+            # with a warning if the engine doesn't expose `soft_delete`.
+            soft_mode = (
+                mip_forget is not None
+                and mip_forget.mode == "soft"
+                and memory_ids is not None
+            )
+            if soft_mode:
+                soft_fn = getattr(self._engine_provider, "soft_delete", None)
+                if soft_fn is not None:
+                    deleted = await soft_fn(bank_id, memory_ids)
+                    await self._hook_manager.fire(
+                        "on_forget",
+                        bank_id=bank_id,
+                        data={"deleted_count": deleted, "archived_count": 0, "soft": True},
+                    )
+                    return ForgetResult(deleted_count=deleted)
+                logging.getLogger("astrocyte.mip").warning(
+                    "forget.mode=soft requested for bank=%s but engine %s does not "
+                    "implement soft_delete(); falling back to hard delete",
+                    bank_id, type(self._engine_provider).__name__ if self._engine_provider else "pipeline",
+                )
+
             request = ForgetRequest(
                 bank_id=bank_id,
                 memory_ids=memory_ids,
@@ -719,6 +824,73 @@ class Astrocyte:
                 },
             )
             return result
+
+    async def _collect_too_young_ids(
+        self,
+        bank_id: str,
+        memory_ids: list[str],
+        min_age_days: int,
+    ) -> list[str]:
+        """Return the subset of ``memory_ids`` younger than ``min_age_days``.
+
+        Best-effort enforcement of ``forget.min_age_days``: relies on records
+        carrying a ``_created_at`` ISO timestamp in metadata (stamped by the
+        engine at retain time). Records lacking the stamp are skipped with a
+        warning — degraded enforcement, not a hard failure, since older data
+        predating the stamp shouldn't permanently block legitimate forgets.
+        """
+        from datetime import timedelta
+
+        wanted = set(memory_ids)
+        try:
+            result = await self._dispatcher.recall(
+                RecallRequest(query="*", bank_id=bank_id, max_results=10000),
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "min_age_days check skipped: recall failed for bank=%s: %s",
+                bank_id, exc,
+            )
+            return []
+
+        now = datetime.now(timezone.utc)
+        threshold = timedelta(days=min_age_days)
+        too_young: list[str] = []
+        seen: set[str] = set()
+        missing_stamp = 0
+
+        for hit in result.hits:
+            if hit.memory_id is None or hit.memory_id not in wanted:
+                continue
+            seen.add(hit.memory_id)
+            stamp = (hit.metadata or {}).get("_created_at")
+            if stamp is None:
+                missing_stamp += 1
+                continue
+            if isinstance(stamp, str):
+                try:
+                    created_at = datetime.fromisoformat(stamp)
+                except ValueError:
+                    missing_stamp += 1
+                    continue
+            elif isinstance(stamp, datetime):
+                created_at = stamp
+            else:
+                missing_stamp += 1
+                continue
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            if (now - created_at) < threshold:
+                too_young.append(hit.memory_id)
+
+        if missing_stamp:
+            mip_logger = logging.getLogger("astrocyte.mip")
+            mip_logger.warning(
+                "min_age_days enforcement degraded: %d/%d record(s) in bank=%s "
+                "lack `_created_at` metadata and were skipped",
+                missing_stamp, len(seen), bank_id,
+            )
+        return too_young
 
     async def health(self) -> HealthStatus:
         """Check system health."""

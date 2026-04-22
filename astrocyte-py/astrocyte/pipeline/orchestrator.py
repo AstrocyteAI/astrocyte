@@ -5,7 +5,9 @@ Async (coordinates I/O stages). See docs/_design/built-in-pipeline.md.
 
 from __future__ import annotations
 
+import logging
 import uuid
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from astrocyte.config import ExtractionProfileConfig, RecallAuthorityConfig
@@ -17,7 +19,17 @@ from astrocyte.pipeline.extraction import (
     prepare_retain_input,
     resolve_retain_chunking,
 )
-from astrocyte.pipeline.fusion import DEFAULT_RRF_K, memory_hits_as_scored, rrf_fusion
+from astrocyte.pipeline.fusion import (
+    DEFAULT_RRF_K,
+    memory_hits_as_scored,
+    rrf_fusion,
+    weighted_rrf_fusion,
+)
+from astrocyte.pipeline.query_intent import (
+    QueryIntent,
+    classify_query_intent,
+    weights_for_intent,
+)
 from astrocyte.pipeline.reflect import synthesize
 from astrocyte.pipeline.reranking import basic_rerank
 from astrocyte.pipeline.retrieval import parallel_retrieve
@@ -42,7 +54,47 @@ from astrocyte.types import (
 )
 
 if TYPE_CHECKING:
+    from astrocyte.mip.router import MipRouter
+    from astrocyte.mip.schema import PipelineSpec
     from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore
+
+
+_logger = logging.getLogger("astrocyte.mip")
+
+
+def _warn_on_version_drift(
+    bank_pipeline: PipelineSpec | None,
+    hits: list[MemoryHit],
+    bank_id: str,
+) -> None:
+    """Emit a single warning when retrieved hits were retained under a different MIP version.
+
+    Soft signal — does not affect recall results. Hits without a persisted
+    ``_mip.pipeline_version`` are ignored (they were retained before MIP, by a
+    rule with no version, or by a different rule).
+    """
+    if bank_pipeline is None or bank_pipeline.version is None:
+        return
+    current_version = int(bank_pipeline.version)
+    seen: set[int] = set()
+    for hit in hits:
+        if not hit.metadata:
+            continue
+        v = hit.metadata.get("_mip.pipeline_version")
+        if v is None:
+            continue
+        try:
+            v_int = int(v)
+        except (TypeError, ValueError):
+            continue
+        if v_int != current_version:
+            seen.add(v_int)
+    if seen:
+        _logger.warning(
+            "MIP pipeline version drift in bank %r: current=%d, hits retained under versions %s. "
+            "Consider re-indexing or accepting the drift.",
+            bank_id, current_version, sorted(seen),
+        )
 
 
 class _TrackingLLMProvider:
@@ -109,6 +161,11 @@ class PipelineOrchestrator:
         rrf_k: int = DEFAULT_RRF_K,
         semantic_overfetch: int = 5,
         extraction_profiles: dict[str, ExtractionProfileConfig] | None = None,
+        *,
+        enable_temporal_retrieval: bool = True,
+        temporal_scan_cap: int = 500,
+        temporal_half_life_days: float = 7.0,
+        enable_intent_aware_recall: bool = True,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -120,9 +177,23 @@ class PipelineOrchestrator:
         self.extraction_profiles = extraction_profiles
         self.rrf_k = rrf_k
         self.semantic_overfetch = semantic_overfetch
+        # Temporal retrieval knobs — see astrocyte.pipeline.retrieval for full
+        # semantics. Enabled by default: the strategy no-ops gracefully on
+        # banks whose vectors have no timestamps, so enabling it is safe.
+        self.enable_temporal_retrieval = enable_temporal_retrieval
+        self.temporal_scan_cap = temporal_scan_cap
+        self.temporal_half_life_days = temporal_half_life_days
+        # Intent-aware recall: heuristic query classifier biases RRF
+        # weights per strategy. Conservative (always fuses all strategies
+        # even under bias), so enabling is safe — a misclassification
+        # degrades to a soft lean rather than a strategy drop.
+        self.enable_intent_aware_recall = enable_intent_aware_recall
         self._dedup = DedupDetector(similarity_threshold=0.95)
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when ``recall_authority`` is configured.
         self.recall_authority: RecallAuthorityConfig | None = None
+        #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when MIP is configured.
+        #: Used by :meth:`recall` to resolve per-bank rerank/reflect overrides (P3).
+        self.mip_router: MipRouter | None = None
 
     @property
     def tokens_used(self) -> int:
@@ -141,30 +212,56 @@ class PipelineOrchestrator:
         profile_table = merged_user_and_builtin_profiles(self.extraction_profiles)
         if name:
             profile = profile_table.get(name)
+
+        # MIP pipeline overrides (from RoutingDecision) — optional, no behavior
+        # change when absent. ``chunker`` and ``dedup`` are consumed here;
+        # ``rerank`` and ``reflect`` apply to recall/reflect (Phase 2).
+        mip_pipeline = request.mip_pipeline
+        mip_chunker = mip_pipeline.chunker if mip_pipeline else None
+        mip_dedup = mip_pipeline.dedup if mip_pipeline else None
+        dedup_threshold_override = mip_dedup.threshold if mip_dedup else None
+        dedup_action = (mip_dedup.action if mip_dedup else None) or "skip_chunk"
+
         prepared = prepare_retain_input(
             request,
             profile,
             graph_store_configured=self.graph_store is not None,
         )
-        strategy, max_chunk = resolve_retain_chunking(
+        chunking = resolve_retain_chunking(
             prepared.effective_content_type,
             profile=profile,
             default_strategy=self.chunk_strategy,
             default_max_chunk_size=self.max_chunk_size,
+            mip_chunker=mip_chunker,
         )
-        chunks = chunk_text(prepared.text, strategy=strategy, max_chunk_size=max_chunk)
+        chunk_kwargs: dict[str, int] = {"max_chunk_size": chunking.max_size}
+        if chunking.overlap is not None:
+            chunk_kwargs["overlap"] = chunking.overlap
+        chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
         if not chunks:
             return RetainResult(stored=False, error="No content after chunking")
 
         # 2. Generate embeddings for all chunks
         embeddings = await generate_embeddings(chunks, self.llm_provider)
 
-        # 2b. Per-chunk dedup — skip individual duplicate chunks, store the rest
+        # 2b. Per-chunk dedup — behavior depends on dedup_action:
+        #     "skip_chunk" (default): drop duplicate chunks, keep the rest
+        #     "skip":     if any chunk is a duplicate, reject the entire retain
+        #     "warn":     keep all chunks regardless of duplicates
+        #     "update":   not yet implemented; falls back to "skip_chunk"
         keep_indices: list[int] = []
+        any_duplicate = False
         for i, emb in enumerate(embeddings):
-            is_dup, _sim = self._dedup.is_duplicate(request.bank_id, emb)
-            if not is_dup:
+            is_dup, _sim = self._dedup.is_duplicate(
+                request.bank_id, emb, threshold_override=dedup_threshold_override,
+            )
+            if is_dup:
+                any_duplicate = True
+            if dedup_action == "warn" or not is_dup:
                 keep_indices.append(i)
+
+        if dedup_action == "skip" and any_duplicate:
+            return RetainResult(stored=False, deduplicated=True, error="Duplicate chunk(s) found; rule action=skip")
 
         if not keep_indices:
             return RetainResult(stored=False, deduplicated=True, error="All chunks are near-duplicates")
@@ -181,6 +278,25 @@ class PipelineOrchestrator:
             bank_id=request.bank_id,
             profile_authority_tier=profile_tier,
             recall_authority=self.recall_authority,
+        )
+
+        # Persist MIP provenance so recall can warn on rule-version drift (P2).
+        if request.mip_rule_name or (mip_pipeline and mip_pipeline.version is not None):
+            chunk_metadata = dict(chunk_metadata or {})
+            if request.mip_rule_name:
+                chunk_metadata["_mip.rule"] = request.mip_rule_name
+            if mip_pipeline and mip_pipeline.version is not None:
+                chunk_metadata["_mip.pipeline_version"] = int(mip_pipeline.version)
+
+        # Stamp ``_created_at`` so (1) temporal retrieval can rank by
+        # recency, (2) MIP forget.min_age_days can enforce age guards, and
+        # (3) lifecycle TTL has a consistent retain timestamp. Callers that
+        # already set ``_created_at`` (imports / replay) win via setdefault.
+        # Mirrors InMemoryEngineProvider.retain so pipeline- and engine-
+        # backed deployments share the same observability contract.
+        chunk_metadata = dict(chunk_metadata or {})
+        chunk_metadata.setdefault(
+            "_created_at", datetime.now(timezone.utc).isoformat(),
         )
 
         # 4. Store vectors
@@ -203,6 +319,35 @@ class PipelineOrchestrator:
             )
 
         await self.vector_store.store_vectors(items)
+
+        # 4b. Mirror chunks into the document store so keyword (BM25) search
+        # has content to retrieve from. Previously recall.parallel_retrieve
+        # ran a keyword strategy when ``document_store`` was configured —
+        # but nothing was ever stored there. Fixed here: every chunk that
+        # lands in the vector store also lands in the document store, with
+        # the same memory_id so RRF fusion can dedupe across strategies.
+        # Failures don't abort the retain — degrading to semantic-only
+        # retrieval is preferable to losing the whole memory.
+        if self.document_store is not None:
+            from astrocyte.types import Document
+
+            for item in items:
+                try:
+                    await self.document_store.store_document(
+                        Document(
+                            id=item.id,
+                            text=item.text,
+                            metadata=item.metadata,
+                            tags=item.tags,
+                        ),
+                        request.bank_id,
+                    )
+                except Exception as exc:
+                    _logger.warning(
+                        "document_store.store_document failed for chunk %s: %s "
+                        "(keyword retrieval will miss this chunk)",
+                        item.id, exc,
+                    )
 
         # 5. Store entities and links (if graph store configured)
         if self.graph_store and entities:
@@ -262,6 +407,23 @@ class PipelineOrchestrator:
                     found.extend(m.id for m in matches)
                 entity_ids = found or None
 
+        # Resolve per-bank MIP PipelineSpec once (reused for temporal
+        # half-life override at retrieval time AND for rerank + version
+        # check further down). Previously resolved after retrieval — moved
+        # earlier so temporal_half_life_days can flow into parallel_retrieve.
+        bank_pipeline = None
+        if self.mip_router is not None:
+            bank_pipeline = self.mip_router.resolve_pipeline_for_bank(request.bank_id)
+
+        # Per-bank half-life override beats the orchestrator default.
+        # Long-term knowledge banks (e.g. LongMemEval-style corpora with
+        # months-old answers) set this to 90+; chat banks leave it at 7.
+        effective_half_life = (
+            bank_pipeline.temporal_half_life_days
+            if bank_pipeline is not None and bank_pipeline.temporal_half_life_days is not None
+            else self.temporal_half_life_days
+        )
+
         # 3. Parallel retrieval
         overfetch_limit = request.max_results * self.semantic_overfetch
         strategy_results = await parallel_retrieve(
@@ -274,16 +436,47 @@ class PipelineOrchestrator:
             entity_ids=entity_ids,
             limit=overfetch_limit,
             filters=filters,
+            enable_temporal=self.enable_temporal_retrieval,
+            temporal_scan_cap=self.temporal_scan_cap,
+            temporal_half_life_days=effective_half_life,
         )
 
         # 4. RRF fusion (local strategies + optional federated / manual external_context)
-        ranked_lists = [results for results in strategy_results.values() if results]
-        if request.external_context:
-            ranked_lists.append(memory_hits_as_scored(request.external_context))
-        fused = rrf_fusion(ranked_lists, k=self.rrf_k)
+        # When intent-aware recall is enabled, weight each strategy's RRF
+        # contribution by a bias derived from the query's classified
+        # intent. UNKNOWN intents pass through with neutral 1.0 weights,
+        # so enabling the feature never *hurts* baseline behavior — it
+        # either kicks in on a confident classification or no-ops.
+        query_intent = QueryIntent.UNKNOWN
+        if self.enable_intent_aware_recall:
+            query_intent = classify_query_intent(request.query).intent
+        intent_weights = weights_for_intent(query_intent)
 
-        # 5. Reranking
-        reranked = basic_rerank(fused, request.query)
+        weighted_inputs: list[tuple[list[Any], float]] = []
+        for strategy, results in strategy_results.items():
+            if not results:
+                continue
+            # Map strategy name → weight. External/proxy results use
+            # semantic weight (they're typically semantic fusions upstream).
+            weight = getattr(intent_weights, strategy, 1.0)
+            weighted_inputs.append((results, weight))
+        if request.external_context:
+            weighted_inputs.append(
+                (memory_hits_as_scored(request.external_context), intent_weights.semantic),
+            )
+
+        # Short-circuit to plain RRF when all weights are 1.0 — keeps the
+        # baseline path bit-identical for deployments that disable
+        # intent-aware recall.
+        if all(w == 1.0 for _, w in weighted_inputs):
+            fused = rrf_fusion([r for r, _ in weighted_inputs], k=self.rrf_k)
+        else:
+            fused = weighted_rrf_fusion(weighted_inputs, k=self.rrf_k)
+
+        # 5. Reranking — apply per-bank MIP RerankSpec when a rule targets this bank (P3)
+        # (bank_pipeline already resolved above for temporal half-life override)
+        mip_rerank = bank_pipeline.rerank if bank_pipeline is not None else None
+        reranked = basic_rerank(fused, request.query, mip_rerank=mip_rerank)
 
         # 6. Trim to max_results
         trimmed = reranked[: request.max_results]
@@ -301,6 +494,12 @@ class PipelineOrchestrator:
             )
             for item in trimmed
         ]
+
+        # 7b. Version-drift warning (Phase 2, Step 10)
+        # Compare each hit's persisted ``_mip.pipeline_version`` against the
+        # version currently configured for this bank's rule. Stale hits indicate
+        # rule changes since retain — operator should re-index or accept drift.
+        _warn_on_version_drift(bank_pipeline, hits, request.bank_id)
 
         # 8. Token budget
         truncated = False
@@ -341,7 +540,14 @@ class PipelineOrchestrator:
             recall_result = apply_recall_authority(recall_result, ra)
             auth_ctx = recall_result.authority_context
 
-        # 2. Synthesize via LLM
+        # 2. Resolve per-bank ReflectSpec from MIP (Phase 2, Step 9)
+        mip_reflect = None
+        if self.mip_router is not None:
+            bank_pipeline = self.mip_router.resolve_pipeline_for_bank(request.bank_id)
+            if bank_pipeline is not None:
+                mip_reflect = bank_pipeline.reflect
+
+        # 3. Synthesize via LLM
         return await synthesize(
             query=request.query,
             hits=recall_result.hits,
@@ -349,4 +555,5 @@ class PipelineOrchestrator:
             dispositions=request.dispositions,
             max_tokens=request.max_tokens or 2048,
             authority_context=auth_ctx,
+            mip_reflect=mip_reflect,
         )

@@ -475,7 +475,7 @@ from astrocyte import Astrocyte
 ast = Astrocyte.from_config("astrocyte.yaml")
 ```
 
-The YAML file defines storage backends, memory banks, extraction profiles, and gateway settings. See [Configuration reference](configuration-reference.md) for the full schema.
+The YAML file defines storage backends, memory banks, extraction profiles, and gateway settings. See [Configuration reference](configuration-reference/) for the full schema.
 
 ### Programmatic construction
 
@@ -512,7 +512,7 @@ result = await ast.retain(
 
 The context is used for access control enforcement and audit logging. When omitted, the operation runs with the default identity configured in `astrocyte.yaml`.
 
-See [Access control setup](access-control-setup.md) for role-based and attribute-based access policies.
+See [Access control setup](access-control-setup/) for role-based and attribute-based access policies.
 
 ---
 
@@ -557,7 +557,9 @@ Error responses follow a consistent JSON structure:
 
 ## Further reading
 
-- [Configuration reference](configuration-reference.md) -- YAML schema for banks, storage, and extraction profiles.
-- [Authentication setup](authentication-setup.md) -- Token issuance, API keys, and OIDC integration.
-- [Access control setup](access-control-setup.md) -- Role-based and attribute-based policies.
-- [Storage backend setup](storage-backend-setup.md) -- PostgreSQL, SQLite, and custom backend configuration.
+- [Configuration reference](configuration-reference/) — YAML schema for banks, storage, and extraction profiles
+- [Bank management](bank-management/) — multi-bank queries, patterns, and lifecycle
+- [Authentication setup](authentication-setup/) — token issuance, API keys, and OIDC integration
+- [Access control setup](access-control-setup/) — role-based and attribute-based policies
+- [Storage backend setup](storage-backend-setup/) — pgvector, Qdrant, Neo4j, Elasticsearch
+- [MIP developer guide](/plugins/mip-developer-guide/) — declarative routing rules for retain operations

@@ -12,6 +12,19 @@ requires-python = ">=3.11"
 dependencies = [
     "astrocyte>=0.7.0,<0.9",
     "litellm>=1.40",
+    # Security floor for aiohttp — litellm pulls it transitively. Pinned
+    # here (not left to transitive resolution) because several GHSA
+    # advisories affect versions <3.13.5 (header smuggling, SSRF, DoS).
+    # Revisit on every Dependabot aiohttp alert; bump this floor.
+    "aiohttp>=3.13.5",
+    # Security floor for python-dotenv. Same upstream-pinning pattern as
+    # aiohttp above: litellm 1.83.x strict-pins python-dotenv==1.0.1,
+    # which is affected by a Dependabot advisory requiring >=1.2.2.
+    # Adding this floor forces uv to pick a compatible litellm — 1.82.x
+    # (flexible python-dotenv>=0.2.0). When a future litellm 1.83.11+
+    # relaxes the pin, resolution can climb back up. Revisit every
+    # python-dotenv alert and bump this floor.
+    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]

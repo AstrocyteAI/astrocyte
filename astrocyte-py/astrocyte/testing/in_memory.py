@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import uuid
+from datetime import UTC, datetime
 from typing import ClassVar
 
 from astrocyte.types import (
@@ -287,12 +288,16 @@ class InMemoryEngineProvider:
         if request.bank_id not in self._memories:
             self._memories[request.bank_id] = []
         mem_id = uuid.uuid4().hex[:16]
+        # Stamp _created_at so MIP forget min_age_days can be enforced. Existing
+        # callers that already set _created_at (eg. import/replay) win.
+        meta = dict(request.metadata) if request.metadata else {}
+        meta.setdefault("_created_at", datetime.now(UTC).isoformat())
         self._memories[request.bank_id].append(
             MemoryHit(
                 text=request.content,
                 score=1.0,
                 fact_type="world",
-                metadata=request.metadata,
+                metadata=meta,
                 tags=request.tags,
                 occurred_at=request.occurred_at,
                 source=request.source,
@@ -306,7 +311,13 @@ class InMemoryEngineProvider:
         memories = self._memories.get(request.bank_id, [])
 
         # Apply filters before scoring
-        filtered = memories
+        # MIP soft-delete: hide records flagged with `_deleted: true` in metadata.
+        # The flag is set by `soft_delete()` when forget.mode == "soft" so that
+        # records survive on disk for audit/restore but disappear from recall.
+        filtered = [
+            m for m in memories
+            if not (m.metadata and m.metadata.get("_deleted") is True)
+        ]
         if request.tags:
             tag_set = set(request.tags)
             filtered = [m for m in filtered if m.tags and tag_set & set(m.tags)]
@@ -354,6 +365,27 @@ class InMemoryEngineProvider:
         recall_result = await self.recall(RecallRequest(query=request.query, bank_id=request.bank_id))
         answer = "Synthesis: " + "; ".join(h.text for h in recall_result.hits[:5])
         return ReflectResult(answer=answer, sources=recall_result.hits[:5])
+
+    async def soft_delete(self, bank_id: str, memory_ids: list[str]) -> int:
+        """Mark records as soft-deleted by setting ``_deleted: true`` in metadata.
+
+        Used by MIP forget when ``forget.mode == "soft"``: records remain in
+        the store (auditable, restorable) but are hidden from recall.
+        Returns the number of records that were transitioned to deleted.
+        """
+        if not memory_ids:
+            return 0
+        ids_set = set(memory_ids)
+        count = 0
+        for m in self._memories.get(bank_id, []):
+            if m.memory_id in ids_set:
+                meta = dict(m.metadata) if m.metadata else {}
+                if meta.get("_deleted") is True:
+                    continue  # already soft-deleted
+                meta["_deleted"] = True
+                m.metadata = meta
+                count += 1
+        return count
 
     async def forget(self, request: ForgetRequest) -> ForgetResult:
         if not self._supports_forget:

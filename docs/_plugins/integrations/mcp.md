@@ -68,7 +68,7 @@ memory_reflect(query="summarize everything", banks=["personal", "team", "org"])
 
 ## Policy enforcement
 
-The full Astrocyte policy layer applies: PII scanning, rate limits, quotas, token budgets, circuit breakers, access control, hooks, metrics. See [Policy layer](../../design/policy-layer/) and [MCP server design](../../design/mcp-server/).
+The full Astrocyte policy layer applies: PII scanning, rate limits, quotas, token budgets, circuit breakers, access control, hooks, metrics. See [Policy layer](/design/policy-layer/) and [MCP server design](/design/mcp-server/).
 
 ## Multi-agent with shared memory
 

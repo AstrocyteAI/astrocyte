@@ -83,7 +83,7 @@ curl -H "X-Admin-Token: $ADMIN_TOKEN" \
 }
 ```
 
-Requires `X-Admin-Token` header. See [Authentication setup](authentication-setup.md) for token configuration.
+Requires `X-Admin-Token` header. See [Authentication setup](authentication-setup/) for token configuration.
 
 ---
 
@@ -322,12 +322,14 @@ Key metrics exposed per bank:
 | `astrocyte_bank_recall_total` | Cumulative recall operations |
 | `astrocyte_bank_recall_latency_seconds` | Recall latency histogram |
 
-See [Monitoring & observability](monitoring-and-observability.md) for dashboard setup and alerting.
+See [Monitoring & observability](monitoring-and-observability/) for dashboard setup and alerting.
 
 ---
 
 ## Further reading
 
-- [Access control setup](access-control-setup.md) -- principals, grants, and per-bank permissions
-- [Configuration reference](configuration-reference.md) -- full `astrocyte.yaml` key reference
-- [Monitoring & observability](monitoring-and-observability.md) -- health endpoints, metrics, alerting
+- [Memory API reference](memory-api-reference/) — retain/recall/reflect/forget signatures
+- [Access control setup](access-control-setup/) — principals, grants, and per-bank permissions
+- [Configuration reference](configuration-reference/) — full `astrocyte.yaml` key reference
+- [Monitoring & observability](monitoring-and-observability/) — health endpoints, metrics, alerting
+- [Multi-bank orchestration](/design/multi-bank-orchestration/) — design doc with strategy details and RRF fusion

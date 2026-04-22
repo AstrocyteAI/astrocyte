@@ -17,122 +17,204 @@ from astrocyte.types import RetainRequest
 
 
 class TestResolveRetainChunking:
-    """Rules: profile overrides content-type defaults; chunk_size from profile when set."""
+    """Rules: MIP > profile > content_type > defaults. Field-level precedence."""
 
     def test_text_uses_orchestrator_default_strategy(self):
-        strategy, max_sz = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "text",
             profile=None,
             default_strategy="sentence",
             default_max_chunk_size=512,
         )
-        assert strategy == "sentence"
-        assert max_sz == 512
+        assert decision.strategy == "sentence"
+        assert decision.max_size == 512
+        assert decision.overlap is None
 
     def test_empty_content_type_uses_default_strategy(self):
-        strategy, _ = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "",
             profile=None,
             default_strategy="sentence",
             default_max_chunk_size=512,
         )
-        assert strategy == "sentence"
+        assert decision.strategy == "sentence"
 
     def test_conversation_routes_to_dialogue(self):
-        strategy, max_sz = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "conversation",
             profile=None,
             default_strategy="sentence",
             default_max_chunk_size=512,
         )
-        assert strategy == "dialogue"
-        assert max_sz == 512
+        assert decision.strategy == "dialogue"
+        assert decision.max_size == 512
 
     def test_transcript_routes_to_dialogue(self):
-        strategy, _ = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "transcript",
             profile=None,
             default_strategy="sentence",
             default_max_chunk_size=400,
         )
-        assert strategy == "dialogue"
+        assert decision.strategy == "dialogue"
 
     def test_document_routes_to_paragraph(self):
-        strategy, _ = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "document",
             profile=None,
             default_strategy="sentence",
             default_max_chunk_size=512,
         )
-        assert strategy == "paragraph"
+        assert decision.strategy == "paragraph"
 
     def test_email_routes_to_paragraph(self):
-        strategy, _ = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "email",
             profile=None,
             default_strategy="sentence",
             default_max_chunk_size=512,
         )
-        assert strategy == "paragraph"
+        assert decision.strategy == "paragraph"
 
     def test_event_routes_to_sentence(self):
-        strategy, _ = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "event",
             profile=None,
             default_strategy="paragraph",
             default_max_chunk_size=512,
         )
-        assert strategy == "sentence"
+        assert decision.strategy == "sentence"
 
     def test_unknown_content_type_falls_back_to_default_strategy(self):
-        strategy, _ = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "weird_future_type",
             profile=None,
             default_strategy="paragraph",
             default_max_chunk_size=512,
         )
-        assert strategy == "paragraph"
+        assert decision.strategy == "paragraph"
 
     def test_profile_overrides_content_type(self):
         profile = ExtractionProfileConfig(chunking_strategy="paragraph")
-        strategy, _ = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "conversation",
             profile=profile,
             default_strategy="sentence",
             default_max_chunk_size=512,
         )
-        assert strategy == "paragraph"
+        assert decision.strategy == "paragraph"
 
     def test_profile_chunk_size_overrides_default(self):
         profile = ExtractionProfileConfig(chunk_size=256)
-        _, max_sz = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "text",
             profile=profile,
             default_strategy="sentence",
             default_max_chunk_size=512,
         )
-        assert max_sz == 256
+        assert decision.max_size == 256
 
     def test_profile_semantic_maps_to_sentence(self):
         profile = ExtractionProfileConfig(chunking_strategy="semantic")
-        strategy, _ = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "document",
             profile=profile,
             default_strategy="sentence",
             default_max_chunk_size=512,
         )
-        assert strategy == "sentence"
+        assert decision.strategy == "sentence"
 
     def test_profile_fixed_strategy(self):
         profile = ExtractionProfileConfig(chunking_strategy="fixed", chunk_size=100)
-        strategy, max_sz = resolve_retain_chunking(
+        decision = resolve_retain_chunking(
             "text",
             profile=profile,
             default_strategy="sentence",
             default_max_chunk_size=512,
         )
-        assert strategy == "fixed"
-        assert max_sz == 100
+        assert decision.strategy == "fixed"
+        assert decision.max_size == 100
+
+
+class TestResolveRetainChunkingMipOverride:
+    """MIP ChunkerSpec is the highest-precedence layer (Phase 1, Step 4)."""
+
+    def test_mip_strategy_wins_over_content_type(self):
+        from astrocyte.mip.schema import ChunkerSpec
+
+        decision = resolve_retain_chunking(
+            "conversation",
+            profile=None,
+            default_strategy="sentence",
+            default_max_chunk_size=512,
+            mip_chunker=ChunkerSpec(strategy="paragraph"),
+        )
+        assert decision.strategy == "paragraph"
+
+    def test_mip_strategy_wins_over_profile(self):
+        from astrocyte.mip.schema import ChunkerSpec
+
+        profile = ExtractionProfileConfig(chunking_strategy="sentence")
+        decision = resolve_retain_chunking(
+            "text",
+            profile=profile,
+            default_strategy="sentence",
+            default_max_chunk_size=512,
+            mip_chunker=ChunkerSpec(strategy="dialogue"),
+        )
+        assert decision.strategy == "dialogue"
+
+    def test_mip_max_size_wins_over_profile(self):
+        from astrocyte.mip.schema import ChunkerSpec
+
+        profile = ExtractionProfileConfig(chunk_size=256)
+        decision = resolve_retain_chunking(
+            "text",
+            profile=profile,
+            default_strategy="sentence",
+            default_max_chunk_size=512,
+            mip_chunker=ChunkerSpec(max_size=900),
+        )
+        assert decision.max_size == 900
+
+    def test_mip_overlap_propagates(self):
+        from astrocyte.mip.schema import ChunkerSpec
+
+        decision = resolve_retain_chunking(
+            "text",
+            profile=None,
+            default_strategy="sentence",
+            default_max_chunk_size=512,
+            mip_chunker=ChunkerSpec(overlap=128),
+        )
+        assert decision.overlap == 128
+
+    def test_mip_partial_override_lets_other_layers_through(self):
+        """ChunkerSpec with only max_size set lets profile.strategy and content_type stand."""
+        from astrocyte.mip.schema import ChunkerSpec
+
+        profile = ExtractionProfileConfig(chunking_strategy="paragraph")
+        decision = resolve_retain_chunking(
+            "conversation",
+            profile=profile,
+            default_strategy="sentence",
+            default_max_chunk_size=512,
+            mip_chunker=ChunkerSpec(max_size=900),
+        )
+        # Strategy from profile (which beat content_type), max_size from MIP
+        assert decision.strategy == "paragraph"
+        assert decision.max_size == 900
+
+    def test_mip_chunker_none_is_equivalent_to_omitted(self):
+        decision = resolve_retain_chunking(
+            "conversation",
+            profile=None,
+            default_strategy="sentence",
+            default_max_chunk_size=512,
+            mip_chunker=None,
+        )
+        assert decision.strategy == "dialogue"
+        assert decision.overlap is None
 
 
 class TestNormalizeContent:

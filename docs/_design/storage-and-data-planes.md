@@ -20,7 +20,7 @@ This page is a **routing hub**: it explains how Astrocyte splits **operational r
 
 **Poor fit without adaptation:** Pure **aggregated metrics** or **BI semantic** surfaces that only expose KPIs—not row- or chunk-level evidence—do **not** map cleanly to the built-in hybrid retrieval pipeline unless you add a different retrieval substrate or a custom orchestration path.
 
-**Read next:** [`provider-spi.md`](../_plugins/provider-spi.md) §1, [`built-in-pipeline.md`](./built-in-pipeline.md).
+**Read next:** [Provider SPI](/plugins/provider-spi/) §1, [Built-in pipeline](./built-in-pipeline.md).
 
 ---
 
@@ -30,7 +30,7 @@ This page is a **routing hub**: it explains how Astrocyte splits **operational r
 
 **Not:** Tier 2 memory engine lifecycle, and **not** the same as in-process **bank health** metrics (see §3).
 
-**Read next:** [`memory-export-sink.md`](./memory-export-sink.md), [`provider-spi.md`](../_plugins/provider-spi.md) §5, [`event-hooks.md`](./event-hooks.md) §1.1 (webhook bridge until core wiring), [`ecosystem-and-packaging.md`](../_plugins/ecosystem-and-packaging.md) §2.6 and §3.5.
+**Read next:** [Memory export sink](./memory-export-sink.md), [Provider SPI](/plugins/provider-spi/) §5, [Event hooks](./event-hooks.md) §1.1 (webhook bridge until core wiring), [Ecosystem & packaging](/plugins/ecosystem-and-packaging/) §2.6 and §3.5.
 
 ---
 

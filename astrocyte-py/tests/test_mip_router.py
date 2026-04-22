@@ -174,3 +174,170 @@ class TestRejectPolicy:
         decision = router.route_sync(RuleEngineInput(content="binary data", content_type="binary"))
         assert decision is not None
         assert decision.retain_policy == "reject"
+
+
+class TestPipelinePropagation:
+    """RoutingDecision must carry the rule's PipelineSpec when set (Phase 1, Step 3)."""
+
+    def test_pipeline_absent_decision_pipeline_none(self) -> None:
+        rules = [
+            RoutingRule(
+                name="r",
+                priority=1,
+                match=MatchBlock(
+                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="chat")]
+                ),
+                action=ActionSpec(bank="b"),
+            ),
+        ]
+        router = MipRouter(MipConfig(rules=rules))
+        decision = router.route_sync(RuleEngineInput(content="hi", content_type="chat"))
+        assert decision is not None
+        assert decision.pipeline is None
+
+    def test_pipeline_propagates_into_decision(self) -> None:
+        from astrocyte.mip.schema import ChunkerSpec, DedupSpec, PipelineSpec
+
+        pipeline = PipelineSpec(
+            version=1,
+            chunker=ChunkerSpec(strategy="dialogue", max_size=800),
+            dedup=DedupSpec(threshold=0.92, action="skip_chunk"),
+        )
+        rules = [
+            RoutingRule(
+                name="conv",
+                priority=1,
+                match=MatchBlock(
+                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="conversation")]
+                ),
+                action=ActionSpec(bank="b", pipeline=pipeline),
+            ),
+        ]
+        router = MipRouter(MipConfig(rules=rules))
+        decision = router.route_sync(
+            RuleEngineInput(content="hi", content_type="conversation")
+        )
+        assert decision is not None
+        assert decision.pipeline is pipeline
+        assert decision.pipeline.chunker.strategy == "dialogue"
+        assert decision.pipeline.dedup.threshold == 0.92
+
+    def test_pipeline_propagates_through_override_rule(self) -> None:
+        from astrocyte.mip.schema import PipelineSpec, ReflectSpec
+
+        pipeline = PipelineSpec(
+            version=1,
+            reflect=ReflectSpec(prompt="evidence_strict"),
+        )
+        rules = [
+            RoutingRule(
+                name="lock",
+                priority=1,
+                override=True,
+                match=MatchBlock(
+                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="legal")]
+                ),
+                action=ActionSpec(bank="locked", pipeline=pipeline),
+            ),
+        ]
+        router = MipRouter(MipConfig(rules=rules))
+        decision = router.route_sync(RuleEngineInput(content="x", content_type="legal"))
+        assert decision is not None
+        assert decision.pipeline is pipeline
+        assert decision.pipeline.reflect.prompt == "evidence_strict"
+
+
+# ---------------------------------------------------------------------------
+# Per-bank pipeline resolution (Phase 2, Step 8b)
+# ---------------------------------------------------------------------------
+
+
+class TestResolvePipelineForBank:
+    """``MipRouter.resolve_pipeline_for_bank(bank_id)`` → highest-priority rule's PipelineSpec."""
+
+    def _config(self, rules: list[RoutingRule]) -> MipConfig:
+        return MipConfig(rules=rules)
+
+    def test_exact_bank_match(self):
+        from astrocyte.mip.schema import PipelineSpec, RerankSpec
+
+        pipe = PipelineSpec(version=1, rerank=RerankSpec(keyword_weight=0.3))
+        rule = RoutingRule(
+            name="ops",
+            priority=10,
+            match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="event")]),
+            action=ActionSpec(bank="ops-monitoring", pipeline=pipe),
+        )
+        router = MipRouter(self._config([rule]))
+        assert router.resolve_pipeline_for_bank("ops-monitoring") is pipe
+
+    def test_template_bank_match(self):
+        from astrocyte.mip.schema import PipelineSpec, RerankSpec
+
+        pipe = PipelineSpec(version=2, rerank=RerankSpec(proper_noun_weight=0.5))
+        rule = RoutingRule(
+            name="student",
+            priority=10,
+            match=MatchBlock(all_conditions=[MatchSpec(field="metadata.student_id", operator="present")]),
+            action=ActionSpec(bank="student-{metadata.student_id}", pipeline=pipe),
+        )
+        router = MipRouter(self._config([rule]))
+        # Concrete bank_id matches the template
+        assert router.resolve_pipeline_for_bank("student-42") is pipe
+        assert router.resolve_pipeline_for_bank("student-foo-bar") is pipe
+        # Unrelated bank does not match
+        assert router.resolve_pipeline_for_bank("not-a-student") is None
+
+    def test_returns_none_when_no_rule_targets_bank(self):
+        rule = RoutingRule(
+            name="r1",
+            priority=10,
+            match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="text")]),
+            action=ActionSpec(bank="b1"),  # no pipeline
+        )
+        router = MipRouter(self._config([rule]))
+        assert router.resolve_pipeline_for_bank("b1") is None
+        assert router.resolve_pipeline_for_bank("unknown") is None
+
+    def test_priority_order_winner(self):
+        from astrocyte.mip.schema import PipelineSpec, RerankSpec
+
+        winner = PipelineSpec(version=1, rerank=RerankSpec(keyword_weight=0.99))
+        loser = PipelineSpec(version=1, rerank=RerankSpec(keyword_weight=0.01))
+        rules = [
+            RoutingRule(
+                name="low-priority",
+                priority=100,
+                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="x")]),
+                action=ActionSpec(bank="b1", pipeline=loser),
+            ),
+            RoutingRule(
+                name="high-priority",
+                priority=1,
+                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="y")]),
+                action=ActionSpec(bank="b1", pipeline=winner),
+            ),
+        ]
+        router = MipRouter(self._config(rules))
+        assert router.resolve_pipeline_for_bank("b1") is winner
+
+    def test_skips_rules_without_pipeline(self):
+        from astrocyte.mip.schema import PipelineSpec, RerankSpec
+
+        pipe = PipelineSpec(version=1, rerank=RerankSpec(keyword_weight=0.5))
+        rules = [
+            RoutingRule(
+                name="no-pipeline",
+                priority=1,
+                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="x")]),
+                action=ActionSpec(bank="b1"),
+            ),
+            RoutingRule(
+                name="with-pipeline",
+                priority=10,
+                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="y")]),
+                action=ActionSpec(bank="b1", pipeline=pipe),
+            ),
+        ]
+        router = MipRouter(self._config(rules))
+        assert router.resolve_pipeline_for_bank("b1") is pipe

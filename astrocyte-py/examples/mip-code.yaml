@@ -1,0 +1,109 @@
+# Memory Intent Protocol — sample for a code-aware memory bank.
+#
+# Demonstrates the `code` pipeline preset and a forget block. The `code`
+# preset configures Astrocyte to chunk source files in fixed 1500-char
+# windows with overlap, dedupe at very high similarity (0.98), and synthesise
+# answers with the `evidence_strict` reflect prompt — the right defaults
+# when memory is read by a coding agent and hallucination must be minimised.
+#
+# Authoring conventions:
+#   - Prefer presets (`pipeline.preset`, `forget.preset`) over raw overrides.
+#   - Override only the knob you need; everything else inherits from preset.
+#   - One rule = one bank purpose. Lower priority numbers fire first.
+#
+# Reference: docs/_plugins/mip-developer-guide.md
+
+version: "1.0"
+
+# ── Bank definitions ──────────────────────────────────────────────────────────
+
+banks:
+  - id: "repo-{repo}"
+    description: Per-repository code memory (snippets, ADRs, design notes)
+    access: [agent:code-assistant, agent:reviewer]
+
+  - id: secrets-quarantine
+    description: Anything that smelled like a credential — locked, audited,
+      and forgettable on demand.
+
+# ── Routing rules ─────────────────────────────────────────────────────────────
+
+rules:
+  # Compliance lock — secrets/keys never reach a normal bank, even by accident.
+  # The forget block uses the GDPR preset so a leak can be erased on request.
+  - name: secret-lockdown
+    priority: 1
+    override: true
+    match:
+      any:
+        - pii_detected: true
+        - signals.has_secret: true        # set by upstream PII/secret scanners
+    action:
+      bank: secrets-quarantine
+      tags: [secret, compliance]
+      retain_policy: redact_before_store
+      forget:
+        version: 1
+        preset: gdpr                       # mode=hard, audit=required, cascade=true
+
+  # Code/diff content → per-repo bank, code-tuned pipeline.
+  - name: code-snippets
+    priority: 10
+    match:
+      all:
+        - content_type: code
+        - metadata.repo: present
+    action:
+      bank: "repo-{metadata.repo}"
+      tags: ["{metadata.lang}", "{metadata.path}"]
+      pipeline:
+        version: 1
+        preset: code                       # fixed/1500/overlap=200, dedup=0.98, evidence_strict
+      forget:
+        version: 1
+        mode: soft                         # mark `_deleted: true`; keep for audit
+        audit: recommended
+        cascade: true
+        min_age_days: 7                    # protect against accidental purges
+        max_per_call: 200                  # cap blast radius for selective deletes
+
+  # Documentation/ADRs — same bank, but document chunking is more appropriate.
+  - name: code-docs
+    priority: 20
+    match:
+      all:
+        - content_type: document
+        - metadata.repo: present
+    action:
+      bank: "repo-{metadata.repo}"
+      tags: [doc, "{metadata.path}"]
+      pipeline:
+        version: 1
+        preset: document                   # paragraph/1200/overlap=100
+
+  # Anything else → escalate to the intent layer (LLM judgment).
+  - name: unmatched-fallback
+    priority: 999
+    match:
+      all: []
+    action:
+      escalate: mip
+
+# ── Intent policy ─────────────────────────────────────────────────────────────
+
+intent_policy:
+  escalate_when:
+    - matched_rules: 0
+    - confidence:
+        lt: 0.8
+
+  model_context: |
+    You are a memory routing agent for a coding assistant. Route content
+    to the correct per-repo bank and apply appropriate tags. Code goes
+    to "repo-<name>"; secrets are NEVER routed here — those are handled
+    by the secret-lockdown rule.
+
+  constraints:
+    cannot_override: [secret-lockdown]
+    must_justify: true
+    max_tokens: 200

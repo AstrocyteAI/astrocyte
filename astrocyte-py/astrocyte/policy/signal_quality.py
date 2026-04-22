@@ -48,11 +48,22 @@ class DedupDetector:
         if bank_id in self._cache:
             self._cache[bank_id] = self._cache.pop(bank_id)
 
-    def is_duplicate(self, bank_id: str, embedding: list[float]) -> tuple[bool, float]:
+    def is_duplicate(
+        self,
+        bank_id: str,
+        embedding: list[float],
+        threshold_override: float | None = None,
+    ) -> tuple[bool, float]:
         """Check if embedding is a near-duplicate of cached content.
+
+        ``threshold_override`` lets a per-call MIP DedupSpec.threshold take
+        precedence over the instance-level default. When ``None``, the
+        configured ``self.threshold`` is used.
 
         Returns (is_dup, max_similarity).
         """
+        threshold = threshold_override if threshold_override is not None else self.threshold
+
         entries = self._cache.get(bank_id, [])
         if entries:
             self._touch_bank(bank_id)
@@ -61,7 +72,7 @@ class DedupDetector:
         for _, cached_emb in entries:
             sim = cosine_similarity(embedding, cached_emb)
             max_sim = max(max_sim, sim)
-            if sim >= self.threshold:
+            if sim >= threshold:
                 return True, sim
 
         return False, max_sim

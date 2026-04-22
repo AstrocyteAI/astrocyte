@@ -8,7 +8,7 @@ Without Astrocyte, each agent framework needs integrations with each memory prov
 
 Astrocyte **does not** specify how an agent is structured (workflow graph, tools, checkpoints, retries, human-in-the-loop, multi-agent handoff). That is the job of **LangGraph**, **CrewAI**, **Pydantic AI**, **AG2**, the **OpenAI / Claude agent SDKs**, or **your own app**. This document only describes **thin mappers** from those frameworks' memory hooks to `Astrocyte.retain()` / `recall()` / `reflect()` / … through the policy layer.
 
-In **harness vs context** terms (see [Architecture framework](../_design/architecture.md) §1, *Context engineering vs harness engineering*): framework integrations and your app are **harness**—they decide when to call memory and how to run the loop; Astrocyte sits **below** that. Turning `recall` hits into the next system block or user message is **context engineering**, which the **app** still owns—Astrocyte returns governed hits and synthesized text, not the only valid prompt shape.
+In **harness vs context** terms (see [Architecture framework](/design/architecture/) §1, *Context engineering vs harness engineering*): framework integrations and your app are **harness**—they decide when to call memory and how to run the loop; Astrocyte sits **below** that. Turning `recall` hits into the next system block or user message is **context engineering**, which the **app** still owns—Astrocyte returns governed hits and synthesized text, not the only valid prompt shape.
 
 **Server-side ingest without an agent loop** (scheduled poll, GitHub → `retain`): see [Poll ingest with the standalone gateway](/end-user/poll-ingest-gateway/) and [Production-grade HTTP service](/end-user/production-grade-http-service/).
 
@@ -89,3 +89,13 @@ pip install crewai                     # etc.
 ```
 
 `openai_agents`, `google_adk`, `microsoft_agent`, and `claude_agent_sdk` (tool definitions mode) produce plain dicts/functions — no extra install needed.
+
+---
+
+## Further reading
+
+- [Memory API reference](/end-user/memory-api-reference/) — retain/recall/reflect/forget signatures
+- [MIP developer guide](mip-developer-guide/) — declarative routing rules for retain operations
+- [Bank management](/end-user/bank-management/) — multi-bank patterns for multi-agent setups
+- [Provider SPI](provider-spi/) — build your own storage or LLM adapter
+- [Ecosystem & packaging](ecosystem-and-packaging/) — distribution model and entry point conventions

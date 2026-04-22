@@ -16,26 +16,64 @@ const defaultOgImage = new URL("logo.png", `${site}${base}`).href;
 /** Explicit sidebar order (filenames without .md → routes). */
 const topicItems = {
   endUser: [
-    { label: "Introduction", link: "/introduction/" },
-    { label: "Quick Start", link: "/end-user/quick-start/" },
-    { label: "Configuration reference", link: "/end-user/configuration-reference/" },
-    { label: "Authentication setup", link: "/end-user/authentication-setup/" },
-    { label: "Storage backend setup", link: "/end-user/storage-backend-setup/" },
-    { label: "Monitoring & observability", link: "/end-user/monitoring-and-observability/" },
-    { label: "Memory API reference", link: "/end-user/memory-api-reference/" },
-    { label: "Access control setup", link: "/end-user/access-control-setup/" },
-    { label: "Bank management", link: "/end-user/bank-management/" },
-    { label: "Production-grade HTTP service", link: "/end-user/production-grade-http-service/" },
-    { label: "Poll ingest with the standalone gateway", link: "/end-user/poll-ingest-gateway/" },
-    { label: "Gateway edge & API gateways", link: "/end-user/gateway-edge-and-api-gateways/" },
+    // ── Getting Started ──
+    {
+      label: "Getting Started",
+      items: [
+        { label: "Introduction", link: "/introduction/" },
+        { label: "How it works", link: "/end-user/how-it-works/" },
+        { label: "Quick Start", link: "/end-user/quick-start/" },
+        { label: "FAQ", link: "/end-user/faq/" },
+      ],
+    },
+    // ── Reference ──
+    {
+      label: "Reference",
+      items: [
+        { label: "Memory API reference", link: "/end-user/memory-api-reference/" },
+        { label: "Configuration reference", link: "/end-user/configuration-reference/" },
+      ],
+    },
+    // ── Setup Guides ──
+    {
+      label: "Setup Guides",
+      items: [
+        { label: "Authentication setup", link: "/end-user/authentication-setup/" },
+        { label: "Storage backend setup", link: "/end-user/storage-backend-setup/" },
+        { label: "Access control setup", link: "/end-user/access-control-setup/" },
+        { label: "Bank management", link: "/end-user/bank-management/" },
+        { label: "Monitoring & observability", link: "/end-user/monitoring-and-observability/" },
+      ],
+    },
+    // ── Deployment ──
+    {
+      label: "Deployment",
+      items: [
+        { label: "Production-grade HTTP service", link: "/end-user/production-grade-http-service/" },
+        { label: "Poll ingest", link: "/end-user/poll-ingest-gateway/" },
+        { label: "Gateway edge & API gateways", link: "/end-user/gateway-edge-and-api-gateways/" },
+      ],
+    },
   ],
   plugins: [
-    { label: "Provider SPI", link: "/plugins/provider-spi/" },
-    { label: "Ecosystem & packaging", link: "/plugins/ecosystem-and-packaging/" },
-    { label: "Outbound transport", link: "/plugins/outbound-transport/" },
-    { label: "Multimodal LLM SPI", link: "/plugins/multimodal-llm-spi/" },
-    { label: "Agent framework middleware", link: "/plugins/agent-framework-middleware/" },
-    { label: "MIP developer guide", link: "/plugins/mip-developer-guide/" },
+    // ── Service Provider Interfaces ──
+    {
+      label: "Service Provider Interfaces",
+      items: [
+        { label: "Provider SPI", link: "/plugins/provider-spi/" },
+        { label: "Multimodal LLM SPI", link: "/plugins/multimodal-llm-spi/" },
+        { label: "Outbound transport", link: "/plugins/outbound-transport/" },
+      ],
+    },
+    // ── Developing Plugins ──
+    {
+      label: "Developing Plugins",
+      items: [
+        { label: "Ecosystem & packaging", link: "/plugins/ecosystem-and-packaging/" },
+        { label: "Agent framework middleware", link: "/plugins/agent-framework-middleware/" },
+        { label: "MIP developer guide", link: "/plugins/mip-developer-guide/" },
+      ],
+    },
     {
       label: "Integrations",
       collapsed: true,
@@ -103,7 +141,7 @@ const topicItems = {
         { label: "Memory Intent Protocol (MIP)", link: "/design/memory-intent-protocol/" },
         { label: "Multi-bank orchestration", link: "/design/multi-bank-orchestration/" },
         { label: "Storage and data planes", link: "/design/storage-and-data-planes/" },
-        { label: "Storage adapter packages", link: "/design/adapter-packages/" },
+        { label: "Storage adapter packages", link: "/plugins/ecosystem-and-packaging/#22-tier-1-retrieval-providers" },
       ],
     },
     // ── Integrations & Extensibility ──
@@ -145,7 +183,46 @@ const topicItems = {
     },
   ],
   tutorials: [
-    { label: "100 Agents in 100 Days", link: "/tutorials/100-agents-in-100-days/" },
+    // ── Getting Started ──
+    {
+      label: "Getting Started",
+      items: [
+        { label: "100 Agents in 100 Days", link: "/tutorials/100-agents-in-100-days/" },
+      ],
+    },
+    // ── Consumer Agents ──
+    {
+      label: "Consumer Agents",
+      collapsed: true,
+      items: [
+        { label: "Productivity & communication", badge: "1–9", link: "/tutorials/100-agents-in-100-days/#productivity--communication" },
+        { label: "Money & subscriptions", badge: "10–14", link: "/tutorials/100-agents-in-100-days/#money-shopping-subscriptions" },
+        { label: "Home & logistics", badge: "15–20", link: "/tutorials/100-agents-in-100-days/#home-mobility-logistics" },
+        { label: "Food & wellness", badge: "21–26", link: "/tutorials/100-agents-in-100-days/#food-health-adjacent-wellness" },
+        { label: "Learning & career", badge: "27–34", link: "/tutorials/100-agents-in-100-days/#learning-career-creativity" },
+        { label: "Family & social", badge: "35–40", link: "/tutorials/100-agents-in-100-days/#family-social-local-life" },
+        { label: "Hobbies", badge: "41–45", link: "/tutorials/100-agents-in-100-days/#hobbies--specialized-leisure" },
+        { label: "Life admin", badge: "46–49", link: "/tutorials/100-agents-in-100-days/#accessibility--life-admin" },
+      ],
+    },
+    // ── Enterprise Agents ──
+    {
+      label: "Enterprise Agents",
+      collapsed: true,
+      items: [
+        { label: "Support & sales", badge: "50–55", link: "/tutorials/100-agents-in-100-days/#customer-facing-support-success-sales" },
+        { label: "IT & workplace", badge: "56–61", link: "/tutorials/100-agents-in-100-days/#internal-it-workplace-hr" },
+        { label: "Engineering & platform", badge: "62–68", link: "/tutorials/100-agents-in-100-days/#engineering-quality-platform" },
+        { label: "Security & compliance", badge: "69–74", link: "/tutorials/100-agents-in-100-days/#security-risk-compliance" },
+        { label: "Finance & procurement", badge: "75–77", link: "/tutorials/100-agents-in-100-days/#finance--procurement" },
+        { label: "Legal operations", badge: "78–96", link: "/tutorials/100-agents-in-100-days/#legal-department--legal-operations" },
+        { label: "Operations & supply chain", badge: "97–102", link: "/tutorials/100-agents-in-100-days/#operations-supply-chain-field" },
+        { label: "Data & product", badge: "103–107", link: "/tutorials/100-agents-in-100-days/#data-analytics-product" },
+        { label: "Industry-specific", badge: "108–112", link: "/tutorials/100-agents-in-100-days/#industry-flavored" },
+        { label: "Marketing & comms", badge: "113–116", link: "/tutorials/100-agents-in-100-days/#marketing-comms-design-systems" },
+        { label: "Strategy & leadership", badge: "117–120", link: "/tutorials/100-agents-in-100-days/#strategy--leadership" },
+      ],
+    },
   ],
 };
 

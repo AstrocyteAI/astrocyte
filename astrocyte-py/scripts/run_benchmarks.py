@@ -28,27 +28,44 @@ import asyncio
 import json
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+@dataclass
+class BenchmarkRunOutcome:
+    """Result of running a benchmark: serialized payload plus dataset provenance."""
+
+    result: dict | None
+    used_real_data: bool
 
 
 def _build_test_brain():
     """Create an Astrocyte instance with in-memory pipeline (no API keys needed).
 
-    Uses InMemoryVectorStore + MockLLMProvider with bag-of-words embeddings
-    so the full pipeline path (chunk → embed → store → recall → reflect) is
-    exercised with meaningful semantic retrieval.
+    Uses InMemoryVectorStore + InMemoryDocumentStore + MockLLMProvider with
+    bag-of-words embeddings so the full pipeline path (chunk → embed →
+    store → 4-way retrieve → fuse → rerank) is exercised. The document
+    store is included so RRF has keyword/BM25 as a fusion input alongside
+    semantic + temporal — see Session 1 Item 2 of the platform-positioning
+    LongMemEval root-causes writeup.
     """
     from astrocyte._astrocyte import Astrocyte
     from astrocyte.config import AstrocyteConfig
     from astrocyte.pipeline.orchestrator import PipelineOrchestrator
-    from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
+    from astrocyte.testing.in_memory import (
+        InMemoryDocumentStore,
+        InMemoryVectorStore,
+        MockLLMProvider,
+    )
 
     config = AstrocyteConfig()
     config.barriers.pii.mode = "disabled"
     brain = Astrocyte(config)
     pipeline = PipelineOrchestrator(
         vector_store=InMemoryVectorStore(),
+        document_store=InMemoryDocumentStore(),
         llm_provider=MockLLMProvider(),
     )
     brain.set_pipeline(pipeline)
@@ -87,6 +104,15 @@ def _build_pipeline_brain(config_path: str):
     if config.document_store:
         ds_cls = resolve_provider(config.document_store, "document_stores")
         document_store = ds_cls(**(config.document_store_config or {}))
+    else:
+        # Default to in-memory document store so keyword/BM25 retrieval
+        # fires for benchmark runs even when the user's config doesn't
+        # explicitly name a document_store provider. Production
+        # deployments should configure a real one (Elasticsearch, etc.)
+        # via config.document_store.
+        from astrocyte.testing.in_memory import InMemoryDocumentStore
+
+        document_store = InMemoryDocumentStore()
 
     if config.llm_provider:
         llm_cls = resolve_provider(config.llm_provider, "llm_providers")
@@ -162,8 +188,11 @@ def _print_result(result, benchmark_name: str) -> None:
     print(f"{'=' * 60}")
 
 
-async def run_longmemeval(brain, data_path: str | None, max_questions: int | None) -> tuple[dict | None, bool]:
-    """Run LongMemEval benchmark. Returns (result_dict, used_real_data)."""
+async def run_longmemeval(
+    brain, data_path: str | None, max_questions: int | None,
+    *, use_canonical_judge: bool = False,
+) -> BenchmarkRunOutcome:
+    """Run LongMemEval benchmark."""
     from astrocyte.eval.benchmarks.longmemeval import (
         LongMemEvalBenchmark,
         LongMemEvalQuestion,
@@ -171,13 +200,22 @@ async def run_longmemeval(brain, data_path: str | None, max_questions: int | Non
 
     bench = LongMemEvalBenchmark(brain)
 
-    has_dataset = data_path and any(Path(data_path).glob("*.json")) if data_path else False
+    dp = Path(data_path) if data_path else None
+    if dp is None:
+        has_dataset = False
+    elif dp.is_file():
+        has_dataset = True
+    elif dp.is_dir():
+        has_dataset = any(dp.glob("*.json"))
+    else:
+        has_dataset = False
 
     if has_dataset:
         result = await bench.run(
             data_path=data_path,
             bank_id="bench-longmemeval",
             max_questions=max_questions,
+            use_canonical_judge=use_canonical_judge,
         )
     else:
         if data_path:
@@ -223,14 +261,18 @@ async def run_longmemeval(brain, data_path: str | None, max_questions: int | Non
             questions=questions,
             bank_id="bench-longmemeval",
             max_questions=max_questions,
+            use_canonical_judge=use_canonical_judge,
         )
 
     _print_result(result, "LongMemEval")
-    return _serialize_result(result, "longmemeval"), has_dataset
+    return BenchmarkRunOutcome(_serialize_result(result, "longmemeval"), has_dataset)
 
 
-async def run_locomo(brain, data_path: str | None, max_questions: int | None) -> tuple[dict | None, bool]:
-    """Run LoCoMo benchmark. Returns (result_dict, used_real_data)."""
+async def run_locomo(
+    brain, data_path: str | None, max_questions: int | None,
+    *, use_canonical_judge: bool = False,
+) -> BenchmarkRunOutcome:
+    """Run LoCoMo benchmark."""
     from astrocyte.eval.benchmarks.locomo import (
         LoComoBenchmark,
         LoCoMoConversation,
@@ -241,17 +283,25 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
     bench = LoComoBenchmark(brain)
 
     dp = Path(data_path) if data_path else None
-    has_dataset = dp and (list(dp.glob("locomo*.json")) or list(dp.glob("*.json"))) if dp else False
+    if dp is None:
+        has_dataset = False
+    elif dp.is_file():
+        has_dataset = True
+    elif dp.is_dir():
+        has_dataset = bool(list(dp.glob("locomo*.json")) or list(dp.glob("*.json")))
+    else:
+        has_dataset = False
 
     if has_dataset:
         result = await bench.run(
             data_path=data_path,
             bank_id="bench-locomo",
             max_questions=max_questions,
+            use_canonical_judge=use_canonical_judge,
         )
     else:
         if data_path:
-            print(f"  WARNING: No JSON files found in {data_path}, using synthetic data.")
+            print(f"  WARNING: dataset not found at {data_path}, using synthetic data.")
         # Synthetic smoke test when no dataset is available
         conversations = [
             LoCoMoConversation(
@@ -354,10 +404,11 @@ async def run_locomo(brain, data_path: str | None, max_questions: int | None) ->
             conversations=conversations,
             bank_id="bench-locomo",
             max_questions=max_questions,
+            use_canonical_judge=use_canonical_judge,
         )
 
     _print_result(result, "LoCoMo")
-    return _serialize_result(result, "locomo"), has_dataset
+    return BenchmarkRunOutcome(_serialize_result(result, "locomo"), has_dataset)
 
 
 async def run_builtin_suites(brain) -> dict:
@@ -443,6 +494,19 @@ async def main() -> None:
         default=None,
         help="Output directory for results JSON (default: benchmark-results/)",
     )
+    parser.add_argument(
+        "--canonical-judge",
+        action="store_true",
+        help=(
+            "Score with each benchmark's canonical judge instead of the "
+            "legacy word/text-overlap scorer. LoCoMo uses stemmed token "
+            "F1 (astrocyte.eval.judges.locomo_judge); LongMemEval uses "
+            "the paper's LLM-judge (one extra LLM call per question). "
+            "REQUIRED for scores comparable to published numbers (paper, "
+            "Mem0, Zep, Hindsight). Legacy scorer kept for internal "
+            "delta-tracking."
+        ),
+    )
     args = parser.parse_args()
 
     # Build brain
@@ -462,16 +526,22 @@ async def main() -> None:
         all_results["builtin"] = await run_builtin_suites(brain)
 
     if "longmemeval" in args.benchmarks:
-        result, real = await run_longmemeval(brain, args.longmemeval_path, args.max_questions)
-        if result:
-            all_results["longmemeval"] = result
-        used_real_data["longmemeval"] = real
+        outcome = await run_longmemeval(
+            brain, args.longmemeval_path, args.max_questions,
+            use_canonical_judge=args.canonical_judge,
+        )
+        if outcome.result:
+            all_results["longmemeval"] = outcome.result
+        used_real_data["longmemeval"] = outcome.used_real_data
 
     if "locomo" in args.benchmarks:
-        result, real = await run_locomo(brain, args.locomo_path, args.max_questions)
-        if result:
-            all_results["locomo"] = result
-        used_real_data["locomo"] = real
+        outcome = await run_locomo(
+            brain, args.locomo_path, args.max_questions,
+            use_canonical_judge=args.canonical_judge,
+        )
+        if outcome.result:
+            all_results["locomo"] = outcome.result
+        used_real_data["locomo"] = outcome.used_real_data
 
     wall_elapsed = time.monotonic() - wall_start
 

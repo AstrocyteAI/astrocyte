@@ -377,6 +377,8 @@ docker run -d --name es -p 9200:9200 \
 ## Further reading
 
 - [Configuration reference](configuration-reference/) — full `astrocyte.yaml` schema
-- [Provider SPI](../plugins/provider-spi/) — build your own storage adapter
-- [Storage adapter packages](../design/adapter-packages/) — architecture and entry point conventions
-- [Storage and data planes](../design/storage-and-data-planes/) — retrieval vs export architecture
+- [Memory API reference](memory-api-reference/) — retain/recall/reflect/forget signatures
+- [Bank management](bank-management/) — bank creation, multi-bank queries, hybrid recall patterns
+- [Provider SPI](/plugins/provider-spi/) — build your own storage adapter
+- [Storage adapter packages](/design/adapter-packages/) — architecture and entry point conventions
+- [Storage and data planes](/design/storage-and-data-planes/) — retrieval vs export architecture

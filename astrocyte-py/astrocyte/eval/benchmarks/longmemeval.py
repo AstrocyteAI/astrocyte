@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
 
+ANSWER_MATCH_THRESHOLD = 0.3
+
 # Map question_type to high-level category for reporting
 _CATEGORY_MAP: dict[str, str] = {
     "single-session-user": "extraction",
@@ -43,6 +45,29 @@ _CATEGORY_MAP: dict[str, str] = {
     "temporal-reasoning": "temporal",
     "knowledge-update": "update",
 }
+
+
+def _parse_longmemeval_date(raw: str | None) -> datetime | None:
+    """Parse a LongMemEval session date string to a UTC datetime.
+
+    The dataset uses the literal form ``"2023/05/20 (Sat) 02:21"`` — a
+    ``YYYY/MM/DD (DDD) HH:MM`` pattern with a parenthesised weekday in
+    the middle. strptime can't handle the weekday token directly, so
+    strip it and parse the rest. Returns None on any failure so the
+    benchmark falls back to retain-time clock rather than crashing.
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    # Drop the parenthesised weekday: "(Sat) " → ""
+    parts = raw.split()
+    cleaned_parts = [p for p in parts if not (p.startswith("(") and p.endswith(")"))]
+    cleaned = " ".join(cleaned_parts)
+    for fmt in ("%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M", "%Y/%m/%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(cleaned, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
 
 
 def _classify_question_type(question_type: str) -> str:
@@ -74,6 +99,12 @@ class LongMemEvalQuestion:
     answer: str
     session_ids: list[str]
     conversation_context: list[dict[str, str]]  # Chat history
+    #: Raw upstream question_type, e.g. "single-session-user",
+    #: "temporal-reasoning", "knowledge-update_abs". Required by the
+    #: canonical LLM-judge to pick the right prompt template;
+    #: ``category`` above is the lossy Astrocyte-side summary and
+    #: cannot round-trip to the template choice.
+    question_type: str = ""
 
 
 class LongMemEvalBenchmark:
@@ -94,6 +125,7 @@ class LongMemEvalBenchmark:
         *,
         clean_after: bool = True,
         max_questions: int | None = None,
+        use_canonical_judge: bool = False,
     ) -> LongMemEvalResult:
         """Run the LongMemEval benchmark.
 
@@ -104,6 +136,13 @@ class LongMemEvalBenchmark:
             bank_id: Dedicated bank for the benchmark.
             clean_after: Delete the bank after running.
             max_questions: Limit number of questions (for quick testing).
+            use_canonical_judge: When True, score each reflect answer
+                with the canonical LongMemEval LLM-judge
+                (``astrocyte.eval.judges.longmemeval_judge``) using the
+                paper's task-specific prompts. Requires an LLM provider
+                on ``brain._pipeline.llm_provider`` (raises if absent).
+                When False (default), uses the legacy
+                ``text_overlap_score`` scorer.
 
         Returns:
             LongMemEvalResult with accuracy breakdown by category.
@@ -153,12 +192,23 @@ class LongMemEvalBenchmark:
                 if not content.strip():
                     continue
 
+                # Parse the session timestamp so the temporal retrieval
+                # strategy has a real signal. Without this, every memory
+                # gets the same retain-time timestamp and recency decay
+                # is meaningless.
+                occurred_at = _parse_longmemeval_date(msg.get("session_date"))
+
                 t0 = time.monotonic()
                 await self.brain.retain(
                     content,
                     bank_id=bank_id,
                     tags=[msg.get("role", "user"), q.category],
-                    metadata={"session_id": msg.get("session_id", ""), "source": "longmemeval"},
+                    metadata={
+                        "session_id": msg.get("session_id", ""),
+                        "source": "longmemeval",
+                        "session_date": msg.get("session_date", ""),
+                    },
+                    occurred_at=occurred_at,
                 )
                 retain_latencies.append((time.monotonic() - t0) * 1000)
                 retain_count += 1
@@ -181,6 +231,21 @@ class LongMemEvalBenchmark:
         per_question: list[dict[str, Any]] = []
         query_results: list[QueryResult] = []
 
+        # Build the canonical LLM-judge once when requested. Reuses the
+        # same LLM provider the reflect stage uses — consistent tier,
+        # shared rate-limit pool, same Doppler-injected API key.
+        canonical_judge = None
+        if use_canonical_judge:
+            from astrocyte.eval.judges import LongMemEvalJudge
+
+            if self.brain._pipeline is None or self.brain._pipeline.llm_provider is None:
+                raise RuntimeError(
+                    "use_canonical_judge=True requires brain._pipeline.llm_provider "
+                    "to be configured (the judge sends one LLM call per question). "
+                    "Either provide an LLM or run with use_canonical_judge=False.",
+                )
+            canonical_judge = LongMemEvalJudge(self.brain._pipeline.llm_provider)
+
         print(f"  [LongMemEval] Evaluating {total_questions} questions...")
         eval_phase_start = time.monotonic()
         for qi, q in enumerate(questions, 1):
@@ -191,14 +256,39 @@ class LongMemEvalBenchmark:
             elapsed = (time.monotonic() - t0) * 1000
             recall_latencies.append(elapsed)
 
-            # Check if the expected answer appears in any recall hit
-            answer_found = any(text_overlap_score([q.answer], h.text) > 0.3 for h in result.hits)
-
-            # Also try reflect for a more thorough check
+            # Always run reflect so canonical-judge path has an answer.
             reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
-            answer_in_reflect = text_overlap_score([q.answer], reflect_result.answer) > 0.3
 
-            is_correct = answer_found or answer_in_reflect
+            if canonical_judge is not None:
+                # Canonical LLM-judge against reflect answer. Uses the
+                # raw upstream question_type (not the Astrocyte-side
+                # lossy category) so the prompt template matches the
+                # paper's per-task rubric.
+                try:
+                    score = await canonical_judge.score(
+                        question_type=q.question_type or q.category,
+                        question=q.question,
+                        answer=q.answer,
+                        response=reflect_result.answer,
+                    )
+                    is_correct = score >= 1.0
+                except Exception as exc:
+                    logging.getLogger("astrocyte.eval.longmemeval").warning(
+                        "canonical judge failed for q=%s: %s (counted as incorrect)",
+                        q.question_id, exc,
+                    )
+                    is_correct = False
+            else:
+                # Legacy scorer — loose but historically comparable.
+                answer_found = any(
+                    text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD
+                    for h in result.hits
+                )
+                answer_in_reflect = (
+                    text_overlap_score([q.answer], reflect_result.answer)
+                    > ANSWER_MATCH_THRESHOLD
+                )
+                is_correct = answer_found or answer_in_reflect
             if is_correct:
                 correct += 1
                 category_correct[q.category] = category_correct.get(q.category, 0) + 1
@@ -230,7 +320,7 @@ class LongMemEvalBenchmark:
             # Build QueryResult for standard metrics
             relevant_ids: set[str] = set()
             for h in result.hits:
-                if h.memory_id and text_overlap_score([q.answer], h.text) > 0.3:
+                if h.memory_id and text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD:
                     relevant_ids.add(h.memory_id)
             retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
 
@@ -320,9 +410,14 @@ def load_longmemeval_dataset(
     data_path = Path(data_path)
     questions: list[LongMemEvalQuestion] = []
 
-    json_files = list(data_path.glob("*.json"))
-    if not json_files:
-        raise FileNotFoundError(f"No JSON files found in {data_path}")
+    if data_path.is_file():
+        json_files = [data_path]
+    elif data_path.is_dir():
+        json_files = list(data_path.glob("*.json"))
+        if not json_files:
+            raise FileNotFoundError(f"No JSON files found in {data_path}")
+    else:
+        raise FileNotFoundError(f"LongMemEval path does not exist: {data_path}")
 
     for json_file in json_files:
         try:
@@ -355,6 +450,12 @@ def load_longmemeval_dataset(
             conversation_context: list[dict[str, str]] = []
             haystack_sessions = item.get("haystack_sessions", [])
             haystack_session_id_list = item.get("haystack_session_ids", [])
+            # haystack_dates: one date per session in LongMemEval — e.g.
+            # "2023/05/20 (Sat) 02:21". Used as ``occurred_at`` so the
+            # temporal retrieval strategy can rank by real recency rather
+            # than retain-time clock (which would flatten all memories
+            # into the same second).
+            haystack_dates_list = item.get("haystack_dates", [])
 
             if isinstance(haystack_sessions, list):
                 for sess_idx, session_turns in enumerate(haystack_sessions):
@@ -363,16 +464,33 @@ def load_longmemeval_dataset(
                         if sess_idx < len(haystack_session_id_list)
                         else f"session_{sess_idx}"
                     )
+                    sess_date = (
+                        haystack_dates_list[sess_idx]
+                        if sess_idx < len(haystack_dates_list)
+                        else None
+                    )
+                    # Concatenate all turns of a session into a single memory
+                    # entry. Previously we emitted one entry per turn and the
+                    # retain loop deduped by session_id — storing the FIRST
+                    # turn and discarding the rest, effectively losing 90%+
+                    # of the haystack content. See
+                    # docs/_design/platform-positioning.md §LongMemEval-root-causes
+                    # for the full writeup.
                     if isinstance(session_turns, list):
+                        turn_texts: list[str] = []
                         for turn in session_turns:
                             if isinstance(turn, dict) and turn.get("content"):
-                                conversation_context.append(
-                                    {
-                                        "role": turn.get("role", "user"),
-                                        "content": str(turn["content"]),
-                                        "session_id": str(sess_id),
-                                    }
-                                )
+                                role = turn.get("role", "user")
+                                turn_texts.append(f"{role}: {turn['content']}")
+                        if turn_texts:
+                            entry: dict[str, str] = {
+                                "role": "session",
+                                "content": "\n".join(turn_texts),
+                                "session_id": str(sess_id),
+                            }
+                            if sess_date:
+                                entry["session_date"] = str(sess_date)
+                            conversation_context.append(entry)
 
             # Fallback: try older field names if haystack_sessions wasn't found
             if not conversation_context:
@@ -395,6 +513,7 @@ def load_longmemeval_dataset(
                 answer=answer_text,
                 session_ids=[str(s) for s in session_ids] if isinstance(session_ids, list) else [],
                 conversation_context=conversation_context,
+                question_type=str(question_type),
             )
             if q.question and q.answer:
                 questions.append(q)

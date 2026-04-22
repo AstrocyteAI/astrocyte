@@ -365,5 +365,7 @@ Uses token bucket algorithm per bank per operation. Returns 429 with `retry_afte
 ## Further reading
 
 - [Configuration reference](configuration-reference/) — `observability`, `homeostasis`, and `escalation` config sections
+- [Memory API reference](memory-api-reference/) — retain/recall/reflect/forget signatures
+- [Bank management](bank-management/) — per-bank metrics and health monitoring
 - [Production-grade HTTP service](production-grade-http-service/) — full production checklist
 - [Gateway edge & API gateways](gateway-edge-and-api-gateways/) — edge rate limiting and reverse proxy patterns

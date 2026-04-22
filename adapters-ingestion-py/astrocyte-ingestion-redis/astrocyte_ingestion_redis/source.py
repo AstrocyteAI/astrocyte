@@ -122,7 +122,8 @@ class RedisStreamIngestSource:
                 raise
 
     async def _run_loop(self) -> None:
-        assert self._redis is not None
+        if self._redis is None:
+            raise RuntimeError("Redis client not initialized")
         r = self._redis
         stream = self._stream_key()
         group = self._group()
@@ -201,6 +202,5 @@ class RedisStreamIngestSource:
             )
         except Exception:
             logger.exception("ingest stream %s retain failed for %s", self._source_id, msg_id)
-            return
 
         await r.xack(stream, group, msg_id)

@@ -17,6 +17,7 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 | M5 | Production Storage Providers | v0.8.0 | Gap 6 | None (parallel) | Adapters |
 | M6 | Standalone Gateway | v0.8.0 | Gap 3 | M1, M2 | Shipped in-repo (`astrocyte-gateway-py`); **v0.8.x** tags (see § Release numbering) |
 | M7 | Structured recall authority | v0.8.0 | Gap 8 | M5 | Core |
+| M8 | LLM wiki compile | v0.8.x (v0.9-era) | — | M3, M5 | Core; opt-in, gated by eval A/B — [`llm-wiki-compile.md`](llm-wiki-compile.md) |
 
 **Release pairing:** **M1 and M2 ship together in a single v0.5.0 tag** (identity + structured context first; config schema immediately after in the same minor). Later milestones renumber as above.
 
@@ -460,11 +461,12 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 
 ### v0.8.x — Connector & gateway integration track (toward v1.0.0)
 
-**Scope:** Implemented **from the v0.8.0 baseline** toward **v1.0.0**. You can describe this as the **”v0.9-era”** feature wave (streams, poll, gateway plugins) in planning docs; **git tags** stay **v0.8.1**, **v0.8.2**, … — **no v0.9.0 tag** — see § Release numbering.
+**Scope:** Implemented **from the v0.8.0 baseline** toward **v1.0.0**. You can describe this as the **”v0.9-era”** feature wave (streams, poll, gateway plugins, **LLM wiki compile**) in planning docs; **git tags** stay **v0.8.1**, **v0.8.2**, … — **no v0.9.0 tag** — see § Release numbering.
 
 - Additional event stream / poll connectors (beyond Kafka, Redis, GitHub) and NATS where needed
 - **Gateway plugins — shipped:** Thin integration plugins for **Kong** (Lua), **Apache APISIX** (Lua), and **Azure API Management** (XML policy fragments + Bicep/Terraform/APIOps deployment). Located in **`gateway-plugins/`** at the repo root. Each plugin intercepts OpenAI-compatible `/chat/completions` requests and calls the standalone gateway for recall (pre-hook) and retain (post-hook). See **[`gateway-plugins/README.md`](../../gateway-plugins/README.md)**.
 - Hardening: CORS, body limits, admin auth, rate limits at the edge (as product requires)
+- **LLM wiki compile (M8 — v0.9-era):** Async CompileEngine maintains rewritable **`WikiPage`** memories (entity/topic/concept) from raw memories, with provenance and cross-links; recall tiers wiki hits ahead of raw with fallback; periodic **lint** pass catches contradictions, stale claims, and orphans. Opt-in per bank via MIP config; defaults **off**. Ships only when the LongMemEval **compile vs no-compile** A/B gate passes (≥ 10-point absolute lift on `multi-session` or `knowledge-update`, no other category regressing > 2 points; retain p95 unchanged). Full design: **[`llm-wiki-compile.md`](llm-wiki-compile.md)**.
 
 SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this track — **§ Stability: SPI, adapters, and config files**.
 

@@ -1011,3 +1011,14 @@ Rationale, OTel, and security constraints: `outbound-transport.md`.
 Event taxonomy and governance: `memory-export-sink.md`. Packaging tables: `ecosystem-and-packaging.md`.
 
 Full implementation guide with examples: see `ecosystem-and-packaging.md`.
+
+---
+
+## Further reading
+
+- [Ecosystem & packaging](ecosystem-and-packaging/) — distribution model, entry points, conformance suites
+- [Outbound transport](outbound-transport/) — credential gateways and enterprise proxy wiring
+- [Multimodal LLM SPI](multimodal-llm-spi/) — image/audio DTOs and multimodal provider extensions
+- [Storage backend setup](/end-user/storage-backend-setup/) — operator guide for pgvector, Qdrant, Neo4j, Elasticsearch
+- [Configuration reference](/end-user/configuration-reference/) — full `astrocyte.yaml` schema
+- [Architecture](/design/architecture/) — two-tier model and read vs export planes

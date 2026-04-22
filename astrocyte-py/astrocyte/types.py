@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from typing import Literal
 
+from astrocyte.mip.schema import ForgetSpec, PipelineSpec
+
 # ---------------------------------------------------------------------------
 # Metadata value type — recursive union replacing Any for FFI safety
 # ---------------------------------------------------------------------------
@@ -157,6 +159,13 @@ class RetainRequest:
     source: str | None = None
     content_type: str = "text"  # "text", "conversation", "document", "email", ...
     extraction_profile: str | None = None  # key in astrocyte.yml extraction_profiles (M3)
+    #: Optional pipeline overrides from a MIP RoutingDecision. When set, fields
+    #: take precedence over extraction profile and content_type defaults during
+    #: chunking and dedup. Persisted onto each stored chunk via ``_mip.*`` keys.
+    mip_pipeline: PipelineSpec | None = None
+    #: Name of the MIP rule whose action produced ``mip_pipeline``. Persisted on
+    #: stored chunks as ``_mip.rule`` so recall can warn on rule-version drift.
+    mip_rule_name: str | None = None
 
 
 @dataclass
@@ -647,6 +656,9 @@ class RoutingDecision:
     rule_name: str | None = None
     confidence: float = 1.0
     reasoning: str | None = None  # LLM justification if intent layer used
+    pipeline: PipelineSpec | None = None  # Optional pipeline-shaping overrides from rule
+    forget: ForgetSpec | None = None  # Optional forget-policy overrides from rule (Phase 4)
+    observability_tags: list[str] | None = None  # Per-rule operator labels (Phase 5)
 
 
 # ---------------------------------------------------------------------------

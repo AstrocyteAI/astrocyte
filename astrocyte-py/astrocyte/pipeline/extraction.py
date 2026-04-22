@@ -16,6 +16,7 @@ from functools import lru_cache
 import yaml
 
 from astrocyte.config import AstrocyteConfig, ExtractionProfileConfig, SourceConfig
+from astrocyte.mip.schema import ChunkerSpec
 from astrocyte.types import Metadata, MetadataValue, RetainRequest
 
 _STRATEGY_ALIASES: dict[str, str] = {
@@ -109,38 +110,70 @@ def _normalize_chunking_strategy(name: str) -> str:
     raise ValueError(f"Unknown chunking strategy: {name!r}")
 
 
+@dataclass(frozen=True)
+class ChunkingDecision:
+    """Resolved chunking parameters for one retain call.
+
+    ``overlap`` is ``None`` when no source set it explicitly — callers should
+    fall through to ``chunk_text``'s default.
+    """
+
+    strategy: str
+    max_size: int
+    overlap: int | None = None
+
+
 def resolve_retain_chunking(
     content_type: str,
     *,
     profile: ExtractionProfileConfig | None,
     default_strategy: str,
     default_max_chunk_size: int,
-) -> tuple[str, int]:
-    """Pick chunking strategy and max chunk size for :class:`~astrocyte.types.RetainRequest`.
+    mip_chunker: ChunkerSpec | None = None,
+) -> ChunkingDecision:
+    """Pick chunking parameters for :class:`~astrocyte.types.RetainRequest`.
 
-    When ``profile`` sets ``chunking_strategy``, it wins over ``content_type`` routing.
-    When ``profile`` sets ``chunk_size``, it overrides ``default_max_chunk_size``.
+    Precedence (highest to lowest):
+    1. ``mip_chunker`` — per-rule overrides from a MIP ``RoutingDecision``
+    2. ``profile`` — per-source ``ExtractionProfileConfig``
+    3. ``content_type`` — built-in routing for known types
+    4. ``default_strategy`` / ``default_max_chunk_size`` — orchestrator defaults
 
-    Without a profile, ``content_type`` selects a built-in strategy; ``text`` (and unknown
-    types) use ``default_strategy`` from the orchestrator.
+    Within each layer, individual fields are independent — a MIP override that
+    only sets ``max_size`` still allows ``profile`` or ``content_type`` to
+    determine the strategy.
     """
-    max_size = default_max_chunk_size
-    if profile is not None and profile.chunk_size is not None:
-        max_size = int(profile.chunk_size)
+    # Layer 4: defaults
+    strategy: str = default_strategy
+    max_size: int = default_max_chunk_size
+    overlap: int | None = None
 
-    if profile is not None and profile.chunking_strategy:
-        strategy = _normalize_chunking_strategy(str(profile.chunking_strategy))
-        return strategy, max_size
-
+    # Layer 3: content_type
     ct = (content_type or "").strip().lower()
     if ct in ("conversation", "transcript"):
-        return "dialogue", max_size
-    if ct in ("document", "email"):
-        return "paragraph", max_size
-    if ct == "event":
-        return "sentence", max_size
-    # "text", unknown future types → orchestrator defaults
-    return default_strategy, max_size
+        strategy = "dialogue"
+    elif ct in ("document", "email"):
+        strategy = "paragraph"
+    elif ct == "event":
+        strategy = "sentence"
+
+    # Layer 2: profile
+    if profile is not None:
+        if profile.chunk_size is not None:
+            max_size = int(profile.chunk_size)
+        if profile.chunking_strategy:
+            strategy = _normalize_chunking_strategy(str(profile.chunking_strategy))
+
+    # Layer 1: MIP override (highest precedence)
+    if mip_chunker is not None:
+        if mip_chunker.strategy is not None:
+            strategy = _normalize_chunking_strategy(mip_chunker.strategy)
+        if mip_chunker.max_size is not None:
+            max_size = int(mip_chunker.max_size)
+        if mip_chunker.overlap is not None:
+            overlap = int(mip_chunker.overlap)
+
+    return ChunkingDecision(strategy=strategy, max_size=max_size, overlap=overlap)
 
 
 # --- Line endings & per-type normalizer (conservative heuristics) ---

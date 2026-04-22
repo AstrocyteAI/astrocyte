@@ -113,3 +113,13 @@ Community transports follow the same pattern as other Astrocyte plugins (see `ec
 | **Retrieval / Memory Engine SPIs** | Retrieval adapters and full memory engines |
 
 This keeps credential gateways **pluggable** without conflating them with memory tiers or the LLM gateway role that Astrocyte explicitly does not take (`architecture.md`).
+
+---
+
+## Further reading
+
+- [Provider SPI](provider-spi/) — full SPI definitions including outbound transport protocol
+- [Ecosystem & packaging](ecosystem-and-packaging/) — entry points, packaging, and distribution model
+- [Gateway edge & API gateways](/end-user/gateway-edge-and-api-gateways/) — inbound edge (reverse proxies, API gateways)
+- [Production-grade HTTP service](/end-user/production-grade-http-service/) — TLS, proxy, and network hardening checklist
+- [Architecture](/design/architecture/) — how outbound transport fits in the layered architecture

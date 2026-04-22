@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 
 from astrocyte.mip.schema import MatchBlock, MatchSpec, RoutingRule
-from astrocyte.types import Metadata
+from astrocyte.types import ActorIdentity, Metadata
 
 
 @dataclass
@@ -23,6 +23,14 @@ class RuleEngineInput:
     pii_detected: bool = False
     source: str | None = None
     signals: dict[str, float] | None = None  # Computed signals (word_count, novelty_score)
+    # Identity-aware routing (identity spec §3 Gap 2). Populated by the
+    # caller when a resolved ActorIdentity is available — e.g. after the
+    # JWT identity middleware classifies the inbound token. Rules can
+    # branch on ``principal_type``, ``principal_id``, ``principal_upn``,
+    # ``principal_app_id`` in their match blocks and interpolate
+    # ``{principal.*}`` in action templates. Absent means "no identity
+    # resolved" — rules with principal_* conditions will not match.
+    actor_identity: ActorIdentity | None = None
 
 
 @dataclass
@@ -125,6 +133,9 @@ def resolve_field(field_path: str, input_data: RuleEngineInput) -> str | int | f
         "metadata.student_id" → input_data.metadata["student_id"]
         "signals.word_count" → input_data.signals["word_count"]
         "pii_detected" → input_data.pii_detected
+        "principal_type" → input_data.actor_identity.type   (identity spec §3 Gap 2)
+        "principal.id" → input_data.actor_identity.id
+        "principal.upn" → input_data.actor_identity.claims["upn"]
     """
     parts = field_path.split(".", 1)
     top = parts[0]
@@ -142,6 +153,25 @@ def resolve_field(field_path: str, input_data: RuleEngineInput) -> str | int | f
         # "tags" as a field returns comma-joined string for matching
         return ",".join(input_data.tags) if input_data.tags else None
 
+    # Identity-aware fields (identity spec §3 Gap 2). Short flat forms are
+    # the ergonomic default for match blocks; the dotted ``principal.*``
+    # form is used for action template interpolation. Both resolve here
+    # so a rule can mix-and-match.
+    if top == "principal_type":
+        return input_data.actor_identity.type if input_data.actor_identity else None
+    if top == "principal_id":
+        return input_data.actor_identity.id if input_data.actor_identity else None
+    if top == "principal_upn":
+        identity = input_data.actor_identity
+        if identity and identity.claims:
+            return identity.claims.get("upn")
+        return None
+    if top == "principal_app_id":
+        identity = input_data.actor_identity
+        if identity and identity.claims:
+            return identity.claims.get("app_id")
+        return None
+
     # Dotted paths into dicts
     if len(parts) == 2:
         sub_key = parts[1]
@@ -149,6 +179,21 @@ def resolve_field(field_path: str, input_data: RuleEngineInput) -> str | int | f
             return input_data.metadata.get(sub_key)
         if top == "signals" and input_data.signals:
             return input_data.signals.get(sub_key)
+        if top == "principal" and input_data.actor_identity:
+            identity = input_data.actor_identity
+            # Primary structured fields take precedence over claims dict.
+            if sub_key == "type":
+                return identity.type
+            if sub_key == "id":
+                return identity.id
+            # oid_or_app_id: convenience alias for action templates —
+            # resolves to identity.id regardless of type, because id
+            # is already the stable identifier (oid for users, app_id
+            # for service accounts) per the JWT classifier.
+            if sub_key == "oid" or sub_key == "oid_or_app_id":
+                return identity.id
+            if identity.claims:
+                return identity.claims.get(sub_key)
 
     return None
 

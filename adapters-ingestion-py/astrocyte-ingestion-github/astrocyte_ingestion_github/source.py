@@ -135,7 +135,8 @@ class GithubPollIngestSource:
         return HealthStatus(healthy=True, message="github poll loop running")
 
     async def _run_loop(self) -> None:
-        assert self._client is not None
+        if self._client is None:
+            raise RuntimeError("HTTP client not initialized")
         interval = self._interval_s()
         while not self._stop.is_set():
             try:
@@ -159,7 +160,8 @@ class GithubPollIngestSource:
                 continue
 
     async def _poll_once(self) -> None:
-        assert self._client is not None
+        if self._client is None:
+            raise RuntimeError("HTTP client not initialized")
         owner, repo = _owner_repo(self._config)
         params: dict[str, Any] = {
             "state": "all",

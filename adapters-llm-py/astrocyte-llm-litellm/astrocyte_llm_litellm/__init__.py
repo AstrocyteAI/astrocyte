@@ -142,6 +142,8 @@ class LiteLLMProvider:
 
         response = await litellm.acompletion(**kwargs)
 
+        if not response.choices:
+            raise RuntimeError(f"LiteLLM returned empty choices for model {use_model}")
         choice = response.choices[0]
         usage = None
         if response.usage:
@@ -167,7 +169,24 @@ class LiteLLMProvider:
         use_model = model or self._embedding_model
 
         # Truncate to stay within typical embedding model token limits.
-        safe_texts = [_sanitize_text(t)[:_MAX_EMBED_CHARS] for t in texts]
+        # Log when truncation actually happens so operators can see silent
+        # clipping in embedding inputs (previously invisible; CodeQL flagged
+        # the unused _logger that this closes).
+        safe_texts: list[str] = []
+        truncated_count = 0
+        for t in texts:
+            sanitized = _sanitize_text(t)
+            if len(sanitized) > _MAX_EMBED_CHARS:
+                truncated_count += 1
+                sanitized = sanitized[:_MAX_EMBED_CHARS]
+            safe_texts.append(sanitized)
+        if truncated_count:
+            _logger.warning(
+                "LiteLLMProvider.embed truncated %d of %d input(s) to %d chars "
+                "(model=%s). Longer inputs risk provider-side rejection; "
+                "consider pre-chunking upstream.",
+                truncated_count, len(texts), _MAX_EMBED_CHARS, use_model,
+            )
 
         kwargs: dict[str, Any] = {
             "model": use_model,
@@ -215,7 +234,7 @@ def _to_litellm_message(msg: Message) -> dict[str, Any]:
             parts.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:{getattr(part, 'media_type', 'image/png')};base64,{part.image_base64}"},
+                    "image_url": {"url": f"data:{part.media_type or 'image/png'};base64,{part.image_base64}"},
                 }
             )
 

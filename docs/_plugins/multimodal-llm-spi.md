@@ -266,3 +266,12 @@ Entity extraction, BM25 document store, and similar steps consume **`message_tex
 - **SPI:** `llm_capabilities()`, optional `embed_multimodal()`, same `complete()` entrypoint with richer messages.
 - **Adapters:** Map DTOs → OpenAI-compatible / LiteLLM / provider SDKs.
 - **Pipeline:** Text-first defaults; **caption** or **multimodal embed** strategies for retain.
+
+---
+
+## Further reading
+
+- [Provider SPI](provider-spi/) — full LLM protocol including `llm_capabilities()` and `embed()`
+- [Ecosystem & packaging](ecosystem-and-packaging/) — how to package and distribute LLM adapters
+- [Memory API reference](/end-user/memory-api-reference/) — how multimodal content flows through retain/recall
+- [Configuration reference](/end-user/configuration-reference/) — LLM provider config keys

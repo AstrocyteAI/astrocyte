@@ -77,7 +77,7 @@ Track completion in your issue tracker or PRs as needed.
 - [ ] **Private networking:** Prefer private subnets / mesh; no public exposure without WAF/rate limits as needed.
 - [ ] **Request limits:** Max body size, header size, URL length; **timeouts** on client and server.
 - [ ] **CORS:** If browser clients exist, **restrict** origins; avoid `*` in production.
-- [ ] **Rate limiting:** Edge (API gateway) + align with Astrocyte **homeostasis** / quotas in config (`policy-layer.md`). Optional in-process **`ASTROCYTE_RATE_LIMIT_PER_SECOND`** on **`astrocyte-gateway-py`** (see **[Gateway edge & API gateways](./gateway-edge-and-api-gateways.md)**).
+- [ ] **Rate limiting:** Edge (API gateway) + align with Astrocyte **homeostasis** / quotas in config (`policy-layer.md`). Optional in-process **`ASTROCYTE_RATE_LIMIT_PER_SECOND`** on **`astrocyte-gateway-py`** (see **[Gateway edge & API gateways](gateway-edge-and-api-gateways/)**).
 
 ### 3.5 API design and contract
 
@@ -218,6 +218,18 @@ Align **`astrocyte-gateway-py`** with §3: real backends, verified AuthN, AuthZ 
 - [x] **Grants from config:** When **`access_control.enabled`**, grants are loaded from YAML (**`access_grants`** and **`banks.*.access`**) via **`access_grants_for_astrocyte()`** in **`astrocyte-py`** and **`set_access_grants()`** in **`astrocyte_gateway/brain.py`** — see `identity-and-external-policy.md` §8. **Not done here:** grants from a **database** or **external PDP** (still your integration or future work).
 - [ ] **Profiles:** Keep PII `disabled` and `access_control.enabled = False` only for explicit **dev** profile; document prod profile requirements.
 - [ ] **MCP / CLI:** If `astrocyte-mcp` is shipped, align its security model with the HTTP service (same AuthN story). See `mcp-server.md`.
+
+---
+
+## Further reading
+
+- [Configuration reference](configuration-reference/) — full `astrocyte.yaml` schema
+- [Authentication setup](authentication-setup/) — auth modes, OIDC providers, JWT claim mapping
+- [Access control setup](access-control-setup/) — grants, principals, OBO
+- [Storage backend setup](storage-backend-setup/) — pgvector, Qdrant, Neo4j, Elasticsearch
+- [Monitoring & observability](monitoring-and-observability/) — health endpoints, logging, tracing, metrics, alerting
+- [Memory API reference](memory-api-reference/) — retain/recall/reflect/forget signatures
+- [Gateway edge & API gateways](gateway-edge-and-api-gateways/) — reverse proxies, edge rate limiting, gateway plugins
 
 ---
 

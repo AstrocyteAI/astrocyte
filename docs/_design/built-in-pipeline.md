@@ -59,7 +59,7 @@ HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook
 
 **Declarative `sources:`** may use **`type: poll`** (alias **`api_poll`**) with **`driver: github`**. Drivers resolve via **`astrocyte.ingest_poll_drivers`**; **`astrocyte-ingestion-github`** registers **`github`** (Issues REST API, skips PRs). Install **`astrocyte[poll]`** (or that package alone). **`path`** is **`owner/repo`**; **`interval_seconds`** ≥ 60 (minimum validation and recommended baseline for production); **`auth.token`** is a GitHub PAT or fine-grained token. **`SourceRegistry.from_sources_config`** still requires **`retain=...`**.
 
-**Gateway ops:** **`GET /health/ingest`** on **`astrocyte-gateway-py`** returns ingest-only readiness (per-source health). Set **`ASTROCYTE_LOG_FORMAT=json`** for structured ingest lines (supervisor start/stop, GitHub rate-limit warnings, stream failures) via **`astrocyte.ingest.logutil`**. Recipe: **[`poll-ingest-gateway.md`](../_end-user/poll-ingest-gateway.md)**.
+**Gateway ops:** **`GET /health/ingest`** on **`astrocyte-gateway-py`** returns ingest-only readiness (per-source health). Set **`ASTROCYTE_LOG_FORMAT=json`** for structured ingest lines (supervisor start/stop, GitHub rate-limit warnings, stream failures) via **`astrocyte.ingest.logutil`**. Recipe: **[Poll ingest gateway](/end-user/poll-ingest-gateway/)**.
 
 ### Extraction profiles for issues vs transcripts
 

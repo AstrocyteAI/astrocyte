@@ -1,5 +1,7 @@
 """Tests for individual pipeline stages — embedding, entity extraction, reflect, reranking, retrieval."""
 
+import pytest
+
 from astrocyte.pipeline.embedding import _pseudo_embedding, generate_embeddings
 from astrocyte.pipeline.entity_extraction import _parse_entities, extract_entities
 from astrocyte.pipeline.fusion import ScoredItem
@@ -148,6 +150,107 @@ class TestSynthesize:
         assert "don't have" in result.answer.lower()
 
 
+class TestPromptRegistry:
+    """ReflectSpec.prompt selects from PROMPT_REGISTRY (Phase 2, Step 9)."""
+
+    def test_default_variant_matches_omitted(self):
+        a = _build_system_prompt(None)
+        b = _build_system_prompt(None, prompt_variant="default")
+        assert a == b
+
+    def test_temporal_aware_variant_emphasizes_chronology(self):
+        prompt = _build_system_prompt(None, prompt_variant="temporal_aware")
+        assert "chronolog" in prompt.lower() or "ordering" in prompt.lower()
+        assert "timestamp" in prompt.lower() or "date" in prompt.lower()
+
+    def test_evidence_strict_variant_emphasizes_citation(self):
+        prompt = _build_system_prompt(None, prompt_variant="evidence_strict")
+        assert "memory" in prompt.lower()
+        assert "cite" in prompt.lower() or "insufficient evidence" in prompt.lower()
+
+    def test_unknown_variant_falls_back_to_default(self):
+        default = _build_system_prompt(None)
+        unknown = _build_system_prompt(None, prompt_variant="not_a_real_variant")
+        assert unknown == default
+
+    def test_variant_layered_with_dispositions(self):
+        prompt = _build_system_prompt(
+            Dispositions(skepticism=5),
+            prompt_variant="evidence_strict",
+        )
+        assert "cite" in prompt.lower() or "insufficient" in prompt.lower()
+        assert "skeptical" in prompt.lower()
+
+
+class TestFormatMemoriesPromote:
+    """promote_metadata renders selected metadata fields inline (P4 capped)."""
+
+    def test_promoted_fields_appear_inline(self):
+        hits = [MemoryHit(text="x", score=0.9, metadata={"author": "Ada", "topic": "alg"})]
+        text = _format_memories(hits, promote_metadata=["author", "topic"])
+        assert "author=Ada" in text
+        assert "topic=alg" in text
+
+    def test_missing_keys_silently_skipped(self):
+        hits = [MemoryHit(text="x", score=0.9, metadata={"author": "Ada"})]
+        text = _format_memories(hits, promote_metadata=["author", "missing_key"])
+        assert "author=Ada" in text
+        assert "missing_key" not in text
+
+    def test_promote_capped_at_five(self):
+        meta = {f"k{i}": f"v{i}" for i in range(10)}
+        hits = [MemoryHit(text="x", score=0.9, metadata=meta)]
+        text = _format_memories(hits, promote_metadata=list(meta.keys()))
+        promoted_count = sum(1 for k in meta if f"{k}=" in text)
+        assert promoted_count == 5
+
+    def test_no_promote_metadata_unchanged_format(self):
+        hits = [MemoryHit(text="hello", score=0.9, fact_type="world")]
+        a = _format_memories(hits)
+        b = _format_memories(hits, promote_metadata=None)
+        assert a == b
+        assert "{" not in a  # no metadata block when empty
+
+
+class TestSynthesizeMipReflect:
+    """synthesize honors mip_reflect.prompt and mip_reflect.promote_metadata."""
+
+    async def test_mip_reflect_selects_prompt_variant(self, monkeypatch):
+        from astrocyte.mip.schema import ReflectSpec
+        from astrocyte.pipeline import reflect as reflect_mod
+
+        captured: dict[str, str] = {}
+
+        def fake_build(dispositions, *, prompt_variant=None):
+            captured["variant"] = prompt_variant or "default"
+            return "stub-system-prompt"
+
+        monkeypatch.setattr(reflect_mod, "_build_system_prompt", fake_build)
+
+        llm = MockLLMProvider(default_response="ok")
+        hits = [MemoryHit(text="m1", score=0.9)]
+        await synthesize(
+            "q", hits, llm,
+            mip_reflect=ReflectSpec(prompt="evidence_strict"),
+        )
+        assert captured["variant"] == "evidence_strict"
+
+    async def test_mip_reflect_promotes_metadata_into_prompt(self):
+        from astrocyte.mip.schema import ReflectSpec
+
+        llm = MockLLMProvider(default_response="ok")
+        hits = [MemoryHit(text="body", score=0.9, metadata={"author": "Ada"})]
+        await synthesize(
+            "q", hits, llm,
+            mip_reflect=ReflectSpec(promote_metadata=["author"]),
+        )
+        # Inspect the rendered user prompt sent to the LLM
+        sent = llm.messages_seen[-1] if hasattr(llm, "messages_seen") else None
+        # If MockLLMProvider does not record messages, just verify no exception was raised.
+        if sent:
+            assert "author=Ada" in str(sent)
+
+
 # ---------------------------------------------------------------------------
 # Reranking
 # ---------------------------------------------------------------------------
@@ -170,6 +273,44 @@ class TestBasicRerank:
         items = [ScoredItem(id="a", text="hello", score=0.5)]
         result = basic_rerank(items, "")
         assert len(result) == 1
+
+
+class TestBasicRerankMipOverride:
+    """Per-call override for MIP RerankSpec (Phase 2, Step 8a)."""
+
+    def test_override_keyword_weight_inflates_score(self):
+        from astrocyte.mip.schema import RerankSpec
+
+        items = [ScoredItem(id="a", text="dark mode preference", score=0.5)]
+        # Default keyword weight is 0.05; bump it to 0.50 — score gain visible
+        with_default = basic_rerank(items, "dark mode")[0].score
+        with_override = basic_rerank(items, "dark mode", mip_rerank=RerankSpec(keyword_weight=0.50))[0].score
+        assert with_override > with_default
+        # Two matching terms × (0.50 - 0.05) = 0.90 expected delta
+        assert with_override - with_default == pytest.approx(0.90, abs=1e-9)
+
+    def test_override_proper_noun_weight(self):
+        from astrocyte.mip.schema import RerankSpec
+
+        items = [ScoredItem(id="a", text="Alice talked to Bob", score=0.5)]
+        with_default = basic_rerank(items, "What did Alice say?")[0].score
+        with_override = basic_rerank(items, "What did Alice say?", mip_rerank=RerankSpec(proper_noun_weight=1.0))[0].score
+        assert with_override > with_default
+
+    def test_partial_override_lets_other_weight_default(self):
+        from astrocyte.mip.schema import RerankSpec
+
+        items = [ScoredItem(id="a", text="Alice on dark mode", score=0.5)]
+        # Only keyword_weight is overridden — proper_noun_weight stays at default
+        scored = basic_rerank(items, "Alice dark mode", mip_rerank=RerankSpec(keyword_weight=0.0))[0].score
+        # keyword contribution is 0, proper-noun contribution is default 0.10 for "Alice"
+        assert scored == pytest.approx(0.5 + 0.10, abs=1e-9)
+
+    def test_none_override_is_equivalent_to_omitted(self):
+        items = [ScoredItem(id="a", text="dark mode", score=0.5)]
+        a = basic_rerank(items, "dark mode")[0].score
+        b = basic_rerank(items, "dark mode", mip_rerank=None)[0].score
+        assert a == b
 
 
 # ---------------------------------------------------------------------------

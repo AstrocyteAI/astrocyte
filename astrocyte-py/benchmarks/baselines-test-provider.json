@@ -1,0 +1,33 @@
+{
+  "locomo": {
+    "provider": "test",
+    "overall_accuracy": 0.6123,
+    "category_accuracy": {
+      "multi-hop": 0.1558,
+      "open-domain": 0.2396,
+      "single-hop": 0.4291,
+      "temporal": 0.6849,
+      "adversarial": 1.0
+    },
+    "metrics": {
+      "recall_hit_rate": 0.5463,
+      "recall_mrr": 0.4559,
+      "recall_precision": 0.2878
+    },
+    "notes": "Mock LLM + BoW embeddings baseline. v2 = temporal retrieval + intent-aware recall. Real-provider scores will differ (should be higher); set a separate baseline for CI jobs that use real API keys."
+  },
+  "longmemeval": {
+    "provider": "test",
+    "overall_accuracy": 0.21,
+    "category_accuracy": {
+      "extraction": 0.1714,
+      "reasoning": 0.3
+    },
+    "metrics": {
+      "recall_hit_rate": 0.18,
+      "recall_mrr": 0.074,
+      "recall_precision": 0.03
+    },
+    "notes": "Mock LLM + BoW embeddings baseline. v2 = temporal retrieval + intent-aware recall. Real-provider scores will differ (should be higher); set a separate baseline for CI jobs that use real API keys."
+  }
+}

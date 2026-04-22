@@ -1,12 +1,12 @@
 # Astrocytes in neuroscience
 
-This note summarizes how astrocyte are understood to work in the healthy and diseased central nervous system (CNS). It is derived primarily from the review article in the repository’s references folder.
+This note summarizes how astrocytes are understood to work in the healthy and diseased central nervous system (CNS). It is derived primarily from the review article in the repository’s references folder.
 
 **Primary source:** Trujillo-Estrada, L., et al. “Astrocytes: From the Physiology to the Disease.” *Current Alzheimer Research*, 2019, 16, 1–22. PDF: `references/AstrocytesFromthePhysiologytotheDisease.pdf`.
 
 ---
 
-## 1. What astrocyte are
+## 1. What astrocytes are
 
 Astrocytes are star-shaped glial cells. They account for roughly **40% of cells in the mammalian brain** and are the major cellular constituent of the CNS. Historically they were framed as passive “support” for neurons; contemporary work treats them as **active partners** in circuit function, metabolism, vascular regulation, and response to injury.
 
@@ -39,7 +39,7 @@ Astrocytes are **heterogeneous** by location, development, and molecular profile
 - **Functional subsets:** imaging and sorting approaches have identified subpopulations with different capacities (e.g., enhanced support for synaptogenesis vs. phagocytic-related signatures).
 - **Reactive phenotypes:** under pathology, labels such as **A1** (complement/inflammatory-associated, described as neurotoxic in some contexts) vs. **A2** (e.g., neurotrophic factor upregulation, described as more protective) have been proposed - useful heuristically, though real diversity is likely richer than a binary split.
 
-Understanding this heterogeneity matters because **region- and state-specific** astrocyte may explain differing vulnerability of brain areas to stress, aging, and disease.
+Understanding this heterogeneity matters because **region- and state-specific** astrocytes may explain differing vulnerability of brain areas to stress, aging, and disease.
 
 ---
 
@@ -71,19 +71,19 @@ Perivascular astrocyte end feet express specialized molecular machinery (e.g., *
 
 ## 5. Response to injury: reactive astrogliosis
 
-Astrocytes react to trauma, infection, and neurodegenerative stress through **astrogliosis** (“reactive” or “activated” astrocyte). Changes can include:
+Astrocytes react to trauma, infection, and neurodegenerative stress through **astrogliosis** (“reactive” or “activated” astrocytes). Changes can include:
 
 - Hypertrophy, process reorganization, polarization toward injury.
 - Upregulation of **GFAP**, vimentin, nestin, CSPGs.
 - Altered glutamate handling, cytokine release, **ROS**, and in chronic settings **glial scar** formation.
 
-The functional impact is **context-dependent**: reactive astrocyte can be **adaptive** (barrier repair, debris handling, trophic support) or **maladaptive** (inflammatory amplification, excitotoxic milieu, scar-related inhibition). The concept of **astrocytopathies** highlights cases where **primary astrocyte dysfunction** drives neurological disease.
+The functional impact is **context-dependent**: reactive astrocytes can be **adaptive** (barrier repair, debris handling, trophic support) or **maladaptive** (inflammatory amplification, excitotoxic milieu, scar-related inhibition). The concept of **astrocytopathies** highlights cases where **primary astrocyte dysfunction** drives neurological disease.
 
 ---
 
 ## 6. Astrocytes in neurodegenerative disease (overview)
 
-Because astrocyte maintain synaptic and metabolic homeostasis, their failure or maladaptive reactivity contributes to multiple disorders. The review highlights roles in:
+Because astrocytes maintain synaptic and metabolic homeostasis, their failure or maladaptive reactivity contributes to multiple disorders. The review highlights roles in:
 
 | Condition | Astrocyte-relevant themes (non-exhaustive) |
 |-----------|-----------------------------------------------|
@@ -97,7 +97,7 @@ Common mechanistic threads include **glutamate dysregulation**, **calcium signal
 
 ---
 
-## 7. How science studies astrocyte today
+## 7. How science studies astrocytes today
 
 The review emphasizes tools that make astrocyte biology more **dynamic and cell-specific**:
 
@@ -105,7 +105,7 @@ The review emphasizes tools that make astrocyte biology more **dynamic and cell-
 - **Optogenetics** and **chemogenetics** (e.g., DREADDs) to raise or lower astrocyte signaling pathways with spatial and temporal control.
 - **Single-cell RNA-seq** to map regional and disease-state transcriptomes.
 - **Conditional genetics** in rodents (e.g., GFAP- or astrocyte-targeted Cre) to test pathways (IP3R2, connexins, receptors, ApoE isoforms, NF-κB, etc.).
-- **Human iPSC-derived astrocyte** for patient-specific modeling of AD, HD, ALS, and related phenotypes.
+- **Human iPSC-derived astrocytes** for patient-specific modeling of AD, HD, ALS, and related phenotypes.
 
 ---
 

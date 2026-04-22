@@ -76,10 +76,17 @@ jobs:
         working-directory: astrocyte-py
         run: uv sync --extra dev
 
+      - name: Install Doppler CLI
+        # Doppler is the source of truth for secrets (see astrocyte prd
+        # environment). The Astrocyte pattern is to run commands via
+        # ``doppler run --`` locally and in CI — keeps secrets out of
+        # workflow env blocks and under a single rotation story.
+        uses: dopplerhq/cli-action@v3
+
       - name: Run ${{ matrix.benchmark }} benchmark
         working-directory: astrocyte-py
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_BENCHMARK_TOKEN }}
         run: |
           ARGS="--config benchmarks/config.yaml"
           ARGS="$ARGS --output-dir benchmark-results"
@@ -99,7 +106,10 @@ jobs:
             ARGS="$ARGS --max-questions $MAX_Q"
           fi
 
-          uv run python scripts/run_benchmarks.py $ARGS
+          # DOPPLER_TOKEN selects the prd config automatically; no need
+          # to pass --config prd. Service token should be scoped to the
+          # benchmark-read role.
+          doppler run -- uv run python scripts/run_benchmarks.py $ARGS
 
       - name: Upload results
         if: always()
@@ -166,11 +176,47 @@ jobs:
               print(json.dumps(summary, indent=2, default=str))
           " > summary.json
 
+          # Also produce the merged file the regression gate consumes
+          # (unwrapped "combined" dict, not the summary-only version).
+          python3 -c "
+          import json, glob, os
+          combined = {}
+          for f in sorted(glob.glob('all-results/*.json')):
+              if os.path.basename(f) == 'latest.json':
+                  continue
+              with open(f) as fh:
+                  data = json.load(fh)
+              for key, val in data.items():
+                  if key != '_meta':
+                      combined[key] = val
+                  elif '_meta' not in combined:
+                      combined['_meta'] = val
+          with open('combined-latest.json', 'w') as fh:
+              json.dump(combined, fh, indent=2)
+          "
+
           echo '```json' >> $GITHUB_STEP_SUMMARY
           cat summary.json >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
+      - name: Checkout for baseline
+        uses: actions/checkout@v6
+        with:
+          path: repo
+
+      - name: Regression gate — fail on score drop beyond tolerance
+        # Does not block the matrix jobs; only surfaces in the summarize
+        # step so the benchmark runs themselves always complete and
+        # upload artifacts. The exit code here decides overall success.
+        run: |
+          cd repo/astrocyte-py
+          uv sync --extra dev
+          uv run python scripts/check_benchmark_regression.py \
+              --baseline benchmarks/baselines-test-provider.json \
+              --results ../../combined-latest.json
+
       - name: Upload combined results
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-results-combined

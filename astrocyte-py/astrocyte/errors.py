@@ -30,6 +30,25 @@ class AccessDenied(AstrocyteError):
         super().__init__(f"Principal '{principal}' denied '{permission}' on bank '{bank_id}'")
 
 
+class AuthorizationError(AstrocyteError):
+    """Caller's credential could not be resolved to a valid identity.
+
+    Raised by the JWT identity classifier (and any upstream middleware that
+    invokes it) when a presented token is invalid, expired, or decodes to a
+    shape Astrocyte cannot classify as either a delegated user token or a
+    service account credential. Also raised when no credential is presented
+    and anonymous access is disabled.
+
+    Must always fail closed — a credential presented and rejected must
+    never silently fall through to a default bank, because cross-user data
+    leakage is the failure mode being prevented.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
 class RateLimited(AstrocyteError):
     """Request exceeds rate limit."""
 

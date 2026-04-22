@@ -291,8 +291,94 @@ Validation errors raise `ConfigError` at load time (duplicate rule names, invali
 
 ---
 
-## 9. Further reading
+## 9. Pipeline shaping (advanced, opt-in)
 
-- **Memory Intent Protocol design doc** -- full architecture and rationale
-- **Configuration reference** -- `mip_config_path` in `astrocyte.yaml`
-- **Architecture** -- how MIP fits into the Astrocyte retain pipeline
+> **Most rules should stay routing-only.** Sections 1–8 cover the entire authoring surface for routing. Pipeline shaping is a separate, opt-in capability: it lets a rule control *how* memories are chunked, deduplicated, reranked, and synthesized — not just where they live. Reach for it only when routing alone leaves observable quality on the table (e.g., conversational content needs dialogue chunking; legal docs need strict-evidence reflect).
+
+When a rule's `action.pipeline:` block is present, MIP propagates a resolved `PipelineSpec` through `RoutingDecision.pipeline` and persists `_mip.rule` and `_mip.pipeline_version` on each retained chunk. At recall time the orchestrator looks up the bank's dominant pipeline rule and applies the rerank / reflect overrides.
+
+### 9.1 Use a preset (recommended)
+
+```yaml
+- name: conversation
+  priority: 10
+  match: { all: [{ content_type: conversation }] }
+  action:
+    bank: dialogue-bank
+    pipeline:
+      version: 1
+      preset: conversational
+```
+
+Built-in presets (defined in `astrocyte/mip/presets.py`):
+
+| Preset | Chunker | Dedup | Rerank | Reflect |
+|---|---|---|---|---|
+| `conversational` | dialogue, max 800 | 0.92 / skip_chunk | keyword 0.08, proper-noun 0.15 | `temporal_aware`, promotes `[speaker, occurred_at]` |
+| `document` | paragraph, max 1200, overlap 100 | 0.95 / skip | keyword 0.10, proper-noun 0.05 | `default` |
+| `code` | fixed, 1500, overlap 200 | 0.98 / skip | keyword 0.12, no proper-noun boost | `evidence_strict` |
+| `evidence_strict` | inherits caller | 0.98 / skip | keyword 0.10, proper-noun 0.05 | `evidence_strict`, promotes `[source, occurred_at]` |
+
+### 9.2 Raw overrides (advanced)
+
+Explicit fields layer on top of (or replace) the preset. Document why in a YAML comment — `mip lint` flags raw overrides without one.
+
+```yaml
+- name: long-form-essays
+  priority: 20
+  match: { all: [{ content_type: essay }] }
+  action:
+    bank: essays
+    pipeline:
+      version: 2
+      preset: document
+      # essay reranker tuned during 2026-Q1 retrieval audit, see PR #482
+      rerank: { keyword_weight: 0.15 }
+      reflect: { promote_metadata: [author, occurred_at, citation] }
+```
+
+### 9.3 Action vocabulary
+
+| Field | Type | Purpose |
+|---|---|---|
+| `pipeline.version` | int (required when block is set) | Persisted on every chunk; recall warns on drift |
+| `pipeline.preset` | string | One of the names above; expanded at load time |
+| `pipeline.chunker.strategy` | `sentence` \| `dialogue` \| `paragraph` \| `fixed` | Overrides extraction profile |
+| `pipeline.chunker.max_size` | int | Max chars per chunk |
+| `pipeline.chunker.overlap` | int | Char overlap between chunks |
+| `pipeline.dedup.threshold` | float (0.0–1.0) | Cosine similarity to flag a chunk as duplicate |
+| `pipeline.dedup.action` | `skip_chunk` \| `skip` \| `warn` \| `update` | What to do with detected dupes |
+| `pipeline.rerank.keyword_weight` | float | Bonus per query-term match in reranker |
+| `pipeline.rerank.proper_noun_weight` | float | Bonus per capitalized query word match |
+| `pipeline.reflect.prompt` | `default` \| `temporal_aware` \| `evidence_strict` | Synthesis prompt variant |
+| `pipeline.reflect.promote_metadata` | list[str], **max 5** | Metadata fields rendered inline in the memory block |
+
+### 9.4 Guardrails enforced at load time
+
+- **P2** — `pipeline.version` is required when any pipeline field is set. Persisted onto each chunk so recall can warn on drift.
+- **P4** — `reflect.promote_metadata` is hard-capped at 5 fields (raises `ConfigError`).
+- **P5** — Pipeline blocks require `content_type` in the match block (raises `ConfigError`). Pipeline overrides without a content-type gate are almost always a mistake.
+
+### 9.5 Per-bank reranker scope (P3)
+
+Reranker weights resolve **per bank**, not per record. The first rule (in priority order) whose `action.bank` matches the recall bank wins. Templates like `student-{id}` match concrete `student-42` for resolution purposes. If two rules write to the same bank with conflicting reranker weights, that's a config error — `mip lint` surfaces it.
+
+### 9.6 Version drift at recall
+
+Each chunk carries `_mip.pipeline_version`. When the current rule's version differs, recall logs a `WARNING` on the `astrocyte.mip` logger naming the bank, current version, and the drifted versions present in the result. Operators decide whether to re-index the bank or accept the drift. No hits are dropped.
+
+### 9.7 CLI tooling
+
+```bash
+astrocyte mip lint mip.yaml         # validates schema, presets, P2/P4/P5 guardrails
+astrocyte mip explain my-rule       # prints the resolved pipeline shape for a sample input
+```
+
+---
+
+## 10. Further reading
+
+- [Memory Intent Protocol](/design/memory-intent-protocol/) — full architecture and rationale
+- [Configuration reference](/end-user/configuration-reference/) — `mip_config_path` in `astrocyte.yaml`
+- [Architecture](/design/architecture/) — how MIP fits into the Astrocyte retain pipeline
+- [Memory API reference](/end-user/memory-api-reference/) — retain/recall/reflect/forget signatures
