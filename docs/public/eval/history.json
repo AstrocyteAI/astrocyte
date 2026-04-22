@@ -414,5 +414,31 @@
     "config_snapshot": {
       "judge": "keyword"
     }
+  },
+  {
+    "suite": "basic",
+    "provider": "pipeline",
+    "provider_tier": "storage",
+    "timestamp": "2026-04-22T06:53:09.890048+00:00",
+    "metrics": {
+      "recall_precision": 0.11000000000000001,
+      "recall_hit_rate": 1.0,
+      "recall_mrr": 0.9333333333333333,
+      "recall_ndcg": 0.9377215315338049,
+      "retain_latency_p50_ms": 469.3587919999977,
+      "retain_latency_p95_ms": 1350.7031920500017,
+      "recall_latency_p50_ms": 202.74041249999897,
+      "recall_latency_p95_ms": 624.0277501999981,
+      "total_tokens_used": 850,
+      "total_duration_seconds": 13.686807539999997,
+      "reflect_accuracy": 1.0,
+      "reflect_completeness": null,
+      "reflect_hallucination_rate": null,
+      "reflect_latency_p50_ms": 1853.3947580000004,
+      "reflect_latency_p95_ms": 2063.8213397
+    },
+    "config_snapshot": {
+      "judge": "keyword"
+    }
   }
 ]
