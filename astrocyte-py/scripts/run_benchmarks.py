@@ -338,7 +338,7 @@ def _locomo_llm_judge(brain, *, use_canonical_judge: bool):
         if isinstance(llm_provider, MockLLMProvider):
             return None
     except ImportError:
-        pass
+        pass  # MockLLMProvider only exists in the test/dev extras; absent in prod
     from astrocyte.eval.judges.locomo_judge import LoCoMoLLMJudge
 
     return LoCoMoLLMJudge(llm_provider)

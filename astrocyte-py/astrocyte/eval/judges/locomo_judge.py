@@ -46,7 +46,6 @@ Those live upstream in the adapter that calls this judge.
 
 from __future__ import annotations
 
-import logging
 import re
 import string
 from collections import Counter
@@ -56,8 +55,6 @@ from astrocyte.eval.judges._stemmer import porter_stem
 
 if TYPE_CHECKING:
     from astrocyte.provider import LLMProvider
-
-_logger = logging.getLogger(__name__)
 
 #: Category id mapping used by the canonical LoCoMo evaluator. Astrocyte's
 #: adapter exposes categories as strings (``"multi-hop"``, etc.);
