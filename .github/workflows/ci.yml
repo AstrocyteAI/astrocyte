@@ -221,10 +221,41 @@ jobs:
 
   # Tavus CVI composer e2e lives in `.github/workflows/e2e-tavus-cvi.yml` (manual-only, single job).
 
+  # In-memory benchmark smoke test — no API key, no Doppler, fast.
+  # Catches regressions in the eval harness (benchmark adapter, judge, scorer)
+  # on every PR without incurring real LLM costs.
+  bench-smoke:
+    name: Benchmark smoke test
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Fetch LoCoMo dataset
+        working-directory: astrocyte-py
+        run: make fetch-locomo
+
+      - name: Install dependencies
+        working-directory: astrocyte-py
+        run: uv sync --extra dev
+
+      - name: Run smoke benchmarks (in-memory, no API key)
+        working-directory: astrocyte-py
+        run: make bench-smoke
+
   # Single green gate for branch protection (optional — pin this job instead of each matrix leg).
   ci:
     name: CI
-    needs: [astrocyte-py, gateway-publish-test-gate, adapters-integration-tavus]
+    needs: [astrocyte-py, gateway-publish-test-gate, adapters-integration-tavus, bench-smoke]
     permissions:
       contents: read
     runs-on: ubuntu-latest

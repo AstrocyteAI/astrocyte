@@ -138,6 +138,24 @@ bench-smoke:
 		--benchmarks builtin locomo
 
 # ---------------------------------------------------------------------------
+# CodeQL
+# ---------------------------------------------------------------------------
+
+CODEQL_DB      := /tmp/astrocyte-codeql-db
+CODEQL_OUT     := /tmp/astrocyte-findings.csv
+CODEQL_QUERIES := \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/StatementNoEffect.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Functions/ConsistentReturns.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Imports/ImportandImportFrom.ql
+
+.PHONY: codeql
+codeql:
+	codeql database create $(CODEQL_DB) --language=python --source-root . --overwrite
+	codeql database analyze $(CODEQL_DB) $(CODEQL_QUERIES) --format=csv --output=$(CODEQL_OUT)
+	@echo "--- Findings ($(CODEQL_OUT)) ---"
+	@cat $(CODEQL_OUT) || echo "(none)"
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 
