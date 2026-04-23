@@ -196,6 +196,12 @@ def main() -> int:
         "--metric-tolerance", type=float, default=0.03,
         help="Max allowed drop on any retrieval metric (default: 0.03)",
     )
+    parser.add_argument(
+        "--benchmarks", nargs="+", default=None,
+        metavar="BENCH",
+        help="Only check these benchmarks (e.g. locomo longmemeval). "
+             "Default: all benchmarks present in the baseline.",
+    )
     args = parser.parse_args()
 
     baseline = _load_json(args.baseline)
@@ -204,8 +210,12 @@ def main() -> int:
     all_regressions: list[str] = []
     all_rows: list[tuple[str, str, str, str, str]] = []
 
+    allowed = set(args.benchmarks) if args.benchmarks else None
+
     for bench_name, bench_baseline in baseline.items():
         if not isinstance(bench_baseline, dict):
+            continue
+        if allowed is not None and bench_name not in allowed:
             continue
         actual = results.get(bench_name)
         if not isinstance(actual, dict):
