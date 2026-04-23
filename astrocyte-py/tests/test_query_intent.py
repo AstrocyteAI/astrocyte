@@ -160,7 +160,7 @@ class TestStrategyWeights:
         """Every value in QueryIntent must have an entry — prevents
         silent KeyError regressions if a new intent is added to the
         enum but not the weights map."""
-        for intent in QueryIntent:
+        for intent in QueryIntent.__members__.values():
             assert intent in INTENT_STRATEGY_WEIGHTS
 
 
