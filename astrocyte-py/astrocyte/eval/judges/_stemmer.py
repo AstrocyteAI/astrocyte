@@ -42,13 +42,17 @@ class _Stemmer(Protocol):  # protocol stub for type hints
 
 
 def porter_stem(word: str) -> str:
-    """Porter-stem ``word`` using snowballstemmer if available.
+    """Porter-stem ``word`` using snowballstemmer.
 
-    Falls back to returning ``word`` unchanged when the optional
-    ``eval`` extra isn't installed. A warning is logged once (lru_cache)
-    so operators see the degradation signal.
+    Raises :class:`ImportError` when the optional ``eval`` extra is not
+    installed. Canonical LoCoMo F1 scores are wrong without stemming, so
+    silent degradation is worse than a loud failure.
     """
     stemmer = _get_stemmer()
     if stemmer is None:
-        return word
+        raise ImportError(
+            "snowballstemmer is required for canonical LoCoMo scoring. "
+            "Install with: pip install 'astrocyte[eval]' "
+            "(or: pip install snowballstemmer>=2.2).",
+        )
     return stemmer.stemWord(word)

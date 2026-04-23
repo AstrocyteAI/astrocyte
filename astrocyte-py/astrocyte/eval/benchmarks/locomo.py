@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from astrocyte.eval.metrics import word_overlap_score
+from astrocyte.eval.metrics import ndcg_at_k, word_overlap_score
 from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 
 # Minimum text overlap score to consider an answer correct.
@@ -235,6 +235,7 @@ class LoComoBenchmark:
         # dropping all partial-credit cases.
         category_f1_sum: dict[str, float] = {}
         total_f1_sum = 0.0
+        ndcg_sum = 0.0
 
         total_q = len(all_questions)
         print(f"  [LoCoMo] Evaluating {total_q} questions...")
@@ -323,6 +324,8 @@ class LoComoBenchmark:
                 if h.memory_id and word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD:
                     relevant_ids.add(h.memory_id)
             retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
+            q_ndcg = ndcg_at_k(relevant_ids, retrieved_ids)
+            ndcg_sum += q_ndcg
 
             query_results.append(
                 QueryResult(
@@ -366,7 +369,7 @@ class LoComoBenchmark:
             recall_precision=sum(qr.precision for qr in query_results) / max(len(query_results), 1),
             recall_hit_rate=sum(1.0 for qr in query_results if qr.relevant_found > 0) / max(len(query_results), 1),
             recall_mrr=sum(qr.reciprocal_rank for qr in query_results) / max(len(query_results), 1),
-            recall_ndcg=0.0,
+            recall_ndcg=ndcg_sum / max(len(query_results), 1),
             retain_latency_p50_ms=percentile(retain_latencies, 50),
             retain_latency_p95_ms=percentile(retain_latencies, 95),
             recall_latency_p50_ms=percentile(recall_latencies, 50),
