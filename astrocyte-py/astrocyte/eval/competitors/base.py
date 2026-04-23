@@ -140,14 +140,14 @@ def build_competitor_brain(
     config = config or {}
 
     if key == "mem0":
-        from astrocyte.eval.competitors.mem0_brain import Mem0Brain
+        from astrocyte.eval.competitors.mem0_adapter import Mem0BrainAdapter
 
-        return Mem0Brain(llm_provider=llm_provider, **config)
+        return Mem0BrainAdapter(llm_provider=llm_provider, **config)
 
     if key == "zep":
-        from astrocyte.eval.competitors.zep_brain import ZepBrain
+        from astrocyte.eval.competitors.zep_adapter import ZepBrainAdapter
 
-        return ZepBrain(llm_provider=llm_provider, **config)
+        return ZepBrainAdapter(llm_provider=llm_provider, **config)
 
     raise ValueError(
         f"Unknown competitor: {name!r}. "
