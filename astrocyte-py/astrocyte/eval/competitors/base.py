@@ -72,7 +72,6 @@ class CompetitorBrain(Protocol):
         they only care about eventual recall-ability. Competitor adapters
         return whatever their SDK returns — the benchmarks don't parse it.
         """
-        ...
 
     async def recall(
         self,
@@ -88,7 +87,6 @@ class CompetitorBrain(Protocol):
         can read ``hits[i].text`` and ``hits[i].memory_id`` without
         caring which system produced them.
         """
-        ...
 
     async def reflect(
         self,
@@ -106,7 +104,6 @@ class CompetitorBrain(Protocol):
         synthesis in the matrix**, regardless of which brain retrieved
         the chunks.
         """
-        ...
 
 
 # ---------------------------------------------------------------------------

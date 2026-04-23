@@ -30,7 +30,7 @@ class _PipelineLike(Protocol):
 
     llm_provider: object
 
-    def reset_token_counter(self) -> int: ...
+    def reset_token_counter(self) -> int: pass
 
 
 @runtime_checkable
@@ -59,7 +59,7 @@ class CompetitorBrain(Protocol):
         tags: list[str] | None = None,
         occurred_at: datetime | None = None,
         content_type: str = "text",
-    ) -> RetainResult: ...
+    ) -> RetainResult: pass
 
     async def recall(
         self,
@@ -67,7 +67,7 @@ class CompetitorBrain(Protocol):
         *,
         bank_id: str,
         max_results: int = 10,
-    ) -> RecallResult: ...
+    ) -> RecallResult: pass
 
     async def reflect(
         self,
@@ -75,4 +75,4 @@ class CompetitorBrain(Protocol):
         *,
         bank_id: str,
         max_tokens: int | None = None,
-    ) -> ReflectResult: ...
+    ) -> ReflectResult: pass
