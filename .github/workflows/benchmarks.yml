@@ -192,15 +192,26 @@ jobs:
           path: repo
 
       - name: Regression gate — fail on score drop beyond tolerance
-        # Does not block the matrix jobs; only surfaces in the summarize
-        # step so the benchmark runs themselves always complete and
-        # upload artifacts. The exit code here decides overall success.
+        # Compares against baselines-openai.json (real provider, LLM-judge)
+        # since this workflow runs with Doppler-injected OPENAI_API_KEY.
+        # Tolerances are looser than the mock-provider gate because LLM
+        # sampling introduces run-to-run variance (~2-3pp on 200q runs).
+        # Falls back to baselines-test-provider.json if openai baseline
+        # doesn't exist yet (first real run after repo creation).
         run: |
           cd repo/astrocyte-py
           uv sync --extra dev
+          BASELINE="benchmarks/baselines-openai.json"
+          if [ ! -f "$BASELINE" ]; then
+            echo "WARNING: $BASELINE not found — falling back to test-provider baseline."
+            BASELINE="benchmarks/baselines-test-provider.json"
+          fi
           uv run python scripts/check_benchmark_regression.py \
-              --baseline benchmarks/baselines-test-provider.json \
-              --results ../../combined-latest.json
+              --baseline "$BASELINE" \
+              --results ../../combined-latest.json \
+              --overall-tolerance 0.04 \
+              --category-tolerance 0.06 \
+              --metric-tolerance 0.05
 
       - name: Upload combined results
         if: always()

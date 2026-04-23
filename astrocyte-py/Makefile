@@ -131,11 +131,16 @@ bench: fetch-datasets
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--locomo-path $(LOCOMO_DIR)/data
 
-# Smoke test — in-memory providers, no API key needed
-bench-smoke:
+# Smoke test — in-memory providers, no API key needed.
+# Uses the real LoCoMo dataset (fetched via fetch-locomo) so the
+# regression gate in CI can compare category-level scores against
+# baselines-test-provider.json. max-questions=50 keeps CI under ~60s.
+bench-smoke: fetch-locomo
 	uv run python scripts/run_benchmarks.py \
 		--provider test \
-		--benchmarks builtin locomo
+		--benchmarks locomo \
+		--locomo-path $(LOCOMO_DIR)/data \
+		--max-questions 50
 
 # ---------------------------------------------------------------------------
 # CodeQL

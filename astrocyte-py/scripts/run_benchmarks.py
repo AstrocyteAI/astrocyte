@@ -312,6 +312,38 @@ async def run_longmemeval(
     )
 
 
+def _locomo_llm_judge(brain, *, use_canonical_judge: bool):
+    """Return a LoCoMoLLMJudge when conditions are right, else None.
+
+    The LLM judge is only used when:
+    - ``use_canonical_judge`` is True (caller opted in)
+    - The pipeline has a real LLM provider (not MockLLMProvider)
+
+    MockLLMProvider returns bag-of-words text that can't answer yes/no
+    reliably, so LLM-judge scores with a mock provider are meaningless.
+    We fall back to stemmed-F1 in that case so `bench-smoke` still works.
+    """
+    if not use_canonical_judge:
+        return None
+    pipeline = getattr(brain, "_pipeline", None)
+    if pipeline is None:
+        return None
+    llm_provider = getattr(pipeline, "llm_provider", None)
+    if llm_provider is None:
+        return None
+    # Skip if this is the mock (in-memory) provider used by bench-smoke.
+    try:
+        from astrocyte.testing.in_memory import MockLLMProvider
+
+        if isinstance(llm_provider, MockLLMProvider):
+            return None
+    except ImportError:
+        pass
+    from astrocyte.eval.judges.locomo_judge import LoCoMoLLMJudge
+
+    return LoCoMoLLMJudge(llm_provider)
+
+
 async def run_locomo(
     brain, data_path: str | None, max_questions: int | None,
     *, use_canonical_judge: bool = False, system: str = "astrocyte",
@@ -336,12 +368,14 @@ async def run_locomo(
     else:
         has_dataset = False
 
+    llm_judge = _locomo_llm_judge(brain, use_canonical_judge=use_canonical_judge)
     if has_dataset:
         result = await bench.run(
             data_path=data_path,
             bank_id="bench-locomo",
             max_questions=max_questions,
             use_canonical_judge=use_canonical_judge,
+            llm_judge=llm_judge,
         )
     else:
         if data_path:
@@ -449,15 +483,19 @@ async def run_locomo(
             bank_id="bench-locomo",
             max_questions=max_questions,
             use_canonical_judge=use_canonical_judge,
+            llm_judge=llm_judge,
         )
+
+    if llm_judge is not None:
+        judge_label = "canonical-llm"
+    elif use_canonical_judge:
+        judge_label = "canonical"
+    else:
+        judge_label = "legacy"
 
     _print_result(result, "LoCoMo")
     return BenchmarkRunOutcome(
-        _serialize_result(
-            result, "locomo",
-            judge="canonical" if use_canonical_judge else "legacy",
-            system=system,
-        ),
+        _serialize_result(result, "locomo", judge=judge_label, system=system),
         has_dataset,
     )
 

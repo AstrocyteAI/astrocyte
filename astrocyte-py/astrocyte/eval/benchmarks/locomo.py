@@ -107,6 +107,7 @@ class LoComoBenchmark:
         clean_after: bool = True,
         max_questions: int | None = None,
         use_canonical_judge: bool = False,
+        llm_judge: object | None = None,
     ) -> LoCoMoResult:
         """Run the LoCoMo benchmark.
 
@@ -116,17 +117,16 @@ class LoComoBenchmark:
             bank_id: Dedicated bank for the benchmark.
             clean_after: Delete the bank after running.
             max_questions: Limit number of questions.
-            use_canonical_judge: When True, score each question with the
-                canonical LoCoMo stemmed-token-F1 judge
-                (``astrocyte.eval.judges.locomo_judge``) against reflect
-                output only, matching published comparisons (paper,
-                Mem0, Zep, Hindsight). When False (default), uses the
-                legacy ``word_overlap_score > 0.3`` scorer on both
-                recall hits and reflect output — looser, useful for
-                internal delta-tracking but NOT cross-competitor
-                comparable. A question counts "correct" under the
-                canonical judge when its F1 score crosses 0.3 (the
-                paper's de-facto threshold in reported accuracy).
+            use_canonical_judge: When True without ``llm_judge``, score with
+                the canonical stemmed-token-F1 judge — the original paper's
+                metric. When True with ``llm_judge``, the LLM judge drives
+                accuracy; F1 means are not computed. When False (default),
+                uses the legacy ``word_overlap_score > 0.3`` scorer.
+            llm_judge: Optional :class:`~astrocyte.eval.judges.locomo_judge.LoCoMoLLMJudge`
+                instance. When provided, accuracy is determined by LLM yes/no
+                judgment, matching the convention used by Mem0 (ECAI 2025),
+                Hindsight, and MemMachine. This is required for numbers
+                directly comparable to published competitor scores.
 
         Returns:
             LoCoMoResult with accuracy breakdown by category.
@@ -255,7 +255,18 @@ class LoComoBenchmark:
             reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
 
             canonical_f1: float | None = None
-            if use_canonical_judge:
+            if llm_judge is not None:
+                # LLM-judge path: binary yes/no per question, matching the
+                # scoring convention used by Mem0, Hindsight, MemMachine.
+                # F1 means are not computed — the LLM score IS the accuracy.
+                llm_score = await llm_judge.score(
+                    question=q.question,
+                    answer=q.answer,
+                    category=q.category,
+                    response=reflect_result.answer,
+                )
+                is_correct = llm_score > 0.5
+            elif use_canonical_judge:
                 # Canonical F1 against reflect answer only. We track the
                 # raw F1 (what the paper publishes as headline numbers)
                 # AND a pass/fail at 0.3 (useful for absolute accuracy

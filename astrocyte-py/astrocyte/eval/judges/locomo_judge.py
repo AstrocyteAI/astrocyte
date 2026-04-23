@@ -46,12 +46,18 @@ Those live upstream in the adapter that calls this judge.
 
 from __future__ import annotations
 
+import logging
 import re
 import string
 from collections import Counter
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from astrocyte.eval.judges._stemmer import porter_stem
+
+if TYPE_CHECKING:
+    from astrocyte.provider import LLMProvider
+
+_logger = logging.getLogger(__name__)
 
 #: Category id mapping used by the canonical LoCoMo evaluator. Astrocyte's
 #: adapter exposes categories as strings (``"multi-hop"``, etc.);
@@ -276,3 +282,119 @@ def normalized_for_scoring(text: str) -> str:
     lowercase, punctuation removed, whitespace collapsed. Stems are NOT
     applied here (stemming is token-level during F1)."""
     return _normalize_answer(text)
+
+
+# ---------------------------------------------------------------------------
+# LLM judge — matches Mem0/Hindsight/MemMachine scoring convention
+# ---------------------------------------------------------------------------
+
+#: Category-specific judge prompts. These match the binary yes/no convention
+#: used by Mem0 (ECAI 2025 arXiv:2504.19413), Hindsight (arXiv:2512.12818),
+#: and MemMachine (arXiv:2604.04853) — the scoring framework competitors
+#: publish against. Use this judge for cross-competitor comparisons; use
+#: :func:`locomo_score_qa` for numbers comparable to the original paper's F1.
+_LLM_TEMPLATES: Final[dict[str, str]] = {
+    "single-hop": (
+        "I will give you a question, the correct answer, and a response from a model. "
+        "Answer yes if the response correctly answers the question. "
+        "Otherwise, answer no.\n\n"
+        "Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "multi-hop": (
+        "I will give you a question requiring information from multiple parts of a "
+        "conversation, the correct answer, and a response from a model. "
+        "Answer yes if the response contains the correct information, even if phrased "
+        "differently. Otherwise, answer no.\n\n"
+        "Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "temporal": (
+        "I will give you a question about events over time, the correct answer, "
+        "and a response from a model. "
+        "Answer yes if the response correctly answers the question. "
+        "Do not penalize minor date approximations (e.g. off-by-one day or week).\n\n"
+        "Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "open-domain": (
+        "I will give you a question, the correct answer, and a response from a model. "
+        "Answer yes if the response correctly answers the question. "
+        "Otherwise, answer no.\n\n"
+        "Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "adversarial": (
+        "I will give you a question that cannot be answered from the conversation "
+        "history, and a response from a model. "
+        "Answer yes if the model correctly says the information is not available or "
+        "that it cannot answer. Answer no if the model attempts to provide an answer.\n\n"
+        "Question: {question}\n\nModel Response: {response}\n\n"
+        "Does the model correctly identify the question as unanswerable? "
+        "Answer yes or no only."
+    ),
+}
+
+
+def build_locomo_llm_judge_prompt(
+    question: str,
+    answer: str,
+    category: str,
+    response: str,
+) -> str:
+    """Render the LLM judge prompt for a LoCoMo question.
+
+    Falls back to the ``"single-hop"`` template for unrecognised categories
+    so new category strings don't break evaluation runs silently.
+    """
+    template = _LLM_TEMPLATES.get(category.strip().lower(), _LLM_TEMPLATES["single-hop"])
+    if category.strip().lower() == "adversarial":
+        return template.format(question=question, response=response)
+    return template.format(question=question, answer=answer, response=response)
+
+
+class LoCoMoLLMJudge:
+    """LLM-backed yes/no judge for LoCoMo predictions.
+
+    Scores each question with a short binary prompt (yes/no), matching the
+    convention used by Mem0 (ECAI 2025), Hindsight, and MemMachine. Use
+    this judge — not the stemmed-F1 :func:`locomo_score_qa` — for numbers
+    directly comparable to those published by competitors.
+
+    Instantiate once per benchmark run. Thread-safe for concurrent calls.
+    """
+
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        *,
+        model: str | None = None,
+        max_tokens: int = 4,
+        temperature: float = 0.0,
+    ) -> None:
+        self._llm = llm_provider
+        self._model = model
+        self._max_tokens = max_tokens
+        self._temperature = temperature
+
+    async def score(
+        self,
+        question: str,
+        answer: str,
+        category: str,
+        response: str,
+    ) -> float:
+        """Return 1.0 (yes) or 0.0 (no). LLM errors propagate to caller."""
+        from astrocyte.types import Message
+
+        prompt = build_locomo_llm_judge_prompt(question, answer, category, response)
+        completion = await self._llm.complete(
+            messages=[Message(role="user", content=prompt)],
+            model=self._model,
+            max_tokens=self._max_tokens,
+            temperature=self._temperature,
+        )
+        # Reuse LongMemEval's yes/no parser — same tolerance rules.
+        from astrocyte.eval.judges.longmemeval_judge import parse_yes_no
+
+        return parse_yes_no(completion.text)

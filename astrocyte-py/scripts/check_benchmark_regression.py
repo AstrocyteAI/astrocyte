@@ -142,7 +142,7 @@ def compare_benchmark(
             regressions, rows,
         )
 
-    for metric_key in ("recall_hit_rate", "recall_mrr", "recall_precision"):
+    for metric_key in ("recall_hit_rate", "recall_mrr", "recall_precision", "recall_ndcg"):
         _compare_field(
             f"{bench_name}:{metric_key}",
             _metric(baseline, metric_key),
