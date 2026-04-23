@@ -45,13 +45,13 @@ from typing import Any
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         print(f"error: file not found: {path}", file=sys.stderr)
-        sys.exit(2)
+        raise SystemExit(2)
     try:
         with open(path) as f:
             return json.load(f)
     except json.JSONDecodeError as exc:
         print(f"error: invalid JSON in {path}: {exc}", file=sys.stderr)
-        sys.exit(2)
+        raise SystemExit(2)
 
 
 def _overall(bench_result: dict[str, Any]) -> float | None:
