@@ -398,13 +398,10 @@ class TestBuildCompetitorBrain:
             "astrocyte.eval.competitors.mem0_adapter.Mem0BrainAdapter.__init__",
             return_value=None,
         ):
-            # Just verify the import path resolves without error
-            import astrocyte.eval.competitors.mem0_adapter as m
-            assert hasattr(m, "Mem0BrainAdapter")
+            assert Mem0BrainAdapter is not None
 
     def test_zep_dispatches_to_zep_brain_adapter(self) -> None:
-        import astrocyte.eval.competitors.zep_adapter as z
-        assert hasattr(z, "ZepBrainAdapter")
+        assert ZepBrainAdapter is not None
 
     def test_factory_name_is_case_insensitive(self) -> None:
         # Patch the import so no real SDK is required
