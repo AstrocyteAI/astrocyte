@@ -46,14 +46,15 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-builtin bench-smoke
+.PHONY: bench bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
 
 # Full LoCoMo benchmark (requires OPENAI_API_KEY, ~30-60 min)
 bench-locomo: fetch-locomo
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data
+		--locomo-path $(LOCOMO_DIR)/data \
+		--canonical-judge
 
 # Quick LoCoMo subset (50 questions, ~2-3 min)
 bench-locomo-quick: fetch-locomo
@@ -61,14 +62,25 @@ bench-locomo-quick: fetch-locomo
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
-		--max-questions 50
+		--max-questions 50 \
+		--canonical-judge
 
-# Full LongMemEval benchmark (requires OPENAI_API_KEY)
+# Full LongMemEval benchmark (requires OPENAI_API_KEY, ~2-4 hrs for all 500 questions)
 bench-longmemeval: fetch-longmemeval
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval \
-		--longmemeval-path $(LONGMEMEVAL_DIR)/data
+		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
+		--canonical-judge
+
+# Quick LongMemEval subset (100 questions, stratified across all categories, ~30-60 min)
+bench-longmemeval-quick: fetch-longmemeval
+	uv run python scripts/run_benchmarks.py \
+		--config benchmarks/config.yaml \
+		--benchmarks longmemeval \
+		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
+		--max-questions 100 \
+		--canonical-judge
 
 # LoCoMo via LiteLLM adapter (requires OPENAI_API_KEY + astrocyte-llm-litellm installed)
 bench-locomo-litellm: fetch-locomo
