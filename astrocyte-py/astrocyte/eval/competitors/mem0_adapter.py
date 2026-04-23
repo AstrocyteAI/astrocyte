@@ -15,20 +15,21 @@ plus ``MEM0_API_KEY`` env var (Mem0 Cloud) or ``MEM0_CONFIG`` for
 self-hosted. The Doppler ``prd`` config in Astrocyte's setup should
 carry ``MEM0_API_KEY`` when a Mem0 benchmark run is queued.
 
-This module is a **scaffold** — method bodies that call the SDK are
-marked with explicit TODO comments. The interface, error handling,
-bank-mapping convention, and docstrings are production-ready; the SDK
-calls get filled in when we commit to running the head-to-head matrix
-(after v5 judge calibration lands).
+Client threading model: the adapter wraps the *sync* ``mem0.Memory``
+client with ``asyncio.to_thread`` so it works inside the async
+benchmark loop without blocking the event loop. Pass ``AsyncMemory``
+if you need true async fan-out — the adapter detects coroutines and
+awaits them directly.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from astrocyte.types import RecallResult, ReflectResult, RetainResult
+from astrocyte.types import MemoryHit, RecallResult, ReflectResult, RetainResult
 
 if TYPE_CHECKING:
     from astrocyte.eval.competitors._base import _PipelineLike
@@ -94,18 +95,39 @@ class Mem0BrainAdapter:
         Mem0's ``Memory.add`` accepts a list of messages; we wrap the
         single content string in a single-message list using the
         ``"user"`` role as mem0's examples do.
+
+        ``occurred_at`` has no mem0 equivalent — mem0 uses server-side
+        timestamps. We log at DEBUG and continue; the benchmark run is
+        still valid, we just lose the temporal metadata for that entry.
         """
-        # TODO: real implementation calls self._client.add(...)
-        # metadata and tags map directly; occurred_at has no mem0
-        # equivalent today (mem0 uses server-side timestamps) — log a
-        # warning rather than raise, since the benchmark can still run.
         if occurred_at is not None:
-            _logger.debug("Mem0 does not support occurred_at; ignoring")
-        raise NotImplementedError(
-            "Mem0BrainAdapter.retain — call self._client.add() here. "
-            "See astrocyte/eval/competitors/README.md for the SDK-to-Astrocyte "
-            "mapping. Mark as done after validating on a small smoke run.",
+            _logger.debug(
+                "Mem0 does not support occurred_at (bank=%s); ignoring", bank_id
+            )
+
+        meta: dict = dict(metadata or {})
+        if tags:
+            meta["tags"] = tags
+
+        raw = await _call(
+            self._client.add,
+            [{"role": "user", "content": content}],
+            user_id=bank_id,
+            **({"metadata": meta} if meta else {}),
         )
+
+        # mem0 ≥0.1.x returns {"results": [{"id": "...", "event": "ADD", ...}]}
+        # Older versions may return a flat list — handle both.
+        memory_id: str | None = None
+        results_list: list = []
+        if isinstance(raw, dict):
+            results_list = raw.get("results", [])
+        elif isinstance(raw, list):
+            results_list = raw
+        if results_list:
+            memory_id = results_list[0].get("id")
+
+        return RetainResult(stored=True, memory_id=memory_id)
 
     async def recall(
         self,
@@ -114,14 +136,36 @@ class Mem0BrainAdapter:
         bank_id: str,
         max_results: int = 10,
     ) -> RecallResult:
-        """Semantic retrieve via ``Memory.search``."""
-        # TODO: self._client.search(query=query, user_id=bank_id, limit=max_results)
-        # Map each mem0 memory result to a MemoryHit. mem0 returns
-        # {id, memory, score, metadata, ...}; benchmark metric code
-        # uses MemoryHit.memory_id + text, so at minimum map those.
-        raise NotImplementedError(
-            "Mem0BrainAdapter.recall — call self._client.search() here.",
+        """Semantic retrieve via ``Memory.search``.
+
+        mem0 returns ``{"results": [{"id": ..., "memory": ..., "score": ...}]}``
+        (≥0.1.x) or a flat list. We normalise to ``RecallResult`` so the
+        benchmark metric code reads ``hits[i].text`` / ``hits[i].memory_id``
+        without caring which system produced them.
+        """
+        raw = await _call(
+            self._client.search,
+            query=query,
+            user_id=bank_id,
+            limit=max_results,
         )
+
+        raw_list: list = []
+        if isinstance(raw, dict):
+            raw_list = raw.get("results", [])
+        elif isinstance(raw, list):
+            raw_list = raw
+
+        hits = [
+            MemoryHit(
+                text=r.get("memory", ""),
+                score=float(r.get("score", 0.0)),
+                memory_id=r.get("id"),
+                metadata=r.get("metadata") or None,
+            )
+            for r in raw_list
+        ]
+        return RecallResult(hits=hits, total_available=len(hits), truncated=False)
 
     async def reflect(
         self,
@@ -133,29 +177,46 @@ class Mem0BrainAdapter:
         """Synthesize an answer by retrieving then prompting the LLM.
 
         Mem0 OSS does not ship a reflect primitive. We synthesize here
-        so the comparison treats the entire retain → recall → reflect
-        chain as a black box, matching how LoCoMo / LongMemEval evaluate
-        end-to-end memory systems.
+        using ``astrocyte.pipeline.reflect.synthesize`` — the same
+        prompt and formatting path Astrocyte uses — so the comparison
+        isolates memory retrieval quality from synthesis-prompt
+        differences.
         """
         if self._pipeline is None or self._pipeline.llm_provider is None:
             raise RuntimeError(
                 "Mem0BrainAdapter.reflect needs an llm_provider — pass one to "
-                "the constructor for synthesis. Without it, the benchmark can "
+                "the constructor for synthesis. Without it the benchmark can "
                 "still run LoCoMo with use_canonical_judge=False against "
                 "recall hits only, but LongMemEval requires reflect output.",
             )
-        # TODO:
-        # 1. Await self.recall(query, bank_id=bank_id, max_results=10)
-        # 2. Build a synthesis prompt from the recalled memories
-        # 3. self._pipeline.llm_provider.complete([...])
-        # 4. Wrap in ReflectResult(answer=..., sources=recall.hits)
-        raise NotImplementedError(
-            "Mem0BrainAdapter.reflect — synthesize from recall + LLM here. "
-            "Reuse the prompt structure from "
-            "astrocyte/pipeline/reflect.py::synthesize for consistency — that "
-            "way the Astrocyte-vs-Mem0 delta isolates retrieval / memory "
-            "layers, not synthesis-prompt differences.",
+
+        from astrocyte.pipeline.reflect import synthesize
+
+        recall_result = await self.recall(query, bank_id=bank_id, max_results=10)
+        return await synthesize(
+            query,
+            recall_result.hits,
+            self._pipeline.llm_provider,
+            max_tokens=max_tokens or 2048,
         )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+async def _call(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Call ``fn(*args, **kwargs)`` without blocking the event loop.
+
+    ``AsyncMemory`` methods are coroutine functions — detected via
+    ``asyncio.iscoroutinefunction`` and awaited directly.
+    Sync ``Memory`` methods run in ``asyncio.to_thread`` so they don't
+    stall the event loop during benchmark runs.
+    """
+    if asyncio.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 class _LightPipeline:
