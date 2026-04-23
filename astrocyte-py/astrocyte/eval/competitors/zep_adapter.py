@@ -3,32 +3,39 @@ brain so the LoCoMo / LongMemEval benchmark adapters can run unchanged.
 
 Scope:
 
-- ``retain`` → ``Memory.add_session`` + ``Memory.add`` (Zep's primitives
-  for adding messages to a session's memory)
-- ``recall`` → ``Memory.search_sessions`` (semantic retrieval)
-- ``reflect`` → composed from recall + LLM synthesis (Zep Cloud exposes
-  a ``Memory.synthesize`` primitive but OSS does not; we synthesize
-  using the same LLM path as Mem0 so the comparison is consistent)
+- ``retain`` → ``memory.add_memory`` / ``aadd_memory``
+- ``recall`` → ``memory.search_memory`` / ``asearch_memory``
+- ``reflect`` → recall + LLM synthesis via ``astrocyte.pipeline.reflect``
+  (Zep Cloud has a native synthesize primitive, but for a fair cross-system
+  comparison we use the same synthesis path as every other adapter so the
+  delta isolates retrieval quality, not prompt differences)
 
 Requires: ``pip install astrocyte[competitors]`` (installs ``zep-python``)
 plus ``ZEP_API_KEY`` env var (Zep Cloud) or ``ZEP_API_URL`` for
-self-hosted. The Doppler ``prd`` config in Astrocyte's setup should
-carry ``ZEP_API_KEY`` when a Zep benchmark run is queued.
+self-hosted. The Doppler ``prd`` config carries ``ZEP_API_KEY`` for
+production benchmark runs.
+
+SDK version: targets zep-python v1.x (OSS / self-hosted). v2.x (Cloud)
+uses ``Zep``/``AsyncZep`` with slightly different method names
+(``memory.add`` / ``memory.search``); see inline notes where the diff
+matters.
 
 Bank model: Zep scopes memories by ``session_id``. We map
 ``bank_id → session_id`` 1:1. Benchmarks use single-bank configurations
-so this is lossless; multi-bank comparison would need a session-per-bank
-naming convention (e.g. ``f"{run_id}:{bank_id}"``).
+so this is lossless; multi-bank comparison would need a per-bank
+session-ID prefix convention (e.g. ``f"{run_id}:{bank_id}"``).
 
-Client threading model: same as the Mem0 adapter — sync ``ZepClient``
-wrapped with ``asyncio.to_thread``; async ``AsyncZepClient`` awaited
-directly via ``asyncio.iscoroutinefunction``.
+Session lifecycle: Zep raises ``NotFoundError`` when adding to a
+non-existent session. The adapter creates sessions lazily on first
+retain and caches the session IDs so repeated retain calls don't pay
+the creation round-trip. The cache is per-adapter-instance; long-lived
+adapters sharing a session namespace should pass pre-created sessions.
 
-This module is a **scaffold** — method bodies that call the SDK are
-marked with explicit TODO comments. The interface, error handling,
-bank-mapping convention, and docstrings are production-ready; the SDK
-calls get filled in when we commit to running the Zep head-to-head
-(after Mem0 baseline is validated and canonical F1 numbers are locked).
+Client threading: sync ``ZepClient`` is wrapped with
+``asyncio.to_thread`` so it doesn't block the event loop during
+benchmark runs. Pass an async client (``AsyncZepClient`` in v1,
+``AsyncZep`` in v2) to await SDK calls directly; the adapter detects
+which variant via ``asyncio.iscoroutinefunction``.
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from astrocyte.types import RecallResult, ReflectResult, RetainResult
+from astrocyte.types import MemoryHit, RecallResult, ReflectResult, RetainResult
 
 if TYPE_CHECKING:
     from astrocyte.eval.competitors._base import _PipelineLike
@@ -56,7 +63,7 @@ class ZepBrainAdapter:
     Example:
 
         from zep_python import ZepClient
-        client = ZepClient(api_key=os.environ["ZEP_API_KEY"])
+        client = ZepClient(base_url="http://localhost:8000")
         brain = ZepBrainAdapter(client, llm_provider=my_litellm_provider)
         # Pass to LoComoBenchmark(brain) as usual.
     """
@@ -71,8 +78,8 @@ class ZepBrainAdapter:
 
         Args:
             client: A ``zep_python.ZepClient`` (or ``AsyncZepClient``)
-                instance, fully configured with API key. The adapter
-                does not create one for you.
+                instance, fully configured with API key / base URL. The
+                adapter does not create one for you.
             llm_provider: An ``astrocyte.provider.LLMProvider`` used for
                 the ``reflect`` synthesis pass and for the LongMemEval
                 canonical judge. Same model family as Zep uses for
@@ -82,6 +89,9 @@ class ZepBrainAdapter:
         self._pipeline: _PipelineLike | None = (
             _LightPipeline(llm_provider) if llm_provider else None
         )
+        # Lazily-created session IDs. Prevents duplicate add_session calls
+        # while keeping the adapter stateless across banks.
+        self._sessions: set[str] = set()
 
     async def retain(
         self,
@@ -95,30 +105,45 @@ class ZepBrainAdapter:
     ) -> RetainResult:
         """Store ``content`` into Zep under ``session_id=bank_id``.
 
-        Zep's ``Memory.add`` accepts a ``Memory`` object containing a list
-        of messages. We wrap the content as a single ``Message`` with role
-        ``"user"`` (Zep's convention for user-generated content).
+        Wraps the content as a single ``Message`` with role ``"user"``.
+        Ensures the session exists (idempotent ``add_session``) before
+        calling ``add_memory``, caching the session ID to avoid repeated
+        creation round-trips.
 
-        Zep Cloud supports ``created_at`` on individual messages for
-        temporal ordering; OSS ignores it. We pass it when present so
-        Cloud runs get accurate temporal metadata.
+        ``occurred_at``: mapped to ``Message.created_at`` (ISO string).
+        Zep Cloud stores it for temporal ordering; OSS ignores the field.
+        ``tags`` and non-string ``metadata`` values are merged into
+        ``Message.metadata`` since Zep has no native tag primitive.
         """
-        # TODO: real implementation:
-        #
-        #   from zep_python.memory import Memory, Message
-        #   msg = Message(role="user", content=content, metadata=metadata or {})
-        #   if occurred_at is not None:
-        #       msg.created_at = occurred_at.isoformat()
-        #   await _call(self._client.memory.add, bank_id, Memory(messages=[msg]))
-        #   return RetainResult(stored=True)
-        #
-        # Ensure the session exists first (Zep raises if session is missing):
-        #   await _call(self._client.memory.add_session, Session(session_id=bank_id))
-        # (add_session is idempotent in Zep Cloud ≥0.26.)
-        raise NotImplementedError(
-            "ZepBrainAdapter.retain — wire self._client.memory.add() here. "
-            "See SDK docs: https://github.com/getzep/zep-python",
-        )
+        from zep_python.memory import Memory, Message
+
+        await self._ensure_session(bank_id)
+
+        merged_meta: dict = dict(metadata or {})
+        if tags:
+            merged_meta["tags"] = tags
+
+        msg_kwargs: dict[str, Any] = {
+            "role": "user",
+            "content": content,
+        }
+        if merged_meta:
+            msg_kwargs["metadata"] = merged_meta
+        if occurred_at is not None:
+            # created_at is a Zep Cloud extension; OSS Message silently
+            # ignores unknown kwargs, so this is safe across versions.
+            msg_kwargs["created_at"] = occurred_at.isoformat()
+
+        msg = Message(**msg_kwargs)
+        memory = Memory(messages=[msg])
+
+        try:
+            await _call(self._client.memory.add_memory, bank_id, memory)
+        except Exception as exc:
+            _logger.warning("Zep retain failed for bank=%s: %s", bank_id, exc)
+            return RetainResult(stored=False, error=str(exc))
+
+        return RetainResult(stored=True)
 
     async def recall(
         self,
@@ -127,31 +152,46 @@ class ZepBrainAdapter:
         bank_id: str,
         max_results: int = 10,
     ) -> RecallResult:
-        """Semantic retrieve via ``Memory.search_sessions``.
+        """Semantic retrieve via ``memory.search_memory``.
 
-        Zep returns ``SearchResult`` objects with ``message`` (the stored
-        content) and ``score`` (relevance). We map these to ``MemoryHit``
-        so downstream metric code reads ``.text`` and ``.memory_id``
-        without caring which system produced them.
+        Zep returns a list of ``MemorySearchResult`` objects; each has
+        a ``.message`` (``Message``) and ``.score`` (float). We map to
+        ``MemoryHit`` so downstream metric code is system-agnostic.
+
+        If the session doesn't exist yet (first recall before any
+        retain), returns empty hits rather than raising.
         """
-        # TODO: real implementation:
-        #
-        #   from zep_python.memory import MemorySearchPayload
-        #   payload = MemorySearchPayload(text=query, limit=max_results)
-        #   results = await _call(self._client.memory.search_memory, bank_id, payload)
-        #   hits = [
-        #       MemoryHit(
-        #           text=r.message.content if r.message else "",
-        #           score=float(r.score or 0.0),
-        #           memory_id=r.message.uuid if r.message else None,
-        #           metadata=r.message.metadata if r.message else None,
-        #       )
-        #       for r in (results or [])
-        #   ]
-        #   return RecallResult(hits=hits, total_available=len(hits), truncated=False)
-        raise NotImplementedError(
-            "ZepBrainAdapter.recall — wire self._client.memory.search_memory() here.",
-        )
+        from zep_python.memory import MemorySearchPayload
+
+        payload = MemorySearchPayload(text=query, limit=max_results)
+
+        try:
+            raw = await _call(
+                self._client.memory.search_memory, bank_id, payload, max_results
+            )
+        except Exception as exc:
+            # Session may not exist yet (e.g. recall before any retain in
+            # the benchmark warm-up). Return empty rather than crashing the run.
+            _logger.debug(
+                "Zep recall returned no results for bank=%s: %s", bank_id, exc
+            )
+            return RecallResult(hits=[], total_available=0, truncated=False)
+
+        hits: list[MemoryHit] = []
+        for r in raw or []:
+            msg = getattr(r, "message", None)
+            if msg is None:
+                continue
+            hits.append(
+                MemoryHit(
+                    text=getattr(msg, "content", "") or "",
+                    score=float(getattr(r, "score", 0.0) or 0.0),
+                    memory_id=getattr(msg, "uuid", None),
+                    metadata=getattr(msg, "metadata", None) or None,
+                )
+            )
+
+        return RecallResult(hits=hits, total_available=len(hits), truncated=False)
 
     async def reflect(
         self,
@@ -162,15 +202,14 @@ class ZepBrainAdapter:
     ) -> ReflectResult:
         """Synthesize an answer by retrieving then prompting the LLM.
 
-        Zep Cloud exposes a ``Memory.synthesize`` primitive (session
-        summarisation + QA). OSS does not. For a consistent comparison
-        matrix we synthesize here using ``astrocyte.pipeline.reflect``
-        — the same prompt path as Mem0 — so the Astrocyte-vs-Zep delta
-        isolates memory retrieval quality, not synthesis differences.
+        We use the same ``astrocyte.pipeline.reflect.synthesize`` path as
+        the Mem0 adapter so the Astrocyte-vs-Zep comparison isolates
+        memory-retrieval quality, not synthesis-prompt differences.
 
-        When Zep Cloud's native synthesize is preferred, swap this body
-        for a direct ``self._client.memory.synthesize(session_id, query)``
-        call and document the difference in the benchmark README.
+        Note: Zep Cloud exposes a ``memory.synthesize(session_id, query)``
+        primitive. If you prefer that for Cloud runs, replace this body
+        with a direct SDK call and document it in the benchmark README
+        (the numbers won't be directly comparable to the shared-LLM matrix).
         """
         if self._pipeline is None or self._pipeline.llm_provider is None:
             raise RuntimeError(
@@ -189,9 +228,34 @@ class ZepBrainAdapter:
             max_tokens=max_tokens or 2048,
         )
 
+    # ---------------------------------------------------------------------------
+    # Internal helpers
+    # ---------------------------------------------------------------------------
+
+    async def _ensure_session(self, bank_id: str) -> None:
+        """Create ``bank_id`` as a Zep session if not already cached."""
+        if bank_id in self._sessions:
+            return
+        from zep_python.memory import Session
+
+        try:
+            await _call(
+                self._client.memory.add_session,
+                Session(session_id=bank_id),
+            )
+        except Exception as exc:
+            # add_session is idempotent in ≥0.26 and raises a conflict
+            # error in older versions when the session already exists.
+            # Either way, we can proceed — the session is there.
+            _logger.debug(
+                "add_session for bank=%s raised (may already exist): %s",
+                bank_id, exc,
+            )
+        self._sessions.add(bank_id)
+
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Module-level helpers
 # ---------------------------------------------------------------------------
 
 

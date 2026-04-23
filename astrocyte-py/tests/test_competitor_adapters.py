@@ -52,10 +52,50 @@ def _fake_mem0_client() -> MagicMock:
     return client
 
 
-def _fake_zep_client() -> MagicMock:
-    """Sync Zep ZepClient stub — methods raise NotImplementedError (scaffold)."""
+def _fake_zep_memory_module() -> MagicMock:
+    """Fake zep_python.memory module injected via sys.modules patch."""
+    mod = MagicMock()
+    # Session / Memory / Message are constructors — return plain mocks.
+    mod.Session = MagicMock(return_value=MagicMock())
+    mod.Memory = MagicMock(return_value=MagicMock())
+    mod.Message = MagicMock(return_value=MagicMock())
+    mod.MemorySearchPayload = MagicMock(return_value=MagicMock())
+    return mod
+
+
+def _fake_zep_client(search_results: list | None = None) -> MagicMock:
+    """Sync ZepClient stub with memory sub-object wired.
+
+    ``search_results``: list of fake MemorySearchResult-like objects
+    returned by ``memory.search_memory``. Defaults to one result.
+    """
+    if search_results is None:
+        hit = MagicMock()
+        hit.message.content = "zep fact"
+        hit.message.uuid = "zep-uuid-1"
+        hit.message.metadata = {}
+        hit.score = 0.85
+        search_results = [hit]
+
     client = MagicMock()
+    client.memory.add_session.return_value = None
+    client.memory.add_memory.return_value = None
+    client.memory.search_memory.return_value = search_results
     return client
+
+
+import sys  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+
+
+@contextmanager
+def _zep_patch():
+    """Inject fake zep_python into sys.modules; yield the injected dict."""
+    zep_mod = MagicMock()
+    zep_mod.memory = _fake_zep_memory_module()
+    mods = {"zep_python": zep_mod, "zep_python.memory": zep_mod.memory}
+    with patch.dict(sys.modules, mods):
+        yield mods
 
 
 # ---------------------------------------------------------------------------
@@ -217,31 +257,130 @@ class TestMem0AdapterReflect:
 # ---------------------------------------------------------------------------
 
 
-class TestZepAdapterScaffold:
+class TestZepAdapterRetain:
     @pytest.mark.asyncio
-    async def test_retain_raises_not_implemented(self) -> None:
-        adapter = ZepBrainAdapter(_fake_zep_client())
-        with pytest.raises(NotImplementedError):
-            await adapter.retain("content", bank_id="session-1")
+    async def test_retain_returns_stored_true(self) -> None:
+        with _zep_patch():
+            adapter = ZepBrainAdapter(_fake_zep_client())
+            result = await adapter.retain("some content", bank_id="session-1")
+        assert result.stored is True
 
     @pytest.mark.asyncio
-    async def test_recall_raises_not_implemented(self) -> None:
-        adapter = ZepBrainAdapter(_fake_zep_client())
-        with pytest.raises(NotImplementedError):
-            await adapter.recall("query", bank_id="session-1")
+    async def test_retain_calls_add_session_once_per_bank(self) -> None:
+        with _zep_patch():
+            client = _fake_zep_client()
+            adapter = ZepBrainAdapter(client)
+            await adapter.retain("a", bank_id="s1")
+            await adapter.retain("b", bank_id="s1")  # same bank — no second add_session
+        assert client.memory.add_session.call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_retain_different_banks_each_get_session(self) -> None:
+        with _zep_patch():
+            client = _fake_zep_client()
+            adapter = ZepBrainAdapter(client)
+            await adapter.retain("a", bank_id="s1")
+            await adapter.retain("b", bank_id="s2")
+        assert client.memory.add_session.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retain_merges_tags_into_message_metadata(self) -> None:
+        with _zep_patch() as mods:
+            client = _fake_zep_client()
+            adapter = ZepBrainAdapter(client)
+            await adapter.retain("text", bank_id="s1", tags=["x", "y"])
+            call_kwargs = mods["zep_python.memory"].Message.call_args[1]
+            assert call_kwargs.get("metadata", {}).get("tags") == ["x", "y"]
+
+    @pytest.mark.asyncio
+    async def test_retain_passes_occurred_at_as_created_at(self) -> None:
+        from datetime import timezone
+        ts = datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        with _zep_patch() as mods:
+            client = _fake_zep_client()
+            adapter = ZepBrainAdapter(client)
+            await adapter.retain("text", bank_id="s1", occurred_at=ts)
+            call_kwargs = mods["zep_python.memory"].Message.call_args[1]
+            assert call_kwargs.get("created_at") == ts.isoformat()
+
+    @pytest.mark.asyncio
+    async def test_retain_sdk_error_returns_stored_false(self) -> None:
+        with _zep_patch():
+            client = MagicMock()
+            client.memory.add_session.return_value = None
+            client.memory.add_memory.side_effect = RuntimeError("SDK error")
+            adapter = ZepBrainAdapter(client)
+            result = await adapter.retain("text", bank_id="s1")
+        assert result.stored is False
+        assert "SDK error" in (result.error or "")
+
+
+class TestZepAdapterRecall:
+    @pytest.mark.asyncio
+    async def test_recall_returns_hits(self) -> None:
+        with _zep_patch():
+            adapter = ZepBrainAdapter(_fake_zep_client())
+            result = await adapter.recall("query", bank_id="s1")
+        assert len(result.hits) == 1
+        assert result.hits[0].text == "zep fact"
+        assert result.hits[0].score == pytest.approx(0.85)
+        assert result.hits[0].memory_id == "zep-uuid-1"
+
+    @pytest.mark.asyncio
+    async def test_recall_empty_sdk_response_returns_empty_hits(self) -> None:
+        with _zep_patch():
+            adapter = ZepBrainAdapter(_fake_zep_client(search_results=[]))
+            result = await adapter.recall("q", bank_id="s1")
+        assert result.hits == []
+
+    @pytest.mark.asyncio
+    async def test_recall_sdk_error_returns_empty_hits(self) -> None:
+        with _zep_patch():
+            client = MagicMock()
+            client.memory.add_session.return_value = None
+            client.memory.search_memory.side_effect = RuntimeError("not found")
+            adapter = ZepBrainAdapter(client)
+            result = await adapter.recall("q", bank_id="s1")
+        assert result.hits == []
+
+    @pytest.mark.asyncio
+    async def test_recall_skips_results_with_no_message(self) -> None:
+        hit_no_msg = MagicMock()
+        hit_no_msg.message = None
+        hit_ok = MagicMock()
+        hit_ok.message.content = "good"
+        hit_ok.message.uuid = "u1"
+        hit_ok.message.metadata = {}
+        hit_ok.score = 0.7
+        with _zep_patch():
+            adapter = ZepBrainAdapter(_fake_zep_client(search_results=[hit_no_msg, hit_ok]))
+            result = await adapter.recall("q", bank_id="s1")
+        assert len(result.hits) == 1
+        assert result.hits[0].text == "good"
+
+
+class TestZepAdapterReflect:
     @pytest.mark.asyncio
     async def test_reflect_without_llm_raises_runtime_error(self) -> None:
-        adapter = ZepBrainAdapter(_fake_zep_client())
-        with pytest.raises(RuntimeError, match="llm_provider"):
-            await adapter.reflect("query", bank_id="session-1")
+        with _zep_patch():
+            adapter = ZepBrainAdapter(_fake_zep_client())
+            with pytest.raises(RuntimeError, match="llm_provider"):
+                await adapter.reflect("query", bank_id="session-1")
 
     @pytest.mark.asyncio
-    async def test_reflect_with_llm_raises_not_implemented_from_recall(self) -> None:
-        # recall is still a stub, so reflect → recall → NotImplementedError
-        adapter = ZepBrainAdapter(_fake_zep_client(), llm_provider=_fake_llm())
-        with pytest.raises(NotImplementedError):
-            await adapter.reflect("query", bank_id="session-1")
+    async def test_reflect_calls_synthesize_with_recall_hits(self) -> None:
+        with _zep_patch():
+            llm = _fake_llm()
+            adapter = ZepBrainAdapter(_fake_zep_client(), llm_provider=llm)
+            with patch(
+                "astrocyte.pipeline.reflect.synthesize",
+                new_callable=AsyncMock,
+            ) as mock_synth:
+                from astrocyte.types import ReflectResult
+                mock_synth.return_value = ReflectResult(answer="zep answer", sources=[])
+                result = await adapter.reflect("what?", bank_id="s1")
+        mock_synth.assert_called_once()
+        assert result.answer == "zep answer"
 
 
 # ---------------------------------------------------------------------------
