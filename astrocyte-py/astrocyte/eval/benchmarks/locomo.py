@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -49,6 +49,14 @@ class LoCoMoResult:
     correct: int
     per_question: list[dict[str, Any]]
     eval_result: EvalResult
+    #: Raw F1 mean across all questions. Populated only when the run
+    #: used ``use_canonical_judge=True``; None otherwise. THIS is the
+    #: paper's headline metric — ``overall_accuracy`` above is the
+    #: pass/fail-at-0.3 rate Astrocyte reports for its own tracking.
+    #: Cross-competitor comparisons should use ``canonical_f1_overall``.
+    canonical_f1_overall: float | None = None
+    #: Per-category F1 means. Empty dict under legacy scorer.
+    canonical_f1_by_category: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -220,6 +228,13 @@ class LoComoBenchmark:
         category_total: dict[str, int] = {}
         per_question: list[dict[str, Any]] = []
         query_results: list[QueryResult] = []
+        # Canonical path: track raw F1 means per category so we can
+        # report the numbers the paper actually publishes alongside the
+        # pass/fail accuracy. Paper's headline numbers ARE F1 means,
+        # not pass-rates — conflating the two underreports our scores by
+        # dropping all partial-credit cases.
+        category_f1_sum: dict[str, float] = {}
+        total_f1_sum = 0.0
 
         total_q = len(all_questions)
         print(f"  [LoCoMo] Evaluating {total_q} questions...")
@@ -238,17 +253,24 @@ class LoComoBenchmark:
             # (the paper compares models by their synthesized answers).
             reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
 
+            canonical_f1: float | None = None
             if use_canonical_judge:
-                # Canonical F1 against reflect answer only. Threshold 0.3
-                # chosen to match the paper's reported-accuracy convention
-                # (it's the minimum F1 at which the paper's tables treat
-                # an answer as recovered).
+                # Canonical F1 against reflect answer only. We track the
+                # raw F1 (what the paper publishes as headline numbers)
+                # AND a pass/fail at 0.3 (useful for absolute accuracy
+                # reporting). The results JSON will surface both so
+                # downstream comparisons can pick the metric that
+                # matches each competitor's published convention.
                 from astrocyte.eval.judges import locomo_score_qa
 
                 canonical_f1 = locomo_score_qa(
                     prediction=reflect_result.answer,
                     ground_truth=q.answer,
                     category=q.category,
+                )
+                total_f1_sum += canonical_f1
+                category_f1_sum[q.category] = (
+                    category_f1_sum.get(q.category, 0.0) + canonical_f1
                 )
                 is_correct = canonical_f1 > 0.3
             else:
@@ -286,6 +308,12 @@ class LoComoBenchmark:
                     "correct": is_correct,
                     "recall_hits": len(result.hits),
                     "reflect_answer_preview": reflect_result.answer[:200],
+                    # Canonical F1 per question, when judge is on. None
+                    # under legacy scorer. Enables per-question post-hoc
+                    # failure analysis (e.g. which questions scored 0.25
+                    # F1 vs which scored 0.35 — the ones at the boundary
+                    # are the most informative).
+                    "canonical_f1": canonical_f1,
                 }
             )
 
@@ -318,6 +346,19 @@ class LoComoBenchmark:
         category_accuracy: dict[str, float] = {}
         for cat in category_total:
             category_accuracy[cat] = category_correct.get(cat, 0) / category_total[cat]
+
+        # Canonical F1 means — the paper's headline numbers. Only
+        # populated when use_canonical_judge was True; empty dict under
+        # legacy scorer so downstream serializers know this run didn't
+        # produce F1 data.
+        canonical_f1_overall: float | None = None
+        canonical_f1_by_category: dict[str, float] = {}
+        if use_canonical_judge:
+            canonical_f1_overall = total_f1_sum / max(len(all_questions), 1)
+            for cat in category_total:
+                canonical_f1_by_category[cat] = (
+                    category_f1_sum.get(cat, 0.0) / category_total[cat]
+                )
 
         from astrocyte.eval.metrics import percentile
 
@@ -359,14 +400,29 @@ class LoComoBenchmark:
             correct=correct,
             per_question=per_question,
             eval_result=eval_result,
+            canonical_f1_overall=canonical_f1_overall,
+            canonical_f1_by_category=canonical_f1_by_category,
         )
 
 
+# Paper's category numbering as verified from ``datasets/locomo/data/locomo10.json``:
+#   cat 1 — multi-hop (multi-speaker synthesis, often comma-listed answers)
+#   cat 2 — temporal ("when did X..." questions)
+#   cat 3 — open-domain (commonsense / inference — "would X likely...")
+#   cat 4 — single-hop (single-session factual)
+#   cat 5 — adversarial (unanswerable; empty ground-truth answer)
+#
+# Previous adapter versions (v0–v5) had this mapping wrong in two places
+# (the adapter labels AND the judge IDs). The per-category breakdowns
+# in snapshots before this commit carry misleading names — notably the
+# old "multi-hop" column actually reported temporal questions, and the
+# old "single-hop" column reported multi-hop. Historical numbers are
+# still real; only the labels were swapped.
 _LOCOMO_CATEGORY_MAP: dict[int, str] = {
-    1: "single-hop",
-    2: "multi-hop",
+    1: "multi-hop",
+    2: "temporal",
     3: "open-domain",
-    4: "temporal",
+    4: "single-hop",
     5: "adversarial",
 }
 

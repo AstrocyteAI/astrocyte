@@ -54,13 +54,21 @@ from typing import Final
 from astrocyte.eval.judges._stemmer import porter_stem
 
 #: Category id mapping used by the canonical LoCoMo evaluator. Astrocyte's
-#: adapter exposes categories as strings (``"single-hop"``, etc.);
+#: adapter exposes categories as strings (``"multi-hop"``, etc.);
 #: callers translate via :func:`locomo_category_id` before scoring.
+#:
+#: Verified against ``datasets/locomo/data/locomo10.json``:
+#:
+#: - cat 1 — multi-hop (multi-speaker synthesis, comma-listed answers)
+#: - cat 2 — temporal ("when did..." questions)
+#: - cat 3 — open-domain (commonsense inference — "would X likely...")
+#: - cat 4 — single-hop (single-session factual)
+#: - cat 5 — adversarial (unanswerable — empty GT)
 LOCOMO_CATEGORY_IDS: Final[dict[str, int]] = {
     "multi-hop": 1,
-    "single-hop": 2,
-    "temporal": 3,
-    "open-domain": 4,
+    "temporal": 2,
+    "open-domain": 3,
+    "single-hop": 4,
     "adversarial": 5,
 }
 
@@ -72,9 +80,43 @@ _ARTICLES_RE: Final[re.Pattern[str]] = re.compile(r"\b(a|an|the|and)\b")
 _PUNCTUATION: Final[frozenset[str]] = frozenset(string.punctuation)
 
 #: Abstention signal phrases for category-5 scoring.
+#:
+#: The upstream paper's list is narrow (``"no information available"`` and
+#: ``"not mentioned"``) because its baseline LLMs were instruction-tuned
+#: toward that phrasing. Real-world reflect stages produce a wider range
+#: of abstention expressions ("not in my memory", "cannot find", etc.)
+#: that are semantically equivalent but miss the narrow match. Extend
+#: here when operators find false-negatives in their v5+ runs; the tests
+#: in :mod:`tests.test_eval_judges` pin the current set.
 _ABSTENTION_PHRASES: Final[tuple[str, ...]] = (
+    # Upstream canonical phrases
     "no information available",
     "not mentioned",
+    # Common LLM-output variants observed in v5 runs
+    "no information",
+    "not available",
+    "not found",
+    "not stated",
+    "not specified",
+    "not provided",
+    "not discussed",
+    "not indicated",
+    "cannot find",
+    "can't find",
+    "don't have",
+    "do not have",
+    "unable to find",
+    "no record",
+    "nothing about",
+    "not in the memor",       # prefix: "not in the memory" / "memories"
+    "not in my memor",        # prefix: "not in my memory" / "memories"
+    "not in the conversation",
+    "not in the provided",
+    "no mention",
+    "isn't mentioned",
+    "wasn't mentioned",
+    "i don't know",
+    "i do not know",
 )
 
 
@@ -215,11 +257,13 @@ def locomo_score_qa(
     if cid == 1:  # multi-hop
         return _multi_hop_f1(prediction, ground_truth)
 
-    if cid == 3:  # temporal — upstream takes first alternate
+    if cid == 3:  # open-domain — upstream takes first alternate
+        # Upstream defensive: some open-domain answers carry ``;``-
+        # separated alternates. Take only the first; plain F1 after.
         gt_for_scoring = ground_truth.split(";")[0].strip()
         return _f1_score(prediction, gt_for_scoring)
 
-    # cid in {2 single-hop, 4 open-domain} — plain F1
+    # cid in {2 temporal, 4 single-hop} — plain F1
     return _f1_score(prediction, ground_truth)
 
 

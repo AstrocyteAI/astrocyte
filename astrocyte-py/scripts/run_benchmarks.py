@@ -132,11 +132,38 @@ def _build_pipeline_brain(config_path: str):
     return brain
 
 
-def _serialize_result(result, benchmark_name: str) -> dict:
-    """Convert benchmark result to a JSON-serializable dict."""
+def _serialize_result(
+    result,
+    benchmark_name: str,
+    *,
+    judge: str = "legacy",
+    system: str = "astrocyte",
+) -> dict:
+    """Convert benchmark result to a JSON-serializable dict.
+
+    ``judge`` records which scoring method produced the numbers so
+    downstream consumers (positioning doc, CI regression gate,
+    competitor matrix) can tell apples-to-apples from apples-to-oranges:
+
+    - ``"legacy"`` — Astrocyte's pre-canonical scorer
+      (``word_overlap_score > 0.3`` for LoCoMo, ``text_overlap_score``
+      for LongMemEval). Useful for internal v-to-v delta tracking;
+      NOT comparable with published competitor numbers.
+    - ``"canonical"`` — the paper's reference judge. LoCoMo: stemmed
+      token-F1 via ``astrocyte.eval.judges.locomo_judge``. LongMemEval:
+      LLM-judge via ``astrocyte.eval.judges.longmemeval_judge``.
+      REQUIRED for cross-system comparisons.
+
+    ``system`` identifies what produced the predictions. Defaults to
+    ``"astrocyte"``; competitor adapter runs set it to
+    ``"mem0"`` / ``"zep"`` / etc. so a head-to-head matrix can filter
+    and group cleanly without re-parsing filenames.
+    """
     data = {
         "benchmark": benchmark_name,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "system": system,
+        "judge": judge,
         "overall_accuracy": result.overall_accuracy,
         "category_accuracy": result.category_accuracy,
         "total_questions": result.total_questions,
@@ -156,6 +183,16 @@ def _serialize_result(result, benchmark_name: str) -> dict:
         "provider": result.eval_result.provider,
         "provider_tier": result.eval_result.provider_tier,
     }
+    # Canonical F1 means — only populated on LoCoMo canonical-judge runs
+    # (attribute exists on LoCoMoResult; None under legacy scorer).
+    # Exposed as the primary cross-competitor metric, since the paper
+    # reports F1 MEANS (not pass/fail counts) as headline numbers.
+    f1_overall = getattr(result, "canonical_f1_overall", None)
+    if f1_overall is not None:
+        data["canonical_f1_overall"] = f1_overall
+        data["canonical_f1_by_category"] = getattr(
+            result, "canonical_f1_by_category", {},
+        )
     return data
 
 
@@ -190,7 +227,7 @@ def _print_result(result, benchmark_name: str) -> None:
 
 async def run_longmemeval(
     brain, data_path: str | None, max_questions: int | None,
-    *, use_canonical_judge: bool = False,
+    *, use_canonical_judge: bool = False, system: str = "astrocyte",
 ) -> BenchmarkRunOutcome:
     """Run LongMemEval benchmark."""
     from astrocyte.eval.benchmarks.longmemeval import (
@@ -265,12 +302,19 @@ async def run_longmemeval(
         )
 
     _print_result(result, "LongMemEval")
-    return BenchmarkRunOutcome(_serialize_result(result, "longmemeval"), has_dataset)
+    return BenchmarkRunOutcome(
+        _serialize_result(
+            result, "longmemeval",
+            judge="canonical" if use_canonical_judge else "legacy",
+            system=system,
+        ),
+        has_dataset,
+    )
 
 
 async def run_locomo(
     brain, data_path: str | None, max_questions: int | None,
-    *, use_canonical_judge: bool = False,
+    *, use_canonical_judge: bool = False, system: str = "astrocyte",
 ) -> BenchmarkRunOutcome:
     """Run LoCoMo benchmark."""
     from astrocyte.eval.benchmarks.locomo import (
@@ -408,7 +452,14 @@ async def run_locomo(
         )
 
     _print_result(result, "LoCoMo")
-    return BenchmarkRunOutcome(_serialize_result(result, "locomo"), has_dataset)
+    return BenchmarkRunOutcome(
+        _serialize_result(
+            result, "locomo",
+            judge="canonical" if use_canonical_judge else "legacy",
+            system=system,
+        ),
+        has_dataset,
+    )
 
 
 async def run_builtin_suites(brain) -> dict:
