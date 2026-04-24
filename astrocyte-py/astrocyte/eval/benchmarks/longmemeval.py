@@ -126,6 +126,7 @@ class LongMemEvalBenchmark:
         *,
         clean_after: bool = True,
         max_questions: int | None = None,
+        max_sessions: int | None = None,
         use_canonical_judge: bool = False,
     ) -> LongMemEvalResult:
         """Run the LongMemEval benchmark.
@@ -137,6 +138,12 @@ class LongMemEvalBenchmark:
             bank_id: Dedicated bank for the benchmark.
             clean_after: Delete the bank after running.
             max_questions: Limit number of questions (for quick testing).
+            max_sessions: Cap the retain phase at this many unique sessions.
+                          Useful for cost control on large haystacks: the
+                          dataset has ~1500 sessions across 500 questions,
+                          so even 300-400 sessions covers the evidence for
+                          most questions while halving retain cost.
+                          When None (default), all sessions are retained.
             use_canonical_judge: When True, score each reflect answer
                 with the canonical LongMemEval LLM-judge
                 (``astrocyte.eval.judges.longmemeval_judge``) using the
@@ -187,6 +194,8 @@ class LongMemEvalBenchmark:
             for msg in q.conversation_context:
                 session_key = msg.get("session_id", "")
                 if session_key in sessions_retained:
+                    continue
+                if max_sessions is not None and len(sessions_retained) >= max_sessions:
                     continue
                 sessions_retained.add(session_key)
 

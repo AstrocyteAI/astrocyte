@@ -41,7 +41,7 @@ class BenchmarkRunOutcome:
     used_real_data: bool
 
 
-def _build_test_brain():
+def _build_test_brain(*, enable_multi_query_expansion: bool = False):
     """Create an Astrocyte instance with in-memory pipeline (no API keys needed).
 
     Uses InMemoryVectorStore + InMemoryDocumentStore + MockLLMProvider with
@@ -67,12 +67,13 @@ def _build_test_brain():
         vector_store=InMemoryVectorStore(),
         document_store=InMemoryDocumentStore(),
         llm_provider=MockLLMProvider(),
+        enable_multi_query_expansion=enable_multi_query_expansion,
     )
     brain.set_pipeline(pipeline)
     return brain
 
 
-def _build_pipeline_brain(config_path: str):
+def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: bool = False):
     """Create an Astrocyte instance with Tier 1 pipeline from YAML config.
 
     The config should specify vector_store, llm_provider, etc.
@@ -127,6 +128,7 @@ def _build_pipeline_brain(config_path: str):
         llm_provider=llm_provider,
         graph_store=graph_store,
         document_store=document_store,
+        enable_multi_query_expansion=enable_multi_query_expansion,
     )
     brain.set_pipeline(pipeline)
     return brain
@@ -228,6 +230,7 @@ def _print_result(result, benchmark_name: str) -> None:
 async def run_longmemeval(
     brain, data_path: str | None, max_questions: int | None,
     *, use_canonical_judge: bool = False, system: str = "astrocyte",
+    max_sessions: int | None = None,
 ) -> BenchmarkRunOutcome:
     """Run LongMemEval benchmark."""
     from astrocyte.eval.benchmarks.longmemeval import (
@@ -252,6 +255,7 @@ async def run_longmemeval(
             data_path=data_path,
             bank_id="bench-longmemeval",
             max_questions=max_questions,
+            max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
         )
     else:
@@ -298,6 +302,7 @@ async def run_longmemeval(
             questions=questions,
             bank_id="bench-longmemeval",
             max_questions=max_questions,
+            max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
         )
 
@@ -596,15 +601,37 @@ async def main() -> None:
             "delta-tracking."
         ),
     )
+    parser.add_argument(
+        "--multi-query",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable multi-query expansion in the retrieval pipeline "
+            "(PipelineOrchestrator.enable_multi_query_expansion). Rewrites "
+            "each recall query into multiple sub-queries before retrieval, "
+            "which improves recall on complex multi-hop questions at the "
+            "cost of extra LLM calls. Off by default."
+        ),
+    )
+    parser.add_argument(
+        "--max-sessions",
+        type=int,
+        default=None,
+        help=(
+            "Cap LongMemEval retain phase at this many unique sessions. "
+            "The full dataset has ~1500 sessions; 300-400 covers most "
+            "evidence while halving retain cost. Default: retain all."
+        ),
+    )
     args = parser.parse_args()
 
     # Build brain
     if args.provider == "test" or (not args.config and not args.provider):
         if not args.config:
             print("No --config provided, using in-memory test provider.")
-        brain = _build_test_brain()
+        brain = _build_test_brain(enable_multi_query_expansion=args.multi_query)
     else:
-        brain = _build_pipeline_brain(args.config)
+        brain = _build_pipeline_brain(args.config, enable_multi_query_expansion=args.multi_query)
 
     # Run benchmarks
     all_results: dict = {}
@@ -618,6 +645,7 @@ async def main() -> None:
         outcome = await run_longmemeval(
             brain, args.longmemeval_path, args.max_questions,
             use_canonical_judge=args.canonical_judge,
+            max_sessions=args.max_sessions,
         )
         if outcome.result:
             all_results["longmemeval"] = outcome.result
