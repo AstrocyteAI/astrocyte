@@ -46,7 +46,7 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
+.PHONY: bench bench-full bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
 
 # Full LoCoMo benchmark (requires OPENAI_API_KEY, ~30-60 min)
 bench-locomo: fetch-locomo
@@ -130,6 +130,16 @@ bench: fetch-datasets
 		--benchmarks builtin longmemeval locomo \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--locomo-path $(LOCOMO_DIR)/data
+
+# Full canonical run — LME + LoCoMo in parallel, LLM-judge, competitor-comparable numbers.
+# Requires API key (use: doppler run -- make bench-full)
+bench-full: fetch-datasets
+	uv run python scripts/run_benchmarks.py \
+		--config benchmarks/config.yaml \
+		--benchmarks longmemeval locomo \
+		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
+		--locomo-path $(LOCOMO_DIR)/data \
+		--canonical-judge
 
 # Smoke test — in-memory providers, no API key needed.
 # Uses the real LoCoMo dataset (all 200q) so the regression gate in CI

@@ -641,24 +641,49 @@ async def main() -> None:
     if "builtin" in args.benchmarks:
         all_results["builtin"] = await run_builtin_suites(brain)
 
-    if "longmemeval" in args.benchmarks:
-        outcome = await run_longmemeval(
-            brain, args.longmemeval_path, args.max_questions,
-            use_canonical_judge=args.canonical_judge,
-            max_sessions=args.max_sessions,
-        )
-        if outcome.result:
-            all_results["longmemeval"] = outcome.result
-        used_real_data["longmemeval"] = outcome.used_real_data
+    # Run longmemeval + locomo concurrently when both are requested — they use
+    # separate bank IDs and are fully independent. Single-benchmark runs stay
+    # sequential so progress output isn't interleaved.
+    run_lme = "longmemeval" in args.benchmarks
+    run_loc = "locomo" in args.benchmarks
 
-    if "locomo" in args.benchmarks:
-        outcome = await run_locomo(
-            brain, args.locomo_path, args.max_questions,
-            use_canonical_judge=args.canonical_judge,
+    if run_lme and run_loc:
+        lme_outcome, loc_outcome = await asyncio.gather(
+            run_longmemeval(
+                brain, args.longmemeval_path, args.max_questions,
+                use_canonical_judge=args.canonical_judge,
+                max_sessions=args.max_sessions,
+            ),
+            run_locomo(
+                brain, args.locomo_path, args.max_questions,
+                use_canonical_judge=args.canonical_judge,
+            ),
         )
-        if outcome.result:
-            all_results["locomo"] = outcome.result
-        used_real_data["locomo"] = outcome.used_real_data
+        if lme_outcome.result:
+            all_results["longmemeval"] = lme_outcome.result
+        used_real_data["longmemeval"] = lme_outcome.used_real_data
+        if loc_outcome.result:
+            all_results["locomo"] = loc_outcome.result
+        used_real_data["locomo"] = loc_outcome.used_real_data
+    else:
+        if run_lme:
+            outcome = await run_longmemeval(
+                brain, args.longmemeval_path, args.max_questions,
+                use_canonical_judge=args.canonical_judge,
+                max_sessions=args.max_sessions,
+            )
+            if outcome.result:
+                all_results["longmemeval"] = outcome.result
+            used_real_data["longmemeval"] = outcome.used_real_data
+
+        if run_loc:
+            outcome = await run_locomo(
+                brain, args.locomo_path, args.max_questions,
+                use_canonical_judge=args.canonical_judge,
+            )
+            if outcome.result:
+                all_results["locomo"] = outcome.result
+            used_real_data["locomo"] = outcome.used_real_data
 
     wall_elapsed = time.monotonic() - wall_start
 
