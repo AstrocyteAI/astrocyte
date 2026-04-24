@@ -260,6 +260,43 @@ Legend: `▲` = integration point / contribution. `━━` = owned surface.
 
 ---
 
+## Research Agenda: Path to 100% Benchmark Accuracy
+
+The four diagnostic tests define *what* matters. The research agenda defines *how far* we can push each one. Five fundamental barriers stand between current scores and 100% — each requires a distinct research direction that engineering alone won't solve.
+
+### The five barriers
+
+| # | Barrier | Current impact | Diagnostic test affected |
+|---|---------|---------------|-------------------------|
+| 1 | **Retrieval recall** — right chunks not in context | 24–31% queries miss relevant content | All four |
+| 2 | **Synthesis quality** — LLM misinterprets retrieved context | ~10–15% answer errors even with correct chunks | Entity resolution, gap analysis |
+| 3 | **Knowledge representation** — raw chunks lose structure | Multi-hop & reasoning fail without typed relations | Entity resolution, gap analysis |
+| 4 | **Temporal reasoning** — LLMs can't order events reliably | LME temporal at 11.3% (mock) | Time travel |
+| 5 | **Abstention calibration** — wrong confidence on edge cases | Open-domain at 61.5% (real) | Gap analysis |
+
+### How the research connects to the diagnostic tests
+
+**Gap analysis (Test 1):** Coverage-aware retrieval (R5) + `brain.audit()` (M10) enable the system to detect thin coverage and abstain precisely. Retrieval sufficiency classifier (R5) prevents false positives — answering from noise when the bank lacks coverage.
+
+**Entity resolution (Test 2):** Relation extraction (R3) extends M11 from alias detection to full typed triples. Contradiction detection (R3) resolves conflicting facts across documents. These create the structured substrate that makes entity resolution evidence-based rather than similarity-based.
+
+**Time travel (Test 3):** Temporal knowledge graph (R4) turns `as_of` queries from filter-based (M9) to interval-algebra-based — deterministic temporal reasoning without LLM inference. Timeline generation (R4) externalizes temporal ordering into a readable artifact the LLM can process linearly.
+
+**Sovereignty (Test 4):** All research techniques are designed to work with self-hosted models. Learned retrieval fine-tuning (R1) trains on operator query logs — no data leaves the org. The fine-tuned synthesis model (R2) runs on local GPU. Temporal embeddings (R4) are open-weight trainable.
+
+### Projected ceiling with research phases
+
+| Benchmark | v1.1.x (M8–M11) | After R1–R5 | Theoretical max |
+|-----------|-----------------|-------------|-----------------|
+| **LoCoMo** (canonical) | ~78–85% | ~92–95% | ~95–97% |
+| **LongMemEval** (canonical) | ~68–75% | ~90–93% | ~93–97% |
+
+The last 3–5% requires a purpose-built synthesis model fine-tuned on structured memory QA — not a general-purpose LLM. Astrocyte's SPI means such a model plugs in as a Tier 2 engine without framework changes.
+
+Full phase details, eval gates, and per-technique projections: `product-roadmap-v1.md` § v2.0.0 — Research track.
+
+---
+
 ## Consequences for Product Strategy
 
 1. **Astrocyte's open-source scope is fixed by this mapping.**

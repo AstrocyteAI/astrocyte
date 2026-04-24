@@ -593,6 +593,81 @@ These four milestones together constitute the complete answer to the capability 
 - Phase 3 identity migration (context required, principal-only deprecated)
 - Graph-enhanced wiki: `WikiPage` entity cross-links traversable in graph store
 
+### v2.0.0 — Research track: path to 100% benchmark accuracy
+
+Five research phases targeting the fundamental barriers that v1.x engineering alone cannot solve. Each phase addresses a distinct barrier identified by benchmark category-level analysis. Phases are independent and can proceed in parallel; evaluation gates determine promotion to core.
+
+See `platform-positioning.md` § Research Agenda for the full diagnostic-test grounding.
+
+#### Phase R1: Retrieval recall (getting the right chunks into context)
+
+**Barrier:** Recall hit rate plateaus at ~76% with current embeddings — 24% of queries never retrieve a relevant chunk. No synthesis improvement helps if the right content isn't in the window.
+
+| Technique | Mechanism | Expected lift | Eval gate |
+|-----------|-----------|---------------|-----------|
+| **Hypothetical Document Embedding (HyDE)** | LLM generates hypothetical answer → embed that → search; bridges paraphrase gap between query and memory | +5–10pp recall hit rate | LoCoMo recall_hit_rate ≥ 0.85 |
+| **Hierarchical indexing** | Index at sentence, paragraph, session, and topic granularity; recall searches across levels | +3–5pp MRR | LongMemEval extraction ≥ 90% |
+| **Exhaustive multi-pass reformulation** | N diverse query reformulations (beyond current multi-query expansion); union-dedupe results | +2–4pp recall hit rate | No regression on adversarial abstention |
+| **Learned retrieval fine-tuning** | Domain-adapted embedding model trained on retain/recall pairs from operator query logs | +5–8pp recall precision | Requires operator opt-in; not benchmarked centrally |
+
+#### Phase R2: Synthesis quality (extracting the right answer from retrieved context)
+
+**Barrier:** Even with correct chunks retrieved, `gpt-4o-mini` synthesis misses details, conflates entities, or hallucinates ~10–15% of the time.
+
+| Technique | Mechanism | Expected lift | Eval gate |
+|-----------|-----------|---------------|-----------|
+| **Chain-of-thought extraction** | "Step 1: Which memories mention X? Step 2: What do they say? Step 3: Synthesize" — forces explicit grounding | +3–5pp reflect accuracy | LoCoMo multi-hop ≥ 90% |
+| **Retrieval-augmented verification** | After LLM generates answer, recall using the *answer* as query; verify retrieved memories support it; abstain if not | +3–5pp on open-domain (fewer false positives) | No regression on single-hop |
+| **Contrastive reflect** | Generate N answers with different chunk orderings; keep the most consistent; abstain if divergent | +2–3pp reflect accuracy | Retain p95 latency increase < 50% |
+| **Fine-tuned synthesis model** | Small model trained specifically on "given these chunks, extract the answer" — plugs in as Tier 2 engine via SPI | +5–10pp across all categories | LongMemEval overall ≥ 85% |
+
+#### Phase R3: Structured memory representation
+
+**Barrier:** Raw text chunks lose relational and temporal structure. Multi-hop and reasoning queries require structured knowledge that chunked text doesn't encode.
+
+| Technique | Mechanism | Expected lift | Eval gate |
+|-----------|-----------|---------------|-----------|
+| **Relation extraction** | Retain-time: extract typed triples `(entity, relation, value, temporal)` alongside raw chunks; store in graph | +5–8pp LoCoMo multi-hop | Entity resolution confidence ≥ 0.9 |
+| **Episodic memory indexing** | Index by episode context (who, where, emotional valence, sequence) not just content — enables situational retrieval | +3–5pp on contextual queries | New benchmark category needed |
+| **Contradiction detection + resolution** | Retain-time: compare incoming facts against existing; flag conflicts; prefer newer or higher-confidence | +5–8pp LongMemEval update | Update category ≥ 90% |
+
+#### Phase R4: Temporal reasoning
+
+**Barrier:** LongMemEval temporal category is at ~11% (mock). LLMs can retrieve timestamped content but struggle to reason about ordering, duration, and change over time.
+
+| Technique | Mechanism | Expected lift | Eval gate |
+|-----------|-----------|---------------|-----------|
+| **Temporal knowledge graph** | Time intervals on every graph edge; temporal queries become interval algebra (Allen's), not LLM reasoning | +20–30pp LongMemEval temporal | Temporal category ≥ 50% |
+| **Timeline generation** | Before answering temporal query, generate explicit timeline artifact; answer from that | +10–15pp temporal reasoning | No regression on extraction |
+| **Temporal embeddings** | Encode *when* something was true, not just *what* it says; time-aware similarity search | Research-stage; lift TBD | Requires custom embedding model |
+| **Change detection pipeline** | Retain-time: flag superseded facts, tag updates with `preference_update` / `correction` types | +5–8pp LongMemEval update | Update category ≥ 85% |
+
+#### Phase R5: Calibrated abstention
+
+**Barrier:** Perfect abstention means answering when you know and declining when you don't — never hallucinating, never refusing something answerable. Current adversarial is 100% but open-domain is 61.5%.
+
+| Technique | Mechanism | Expected lift | Eval gate |
+|-----------|-----------|---------------|-----------|
+| **Calibrated confidence scoring** | Output confidence with every reflect; train calibration on benchmark pairs | +5–8pp open-domain | Calibration error < 0.05 |
+| **Retrieval sufficiency classifier** | Lightweight model predicts "Is there enough info to answer?" before LLM synthesis; short-circuits to abstention | +5–8pp open-domain (fewer false positives) | No regression on single-hop |
+| **Self-consistency verification** | Generate answer N times with different chunk orderings; divergence → abstain | +3–5pp across categories | Adversarial stays ≥ 98% |
+| **Coverage-aware retrieval** | `brain.audit()` coverage map checked at recall time; abstain if query topic outside bank coverage | +3–5pp open-domain | Requires M10 (gap analysis) |
+
+#### Projected benchmark trajectory
+
+| Phase | LoCoMo (canonical) | LongMemEval (canonical) | Primary categories improved |
+|-------|-------------------|------------------------|----------------------------|
+| **Current** | ~70–78% | ~75% (20Q) | — |
+| **After v1.1.x (M9–M11+M8)** | ~78–85% | ~68–75% (200Q) | Multi-hop, temporal, reasoning, update |
+| **After R1 (retrieval)** | ~82–88% | ~75–82% | All (higher recall hit rate) |
+| **After R2 (synthesis)** | ~85–90% | ~80–85% | Multi-hop, open-domain, reasoning |
+| **After R3 (structured)** | ~88–92% | ~83–88% | Multi-hop, update |
+| **After R4 (temporal)** | ~89–93% | ~88–92% | Temporal, update |
+| **After R5 (abstention)** | ~92–95% | ~90–93% | Open-domain, adversarial edge cases |
+| **Theoretical ceiling** | ~95–97% | ~93–97% | Bounded by embedding + LLM model quality |
+
+**True 100% requires a purpose-built synthesis model** fine-tuned on the "given structured memory, answer questions" task — not a general-purpose LLM. Astrocyte's SPI model means such a model plugs in as a Tier 2 engine without changing the framework. The research track creates the structured substrate (temporal KG, episodic indexing, contradiction resolution) that makes such a model trainable.
+
 ---
 
 ## Gap-to-Milestone Mapping
