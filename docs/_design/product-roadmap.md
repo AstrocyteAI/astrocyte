@@ -586,16 +586,18 @@ These four milestones together constitute the complete answer to the capability 
 
 **`astrocyte-age` is the new default graph store** from v1.1.x — Apache AGE runs inside the same PostgreSQL instance as pgvector, eliminating the need for a separate graph database for most deployments.
 
-### v1.2.0+ (post-primitives)
+### v1.2.0+ — Research track + post-primitives
+
+**Post-primitive engineering:**
 - Additional storage adapters (Pinecone, Weaviate, Memgraph)
 - Multi-region / global deployment patterns
 - Tavus CVI integration (bidirectional) — HTTP client package **`astrocyte-integration-tavus`** (`adapters-integration-py/`); full bidirectional + e2e deferred
 - Phase 3 identity migration (context required, principal-only deprecated)
 - Graph-enhanced wiki: `WikiPage` entity cross-links traversable in graph store
 
-### v2.0.0 — Research track: path to 100% benchmark accuracy
+**Research track: path to 100% benchmark accuracy**
 
-Five research phases targeting the fundamental barriers that v1.x engineering alone cannot solve. Each phase addresses a distinct barrier identified by benchmark category-level analysis. Phases are independent and can proceed in parallel; evaluation gates determine promotion to core.
+Five research phases targeting the fundamental barriers remaining after v1.1.x. Each phase addresses a distinct barrier identified by benchmark category-level analysis. Phases are independent and can proceed in parallel on the v1.2.x line; evaluation gates determine promotion to core. All techniques are additive — no SPI breaking changes.
 
 See `platform-positioning.md` § Research Agenda for the full diagnostic-test grounding.
 
