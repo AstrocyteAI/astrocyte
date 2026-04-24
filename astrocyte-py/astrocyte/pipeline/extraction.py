@@ -2,7 +2,7 @@
 
 Pipeline shape: **Raw → Normalizer → Chunker → Entity extract (optional) → retain**.
 
-See ``docs/_design/product-roadmap-v1.md`` (M3) and ``built-in-pipeline.md``.
+See ``docs/_design/product-roadmap.md`` (M3) and ``built-in-pipeline.md``.
 """
 
 from __future__ import annotations

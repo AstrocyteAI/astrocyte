@@ -86,7 +86,7 @@ See **[`gateway-plugins/README.md`](../../gateway-plugins/README.md)** for archi
 - **Additional poll drivers** (ticketing, CRM APIs) — same pattern as GitHub Issues
 - **Additional gateway plugins** (AWS API Gateway, Envoy, etc.) — same thin-shim pattern
 
-See **[Product roadmap](/design/product-roadmap-v1/)** § **v0.8.x — Connector & gateway integration track** and **[`adapters-ingestion-py/README.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/adapters-ingestion-py/README.md)**.
+See **[Product roadmap](/design/product-roadmap/)** § **v0.8.x — Connector & gateway integration track** and **[`adapters-ingestion-py/README.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/adapters-ingestion-py/README.md)**.
 
 ---
 

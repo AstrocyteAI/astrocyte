@@ -4,7 +4,7 @@ Use :func:`astrocyte.ingest.webhook.handle_webhook_ingest` from an HTTP layer wi
 request body (needed for HMAC). Optional ASGI helper: ``astrocyte.ingest.fastapi_app.create_ingest_webhook_app`` (install ``astrocyte[gateway]``; Starlette app, uvicorn-compatible).
 Stream sources (``type: stream``, ``driver: kafka`` / ``redis``) need ``astrocyte[stream]`` (``astrocyte-ingestion-kafka``, ``astrocyte-ingestion-redis``) and ``retain=`` when building :class:`SourceRegistry`.
 Poll sources (``type: poll``, ``driver: github``) need ``astrocyte[poll]`` (``astrocyte-ingestion-github``) and ``retain=``.
-See ``docs/_design/product-roadmap-v1.md`` (M4).
+See ``docs/_design/product-roadmap.md`` (M4).
 """
 
 from __future__ import annotations

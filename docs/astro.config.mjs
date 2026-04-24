@@ -108,7 +108,7 @@ const topicItems = {
         { label: "Design principles", link: "/design/design-principles/" },
         { label: "Architecture", link: "/design/architecture/" },
         { label: "C4, deployment & domain model", link: "/design/c4-deployment-domain/" },
-        { label: "Product roadmap v1", link: "/design/product-roadmap-v1/" },
+        { label: "Product roadmap", link: "/design/product-roadmap/" },
         {
           label: "ADRs",
           collapsed: true,

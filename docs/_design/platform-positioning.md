@@ -293,7 +293,7 @@ The four diagnostic tests define *what* matters. The research agenda defines *ho
 
 The last 3–5% requires a purpose-built synthesis model fine-tuned on structured memory QA — not a general-purpose LLM. Astrocyte's SPI means such a model plugs in as a Tier 2 engine without framework changes.
 
-Full phase details, eval gates, and per-technique projections: `product-roadmap-v1.md` § v2.0.0 — Research track.
+Full phase details, eval gates, and per-technique projections: `product-roadmap.md` § v2.0.0 — Research track.
 
 ---
 

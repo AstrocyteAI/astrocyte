@@ -49,7 +49,7 @@ Details: chunking uses sentence, paragraph, dialogue, or fixed-size strategies; 
 
 ### M4 — Webhook ingest (library)
 
-HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook_ingest` with the matching `SourceConfig`. JSON body: `content` or `text`, optional `principal`, `content_type`, `metadata`. **HMAC** when `auth.type: hmac` (`secret`, optional `header`). **Bank**: `target_bank` or `target_bank_template` with `{principal}`. Optional **`astrocyte[gateway]`**: `create_ingest_webhook_app` (Starlette ASGI) exposes `POST /v1/ingest/webhook/{source_id}`. Full gateway (JWT, OpenAPI, Docker) is M6. **M4.1** federated recall (`astrocyte.recall.proxy`, RRF merge) is separate from gateway HTTP; see `product-roadmap-v1.md` §M4.1. OAuth for proxy sources is documented in **`adr-003-config-schema.md`** (proxy `auth`). Not in core today but can be added when needed: a **hosted redirect/callback** flow, **PKCE**, and **device / JWT bearer** grants — see that ADR for the explicit “layered on later” note.
+HTTP handlers should pass **raw body bytes** to `astrocyte.ingest.handle_webhook_ingest` with the matching `SourceConfig`. JSON body: `content` or `text`, optional `principal`, `content_type`, `metadata`. **HMAC** when `auth.type: hmac` (`secret`, optional `header`). **Bank**: `target_bank` or `target_bank_template` with `{principal}`. Optional **`astrocyte[gateway]`**: `create_ingest_webhook_app` (Starlette ASGI) exposes `POST /v1/ingest/webhook/{source_id}`. Full gateway (JWT, OpenAPI, Docker) is M6. **M4.1** federated recall (`astrocyte.recall.proxy`, RRF merge) is separate from gateway HTTP; see `product-roadmap.md` §M4.1. OAuth for proxy sources is documented in **`adr-003-config-schema.md`** (proxy `auth`). Not in core today but can be added when needed: a **hosted redirect/callback** flow, **PKCE**, and **device / JWT bearer** grants — see that ADR for the explicit “layered on later” note.
 
 ### M4 — Stream ingest (`type: stream`)
 
@@ -88,7 +88,7 @@ Query analysis and reflect can pass **multimodal `Message`** lists to **`complet
 
 **Not a single YAML `pipeline:` block yet.** A future top-level `pipeline:` key may unify chunk/entity/embed knobs; until then the above fields and orchestrator constructor arguments are the real surface.
 
-**Multi-system recall (M4.1):** **`sources:`** with **`type: proxy`** federates HTTP recall into **`PipelineOrchestrator.recall`** (RRF merge with local hits). Use when the next retrieval bet is **combining** vector/graph/document stores with an external search or ticket API — see **`product-roadmap-v1.md`** (M4.1) and **`astrocyte.recall.proxy`**.
+**Multi-system recall (M4.1):** **`sources:`** with **`type: proxy`** federates HTTP recall into **`PipelineOrchestrator.recall`** (RRF merge with local hits). Use when the next retrieval bet is **combining** vector/graph/document stores with an external search or ticket API — see **`product-roadmap.md`** (M4.1) and **`astrocyte.recall.proxy`**.
 
 **Roadmap sketch (not implemented as one nested `pipeline:` tree):**
 
@@ -281,9 +281,9 @@ Per-memory composite score combining recency (exponential decay), frequency (rec
 
 ### 9.4 Adaptive tiered retrieval (implemented)
 
-5-tier **progressive escalation by cost and latency**: cache → fuzzy recent → BM25 → full multi-strategy → agentic recall. Each tier is cheaper than the next. Stops when `min_results` with `min_score` are found. Module: `astrocyte/pipeline/tiered_retrieval.py`. Config: `tiered_retrieval` in `astrocyte.yaml` (including optional `full_recall: hybrid` when using `HybridEngineProvider` — see core docstrings and `product-roadmap-v1.md`).
+5-tier **progressive escalation by cost and latency**: cache → fuzzy recent → BM25 → full multi-strategy → agentic recall. Each tier is cheaper than the next. Stops when `min_results` with `min_score` are found. Module: `astrocyte/pipeline/tiered_retrieval.py`. Config: `tiered_retrieval` in `astrocyte.yaml` (including optional `full_recall: hybrid` when using `HybridEngineProvider` — see core docstrings and `product-roadmap.md`).
 
-**Terminology — cost tiers vs truth tiers:** “Tier” here means **how much work recall does**, not **which source is authoritative**. Do **not** confuse this with *precedence-in-the-prompt* RAG patterns (e.g. labeled Priority 1 / 2 / 3 blocks where graph facts override statistics and vectors). That style optimizes **structured precedence and conflict handling at generation time**; Astrocyte’s default story remains **algorithmic fusion** (e.g. RRF) and optional **layer weights**. **Structured recall authority** (**M7**, **v0.8.0**) is **implemented** as optional `recall_authority` in `astrocyte.yaml` (`RecallResult.authority_context`, reflect injection) — see **`adr-004-recall-authority.md`** and **`product-roadmap-v1.md` § M7**. It is **not** the default recall path when disabled.
+**Terminology — cost tiers vs truth tiers:** “Tier” here means **how much work recall does**, not **which source is authoritative**. Do **not** confuse this with *precedence-in-the-prompt* RAG patterns (e.g. labeled Priority 1 / 2 / 3 blocks where graph facts override statistics and vectors). That style optimizes **structured precedence and conflict handling at generation time**; Astrocyte’s default story remains **algorithmic fusion** (e.g. RRF) and optional **layer weights**. **Structured recall authority** (**M7**, **v0.8.0**) is **implemented** as optional `recall_authority` in `astrocyte.yaml` (`RecallResult.authority_context`, reflect injection) — see **`adr-004-recall-authority.md`** and **`product-roadmap.md` § M7**. It is **not** the default recall path when disabled.
 
 ### 9.5 LLM-curated retain (implemented)
 
