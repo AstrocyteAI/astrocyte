@@ -2,23 +2,23 @@
   "suite": "basic",
   "provider": "pipeline",
   "provider_tier": "storage",
-  "timestamp": "2026-04-23T06:57:02.629306+00:00",
+  "timestamp": "2026-04-24T07:00:59.676780+00:00",
   "metrics": {
     "recall_precision": 0.11000000000000001,
     "recall_hit_rate": 1.0,
     "recall_mrr": 0.9333333333333333,
     "recall_ndcg": 0.9377215315338049,
-    "retain_latency_p50_ms": 549.8102120000005,
-    "retain_latency_p95_ms": 2129.8826702499964,
-    "recall_latency_p50_ms": 160.03793400000177,
-    "recall_latency_p95_ms": 792.9886575499985,
-    "total_tokens_used": 818,
-    "total_duration_seconds": 15.804077324000005,
+    "retain_latency_p50_ms": 337.61281449999814,
+    "retain_latency_p95_ms": 1293.0089346500013,
+    "recall_latency_p50_ms": 194.59231900000162,
+    "recall_latency_p95_ms": 265.2691381999997,
+    "total_tokens_used": 842,
+    "total_duration_seconds": 9.218815907,
     "reflect_accuracy": 1.0,
     "reflect_completeness": null,
     "reflect_hallucination_rate": null,
-    "reflect_latency_p50_ms": 1879.2806310000003,
-    "reflect_latency_p95_ms": 2118.0638142000003
+    "reflect_latency_p50_ms": 1179.090275500002,
+    "reflect_latency_p95_ms": 1245.361918149999
   },
   "config_snapshot": {
     "judge": "keyword"
