@@ -1,6 +1,6 @@
 # Astrocyte + Mystique: Platform Positioning
 
-**Status:** Living document. Last updated 2026-04-21.
+**Status:** Living document. Last updated 2026-04-24.
 
 This document maps Astrocyte (open-source memory framework) and Mystique
 (commercial control plane) onto the enterprise agentic platform reference
@@ -8,6 +8,62 @@ architecture — five layers that enterprises will build regardless, of which
 memory / context is the layer with the highest strategic value.
 
 Reference: mdjawad, *Enterprise Agentic Platform* (Apr 2026).
+
+---
+
+## The thesis: the third option
+
+Enterprise knowledge management has oscillated between two failing options for sixty years. The first option — hand-encoding structure — produces Palantir-style systems: accurate at first, unmaintainable as reality evolves. The second option — skipping structure — produces wikis, SharePoint, and now RAG: searchable but unintelligent, unable to reason about what they *don't* know.
+
+**Astrocyte is the third option.** LLMs extract structure automatically — entities, relationships, temporal context — and a deterministic harness verifies, governs, and queries that structure. Structure emerges from content; it is not hand-encoded, and it is not discarded.
+
+### Four diagnostic tests
+
+Any system claiming to be the third option should pass four diagnostic tests. These tests expose whether a system is genuinely intelligent about its knowledge or just a sophisticated retrieval index.
+
+**1. Gap analysis** — Can the system reason about absence?
+
+```python
+result = await brain.audit("deployment practices", bank_id="eng-team")
+# AuditResult(
+#   gaps=["no documentation on rollback procedures",
+#         "database migration strategy not covered"],
+#   coverage_score=0.62,
+# )
+```
+
+A pure RAG system returns results for what exists. It cannot tell you what's missing. Gap analysis is the difference between a search engine and an intelligent knowledge assistant.
+
+**2. Entity resolution** — Can the system unify evidence across documents?
+
+When the system encounters "Calvin," "the CTO," and "linchuan.cheng@gmail.com" across different retained documents, it should recognize these as the same entity — and produce an evidence chain, not just a cosine similarity score.
+
+```python
+# During retain: entity extractor sees "Calvin" in document A
+# Graph lookup finds candidate: entity "CTO" from document B
+# LLM confirmation: "Calvin Cheng is referred to as the CTO in document B (evidence: 'our CTO Calvin approved')"
+# EntityLink(type="alias_of", entity_a="Calvin", entity_b="CTO", evidence="our CTO Calvin approved", confidence=0.94)
+```
+
+**3. Time travel** — Can the system answer "what did we know on date X?"
+
+Every memory carries a `retained_at` system timestamp. Soft deletes write `forgotten_at`. The recall path supports `as_of: datetime` — returning the exact knowledge state at any historical moment.
+
+```python
+hits = await brain.recall("deployment strategy", bank_id="eng-team", as_of=datetime(2026, 3, 1))
+# Returns memories that existed on March 1st, excluding anything retained after
+# and anything forgotten (forgotten_at <= March 1st not included)
+```
+
+**4. Sovereignty** — Can this run entirely on your own infrastructure?
+
+Self-hosted PostgreSQL (pgvector + Apache AGE), self-hosted LLM (Ollama/vLLM), no data leaving the org. Compliance profiles for GDPR, HIPAA, PDPA. PII barriers before any data reaches storage.
+
+### Why these four tests matter
+
+The standard RAG objection — "just do better semantic search" — fails all four. Better embeddings improve retrieval of what exists; they do not surface what's absent (gap analysis), they do not resolve identities with evidence (entity resolution), they do not give you a historical snapshot (time travel), and they do not change the data-residency story (sovereignty).
+
+These four tests are the criteria against which memory systems should be evaluated. Astrocyte's v1.0.0 scope is shaped by passing all four.
 
 ---
 
@@ -43,11 +99,12 @@ it does not aspire to own the whole platform.
 
 ### The positioning line
 
-> Astrocyte is the governed memory layer of the enterprise agentic platform.
+> Astrocyte is the third option: structured memory that emerges from content, governed by a deterministic harness, passing the four diagnostic tests that matter for enterprise AI.
 
-Not "memory for agents." Not "RAG library." **Governed memory as
-strategic infrastructure** — the layer enterprises will build regardless,
-purpose-built for the job.
+Not "memory for agents." Not "RAG library." Not "governed memory" as
+a euphemism for RAG-with-access-control. **Structure that emerges automatically**
+— LLMs propose, the deterministic harness verifies and queries — the layer
+enterprises will build regardless, purpose-built for the job.
 
 ### What the numbers look like
 
@@ -93,14 +150,26 @@ See `benchmarks/snapshots/` for the full run history and
 
 ### Where Astrocyte is *ahead* of the article's reference architecture
 
-1. **Declarative routing (MIP).** The article argues for governance at the
+1. **Passes all four diagnostic tests.** Gap analysis (`brain.audit`), entity
+   resolution with evidence chains, time travel (`as_of` queries + `retained_at`
+   / `forgotten_at` history), and full sovereignty (self-hosted PostgreSQL with
+   pgvector + Apache AGE, no data leaving the org). The article identifies
+   "context is the moat" but does not specify mechanisms that pass these tests.
+2. **The third option is implemented, not aspirational.** LLM wiki compile (M8)
+   maintains rewritable `WikiPage` summaries from raw memories, with provenance
+   and cross-links. Gap analysis audits coverage and surfaces absent topics.
+   Entity resolution unifies identities across documents with evidence quotes.
+   These together constitute the intelligence layer the article describes without
+   naming.
+3. **Declarative routing (MIP).** The article argues for governance at the
    pipeline level but offers no mechanism more opinionated than "policy-as-code
    at the gateway." MIP is a full DSL — presets, tie-breaking, shadow mode,
    time-bounded activation, observability tags.
-2. **Lifecycle as first-class.** Soft/hard/tombstone forget modes, legal
-   hold, min-age-days enforcement, cascade semantics. The article acknowledges
-   governance but doesn't specify mechanism at this level of detail.
-3. **Pluggable provider tiers.** Tier 1 (built-in pipeline) vs. Tier 2
+4. **Lifecycle as first-class.** Soft/hard/tombstone forget modes, legal
+   hold, min-age-days enforcement, cascade semantics, `forgotten_at` timestamps
+   for compliance audit. The article acknowledges governance but doesn't specify
+   mechanism at this level of detail.
+5. **Pluggable provider tiers.** Tier 1 (built-in pipeline) vs. Tier 2
    (full-stack engines like Mystique, Mem0, Zep). The article assumes a
    single serving layer; Astrocyte's SPI makes substrate choice orthogonal
    to the memory contract.

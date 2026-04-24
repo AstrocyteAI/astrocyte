@@ -255,6 +255,153 @@ Quality-based loss functions and observation formation — Hindsight's engine ad
 
 ---
 
+## Phase 5: The third-option primitives (v1.1.x — planned)
+
+These three capabilities plus M8 constitute the complete answer to the four diagnostic tests in *Familiarity is the Enemy* (see `platform-positioning.md` for the framing). Each is an open-source framework capability — not a Mystique exclusive.
+
+The open-core split for this phase:
+
+| Capability | Astrocyte (free) | Mystique (premium) |
+|---|---|---|
+| Time travel | `retained_at` + `forgotten_at` + `as_of` filter + `brain.history()` | Same + temporal spreading activation in graph traversal |
+| Gap analysis | `brain.audit()` + LLM judge + `AuditResult` | Same + multi-bank gap synthesis + scheduled gap alerts |
+| Entity resolution | `EntityResolver` + `EntityLink` with evidence + `astrocyte-age` default | Same + gleaning passes (multi-pass entity extraction) + co-occurrence tracking |
+| LLM wiki compile | `WikiPage` compiled memories + provenance + lint pass | Same + disposition-aware compilation + cross-bank wiki merge |
+
+### 5.1 Time Travel (M9)
+
+**Diagnostic test:** Test 3 — "What did we believe about X on March 1st?"
+
+**Module:** `astrocyte/pipeline/time_travel.py` (filter application); type changes in `astrocyte/types.py`
+
+Every `VectorItem` carries two system-managed timestamps:
+
+- `retained_at: datetime` — set on write, immutable; the moment the memory entered the bank
+- `forgotten_at: datetime | None` — set on soft-delete; `None` means the memory is active
+
+`VectorFilters` gains `as_of: datetime | None`. When set, the recall path restricts results to:
+
+```sql
+retained_at <= as_of AND (forgotten_at IS NULL OR forgotten_at > as_of)
+```
+
+A new `brain.history(bank_id, start, end)` method returns all memories retained and/or forgotten in a date range, ordered by `retained_at`.
+
+```python
+# What did the eng team know about the deployment pipeline before the March 5 incident?
+hits = await brain.recall(
+    "deployment pipeline",
+    bank_id="eng-team",
+    as_of=datetime(2026, 3, 5, tzinfo=timezone.utc),
+)
+
+# Timeline of what changed in March
+timeline = await brain.history("eng-team", start=datetime(2026, 3, 1), end=datetime(2026, 3, 31))
+```
+
+**Type additions:** `retained_at: datetime` and `forgotten_at: datetime | None` on `VectorItem`; `as_of: datetime | None` on `VectorFilters`.
+
+**Impact:** Enables post-mortem analysis, compliance audit, and accountability. The system becomes an append-only ledger of beliefs, not a mutable black box.
+
+### 5.2 Gap Analysis (M10)
+
+**Diagnostic test:** Test 1 — "What don't we know about X?"
+
+**Module:** `astrocyte/pipeline/audit.py`
+
+`brain.audit(scope: str, bank_id: str) -> AuditResult` surfaces absent topics and thin coverage areas. Unlike recall — which retrieves what exists — audit reasons about what is *missing*.
+
+Implementation:
+1. Run scoped recall against `bank_id` for `scope` topic
+2. Pass recall results to a configurable LLM judge with prompt: "Given these memories about {scope}, what topics are missing, thin, or contradictory?"
+3. Parse structured output into `AuditResult`
+
+```python
+result = await brain.audit("incident response procedures", bank_id="eng-team")
+# AuditResult(
+#   gaps=[
+#     GapItem(topic="rollback procedures", severity="high",
+#             reason="no memories matching rollback or revert"),
+#     GapItem(topic="escalation path for database incidents", severity="medium",
+#             reason="only one memory, dated 2025"),
+#   ],
+#   coverage_score=0.54,
+#   memories_scanned=12,
+# )
+```
+
+**Type additions:** `AuditResult(gaps: list[GapItem], coverage_score: float, memories_scanned: int, scope: str)`, `GapItem(topic: str, severity: Literal["high", "medium", "low"], reason: str)`.
+
+**Impact:** Gap analysis is the primary way compliance teams verify that critical knowledge areas are adequately documented. It is also the foundation for the M8 wiki compile lint pass.
+
+### 5.3 Entity Resolution (M11)
+
+**Diagnostic test:** Test 2 — "Is 'Calvin' the same person as 'the CTO'?"
+
+**Module:** `astrocyte/pipeline/entity_resolution.py`
+
+Retain-time pipeline stage that extracts named entities, looks up graph candidates, and confirms matches with LLM-generated evidence quotes. The result is an `EntityLink` — not a cosine similarity score, but a structured assertion with provenance.
+
+```python
+# During retain of "The CTO approved the rollout":
+# 1. Entity extractor: {"CTO"} detected
+# 2. Graph lookup: existing entity "Calvin Cheng" is a candidate (alias lookup)
+# 3. LLM confirmation: "CTO refers to Calvin Cheng (evidence: 'our CTO Calvin approved the Q4 plan')"
+# 4. Write EntityLink:
+EntityLink(
+    type="alias_of",
+    entity_a="CTO",
+    entity_b="Calvin Cheng",
+    evidence="our CTO Calvin approved the Q4 plan",
+    confidence=0.94,
+    created_at=datetime.utcnow(),
+)
+```
+
+On recall, graph traversal automatically follows entity links. A query for "Calvin" retrieves memories tagged with "CTO" and vice versa.
+
+**New `GraphStore` SPI methods:** `find_entity_candidates(name: str, threshold: float) -> list[EntityCandidate]`, `store_entity_link(link: EntityLink) -> None`.
+
+**Default graph store — `astrocyte-age`:** Apache AGE is a PostgreSQL extension that adds a full property graph model (vertices, edges, Cypher queries) to the same instance already running pgvector. This means most deployments need zero additional infrastructure — one PostgreSQL instance provides both vector search and graph traversal.
+
+```yaml
+# astrocyte.yaml — default v1.1.x stack
+vector_store: pgvector
+vector_store_config:
+  connection_url: postgresql://localhost/memories  # same instance
+
+graph_store: age
+graph_store_config:
+  connection_url: postgresql://localhost/memories  # same instance, no extra service
+
+entity_resolution:
+  enabled: true
+  similarity_threshold: 0.75
+  llm_confirmation: true
+```
+
+**Impact:** Entity resolution turns the memory graph into a structured knowledge base. Cross-document queries become semantically accurate rather than just syntactically similar. The evidence chain makes the resolution auditable and correctable.
+
+### 5.4 LLM Wiki Compile (M8)
+
+**All four diagnostic tests** — synthesizes across M9, M10, M11.
+
+Full design: **[`llm-wiki-compile.md`](llm-wiki-compile.md)**. Summary:
+
+An async `CompileEngine` maintains rewritable `WikiPage` memories (entity/topic/concept pages) from raw memories. Each `WikiPage` has:
+- A synthesized summary of what the bank knows about this entity or topic
+- Provenance: which raw memories contributed (with `retained_at` timestamps from M9)
+- Cross-links: which other entities are mentioned (resolved via M11 entity links)
+- A lint status: whether the page has contradictions or stale claims (detected using M10 audit logic)
+
+On recall, wiki hits are ranked ahead of raw memories with fallback. A periodic lint pass catches contradictions, stale claims, and orphaned cross-links.
+
+**Ships when**: LongMemEval compile vs no-compile A/B gate passes — ≥10pp absolute lift on `multi-session` or `knowledge-update`, no other category regressing > 2pp, retain p95 unchanged.
+
+**Why M9 + M10 + M11 first:** Wiki pages need accurate provenance (M9), gap detection drives the lint pass (M10), and entity links enrich cross-page references (M11). Shipping M8 without these three would produce wiki pages that are synthesized but not temporally accurate, not auditable, and not graph-connected.
+
+---
+
 ## Backward compatibility
 
 All innovations follow these rules:
