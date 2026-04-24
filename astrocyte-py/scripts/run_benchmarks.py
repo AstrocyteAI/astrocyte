@@ -41,7 +41,7 @@ class BenchmarkRunOutcome:
     used_real_data: bool
 
 
-def _build_test_brain():
+def _build_test_brain(*, enable_multi_query_expansion: bool = False):
     """Create an Astrocyte instance with in-memory pipeline (no API keys needed).
 
     Uses InMemoryVectorStore + InMemoryDocumentStore + MockLLMProvider with
@@ -67,12 +67,13 @@ def _build_test_brain():
         vector_store=InMemoryVectorStore(),
         document_store=InMemoryDocumentStore(),
         llm_provider=MockLLMProvider(),
+        enable_multi_query_expansion=enable_multi_query_expansion,
     )
     brain.set_pipeline(pipeline)
     return brain
 
 
-def _build_pipeline_brain(config_path: str):
+def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: bool = False):
     """Create an Astrocyte instance with Tier 1 pipeline from YAML config.
 
     The config should specify vector_store, llm_provider, etc.
@@ -127,16 +128,44 @@ def _build_pipeline_brain(config_path: str):
         llm_provider=llm_provider,
         graph_store=graph_store,
         document_store=document_store,
+        enable_multi_query_expansion=enable_multi_query_expansion,
     )
     brain.set_pipeline(pipeline)
     return brain
 
 
-def _serialize_result(result, benchmark_name: str) -> dict:
-    """Convert benchmark result to a JSON-serializable dict."""
+def _serialize_result(
+    result,
+    benchmark_name: str,
+    *,
+    judge: str = "legacy",
+    system: str = "astrocyte",
+) -> dict:
+    """Convert benchmark result to a JSON-serializable dict.
+
+    ``judge`` records which scoring method produced the numbers so
+    downstream consumers (positioning doc, CI regression gate,
+    competitor matrix) can tell apples-to-apples from apples-to-oranges:
+
+    - ``"legacy"`` — Astrocyte's pre-canonical scorer
+      (``word_overlap_score > 0.3`` for LoCoMo, ``text_overlap_score``
+      for LongMemEval). Useful for internal v-to-v delta tracking;
+      NOT comparable with published competitor numbers.
+    - ``"canonical"`` — the paper's reference judge. LoCoMo: stemmed
+      token-F1 via ``astrocyte.eval.judges.locomo_judge``. LongMemEval:
+      LLM-judge via ``astrocyte.eval.judges.longmemeval_judge``.
+      REQUIRED for cross-system comparisons.
+
+    ``system`` identifies what produced the predictions. Defaults to
+    ``"astrocyte"``; competitor adapter runs set it to
+    ``"mem0"`` / ``"zep"`` / etc. so a head-to-head matrix can filter
+    and group cleanly without re-parsing filenames.
+    """
     data = {
         "benchmark": benchmark_name,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "system": system,
+        "judge": judge,
         "overall_accuracy": result.overall_accuracy,
         "category_accuracy": result.category_accuracy,
         "total_questions": result.total_questions,
@@ -156,6 +185,16 @@ def _serialize_result(result, benchmark_name: str) -> dict:
         "provider": result.eval_result.provider,
         "provider_tier": result.eval_result.provider_tier,
     }
+    # Canonical F1 means — only populated on LoCoMo canonical-judge runs
+    # (attribute exists on LoCoMoResult; None under legacy scorer).
+    # Exposed as the primary cross-competitor metric, since the paper
+    # reports F1 MEANS (not pass/fail counts) as headline numbers.
+    f1_overall = getattr(result, "canonical_f1_overall", None)
+    if f1_overall is not None:
+        data["canonical_f1_overall"] = f1_overall
+        data["canonical_f1_by_category"] = getattr(
+            result, "canonical_f1_by_category", {},
+        )
     return data
 
 
@@ -190,7 +229,8 @@ def _print_result(result, benchmark_name: str) -> None:
 
 async def run_longmemeval(
     brain, data_path: str | None, max_questions: int | None,
-    *, use_canonical_judge: bool = False,
+    *, use_canonical_judge: bool = False, system: str = "astrocyte",
+    max_sessions: int | None = None,
 ) -> BenchmarkRunOutcome:
     """Run LongMemEval benchmark."""
     from astrocyte.eval.benchmarks.longmemeval import (
@@ -215,6 +255,7 @@ async def run_longmemeval(
             data_path=data_path,
             bank_id="bench-longmemeval",
             max_questions=max_questions,
+            max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
         )
     else:
@@ -261,16 +302,56 @@ async def run_longmemeval(
             questions=questions,
             bank_id="bench-longmemeval",
             max_questions=max_questions,
+            max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
         )
 
     _print_result(result, "LongMemEval")
-    return BenchmarkRunOutcome(_serialize_result(result, "longmemeval"), has_dataset)
+    return BenchmarkRunOutcome(
+        _serialize_result(
+            result, "longmemeval",
+            judge="canonical" if use_canonical_judge else "legacy",
+            system=system,
+        ),
+        has_dataset,
+    )
+
+
+def _locomo_llm_judge(brain, *, use_canonical_judge: bool):
+    """Return a LoCoMoLLMJudge when conditions are right, else None.
+
+    The LLM judge is only used when:
+    - ``use_canonical_judge`` is True (caller opted in)
+    - The pipeline has a real LLM provider (not MockLLMProvider)
+
+    MockLLMProvider returns bag-of-words text that can't answer yes/no
+    reliably, so LLM-judge scores with a mock provider are meaningless.
+    We fall back to stemmed-F1 in that case so `bench-smoke` still works.
+    """
+    if not use_canonical_judge:
+        return None
+    pipeline = getattr(brain, "_pipeline", None)
+    if pipeline is None:
+        return None
+    llm_provider = getattr(pipeline, "llm_provider", None)
+    if llm_provider is None:
+        return None
+    # Skip if this is the mock (in-memory) provider used by bench-smoke.
+    try:
+        from astrocyte.testing.in_memory import MockLLMProvider
+
+        if isinstance(llm_provider, MockLLMProvider):
+            return None
+    except ImportError:
+        pass  # MockLLMProvider only exists in the test/dev extras; absent in prod
+    from astrocyte.eval.judges.locomo_judge import LoCoMoLLMJudge
+
+    return LoCoMoLLMJudge(llm_provider)
 
 
 async def run_locomo(
     brain, data_path: str | None, max_questions: int | None,
-    *, use_canonical_judge: bool = False,
+    *, use_canonical_judge: bool = False, system: str = "astrocyte",
 ) -> BenchmarkRunOutcome:
     """Run LoCoMo benchmark."""
     from astrocyte.eval.benchmarks.locomo import (
@@ -292,12 +373,14 @@ async def run_locomo(
     else:
         has_dataset = False
 
+    llm_judge = _locomo_llm_judge(brain, use_canonical_judge=use_canonical_judge)
     if has_dataset:
         result = await bench.run(
             data_path=data_path,
             bank_id="bench-locomo",
             max_questions=max_questions,
             use_canonical_judge=use_canonical_judge,
+            llm_judge=llm_judge,
         )
     else:
         if data_path:
@@ -405,10 +488,21 @@ async def run_locomo(
             bank_id="bench-locomo",
             max_questions=max_questions,
             use_canonical_judge=use_canonical_judge,
+            llm_judge=llm_judge,
         )
 
+    if llm_judge is not None:
+        judge_label = "canonical-llm"
+    elif use_canonical_judge:
+        judge_label = "canonical"
+    else:
+        judge_label = "legacy"
+
     _print_result(result, "LoCoMo")
-    return BenchmarkRunOutcome(_serialize_result(result, "locomo"), has_dataset)
+    return BenchmarkRunOutcome(
+        _serialize_result(result, "locomo", judge=judge_label, system=system),
+        has_dataset,
+    )
 
 
 async def run_builtin_suites(brain) -> dict:
@@ -507,15 +601,37 @@ async def main() -> None:
             "delta-tracking."
         ),
     )
+    parser.add_argument(
+        "--multi-query",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable multi-query expansion in the retrieval pipeline "
+            "(PipelineOrchestrator.enable_multi_query_expansion). Rewrites "
+            "each recall query into multiple sub-queries before retrieval, "
+            "which improves recall on complex multi-hop questions at the "
+            "cost of extra LLM calls. Off by default."
+        ),
+    )
+    parser.add_argument(
+        "--max-sessions",
+        type=int,
+        default=None,
+        help=(
+            "Cap LongMemEval retain phase at this many unique sessions. "
+            "The full dataset has ~1500 sessions; 300-400 covers most "
+            "evidence while halving retain cost. Default: retain all."
+        ),
+    )
     args = parser.parse_args()
 
     # Build brain
     if args.provider == "test" or (not args.config and not args.provider):
         if not args.config:
             print("No --config provided, using in-memory test provider.")
-        brain = _build_test_brain()
+        brain = _build_test_brain(enable_multi_query_expansion=args.multi_query)
     else:
-        brain = _build_pipeline_brain(args.config)
+        brain = _build_pipeline_brain(args.config, enable_multi_query_expansion=args.multi_query)
 
     # Run benchmarks
     all_results: dict = {}
@@ -525,23 +641,49 @@ async def main() -> None:
     if "builtin" in args.benchmarks:
         all_results["builtin"] = await run_builtin_suites(brain)
 
-    if "longmemeval" in args.benchmarks:
-        outcome = await run_longmemeval(
-            brain, args.longmemeval_path, args.max_questions,
-            use_canonical_judge=args.canonical_judge,
-        )
-        if outcome.result:
-            all_results["longmemeval"] = outcome.result
-        used_real_data["longmemeval"] = outcome.used_real_data
+    # Run longmemeval + locomo concurrently when both are requested — they use
+    # separate bank IDs and are fully independent. Single-benchmark runs stay
+    # sequential so progress output isn't interleaved.
+    run_lme = "longmemeval" in args.benchmarks
+    run_loc = "locomo" in args.benchmarks
 
-    if "locomo" in args.benchmarks:
-        outcome = await run_locomo(
-            brain, args.locomo_path, args.max_questions,
-            use_canonical_judge=args.canonical_judge,
+    if run_lme and run_loc:
+        lme_outcome, loc_outcome = await asyncio.gather(
+            run_longmemeval(
+                brain, args.longmemeval_path, args.max_questions,
+                use_canonical_judge=args.canonical_judge,
+                max_sessions=args.max_sessions,
+            ),
+            run_locomo(
+                brain, args.locomo_path, args.max_questions,
+                use_canonical_judge=args.canonical_judge,
+            ),
         )
-        if outcome.result:
-            all_results["locomo"] = outcome.result
-        used_real_data["locomo"] = outcome.used_real_data
+        if lme_outcome.result:
+            all_results["longmemeval"] = lme_outcome.result
+        used_real_data["longmemeval"] = lme_outcome.used_real_data
+        if loc_outcome.result:
+            all_results["locomo"] = loc_outcome.result
+        used_real_data["locomo"] = loc_outcome.used_real_data
+    else:
+        if run_lme:
+            outcome = await run_longmemeval(
+                brain, args.longmemeval_path, args.max_questions,
+                use_canonical_judge=args.canonical_judge,
+                max_sessions=args.max_sessions,
+            )
+            if outcome.result:
+                all_results["longmemeval"] = outcome.result
+            used_real_data["longmemeval"] = outcome.used_real_data
+
+        if run_loc:
+            outcome = await run_locomo(
+                brain, args.locomo_path, args.max_questions,
+                use_canonical_judge=args.canonical_judge,
+            )
+            if outcome.result:
+                all_results["locomo"] = outcome.result
+            used_real_data["locomo"] = outcome.used_real_data
 
     wall_elapsed = time.monotonic() - wall_start
 

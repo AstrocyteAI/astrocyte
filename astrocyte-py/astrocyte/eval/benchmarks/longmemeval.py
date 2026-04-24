@@ -21,13 +21,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from astrocyte.eval.metrics import text_overlap_score
+from astrocyte.eval.metrics import ndcg_at_k, text_overlap_score
 from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 
 if TYPE_CHECKING:
@@ -125,6 +126,7 @@ class LongMemEvalBenchmark:
         *,
         clean_after: bool = True,
         max_questions: int | None = None,
+        max_sessions: int | None = None,
         use_canonical_judge: bool = False,
     ) -> LongMemEvalResult:
         """Run the LongMemEval benchmark.
@@ -136,6 +138,12 @@ class LongMemEvalBenchmark:
             bank_id: Dedicated bank for the benchmark.
             clean_after: Delete the bank after running.
             max_questions: Limit number of questions (for quick testing).
+            max_sessions: Cap the retain phase at this many unique sessions.
+                          Useful for cost control on large haystacks: the
+                          dataset has ~1500 sessions across 500 questions,
+                          so even 300-400 sessions covers the evidence for
+                          most questions while halving retain cost.
+                          When None (default), all sessions are retained.
             use_canonical_judge: When True, score each reflect answer
                 with the canonical LongMemEval LLM-judge
                 (``astrocyte.eval.judges.longmemeval_judge``) using the
@@ -151,9 +159,10 @@ class LongMemEvalBenchmark:
             questions = load_longmemeval_dataset(data_path, max_questions=max_questions)
         elif questions is None:
             raise ValueError("Either data_path or questions must be provided")
-
-        if max_questions and len(questions) > max_questions:
-            questions = questions[:max_questions]
+        elif max_questions and len(questions) > max_questions:
+            # Pre-loaded questions — apply stratified sampling so the
+            # caller's max_questions limit doesn't silently drop categories.
+            questions = _stratified_sample(questions, max_questions)
 
         start_time = time.monotonic()
         retain_latencies: list[float] = []
@@ -185,6 +194,8 @@ class LongMemEvalBenchmark:
             for msg in q.conversation_context:
                 session_key = msg.get("session_id", "")
                 if session_key in sessions_retained:
+                    continue
+                if max_sessions is not None and len(sessions_retained) >= max_sessions:
                     continue
                 sessions_retained.add(session_key)
 
@@ -246,6 +257,7 @@ class LongMemEvalBenchmark:
                 )
             canonical_judge = LongMemEvalJudge(self.brain._pipeline.llm_provider)
 
+        ndcg_sum = 0.0
         print(f"  [LongMemEval] Evaluating {total_questions} questions...")
         eval_phase_start = time.monotonic()
         for qi, q in enumerate(questions, 1):
@@ -323,6 +335,8 @@ class LongMemEvalBenchmark:
                 if h.memory_id and text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD:
                     relevant_ids.add(h.memory_id)
             retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
+            q_ndcg = ndcg_at_k(relevant_ids, retrieved_ids)
+            ndcg_sum += q_ndcg
 
             query_results.append(
                 QueryResult(
@@ -353,7 +367,7 @@ class LongMemEvalBenchmark:
             recall_precision=sum(qr.precision for qr in query_results) / max(len(query_results), 1),
             recall_hit_rate=sum(1.0 for qr in query_results if qr.relevant_found > 0) / max(len(query_results), 1),
             recall_mrr=sum(qr.reciprocal_rank for qr in query_results) / max(len(query_results), 1),
-            recall_ndcg=0.0,  # Not computed for LongMemEval (binary correctness)
+            recall_ndcg=ndcg_sum / max(len(query_results), 1),
             retain_latency_p50_ms=percentile(retain_latencies, 50),
             retain_latency_p95_ms=percentile(retain_latencies, 95),
             recall_latency_p50_ms=percentile(recall_latencies, 50),
@@ -388,6 +402,51 @@ class LongMemEvalBenchmark:
             per_question=per_question,
             eval_result=eval_result,
         )
+
+
+def _stratified_sample(
+    questions: list[LongMemEvalQuestion],
+    max_questions: int,
+) -> list[LongMemEvalQuestion]:
+    """Sample up to max_questions proportionally from each category.
+
+    Without stratification, a sorted dataset hands max_questions=200 only
+    the categories that appear first, silently omitting temporal/update/
+    abstention from all metrics. Stratification ensures every category
+    contributes questions proportional to its share of the full dataset.
+    """
+    from collections import defaultdict
+
+    by_cat: dict[str, list[LongMemEvalQuestion]] = defaultdict(list)
+    for q in questions:
+        by_cat[q.category].append(q)
+
+    cats = sorted(by_cat.keys())
+    n_cats = len(cats)
+    if n_cats == 0:
+        return []
+
+    # Allocate quota per category proportional to its size, floor then
+    # distribute remainder to the largest categories.
+    total = len(questions)
+    quotas: dict[str, int] = {}
+    remainder = max_questions
+    for cat in cats:
+        share = len(by_cat[cat]) / total
+        quotas[cat] = math.floor(share * max_questions)
+        remainder -= quotas[cat]
+
+    # Distribute leftover slots to categories with the most questions
+    for cat in sorted(cats, key=lambda c: len(by_cat[c]), reverse=True):
+        if remainder <= 0:
+            break
+        quotas[cat] += 1
+        remainder -= 1
+
+    result: list[LongMemEvalQuestion] = []
+    for cat in cats:
+        result.extend(by_cat[cat][: quotas[cat]])
+    return result
 
 
 def load_longmemeval_dataset(
@@ -518,7 +577,6 @@ def load_longmemeval_dataset(
             if q.question and q.answer:
                 questions.append(q)
 
-        if max_questions and len(questions) >= max_questions:
-            break
-
-    return questions[:max_questions] if max_questions else questions
+    if max_questions and len(questions) > max_questions:
+        return _stratified_sample(questions, max_questions)
+    return questions

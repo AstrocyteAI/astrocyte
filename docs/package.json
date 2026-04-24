@@ -21,7 +21,8 @@
   },
   "pnpm": {
     "overrides": {
-      "dompurify": ">=3.3.4"
+      "dompurify": ">=3.3.4",
+      "uuid": ">=14.0.0"
     }
   }
 }

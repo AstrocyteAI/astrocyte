@@ -1,33 +1,49 @@
 {
   "locomo": {
-    "provider": "test",
-    "overall_accuracy": 0.6123,
+    "provider": "test-provider",
+    "overall_accuracy": 0.605,
     "category_accuracy": {
-      "multi-hop": 0.1558,
-      "open-domain": 0.2396,
-      "single-hop": 0.4291,
-      "temporal": 0.6849,
+      "temporal": 0.0789,
+      "open-domain": 0.3846,
+      "multi-hop": 0.4375,
+      "single-hop": 0.7429,
       "adversarial": 1.0
     },
     "metrics": {
-      "recall_hit_rate": 0.5463,
-      "recall_mrr": 0.4559,
-      "recall_precision": 0.2878
+      "recall_precision": 0.3085,
+      "recall_hit_rate": 0.575,
+      "recall_mrr": 0.4905,
+      "recall_ndcg": 0.4985,
+      "retain_latency_p50_ms": 36.7116,
+      "retain_latency_p95_ms": 70.6141,
+      "recall_latency_p50_ms": 29.6063,
+      "recall_latency_p95_ms": 30.7001,
+      "reflect_accuracy": 0.605,
+      "total_duration_seconds": 22.5739
     },
-    "notes": "Mock LLM + BoW embeddings baseline. v2 = temporal retrieval + intent-aware recall. Real-provider scores will differ (should be higher); set a separate baseline for CI jobs that use real API keys."
+    "notes": "Promoted from results-20260423T220206Z.json. Suite: test-provider. Real-provider runs are noisier than mock; consider looser tolerances in CI (e.g. --overall-tolerance 0.04)."
   },
   "longmemeval": {
-    "provider": "test",
-    "overall_accuracy": 0.21,
+    "provider": "test-provider",
+    "overall_accuracy": 0.36,
     "category_accuracy": {
-      "extraction": 0.1714,
-      "reasoning": 0.3
+      "extraction": 0.5079,
+      "reasoning": 0.283,
+      "temporal": 0.1132,
+      "update": 0.6129
     },
     "metrics": {
-      "recall_hit_rate": 0.18,
-      "recall_mrr": 0.074,
-      "recall_precision": 0.03
+      "recall_precision": 0.0525,
+      "recall_hit_rate": 0.355,
+      "recall_mrr": 0.2445,
+      "recall_ndcg": 0.2667,
+      "retain_latency_p50_ms": 175.4684,
+      "retain_latency_p95_ms": 303.6401,
+      "recall_latency_p50_ms": 2766.6603,
+      "recall_latency_p95_ms": 2987.907,
+      "reflect_accuracy": 0.36,
+      "total_duration_seconds": 2613.9552
     },
-    "notes": "Mock LLM + BoW embeddings baseline. v2 = temporal retrieval + intent-aware recall. Real-provider scores will differ (should be higher); set a separate baseline for CI jobs that use real API keys."
+    "notes": "Promoted from results-20260423T220206Z.json. Suite: test-provider. Real-provider runs are noisier than mock; consider looser tolerances in CI (e.g. --overall-tolerance 0.04)."
   }
 }

@@ -890,6 +890,13 @@ class Astrocyte:
                 "lack `_created_at` metadata and were skipped",
                 missing_stamp, len(seen), bank_id,
             )
+            # One increment per forget call that encountered unstamped records.
+            # The warning log above carries the exact count; this counter
+            # fires dashboards / alerts when the condition occurs at all.
+            self._metrics.inc_counter(
+                "astrocyte_forget_unstamped_records_total",
+                {"bank_id": bank_id},
+            )
         return too_young
 
     async def health(self) -> HealthStatus:

@@ -160,10 +160,13 @@ class TestLocomoMultiHop:
 
 class TestLocomoDispatch:
     def test_category_string_to_id_mapping(self) -> None:
-        assert locomo_category_id("single-hop") == 2
+        # Verified against the dataset: cat 1 = multi-hop, 2 = temporal,
+        # 3 = open-domain, 4 = single-hop, 5 = adversarial. Earlier
+        # adapter / judge versions had 2↔4 swapped AND 3 mislabeled.
         assert locomo_category_id("multi-hop") == 1
-        assert locomo_category_id("temporal") == 3
-        assert locomo_category_id("open-domain") == 4
+        assert locomo_category_id("temporal") == 2
+        assert locomo_category_id("open-domain") == 3
+        assert locomo_category_id("single-hop") == 4
         assert locomo_category_id("adversarial") == 5
 
     def test_category_int_passthrough(self) -> None:
@@ -195,23 +198,25 @@ class TestLocomoDispatch:
             "Multi-hop dispatch should NOT degrade to plain F1"
         )
 
-    def test_temporal_takes_first_alternate(self) -> None:
-        """Ground truth ``"March; April; early spring"`` — upstream uses
-        only the first alternate ("March")."""
+    def test_open_domain_takes_first_alternate(self) -> None:
+        """Category 3 (open-domain) — ground truth may carry ``;``-
+        separated alternates; upstream uses only the first. (The
+        earlier label ``"temporal"`` on this behavior was a mismap —
+        cat 3 is open-domain, cat 2 is temporal.)"""
         score = locomo_score_qa(
-            "She started in March",
-            "March; April; early spring",
-            category="temporal",
+            "He might pursue psychology",
+            "psychology; counseling; therapy",
+            category="open-domain",
         )
-        # Should match cleanly against "March" alone.
+        # Should match cleanly against "psychology" alone.
         assert score > 0.0
         # If the judge erroneously used the entire string as GT, the
-        # prediction "She started in March" would score LOWER (lots of
-        # non-matching tokens in the GT). So score against full string
-        # should be less.
-        plain_full = _f1_score("She started in March", "March; April; early spring")
-        # Score under dispatch should NOT equal the full-string F1 —
-        # the dispatch uses only "March" as GT.
+        # prediction would score LOWER due to non-matching tokens in
+        # the alternates. Dispatch must strip to the first alternate.
+        plain_full = _f1_score(
+            "He might pursue psychology",
+            "psychology; counseling; therapy",
+        )
         assert score != pytest.approx(plain_full, abs=1e-6)
 
     def test_adversarial_passes_on_abstention_phrase(self) -> None:
@@ -460,12 +465,14 @@ class TestCategoryIdsFrozen:
     A rename here silently shifts every per-category score."""
 
     def test_category_ids_match_upstream(self) -> None:
-        # From evaluate_qa.py: multi-hop=1, single-hop=2, temporal=3,
-        # open-domain=4, adversarial=5.
+        # Verified from datasets/locomo/data/locomo10.json: 1=multi-hop,
+        # 2=temporal, 3=open-domain, 4=single-hop, 5=adversarial.
+        # Earlier revisions had incorrect mappings (2↔4 swapped AND 3
+        # mislabeled as "temporal").
         assert LOCOMO_CATEGORY_IDS == {
             "multi-hop": 1,
-            "single-hop": 2,
-            "temporal": 3,
-            "open-domain": 4,
+            "temporal": 2,
+            "open-domain": 3,
+            "single-hop": 4,
             "adversarial": 5,
         }

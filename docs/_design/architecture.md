@@ -10,6 +10,10 @@ For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the desig
 
 ## 1. What Astrocyte is
 
+Astrocyte is the **third option** for enterprise knowledge management — structure that emerges from content automatically via LLMs, governed and queried by a deterministic harness. Not hand-encoded ontologies (Option 1 — accurate but unmaintainable). Not skip-the-structure RAG (Option 2 — searchable but unintelligent). LLMs propose structure; the harness verifies, persists, and queries it.
+
+From v1.1.x, Astrocyte passes four diagnostic tests that separate genuine third-option systems from sophisticated RAG: **gap analysis** (reason about absence), **entity resolution** (unify identities with evidence), **time travel** (as-of queries), and **sovereignty** (fully self-hosted). See `platform-positioning.md` for the framing and `product-roadmap-v1.md` §M9–M11 for the implementation.
+
 Astrocyte is an **open-source memory framework** that sits between AI agents and memory storage. It provides:
 
 - A **stable API** for agents to store, retrieve, and synthesize memories.
@@ -637,6 +641,9 @@ Beyond intelligence and governance, the framework provides capabilities that no 
 | AuthN wiring + external AuthZ | Map IdP claims to principals / `AstrocyteContext`; optional PDP/Casbin adapters beyond config grants | [ADR-002](./adr/adr-002-identity-model.md); see [access control setup](/end-user/access-control-setup/) |
 | Presentation / multimodal (non-LLM API) | How Tavus-class video, voice (e.g. ElevenLabs), and related APIs compose **beside** the LLM SPI | `presentation-layer-and-multimodal-services.md` |
 | Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for multi-provider gateways (LiteLLM / OpenRouter–class and similar) | `multimodal-llm-spi.md` |
+| **Time travel** | `retained_at` + `forgotten_at` soft-delete + `as_of: datetime` on `VectorFilters` + `brain.history()` — point-in-time queries and audit trails (v1.1.x, M9) | `product-roadmap-v1.md` §M9 |
+| **Gap analysis** | `brain.audit(scope, bank_id)` — reasons about absent topics, returns `AuditResult(gaps, coverage_score)` (v1.1.x, M10) | `product-roadmap-v1.md` §M10 |
+| **Entity resolution** | Retain-time `EntityResolver` — extracts entities, confirms aliases via LLM with evidence quotes, writes `EntityLink` to graph; `astrocyte-age` default graph adapter on same PostgreSQL instance as pgvector (v1.1.x, M11) | `product-roadmap-v1.md` §M11 |
 
 ### 7.4 Pipeline innovations
 
@@ -672,6 +679,7 @@ These capabilities exist at the **framework layer** — they apply regardless of
 | OTel instrumentation | `astrocyte` | Apache 2.0 |
 | **Retrieval providers (Tier 1)** | | |
 | pgvector adapter | `astrocyte-pgvector` | Apache 2.0 |
+| Apache AGE graph adapter (default graph store, v1.1.x) | `astrocyte-age` | Apache 2.0 |
 | Pinecone adapter | `astrocyte-pinecone` | Apache 2.0 |
 | Qdrant adapter | `astrocyte-qdrant` | Apache 2.0 |
 | Weaviate adapter | `astrocyte-weaviate` | Apache 2.0 |
@@ -707,21 +715,31 @@ The two-tier architecture creates a natural upgrade path:
 | Stage | Stack | Cost |
 |---|---|---|
 | Getting started | `astrocyte` + `astrocyte-pgvector` | Free |
-| Add graph | `astrocyte` + `astrocyte-pgvector` + `astrocyte-neo4j` | Free |
+| Add graph (v1.1.x) | `astrocyte` + `astrocyte-pgvector` + `astrocyte-age` (same PostgreSQL) | Free |
 | Want better retrieval | `astrocyte` + `astrocyte-mystique` | Paid |
+
+**The third-option bar** — what the free tier passes from v1.1.x onward:
+
+| Diagnostic test | Free tier (v1.1.x) | Mystique (premium) |
+|---|---|---|
+| Gap analysis | `brain.audit()` + LLM judge + `AuditResult` | Same + multi-bank gap synthesis + scheduled gap alerts |
+| Entity resolution | `EntityResolver` + `EntityLink` with evidence + `astrocyte-age` | Same + gleaning passes (multi-pass entity extraction) + co-occurrence tracking |
+| Time travel | `retained_at` + `forgotten_at` + `as_of` + `brain.history()` | Same + temporal spreading activation in graph traversal |
+| Sovereignty | Self-hosted PostgreSQL (pgvector + AGE), self-hosted LLM | Same + managed multi-tenant deployment + FinOps attribution |
 
 **What makes Mystique worth paying for** (beyond the free built-in pipeline):
 
 | Capability | Astrocyte built-in (free) | Mystique (premium) |
 |---|---|---|
 | Semantic retrieval | Basic vector similarity | HNSW-tuned with partial indexes per fact type |
-| Graph retrieval | Basic entity-link traversal | Spreading activation with decay |
+| Graph retrieval | Entity-link traversal + entity resolution | Spreading activation with decay + co-occurrence |
 | Fusion | Standard RRF | Tuned RRF + cross-encoder reranking |
 | Reflect | recall + generic LLM synthesis | Agentic multi-turn with tool use |
 | Dispositions | Not supported | Native personality modulation (skepticism, literalism, empathy) |
 | Consolidation | Basic dedup + archive | Quality-based loss functions, observation formation |
-| Temporal retrieval | Date range filtering | Temporal proximity weighting, temporal link expansion |
-| Entity resolution | Basic NER + exact dedup | Canonical resolution with co-occurrence tracking |
+| Temporal retrieval | `as_of` filter + date range | `as_of` + temporal proximity weighting + temporal link expansion |
+| Entity resolution | `EntityResolver` + evidence chains | Canonical resolution + gleaning + co-occurrence tracking |
+| Wiki compile | `WikiPage` + provenance + lint pass | Same + disposition-aware + cross-bank wiki merge |
 | Scale | Single-node | Multi-tenant, distributed, production-grade |
 
 The free tier is **good enough** to build real products. The premium tier is **materially better** in ways that matter at scale.

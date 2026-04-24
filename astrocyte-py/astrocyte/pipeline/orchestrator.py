@@ -5,6 +5,7 @@ Async (coordinates I/O stages). See docs/_design/built-in-pipeline.md.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -166,6 +167,7 @@ class PipelineOrchestrator:
         temporal_scan_cap: int = 500,
         temporal_half_life_days: float = 7.0,
         enable_intent_aware_recall: bool = True,
+        enable_multi_query_expansion: bool = False,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -188,6 +190,11 @@ class PipelineOrchestrator:
         # even under bias), so enabling is safe — a misclassification
         # degrades to a soft lean rather than a strategy drop.
         self.enable_intent_aware_recall = enable_intent_aware_recall
+        # Multi-query expansion: decompose complex questions into sub-questions,
+        # recall for each independently, and merge via RRF. Improves multi-hop
+        # coverage at the cost of N-1 extra embedding + retrieval passes per query.
+        # Disabled by default; enable in config for multi-hop-heavy workloads.
+        self.enable_multi_query_expansion = enable_multi_query_expansion
         self._dedup = DedupDetector(similarity_threshold=0.95)
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when ``recall_authority`` is configured.
         self.recall_authority: RecallAuthorityConfig | None = None
@@ -472,6 +479,57 @@ class PipelineOrchestrator:
             fused = rrf_fusion([r for r, _ in weighted_inputs], k=self.rrf_k)
         else:
             fused = weighted_rrf_fusion(weighted_inputs, k=self.rrf_k)
+
+        # 4b. Multi-query expansion: decompose the question into sub-questions,
+        # recall for each independently (parallel), and merge all fused lists
+        # via a final RRF pass. Only runs when enabled and the LLM judges the
+        # question as multi-hop (len > 1). The original query's fused result is
+        # always included so the expansion never discards the baseline recall.
+        if self.enable_multi_query_expansion:
+            from astrocyte.pipeline.multi_query import decompose_query
+
+            sub_queries = await decompose_query(request.query, self.llm_provider)
+            if len(sub_queries) > 1:
+                async def _fuse_sub_query(sq: str) -> list[Any]:
+                    sq_vec = (await generate_embeddings([sq], self.llm_provider))[0]
+                    sq_strategy_results = await parallel_retrieve(
+                        query_vector=sq_vec,
+                        query_text=sq,
+                        bank_id=request.bank_id,
+                        vector_store=self.vector_store,
+                        graph_store=self.graph_store,
+                        document_store=self.document_store,
+                        entity_ids=entity_ids,
+                        limit=overfetch_limit,
+                        filters=filters,
+                        enable_temporal=self.enable_temporal_retrieval,
+                        temporal_scan_cap=self.temporal_scan_cap,
+                        temporal_half_life_days=effective_half_life,
+                    )
+                    sq_intent = (
+                        classify_query_intent(sq).intent
+                        if self.enable_intent_aware_recall
+                        else QueryIntent.UNKNOWN
+                    )
+                    sq_weights = weights_for_intent(sq_intent)
+                    sq_weighted = [
+                        (res, getattr(sq_weights, strat, 1.0))
+                        for strat, res in sq_strategy_results.items()
+                        if res
+                    ]
+                    if not sq_weighted:
+                        return []
+                    if all(w == 1.0 for _, w in sq_weighted):
+                        return rrf_fusion([r for r, _ in sq_weighted], k=self.rrf_k)
+                    return weighted_rrf_fusion(sq_weighted, k=self.rrf_k)
+
+                # sub_queries[0] is the original (already in fused); expand the rest
+                sub_fused_lists = await asyncio.gather(
+                    *[_fuse_sub_query(sq) for sq in sub_queries[1:]]
+                )
+                non_empty = [sf for sf in sub_fused_lists if sf]
+                if non_empty:
+                    fused = rrf_fusion([fused, *non_empty], k=self.rrf_k)
 
         # 5. Reranking — apply per-bank MIP RerankSpec when a rule targets this bank (P3)
         # (bank_pipeline already resolved above for temporal half-life override)

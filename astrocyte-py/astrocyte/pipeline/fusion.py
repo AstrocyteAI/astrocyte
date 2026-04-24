@@ -94,8 +94,12 @@ def weighted_rrf_fusion(
     up more aggressively.
 
     A weight of 0.0 mutes a strategy (it contributes nothing). Negative
-    weights are clamped to 0.0 — we never want a strategy to push items
-    *down* (that's a bug in the caller's weighting, not a feature).
+    weights are a caller bug — they would silently invert strategy
+    rankings (items pushed *down* instead of up), which is never
+    intentional. Pass ``weight=0.0`` to mute a strategy explicitly.
+
+    Raises:
+        ValueError: If any weight is negative.
 
     Sync, pure computation — Rust migration candidate.
     """
@@ -106,7 +110,12 @@ def weighted_rrf_fusion(
     items: dict[str, ScoredItem] = {}
 
     for ranked_list, weight in ranked_lists_with_weights:
-        effective_weight = max(weight, 0.0)
+        if weight < 0.0:
+            raise ValueError(
+                f"RRF weight must be >= 0.0; got {weight!r}. "
+                "Pass weight=0.0 to mute a strategy."
+            )
+        effective_weight = weight
         if effective_weight == 0.0:
             continue
         for rank, item in enumerate(ranked_list):

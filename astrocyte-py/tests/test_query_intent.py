@@ -160,7 +160,7 @@ class TestStrategyWeights:
         """Every value in QueryIntent must have an entry — prevents
         silent KeyError regressions if a new intent is added to the
         enum but not the weights map."""
-        for intent in QueryIntent:
+        for intent in QueryIntent.__members__.values():
             assert intent in INTENT_STRATEGY_WEIGHTS
 
 
@@ -203,13 +203,13 @@ class TestWeightedRrfFusion:
         assert out[0].id == "recent"
         assert out[1].id == "old"
 
-    def test_negative_weights_clamped_to_zero(self) -> None:
-        """Negative weights would push items DOWN in the ranking — that's
-        always a bug in the caller, so we clamp to 0 and treat it as
-        muting (safer than a sign error becoming a silent ranking flip)."""
+    def test_negative_weight_raises(self) -> None:
+        """Negative weights are a caller bug — raise so the sign error
+        surfaces immediately rather than silently inverting rankings."""
+        import pytest
         a, b = _lists(["x"], ["y"])
-        out = weighted_rrf_fusion([(a, 1.0), (b, -5.0)])
-        assert {i.id for i in out} == {"x"}  # b muted, not inverted
+        with pytest.raises(ValueError, match="weight must be >= 0.0"):
+            weighted_rrf_fusion([(a, 1.0), (b, -5.0)])
 
     def test_empty_input_returns_empty(self) -> None:
         assert weighted_rrf_fusion([]) == []

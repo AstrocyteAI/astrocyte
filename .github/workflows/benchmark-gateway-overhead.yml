@@ -1,7 +1,18 @@
-# Manual-only: measures in-process ASGI gateway overhead vs direct brain.recall (see script docstring).
+# Measures in-process ASGI gateway overhead vs direct brain.recall (see script docstring).
+# SLO: overhead_p99_ms < 10ms. Breach emits a warning annotation but does NOT fail the job —
+# this is an observability signal, not a hard gate. Runs on every push that touches the gateway
+# and on a weekly schedule to catch environmental drift.
 name: Benchmark gateway overhead
 
 on:
+  push:
+    branches: [main, master]
+    paths:
+      - "astrocyte-services-py/astrocyte-gateway-py/**"
+      - ".github/workflows/benchmark-gateway-overhead.yml"
+  schedule:
+    # Weekly Wednesday 6am UTC
+    - cron: "0 6 * * 3"
   workflow_dispatch:
 
 permissions:
@@ -27,13 +38,50 @@ jobs:
         working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           ASTROCYTE_AUTH_MODE: dev
-        # Optional SLO gate: append e.g. `--max-overhead-p99-ms 10` (exit 2 if exceeded; tune per runner).
-        run: uv run python scripts/bench_gateway_overhead.py --warmup 80 --iterations 1500 --json | tee bench-gateway-overhead.json
+        run: |
+          set +e
+          uv run python scripts/bench_gateway_overhead.py \
+            --warmup 80 --iterations 1500 \
+            --max-overhead-p99-ms 10 \
+            --json | tee bench-gateway-overhead.json
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$EXIT_CODE" -eq 2 ]; then
+            P99=$(python3 -c "import json; print(json.load(open('bench-gateway-overhead.json')).get('overhead_p99_ms', '?'))")
+            echo "::warning::Gateway overhead SLO breached: overhead_p99_ms=${P99} > 10ms (non-blocking)"
+          elif [ "$EXIT_CODE" -ne 0 ]; then
+            echo "::error::bench_gateway_overhead.py failed (exit $EXIT_CODE)"
+            exit "$EXIT_CODE"
+          fi
 
       - name: Summary
+        if: always()
         working-directory: astrocyte-services-py/astrocyte-gateway-py
         run: |
-          echo "### Gateway overhead (JSON)" >> "$GITHUB_STEP_SUMMARY"
+          P99=$(python3 -c "import json; d=json.load(open('bench-gateway-overhead.json')); print(f\"{d.get('overhead_p99_ms', '?'):.3f}\")" 2>/dev/null || echo "?")
+          P50=$(python3 -c "import json; d=json.load(open('bench-gateway-overhead.json')); print(f\"{d.get('overhead_p50_ms', '?'):.3f}\")" 2>/dev/null || echo "?")
+
+          if python3 -c "import json; exit(0 if json.load(open('bench-gateway-overhead.json')).get('overhead_p99_ms', 999) <= 10 else 1)" 2>/dev/null; then
+            STATUS="✅ SLO met"
+          else
+            STATUS="⚠️ SLO breached (non-blocking)"
+          fi
+
+          echo "### Gateway overhead — $STATUS" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| overhead p50 | ${P50} ms |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| overhead p99 | ${P99} ms |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| SLO threshold | 10 ms (p99) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
           cat bench-gateway-overhead.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gateway-overhead-${{ github.run_number }}
+          path: astrocyte-services-py/astrocyte-gateway-py/bench-gateway-overhead.json

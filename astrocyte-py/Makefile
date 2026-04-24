@@ -46,14 +46,15 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-builtin bench-smoke
+.PHONY: bench bench-full bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
 
 # Full LoCoMo benchmark (requires OPENAI_API_KEY, ~30-60 min)
 bench-locomo: fetch-locomo
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data
+		--locomo-path $(LOCOMO_DIR)/data \
+		--canonical-judge
 
 # Quick LoCoMo subset (50 questions, ~2-3 min)
 bench-locomo-quick: fetch-locomo
@@ -61,14 +62,25 @@ bench-locomo-quick: fetch-locomo
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
-		--max-questions 50
+		--max-questions 50 \
+		--canonical-judge
 
-# Full LongMemEval benchmark (requires OPENAI_API_KEY)
+# Full LongMemEval benchmark (requires OPENAI_API_KEY, ~2-4 hrs for all 500 questions)
 bench-longmemeval: fetch-longmemeval
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval \
-		--longmemeval-path $(LONGMEMEVAL_DIR)/data
+		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
+		--canonical-judge
+
+# Quick LongMemEval subset (100 questions, stratified across all categories, ~30-60 min)
+bench-longmemeval-quick: fetch-longmemeval
+	uv run python scripts/run_benchmarks.py \
+		--config benchmarks/config.yaml \
+		--benchmarks longmemeval \
+		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
+		--max-questions 100 \
+		--canonical-judge
 
 # LoCoMo via LiteLLM adapter (requires OPENAI_API_KEY + astrocyte-llm-litellm installed)
 bench-locomo-litellm: fetch-locomo
@@ -119,11 +131,42 @@ bench: fetch-datasets
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--locomo-path $(LOCOMO_DIR)/data
 
-# Smoke test — in-memory providers, no API key needed
-bench-smoke:
+# Full canonical run — LME + LoCoMo in parallel, LLM-judge, competitor-comparable numbers.
+# Requires API key (use: doppler run -- make bench-full)
+bench-full: fetch-datasets
+	uv run python scripts/run_benchmarks.py \
+		--config benchmarks/config.yaml \
+		--benchmarks longmemeval locomo \
+		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
+		--locomo-path $(LOCOMO_DIR)/data \
+		--canonical-judge
+
+# Smoke test — in-memory providers, no API key needed.
+# Uses the real LoCoMo dataset (all 200q) so the regression gate in CI
+# covers all five categories. With the mock provider this runs in ~25s.
+bench-smoke: fetch-locomo
 	uv run python scripts/run_benchmarks.py \
 		--provider test \
-		--benchmarks builtin locomo
+		--benchmarks locomo \
+		--locomo-path $(LOCOMO_DIR)/data
+
+# ---------------------------------------------------------------------------
+# CodeQL
+# ---------------------------------------------------------------------------
+
+CODEQL_DB      := /tmp/astrocyte-codeql-db
+CODEQL_OUT     := /tmp/astrocyte-findings.csv
+CODEQL_QUERIES := \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/StatementNoEffect.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Functions/ConsistentReturns.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Imports/ImportandImportFrom.ql
+
+.PHONY: codeql
+codeql:
+	codeql database create $(CODEQL_DB) --language=python --source-root . --overwrite
+	codeql database analyze $(CODEQL_DB) $(CODEQL_QUERIES) --format=csv --output=$(CODEQL_OUT)
+	@echo "--- Findings ($(CODEQL_OUT)) ---"
+	@cat $(CODEQL_OUT) || echo "(none)"
 
 # ---------------------------------------------------------------------------
 # Cleanup

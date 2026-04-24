@@ -41,17 +41,24 @@ import sys
 from pathlib import Path
 from typing import Any
 
+RECALL_METRICS: tuple[str, ...] = (
+    "recall_hit_rate",
+    "recall_mrr",
+    "recall_precision",
+    "recall_ndcg",
+)
+
 
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         print(f"error: file not found: {path}", file=sys.stderr)
-        sys.exit(2)
+        raise SystemExit(2)
     try:
         with open(path) as f:
             return json.load(f)
     except json.JSONDecodeError as exc:
         print(f"error: invalid JSON in {path}: {exc}", file=sys.stderr)
-        sys.exit(2)
+        raise SystemExit(2)
 
 
 def _overall(bench_result: dict[str, Any]) -> float | None:
@@ -142,7 +149,7 @@ def compare_benchmark(
             regressions, rows,
         )
 
-    for metric_key in ("recall_hit_rate", "recall_mrr", "recall_precision"):
+    for metric_key in RECALL_METRICS:
         _compare_field(
             f"{bench_name}:{metric_key}",
             _metric(baseline, metric_key),
@@ -196,6 +203,12 @@ def main() -> int:
         "--metric-tolerance", type=float, default=0.03,
         help="Max allowed drop on any retrieval metric (default: 0.03)",
     )
+    parser.add_argument(
+        "--benchmarks", nargs="+", default=None,
+        metavar="BENCH",
+        help="Only check these benchmarks (e.g. locomo longmemeval). "
+             "Default: all benchmarks present in the baseline.",
+    )
     args = parser.parse_args()
 
     baseline = _load_json(args.baseline)
@@ -204,8 +217,12 @@ def main() -> int:
     all_regressions: list[str] = []
     all_rows: list[tuple[str, str, str, str, str]] = []
 
+    allowed = set(args.benchmarks) if args.benchmarks else None
+
     for bench_name, bench_baseline in baseline.items():
         if not isinstance(bench_baseline, dict):
+            continue
+        if allowed is not None and bench_name not in allowed:
             continue
         actual = results.get(bench_name)
         if not isinstance(actual, dict):

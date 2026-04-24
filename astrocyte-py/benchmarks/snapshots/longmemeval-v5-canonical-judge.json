@@ -1,0 +1,36 @@
+{
+  "longmemeval": {
+    "benchmark": "longmemeval",
+    "timestamp": "2026-04-22T00:08:42.773201+00:00",
+    "system": "astrocyte",
+    "judge": "canonical",
+    "overall_accuracy": 0.75,
+    "category_accuracy": {
+      "extraction": 0.75
+    },
+    "total_questions": 20,
+    "correct": 15,
+    "metrics": {
+      "recall_precision": 0.10500000000000001,
+      "recall_hit_rate": 0.75,
+      "recall_mrr": 0.5384722222222222,
+      "recall_ndcg": 0.0,
+      "retain_latency_p50_ms": 3444.473895993724,
+      "retain_latency_p95_ms": 6075.402208247397,
+      "recall_latency_p50_ms": 3288.189354498172,
+      "recall_latency_p95_ms": 3696.4516250038287,
+      "reflect_accuracy": 0.75,
+      "total_duration_seconds": 3485.1138060420053
+    },
+    "provider": "pipeline",
+    "provider_tier": "storage"
+  },
+  "_meta": {
+    "timestamp": "2026-04-22T00:08:42.773392+00:00",
+    "wall_time_seconds": 3487.5140477910027,
+    "provider": "pipeline",
+    "provider_tier": "storage",
+    "max_questions": 20,
+    "config": "benchmarks/config.yaml"
+  }
+}

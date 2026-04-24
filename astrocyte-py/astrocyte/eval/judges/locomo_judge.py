@@ -14,10 +14,10 @@ text, with **category-specific adjustments**:
 - **Category 1 — multi-hop**: prediction and ground truth are each split
   on commas into sub-answers; for each ground-truth sub-answer, take the
   max F1 across all prediction sub-answers; average those maxes.
-- **Category 2 — single-hop**: plain stemmed-token F1.
-- **Category 3 — temporal**: ground truth may have multiple acceptable
+- **Category 2 — temporal**: plain stemmed-token F1.
+- **Category 3 — open-domain**: ground truth may have multiple acceptable
   forms separated by ``;`` — use the first. Plain F1.
-- **Category 4 — open-domain**: plain F1.
+- **Category 4 — single-hop**: plain F1.
 - **Category 5 — adversarial**: correct if the prediction signals
   abstention (``"no information available"`` or ``"not mentioned"``).
   Binary 1/0 score.
@@ -49,18 +49,29 @@ from __future__ import annotations
 import re
 import string
 from collections import Counter
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from astrocyte.eval.judges._stemmer import porter_stem
 
+if TYPE_CHECKING:
+    from astrocyte.provider import LLMProvider
+
 #: Category id mapping used by the canonical LoCoMo evaluator. Astrocyte's
-#: adapter exposes categories as strings (``"single-hop"``, etc.);
+#: adapter exposes categories as strings (``"multi-hop"``, etc.);
 #: callers translate via :func:`locomo_category_id` before scoring.
+#:
+#: Verified against ``datasets/locomo/data/locomo10.json``:
+#:
+#: - cat 1 — multi-hop (multi-speaker synthesis, comma-listed answers)
+#: - cat 2 — temporal ("when did..." questions)
+#: - cat 3 — open-domain (commonsense inference — "would X likely...")
+#: - cat 4 — single-hop (single-session factual)
+#: - cat 5 — adversarial (unanswerable — empty GT)
 LOCOMO_CATEGORY_IDS: Final[dict[str, int]] = {
     "multi-hop": 1,
-    "single-hop": 2,
-    "temporal": 3,
-    "open-domain": 4,
+    "temporal": 2,
+    "open-domain": 3,
+    "single-hop": 4,
     "adversarial": 5,
 }
 
@@ -72,9 +83,43 @@ _ARTICLES_RE: Final[re.Pattern[str]] = re.compile(r"\b(a|an|the|and)\b")
 _PUNCTUATION: Final[frozenset[str]] = frozenset(string.punctuation)
 
 #: Abstention signal phrases for category-5 scoring.
+#:
+#: The upstream paper's list is narrow (``"no information available"`` and
+#: ``"not mentioned"``) because its baseline LLMs were instruction-tuned
+#: toward that phrasing. Real-world reflect stages produce a wider range
+#: of abstention expressions ("not in my memory", "cannot find", etc.)
+#: that are semantically equivalent but miss the narrow match. Extend
+#: here when operators find false-negatives in their v5+ runs; the tests
+#: in :mod:`tests.test_eval_judges` pin the current set.
 _ABSTENTION_PHRASES: Final[tuple[str, ...]] = (
+    # Upstream canonical phrases
     "no information available",
     "not mentioned",
+    # Common LLM-output variants observed in v5 runs
+    "no information",
+    "not available",
+    "not found",
+    "not stated",
+    "not specified",
+    "not provided",
+    "not discussed",
+    "not indicated",
+    "cannot find",
+    "can't find",
+    "don't have",
+    "do not have",
+    "unable to find",
+    "no record",
+    "nothing about",
+    "not in the memor",       # prefix: "not in the memory" / "memories"
+    "not in my memor",        # prefix: "not in my memory" / "memories"
+    "not in the conversation",
+    "not in the provided",
+    "no mention",
+    "isn't mentioned",
+    "wasn't mentioned",
+    "i don't know",
+    "i do not know",
 )
 
 
@@ -195,10 +240,10 @@ def locomo_score_qa(
     Category-specific semantics:
 
     - 1 / multi-hop: F1 on split sub-answers; average of per-GT-max.
-    - 2 / single-hop: plain F1.
-    - 3 / temporal: ground truth may carry alternates separated by ``;``;
+    - 2 / temporal: plain F1.
+    - 3 / open-domain: ground truth may carry alternates separated by ``;``;
       upstream takes the first alternate before scoring. Plain F1.
-    - 4 / open-domain: plain F1.
+    - 4 / single-hop: plain F1.
     - 5 / adversarial: 1.0 when prediction contains an abstention
       phrase; 0.0 otherwise.
     """
@@ -215,11 +260,13 @@ def locomo_score_qa(
     if cid == 1:  # multi-hop
         return _multi_hop_f1(prediction, ground_truth)
 
-    if cid == 3:  # temporal — upstream takes first alternate
+    if cid == 3:  # open-domain — upstream takes first alternate
+        # Upstream defensive: some open-domain answers carry ``;``-
+        # separated alternates. Take only the first; plain F1 after.
         gt_for_scoring = ground_truth.split(";")[0].strip()
         return _f1_score(prediction, gt_for_scoring)
 
-    # cid in {2 single-hop, 4 open-domain} — plain F1
+    # cid in {2 temporal, 4 single-hop} — plain F1
     return _f1_score(prediction, ground_truth)
 
 
@@ -232,3 +279,119 @@ def normalized_for_scoring(text: str) -> str:
     lowercase, punctuation removed, whitespace collapsed. Stems are NOT
     applied here (stemming is token-level during F1)."""
     return _normalize_answer(text)
+
+
+# ---------------------------------------------------------------------------
+# LLM judge — matches Mem0/Hindsight/MemMachine scoring convention
+# ---------------------------------------------------------------------------
+
+#: Category-specific judge prompts. These match the binary yes/no convention
+#: used by Mem0 (ECAI 2025 arXiv:2504.19413), Hindsight (arXiv:2512.12818),
+#: and MemMachine (arXiv:2604.04853) — the scoring framework competitors
+#: publish against. Use this judge for cross-competitor comparisons; use
+#: :func:`locomo_score_qa` for numbers comparable to the original paper's F1.
+_LLM_TEMPLATES: Final[dict[str, str]] = {
+    "single-hop": (
+        "I will give you a question, the correct answer, and a response from a model. "
+        "Answer yes if the response correctly answers the question. "
+        "Otherwise, answer no.\n\n"
+        "Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "multi-hop": (
+        "I will give you a question requiring information from multiple parts of a "
+        "conversation, the correct answer, and a response from a model. "
+        "Answer yes if the response contains the correct information, even if phrased "
+        "differently. Otherwise, answer no.\n\n"
+        "Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "temporal": (
+        "I will give you a question about events over time, the correct answer, "
+        "and a response from a model. "
+        "Answer yes if the response correctly answers the question. "
+        "Do not penalize minor date approximations (e.g. off-by-one day or week).\n\n"
+        "Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "open-domain": (
+        "I will give you a question, the correct answer, and a response from a model. "
+        "Answer yes if the response correctly answers the question. "
+        "Otherwise, answer no.\n\n"
+        "Question: {question}\n\nCorrect Answer: {answer}\n\nModel Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "adversarial": (
+        "I will give you a question that cannot be answered from the conversation "
+        "history, and a response from a model. "
+        "Answer yes if the model correctly says the information is not available or "
+        "that it cannot answer. Answer no if the model attempts to provide an answer.\n\n"
+        "Question: {question}\n\nModel Response: {response}\n\n"
+        "Does the model correctly identify the question as unanswerable? "
+        "Answer yes or no only."
+    ),
+}
+
+
+def build_locomo_llm_judge_prompt(
+    question: str,
+    answer: str,
+    category: str,
+    response: str,
+) -> str:
+    """Render the LLM judge prompt for a LoCoMo question.
+
+    Falls back to the ``"single-hop"`` template for unrecognised categories
+    so new category strings don't break evaluation runs silently.
+    """
+    template = _LLM_TEMPLATES.get(category.strip().lower(), _LLM_TEMPLATES["single-hop"])
+    if category.strip().lower() == "adversarial":
+        return template.format(question=question, response=response)
+    return template.format(question=question, answer=answer, response=response)
+
+
+class LoCoMoLLMJudge:
+    """LLM-backed yes/no judge for LoCoMo predictions.
+
+    Scores each question with a short binary prompt (yes/no), matching the
+    convention used by Mem0 (ECAI 2025), Hindsight, and MemMachine. Use
+    this judge — not the stemmed-F1 :func:`locomo_score_qa` — for numbers
+    directly comparable to those published by competitors.
+
+    Instantiate once per benchmark run. Thread-safe for concurrent calls.
+    """
+
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        *,
+        model: str | None = None,
+        max_tokens: int = 4,
+        temperature: float = 0.0,
+    ) -> None:
+        self._llm = llm_provider
+        self._model = model
+        self._max_tokens = max_tokens
+        self._temperature = temperature
+
+    async def score(
+        self,
+        question: str,
+        answer: str,
+        category: str,
+        response: str,
+    ) -> float:
+        """Return 1.0 (yes) or 0.0 (no). LLM errors propagate to caller."""
+        from astrocyte.types import Message
+
+        prompt = build_locomo_llm_judge_prompt(question, answer, category, response)
+        completion = await self._llm.complete(
+            messages=[Message(role="user", content=prompt)],
+            model=self._model,
+            max_tokens=self._max_tokens,
+            temperature=self._temperature,
+        )
+        # Reuse LongMemEval's yes/no parser — same tolerance rules.
+        from astrocyte.eval.judges.longmemeval_judge import parse_yes_no
+
+        return parse_yes_no(completion.text)

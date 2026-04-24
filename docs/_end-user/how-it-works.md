@@ -4,16 +4,16 @@ A mid-level overview of Astrocyte's architecture — what happens when you call 
 
 ---
 
-## The four operations
+## The five operations
 
-Every interaction with Astrocyte uses one of four operations:
+Every interaction with Astrocyte uses one of five operations:
 
 ```
 ┌─────────────────────────────────────────────────┐
 │                  Your agent / app                │
 │  (LangGraph, CrewAI, MCP, REST client, …)       │
 └──────────────┬──────────────────────────────────┘
-               │  retain / recall / reflect / forget
+               │  retain / recall / reflect / forget / audit
                ▼
 ┌─────────────────────────────────────────────────┐
 │                   Astrocyte                      │
@@ -26,16 +26,19 @@ Every interaction with Astrocyte uses one of four operations:
                                │
                ┌───────────────┼───────────────┐
                ▼               ▼               ▼
-          pgvector          Qdrant          Neo4j
-         (vector)          (vector)        (graph)
+          pgvector          Apache AGE       Qdrant
+         (vector)            (graph)        (vector)
 ```
 
 | Operation | What it does |
 |-----------|-------------|
-| **retain** | Ingest text → extract facts → deduplicate → chunk → embed → store in a memory bank |
-| **recall** | Parse query → search vector + keyword + graph stores → rerank → return scored hits |
+| **retain** | Ingest text → extract entities and facts → resolve entities → deduplicate → chunk → embed → store in a memory bank |
+| **recall** | Parse query → search vector + keyword + graph stores → rerank → return scored hits; optional `as_of` for point-in-time queries |
 | **reflect** | Run recall, then pass hits to an LLM to synthesize a natural-language answer |
-| **forget** | Delete or archive memories by ID, tag, date, or full bank wipe |
+| **forget** | Soft-delete memories — writes `forgotten_at` timestamp; hard delete available; compliance audit support |
+| **audit** | Reason about absence — scan coverage of a scope in a bank, surface missing topics and thin areas, return `AuditResult(gaps, coverage_score)` |
+
+The **audit** operation is what separates Astrocyte from a retrieval index. A retrieval system finds what exists; audit surfaces what doesn't.
 
 ---
 
@@ -61,12 +64,15 @@ When you call `retain()`, content flows through several stages:
 1. **Policy check** — access control, rate limits, token budgets
 2. **PII scanning** — regex and optional LLM-based detection; redact, warn, or reject
 3. **Fact extraction** — break content into discrete facts (configurable profiles)
-4. **Deduplication** — skip facts that already exist in the bank
-5. **Chunking** — split into embeddable pieces (sentence, dialogue, or fixed-size)
-6. **Embedding** — convert chunks to vectors via the configured LLM provider
-7. **Storage** — write to the configured backend (pgvector, Qdrant, etc.)
+4. **Entity extraction + resolution** — extract named entities; query the graph store for candidates; LLM confirms matches with evidence quote; write `EntityLink(type="alias_of", evidence=...)` to graph
+5. **Deduplication** — skip facts that already exist in the bank
+6. **Chunking** — split into embeddable pieces (sentence, dialogue, or fixed-size)
+7. **Embedding** — convert chunks to vectors via the configured LLM provider
+8. **Storage** — write to the configured backend; `retained_at` system timestamp is set at this point
 
 Each stage is configurable. The default pipeline works out of the box — override only what you need.
+
+The entity resolution stage (step 4) is what enables cross-document identity unification. Without it, "Calvin" and "the CTO" remain separate memories with no link. With it, they become connected nodes in the graph, retrievable together and auditable as the same entity.
 
 ---
 
@@ -75,13 +81,49 @@ Each stage is configurable. The default pipeline works out of the box — overri
 When you call `recall()`:
 
 1. **Query analysis** — extract intent, entities, and keywords
-2. **Multi-store search** — semantic (vector similarity), keyword (BM25), and optional graph neighborhood
-3. **Fusion** — merge results from all stores using reciprocal rank fusion (RRF)
-4. **Reranking** — boost proper nouns, keyword overlap, and recency
-5. **Policy filtering** — enforce access control and DLP on returned hits
-6. **Token budgeting** — trim results to stay within the caller's token budget
+2. **Time-travel filter** — if `as_of` is set, apply `retained_at <= as_of` and `forgotten_at > as_of` (or `forgotten_at IS NULL`) to scope the search to the bank's historical state
+3. **Multi-store search** — semantic (vector similarity), keyword (BM25), and optional graph neighborhood
+4. **Fusion** — merge results from all stores using reciprocal rank fusion (RRF)
+5. **Reranking** — boost proper nouns, keyword overlap, and recency
+6. **Policy filtering** — enforce access control and DLP on returned hits
+7. **Token budgeting** — trim results to stay within the caller's token budget
 
 For multi-bank queries, you choose a **strategy**: `parallel` (search all banks at once), `cascade` (search in order, stop when enough results), or `first_match` (return from the first bank with hits).
+
+**Time travel example:**
+```python
+# What did the team know about the deployment strategy before the incident?
+hits = await brain.recall(
+    "deployment strategy",
+    bank_id="eng-team",
+    as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
+)
+```
+
+---
+
+## The audit operation
+
+`brain.audit(scope, bank_id)` asks: *given what's retained in this bank, what's missing about this topic?*
+
+Unlike recall — which retrieves what exists — audit reasons about absence. It:
+
+1. **Runs a scoped recall** — fetch what the bank knows about the scope topic
+2. **Invokes an LLM judge** — given these memories, what should be here that isn't? What's thin? What contradicts?
+3. **Returns** `AuditResult(gaps: list[GapItem], coverage_score: float)`
+
+```python
+result = await brain.audit("incident response procedures", bank_id="eng-team")
+# AuditResult(
+#   gaps=[
+#     GapItem(topic="rollback procedures", severity="high", reason="no memories matching rollback or revert"),
+#     GapItem(topic="escalation path for database incidents", severity="medium", reason="only one memory, from 2025"),
+#   ],
+#   coverage_score=0.54,
+# )
+```
+
+The `coverage_score` is a 0–1 float. Below 0.7 indicates significant gaps. Operators can alert on low scores for critical knowledge areas (compliance procedures, runbooks, customer commitments).
 
 ---
 
