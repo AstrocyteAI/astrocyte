@@ -14,10 +14,10 @@ text, with **category-specific adjustments**:
 - **Category 1 — multi-hop**: prediction and ground truth are each split
   on commas into sub-answers; for each ground-truth sub-answer, take the
   max F1 across all prediction sub-answers; average those maxes.
-- **Category 2 — single-hop**: plain stemmed-token F1.
-- **Category 3 — temporal**: ground truth may have multiple acceptable
+- **Category 2 — temporal**: plain stemmed-token F1.
+- **Category 3 — open-domain**: ground truth may have multiple acceptable
   forms separated by ``;`` — use the first. Plain F1.
-- **Category 4 — open-domain**: plain F1.
+- **Category 4 — single-hop**: plain F1.
 - **Category 5 — adversarial**: correct if the prediction signals
   abstention (``"no information available"`` or ``"not mentioned"``).
   Binary 1/0 score.
@@ -240,10 +240,10 @@ def locomo_score_qa(
     Category-specific semantics:
 
     - 1 / multi-hop: F1 on split sub-answers; average of per-GT-max.
-    - 2 / single-hop: plain F1.
-    - 3 / temporal: ground truth may carry alternates separated by ``;``;
+    - 2 / temporal: plain F1.
+    - 3 / open-domain: ground truth may carry alternates separated by ``;``;
       upstream takes the first alternate before scoring. Plain F1.
-    - 4 / open-domain: plain F1.
+    - 4 / single-hop: plain F1.
     - 5 / adversarial: 1.0 when prediction contains an abstention
       phrase; 0.0 otherwise.
     """

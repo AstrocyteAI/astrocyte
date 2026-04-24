@@ -41,6 +41,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+RECALL_METRICS: tuple[str, ...] = (
+    "recall_hit_rate",
+    "recall_mrr",
+    "recall_precision",
+    "recall_ndcg",
+)
+
 
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
@@ -142,7 +149,7 @@ def compare_benchmark(
             regressions, rows,
         )
 
-    for metric_key in ("recall_hit_rate", "recall_mrr", "recall_precision", "recall_ndcg"):
+    for metric_key in RECALL_METRICS:
         _compare_field(
             f"{bench_name}:{metric_key}",
             _metric(baseline, metric_key),
