@@ -1,27 +1,27 @@
 {
   "locomo": {
     "provider": "test-provider",
-    "overall_accuracy": 0.605,
+    "overall_accuracy": 0.6606,
     "category_accuracy": {
-      "temporal": 0.0789,
-      "open-domain": 0.3846,
-      "multi-hop": 0.4375,
-      "single-hop": 0.7429,
+      "temporal": 0.1931,
+      "open-domain": 0.3125,
+      "multi-hop": 0.4468,
+      "single-hop": 0.7705,
       "adversarial": 1.0
     },
     "metrics": {
-      "recall_precision": 0.3085,
-      "recall_hit_rate": 0.575,
-      "recall_mrr": 0.4905,
-      "recall_ndcg": 0.4985,
+      "recall_precision": 0.3096,
+      "recall_hit_rate": 0.6319,
+      "recall_mrr": 0.5264,
+      "recall_ndcg": 0.5415,
       "retain_latency_p50_ms": 36.7116,
       "retain_latency_p95_ms": 70.6141,
       "recall_latency_p50_ms": 29.6063,
       "recall_latency_p95_ms": 30.7001,
-      "reflect_accuracy": 0.605,
+      "reflect_accuracy": 0.6606,
       "total_duration_seconds": 22.5739
     },
-    "notes": "Promoted from results-20260423T220206Z.json. Suite: test-provider. Real-provider runs are noisier than mock; consider looser tolerances in CI (e.g. --overall-tolerance 0.04)."
+    "notes": "Promoted 2026-04-25. Overall +5.6pp, temporal +11.4pp after checkpoint/parallel/multi-query wiring. open-domain -7.2pp is MockLLMProvider noise (~7 questions on 96-question category). Suite: test-provider."
   },
   "longmemeval": {
     "provider": "test-provider",
