@@ -11,7 +11,22 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "astrocyte>=0.7.0,<0.9",
-    "litellm>=1.40",
+    # litellm version ceiling: 1.83.1+ strict-pins python-dotenv==1.0.1,
+    # which conflicts with our python-dotenv>=1.2.2 security floor below.
+    # 1.83.0 is the last version with the flexible python-dotenv>=0.2.0 pin.
+    #
+    # Two open Dependabot advisories (as of 2026-04-25):
+    #   GHSA SQL injection in Proxy API key verification (Critical)
+    #   GHSA SSTI in /prompts/test endpoint (High)
+    # Both affect the LiteLLM *proxy server* component. Astrocyte uses
+    # LiteLLM as a client library only (litellm.completion / litellm.embedding)
+    # and never instantiates or exposes the proxy server — so these CVEs are
+    # not exploitable in this adapter.
+    #
+    # When litellm releases a version that both fixes the proxy CVEs AND
+    # relaxes the python-dotenv pin back to >=1.2.2 (or drops it), update
+    # this ceiling and the python-dotenv floor below.
+    "litellm>=1.40,<=1.83.0",
     # Security floor for aiohttp — litellm pulls it transitively. Pinned
     # here (not left to transitive resolution) because several GHSA
     # advisories affect versions <3.13.5 (header smuggling, SSRF, DoS).
