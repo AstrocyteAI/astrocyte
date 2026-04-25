@@ -1,6 +1,6 @@
 # Memory API reference
 
-Complete reference for Astrocyte's four core memory operations -- retain, recall, reflect, and forget -- via Python library and REST gateway.
+Complete reference for Astrocyte's core memory operations -- retain, recall, reflect, forget, and history -- via Python library and REST gateway.
 
 ---
 
@@ -12,6 +12,7 @@ Complete reference for Astrocyte's four core memory operations -- retain, recall
 | **recall** | Retrieve relevant memories | `astrocyte.recall()` | `POST /v1/recall` |
 | **reflect** | Synthesize an answer from memory | `astrocyte.reflect()` | `POST /v1/reflect` |
 | **forget** | Remove memories | `astrocyte.forget()` | `POST /v1/forget` |
+| **history** | Recall memories as they existed at a past point in time | `astrocyte.history()` | `POST /v1/history` |
 
 ---
 
@@ -141,6 +142,7 @@ async def recall(
     include_sources: bool = False,
     layer_weights: dict[str, float] | None = None,
     detail_level: str | None = None,
+    as_of: datetime | None = None,
 ) -> RecallResult:
 ```
 
@@ -162,6 +164,7 @@ async def recall(
 | `include_sources` | `bool` | Include source metadata in each hit. Defaults to `False`. |
 | `layer_weights` | `dict[str, float]` | Per-layer scoring weights (e.g. `{"semantic": 1.2, "episodic": 0.8}`). |
 | `detail_level` | `str` | Controls verbosity of returned text. |
+| `as_of` | `datetime \| None` | Time-travel filter. When set, only memories whose `retained_at` is on or before this UTC timestamp are returned. Defaults to `None` (no filter). See also [`history()`](#history----recall-a-point-in-time-snapshot). |
 
 ### RecallResult
 
@@ -183,7 +186,8 @@ async def recall(
 | `bank_id` | `str` | Bank the memory belongs to. |
 | `metadata` | `dict` | Attached metadata. |
 | `tags` | `list[str]` | Tags on the memory. |
-| `occurred_at` | `datetime \| None` | When the content originally occurred. |
+| `occurred_at` | `datetime \| None` | When the content originally occurred (domain time, caller-supplied). |
+| `retained_at` | `datetime \| None` | UTC wall-clock time when this memory was stored. Populated by the retain pipeline; use with `as_of` for time-travel queries. |
 | `source` | `str \| None` | Source label. |
 | `memory_layer` | `str \| None` | Layer (e.g. `"episodic"`, `"semantic"`). |
 
@@ -265,6 +269,133 @@ curl -X POST https://gateway.example.com/v1/recall \
     "banks": ["incidents", "runbooks", "team-notes"],
     "strategy": "parallel",
     "max_results": 20
+  }'
+```
+
+---
+
+## history() -- Recall a point-in-time snapshot
+
+Returns the memories that existed in a bank **at a specific past moment** — only memories whose `retained_at` timestamp is on or before `as_of` are included. Use this for post-mortems, compliance audits, and debugging ("what did the agent believe on date X?").
+
+For most use cases `history()` is the right call. If you need finer control (multi-bank queries, layer weights, etc.) pass `as_of` directly to `recall()` instead.
+
+### Python signature
+
+```python
+async def history(
+    self,
+    query: str,
+    bank_id: str,
+    as_of: datetime,
+    *,
+    max_results: int = 10,
+    max_tokens: int | None = None,
+    tags: list[str] | None = None,
+) -> HistoryResult:
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | `str` | Natural-language search query to run against the historical snapshot. |
+| `bank_id` | `str` | Bank to query. |
+| `as_of` | `datetime` | UTC timestamp. Memories retained after this moment are excluded. Must be timezone-aware. |
+| `max_results` | `int` | Maximum number of hits to return. Defaults to `10`. |
+| `max_tokens` | `int` | Optional token budget for the result set. |
+| `tags` | `list[str]` | Optional tag filter applied on top of the time filter. |
+
+### HistoryResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hits` | `list[MemoryHit]` | Ranked memories visible at `as_of`. |
+| `total_available` | `int` | Total matches before `max_results` truncation. |
+| `truncated` | `bool` | Whether results were truncated. |
+| `as_of` | `datetime` | The timestamp used for the snapshot query (echoed back for traceability). |
+| `bank_id` | `str` | The bank that was queried. |
+| `trace` | `RecallTrace \| None` | Diagnostic trace of the recall pipeline. |
+
+Each `MemoryHit` in `hits` includes a `retained_at` field showing exactly when that memory was stored.
+
+### Python examples
+
+**Post-mortem — what did the agent know on 1 Jan 2025?**
+
+```python
+from datetime import datetime, UTC
+
+snapshot = await ast.history(
+    "What did we know about Alice's employer?",
+    bank_id="user-alice",
+    as_of=datetime(2025, 1, 1, tzinfo=UTC),
+)
+
+print(f"Snapshot at: {snapshot.as_of}")
+for hit in snapshot.hits:
+    print(f"  retained={hit.retained_at:%Y-%m-%d}  {hit.text}")
+```
+
+**Compliance audit — memory state before a policy change:**
+
+```python
+from datetime import datetime, UTC
+
+policy_change = datetime(2025, 6, 1, tzinfo=UTC)
+snapshot = await ast.history(
+    "user consent preferences",
+    bank_id="gdpr-audit",
+    as_of=policy_change,
+    tags=["consent"],
+)
+
+for hit in snapshot.hits:
+    print(hit.memory_id, hit.retained_at, hit.text)
+```
+
+**Check what changed between two snapshots:**
+
+```python
+from datetime import datetime, UTC
+
+before = await ast.history("Alice employment", bank_id="contacts", as_of=datetime(2025, 1, 1, tzinfo=UTC))
+after  = await ast.history("Alice employment", bank_id="contacts", as_of=datetime(2025, 6, 1, tzinfo=UTC))
+
+before_ids = {h.memory_id for h in before.hits}
+after_ids  = {h.memory_id for h in after.hits}
+
+print("Added:  ", after_ids - before_ids)
+print("Removed:", before_ids - after_ids)
+```
+
+### REST equivalent
+
+```
+POST /v1/history
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "query": "What did we know about Alice's employer?",
+  "bank_id": "user-alice",
+  "as_of": "2025-01-01T00:00:00Z",
+  "max_results": 10
+}
+```
+
+### curl example
+
+```bash
+curl -X POST https://gateway.example.com/v1/history \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{
+    "query": "What did we know about Alice'\''s employer?",
+    "bank_id": "user-alice",
+    "as_of": "2025-01-01T00:00:00Z"
   }'
 ```
 
@@ -563,3 +694,4 @@ Error responses follow a consistent JSON structure:
 - [Access control setup](access-control-setup/) — role-based and attribute-based policies
 - [Storage backend setup](storage-backend-setup/) — pgvector, Qdrant, Neo4j, Elasticsearch
 - [MIP developer guide](/plugins/mip-developer-guide/) — declarative routing rules for retain operations
+- [Time travel guide](time-travel/) — patterns for point-in-time snapshots, post-mortems, and compliance audits
