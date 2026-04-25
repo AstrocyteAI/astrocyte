@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
-    "astrocyte>=0.7.0,<0.9",
+    "astrocyte>=0.7.0,<2",
     # litellm >=1.83.7 patches GHSA-xqmj-j6mv-4862 (SSTI in /prompts/test, High).
     # 1.83.1+ strict-pins python-dotenv==1.0.1, which carries GHSA-mf9w-mj56-hr94
     # (symlink following in set_key(), fixed in python-dotenv 1.2.2). Astrocyte
