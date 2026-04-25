@@ -4,9 +4,42 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-## [1.0.0] — 2026-04-22 (GA — eval polish, competitor adapters, observability)
+## [0.9.0] — 2026-04-25 (M8–M11 — wiki compile, time travel, gap analysis, entity resolution)
 
-All M1–M7 milestones are complete. This release finalises the evaluation harness, wires the competitor adapters, tightens the RRF API contract, and adds telemetry for unstamped forget records. No new runtime features; all changes are either bug fixes, new test coverage, or hardening for production benchmark runs.
+Four milestones completing the pre-GA feature surface. M8 (wiki compile) ships on the v0.8.x engineering track; M9–M11 constitute the v1.0.0 scope and are now fully implemented. v1.0.0 GA will be declared after the v0.9.x eval gates pass.
+
+### Added
+
+- **M8 — LLM wiki compile** (`pipeline/wiki_compile.py`, `pipeline/wiki_lint.py`): `WikiPage` memory type maintained by `CompileEngine`; retain-time async compile queue; threshold-based trigger; wiki-tier recall precedence (wiki hits ranked above raw memories); periodic lint pass catches contradictions, stale claims, and orphans; A/B eval harness with regression gate (≥10pp lift on LongMemEval `multi-session` / `knowledge-update`, no other category regressing >2pp). Opt-in per bank via MIP config (`compile: { enabled: true }`). `brain.compile(bank_id)` for manual trigger.
+- **M9 — Time travel** (`pipeline/retrieval.py`, `types.py`, `_astrocyte.py`): `retained_at` timestamp stamped on every `VectorItem` at retain time and propagated through the full pipeline (`ScoredItem`, `MemoryHit`). `VectorFilters.as_of: datetime | None` filters retrieved memories to those retained on or before the given UTC timestamp. `brain.history(query, bank_id, as_of) → HistoryResult` convenience wrapper. `HistoryResult` carries `hits`, `total_available`, `truncated`, `as_of`, `bank_id`, and `trace`.
+- **M10 — Gap analysis** (`pipeline/audit.py`, `types.py`, `_astrocyte.py`): `brain.audit(scope, bank_id) → AuditResult` — samples up to `max_memories` recent memories, sends them to an LLM judge with the operator-supplied `scope` description, and returns a `coverage_score` (0–1) plus a list of `GapItem(topic, severity, reason)`. Empty-bank fast path skips the LLM call entirely. Graceful fallback on malformed LLM response.
+- **M11a — Entity resolution** (`pipeline/entity_resolution.py`, `provider.py`, `types.py`): `EntityLink` migrated to `entity_a` / `entity_b` (was `source_entity_id` / `target_entity_id`); added `evidence: str`, `confidence: float`, `created_at: datetime | None`. `EntityResolver` opt-in pipeline stage: at retain time, new entities are compared against existing candidates via `find_entity_candidates`; an LLM judge confirms aliases; confirmed pairs are stored as `alias_of` links. Resolution failures never abort retain. `GraphStore` SPI extended with `find_entity_candidates` and `store_entity_link`. `InMemoryGraphStore` implements both.
+- **M11b — `astrocyte-age`** (`adapters-storage-py/astrocyte-age/`): new PyPI package. Apache AGE (PostgreSQL 16 graph extension) `GraphStore` implementation. Migrations in `migrations/` (AGE extension, graph DDL, memory-entity mapping table). `bootstrap_schema=True` (default) auto-creates on first connection. `docker/postgres-age-pgvector/Dockerfile` bundles AGE + pgvector on a single PG16 image. `astrocyte-services-py/docker-compose-age.yml` for local development. CI job in `adapters-storage-ci.yml`; `publish-astrocyte-age.yml` for PyPI Trusted Publishing; wired into `release.yml`.
+- **Eval: checkpoint/resume** (`eval/checkpoint.py`): `BenchmarkCheckpoint` serialises per-question progress to JSON; `--resume` / `RESUME=1` skip already-scored questions on restart. Prevents full re-runs after network or quota failures.
+- **Eval: `bench-full` target** (`Makefile`): runs LoCoMo and LongMemEval concurrently via `asyncio.gather`; unified summary table.
+- **Eval: LoCoMo LLM judge** (`eval/judges/locomo_judge.py`): competitor-comparable LLM yes/no scoring alongside canonical stemmed-F1; `--canonical-judge` flag selects scoring path.
+- **Docs: benchmark roadmap** (`docs/_design/benchmark-roadmap.md`): three-tier benchmark strategy — Tier 1 (LoCoMo + LongMemEval, current), Tier 2 (AMA-Bench, agentic trajectory memory, planned), Tier 3 (MemoryArena, task-execution outcomes, planned).
+
+### Fixed
+
+- **`retained_at` propagation**: field was silently dropped at two pipeline stages (`_semantic_search` and `basic_rerank`). Fixed at all four transformation points so `MemoryHit.retained_at` reliably reflects the original retain timestamp.
+- **Temporal strategy `as_of` bypass**: `_temporal_search` used `list_vectors()` which bypassed the `VectorFilters.as_of` filter. Fixed by passing `as_of` through `parallel_retrieve → _temporal_search` and applying the filter in the scan loop.
+- **`basic_rerank` field loss**: creating new `ScoredItem` instances without copying `memory_layer` or `retained_at`. Both fields now propagated.
+
+### Changed
+
+- **`EntityLink` field names**: `source_entity_id` → `entity_a`, `target_entity_id` → `entity_b`. **Migration note**: callers constructing `EntityLink` directly must update keyword arguments; the old names are not aliased.
+- **PyPI / install**: `astrocyte-age` and updated adapters require **`astrocyte>=0.8.0,<2`** to survive the v0.9.x → v1.0.x version boundary cleanly.
+
+## [0.8.1] — 2026-04-22 (eval polish, competitor adapters, observability)
+
+Finalises the evaluation harness, wires the competitor adapters, tightens the RRF API contract, and adds telemetry for unstamped forget records. No new runtime features; all changes are either bug fixes, new test coverage, or hardening for production benchmark runs.
+
+### Fixed
+
+- **LoCoMo category map** (`eval/benchmarks/locomo.py`, `eval/judges/locomo_judge.py`): categories 1 and 4 were swapped and category 3 was mislabeled as temporal (it is open-domain). **Operator note**: per-category columns in benchmark snapshots produced before this release carry incorrect labels; re-run to get accurate per-category F1.
+- **LoCoMo canonical-judge scoring dispatch**: `cid == 3` (open-domain) now uses the correct open-domain scoring path; `cid in {2, 4}` uses plain F1 (was treating open-domain as temporal).
+- **`build_competitor_brain` factory** (`eval/competitors/base.py`): both `"mem0"` and `"zep"` branches now import from the correct module paths and pass `llm_provider` to the adapter constructors.
 
 ### Fixed
 
@@ -35,7 +68,7 @@ This release bundles **M5** (production storage providers), **M6** (standalone H
 
 ### Changed
 
-- **PyPI / install**: adapter and gateway packages now require **`astrocyte>=0.7.0,<0.9`** (was **`<0.8`**) so **v0.8.x** resolves cleanly; pin **`astrocyte==0.8.0`** (and matching adapter versions) together for the M5–M7 milestone bundle.
+- **PyPI / install**: adapter and gateway packages now require **`astrocyte>=0.7.0,<2`** (was **`<0.8`**) so **v0.8.x** and later resolve cleanly; pin **`astrocyte==0.8.0`** (and matching adapter versions) together for the M5–M7 milestone bundle.
 
 ### Added
 
@@ -70,8 +103,9 @@ This release bundles **M5** (production storage providers), **M6** (standalone H
 - Profile-driven `metadata_mapping`, `tag_rules`, `entity_extraction`, and `fact_type` on retain.
 - Packaged defaults: `astrocyte/pipeline/extraction_builtin.yaml`; stable imports: `prepare_retain_input`, `merged_extraction_profiles`, `extraction_profile_for_source`, `PreparedRetainInput`.
 
-[Unreleased]: https://github.com/AstrocyteAI/astrocyte/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/AstrocyteAI/astrocyte/compare/v0.8.0...v1.0.0
+[Unreleased]: https://github.com/AstrocyteAI/astrocyte/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/AstrocyteAI/astrocyte/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/AstrocyteAI/astrocyte/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/AstrocyteAI/astrocyte/releases/tag/v0.8.0
 [0.7.0]: https://github.com/AstrocyteAI/astrocyte/releases/tag/v0.7.0
 [0.6.0]: https://github.com/AstrocyteAI/astrocyte/releases/tag/v0.6.0
