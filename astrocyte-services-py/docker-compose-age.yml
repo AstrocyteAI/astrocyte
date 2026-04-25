@@ -1,0 +1,58 @@
+# Gateway + PostgreSQL with Apache AGE + pgvector.
+#
+# Use this file when you want graph-based entity resolution (M11) in addition
+# to vector search.  The Postgres service uses a custom image that bundles
+# both AGE and pgvector on PostgreSQL 16.
+#
+# Quick start:
+#   cp .env.example .env          # adjust secrets/ports if needed
+#   docker compose -f astrocyte-services-py/docker-compose-age.yml \
+#                  --env-file astrocyte-services-py/.env \
+#                  up --build
+#
+# Run migrations after the database is healthy:
+#   docker compose -f astrocyte-services-py/docker-compose-age.yml \
+#       exec postgres psql -U astrocyte -d astrocyte \
+#       -f /migrations/001_age_extension.sql \
+#       -f /migrations/002_graph.sql \
+#       -f /migrations/003_memory_entity_map.sql
+#
+# Integration tests (from adapters-storage-py/astrocyte-age/):
+#   ASTROCYTE_AGE_TEST_DSN=postgresql://astrocyte:astrocyte@localhost:5434/astrocyte \
+#       uv run pytest tests/ -v
+
+services:
+  postgres:
+    build:
+      context: ..
+      dockerfile: docker/postgres-age-pgvector/Dockerfile
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-astrocyte}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-astrocyte}
+      POSTGRES_DB: ${POSTGRES_DB:-astrocyte}
+    ports:
+      - "${POSTGRES_PUBLISH_PORT:-5434}:5432"
+    volumes:
+      - ../adapters-storage-py/astrocyte-age/migrations:/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  astrocyte-gateway-py:
+    build:
+      context: ..
+      dockerfile: astrocyte-services-py/astrocyte-gateway-py/Dockerfile
+    ports:
+      - "${ASTROCYTE_HTTP_PUBLISH_PORT:-8080}:${ASTROCYTE_PORT:-8080}"
+    environment:
+      ASTROCYTE_VECTOR_STORE: ${ASTROCYTE_VECTOR_STORE:-pgvector}
+      ASTROCYTE_GRAPH_STORE: ${ASTROCYTE_GRAPH_STORE:-age}
+      DATABASE_URL: ${ASTROCYTE_GATEWAY_DATABASE_URL:-postgresql://${POSTGRES_USER:-astrocyte}:${POSTGRES_PASSWORD:-astrocyte}@postgres:5432/${POSTGRES_DB:-astrocyte}}
+      ASTROCYTE_AGE_DSN: ${ASTROCYTE_AGE_DSN:-postgresql://${POSTGRES_USER:-astrocyte}:${POSTGRES_PASSWORD:-astrocyte}@postgres:5432/${POSTGRES_DB:-astrocyte}}
+      ASTROCYTE_HOST: ${ASTROCYTE_HOST:-0.0.0.0}
+      ASTROCYTE_PORT: ${ASTROCYTE_PORT:-8080}
+    depends_on:
+      postgres:
+        condition: service_healthy
