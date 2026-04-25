@@ -1,6 +1,6 @@
 # LLM wiki compile — compounding knowledge pages for Astrocyte
 
-**Status:** Draft design note (exploratory). Targeted for the **v0.9-era** feature wave (tagged on the `v0.8.x` train; see `product-roadmap.md` § Release numbering).
+**Status:** Draft design note (exploratory). Targeted for the **v0.9-era** feature wave (tagged on the `v0.8.x` train; see [product-roadmap.md (§ Release numbering)](product-roadmap.md)).
 
 **Origin:** Karpathy's [LLM wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — "a structured, interlinked collection of markdown files that sits between you and the raw sources," with the LLM doing the bookkeeping (summaries, cross-references, lint) so humans only supply curation and direction.
 
@@ -205,7 +205,7 @@ banks:
 
       clustering:
         # DBSCAN parameters for untagged memory scope discovery (§3.2)
-        eps: 0.25                             # Cosine distance threshold for neighbourhood
+        eps: 0.25                             # Cosine distance threshold for neighborhood
         min_samples: 5                        # Minimum memories to form a cluster
         noise_holdover: true                  # Hold noise points for next compile cycle
 
@@ -287,7 +287,7 @@ class CompileResult:
 - **Multi-actor contention.** Two retains hitting the same page concurrently — last-write-wins, CRDT, or queue-serialised per page? Queue-per-page is simplest.
 - **Does wiki obsolete `reflect()`?** Probably not — `reflect()` still composes across pages at query time. But the two need a clear division of labour.
 - **Schema drift across models.** Compile output depends on the model. Version the compile prompt and re-run on major model swaps.
-- **DBSCAN parameter tuning.** The right `eps` and `min_samples` values depend on the embedding model and typical memory length. Will need empirical calibration against LongMemEval corpus before shipping.
+- **DBSCAN parameter tuning.** The right `eps` and `min_samples` values depend on the embedding model and typical memory length. Start with L2-normalized embeddings + cosine distance, grid-search `eps` in ~`0.08–0.30` and `min_samples` in `3–10` on LongMemEval, then pick the **smallest** `eps` that keeps noise in a target band (e.g. `10–35%`) while avoiding giant catch-all clusters (e.g. largest cluster `<40%` of points). Re-run calibration whenever the embedding model changes.
 - **Noise holdover accumulation.** If a memory is noise for many consecutive compile cycles (no cluster forms around it), should it eventually be force-assigned to the nearest cluster, or flagged for operator review?
 
 ---
