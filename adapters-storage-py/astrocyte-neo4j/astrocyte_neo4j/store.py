@@ -57,6 +57,10 @@ class Neo4jGraphStore:
         ids: list[str] = []
         async with self._driver.session(database=self._database) as session:
             for i, link in enumerate(links):
+                # Intentionally include `link_type` in MERGE identity so
+                # different semantic link types between the same entity pair
+                # are stored as distinct relationships rather than collapsed
+                # into one.
                 result = await session.run(
                     """
                     OPTIONAL MATCH (s:AstrocyteEntity {entity_id: $sid, bank: $bank})
