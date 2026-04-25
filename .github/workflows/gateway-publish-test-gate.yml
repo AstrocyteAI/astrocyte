@@ -126,3 +126,70 @@ jobs:
         run: |
           uv sync --extra dev --extra pgvector
           uv run python -m pytest tests/test_gateway_examples_smoke.py -v --tb=short
+
+  pgvector-age-integration:
+    name: pgvector + AGE integration (combined image)
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: ghcr.io/astrocyteai/astrocyte/postgres-age-pgvector:latest
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          POSTGRES_USER: astrocyte
+          POSTGRES_PASSWORD: astrocyte
+          POSTGRES_DB: astrocyte
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U astrocyte"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
+      ASTROCYTE_AGE_DSN: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
+      ASTROCYTE_GRAPH_STORE: age
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install psql (migrations)
+        run: sudo apt-get update -y && sudo apt-get install -y postgresql-client
+
+      - name: Migrate Postgres (pgvector SQL)
+        run: adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh
+        env:
+          DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
+
+      - name: Test astrocyte-pgvector (combined image)
+        working-directory: adapters-storage-py/astrocyte-pgvector
+        run: uv sync --extra dev && uv run python -m pytest
+
+      - name: Test astrocyte-age (combined image)
+        working-directory: adapters-storage-py/astrocyte-age
+        env:
+          ASTROCYTE_AGE_TEST_DSN: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
+        run: uv sync --extra dev && uv run python -m pytest
+
+      - name: Gateway E2E (HTTP + pgvector + AGE, combined image)
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
+        env:
+          DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
+          ASTROCYTE_AGE_DSN: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
+          ASTROCYTE_GRAPH_STORE: age
+          ASTROCYTE_GATEWAY_E2E_MIGRATED: "1"
+        run: |
+          uv sync --extra dev --extra pgvector --extra age
+          uv run python -m pytest tests/test_integration_pgvector_http.py -v --tb=short

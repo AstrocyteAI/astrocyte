@@ -46,10 +46,21 @@ jobs:
     uses: ./.github/workflows/publish-astrocyte-age.yml
     secrets: inherit
 
-  publish-gateway-image:
+  publish-postgres-image:
     needs:
       - publish-pgvector
       - publish-age
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-postgres-age-pgvector-image.yml
+    secrets: inherit
+
+  publish-gateway-image:
+    needs:
+      - publish-postgres-image
     permissions:
       contents: read
       id-token: write
