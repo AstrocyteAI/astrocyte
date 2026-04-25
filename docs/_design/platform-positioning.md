@@ -286,7 +286,7 @@ The four diagnostic tests define *what* matters. The research agenda defines *ho
 
 ### Projected ceiling with research phases
 
-| Benchmark | v1.1.x (M8–M11) | After R1–R5 | Theoretical max |
+| Benchmark | v1.0.0 (M9–M11) | After R1–R5 | Theoretical max |
 |-----------|-----------------|-------------|-----------------|
 | **LoCoMo** (canonical) | ~78–85% | ~92–95% | ~95–97% |
 | **LongMemEval** (canonical) | ~68–75% | ~90–93% | ~93–97% |

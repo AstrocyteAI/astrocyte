@@ -57,7 +57,7 @@ Astrocyte is **not** an LLM gateway and **not** an agent runtime. It does not de
 
 ## Current release
 
-**v1.0.0** (GA): Eval harness polish, competitor adapters, observability. All M1–M7 milestones complete. See [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for full release notes.
+**v0.8.x** (latest tag: **`v0.8.0`**): M1–M7 complete — production storage adapters, standalone gateway, structured recall authority, ingest connectors, gateway plugins. **v1.0.0** (in progress): adds M9–M11 (time travel, gap analysis, entity resolution) and is the first release to pass all four diagnostic tests. See [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
 
 Release notes: [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md)
 
