@@ -36,20 +36,78 @@ This maps cleanly onto Astrocyte's **Principle 7 (pruning / consolidation)** —
 ```
 retain(raw memory)
     ↓
-[enqueue compile job]  ← async, per-bank queue
-    ↓
-CompileEngine.compile(raw_memory):
-    1. topic_pick(raw_memory) → list[WikiPage]    (hybrid: MIP rules + LLM)
-    2. for each page:
-         merge(page, raw_memory) → new page revision
-         write(page_revision)  ← rewritable; retains revision history
-    3. cross-link(pages_touched)                   (entity → entity edges)
-    4. emit memory.compiled event
+[threshold check]  ← per-bank: new memories since last compile + staleness
+    │
+    ├─ below threshold → done (no compile)
+    │
+    └─ at/above threshold → enqueue compile job (async, per-bank queue)
+                                        ↓
+                            CompileEngine.run(bank_id):
+                                1. scope_discover(bank_id)  → list[CompileScope]
+                                2. for each scope:
+                                     fetch_memories(scope)
+                                     synthesise(memories) → WikiPage revision
+                                     write(page_revision)  ← rewritable; retains revision history
+                                3. cross_link(pages_touched)  (entity → entity edges)
+                                4. emit memory.compiled event
 ```
 
 **Async, never blocks retain.** Retain latency must stay bounded; compile is eventual. Failures are retried and observable but do not fail the write path.
 
 **Per-bank opt-in.** Compile is expensive (LLM cost × pages-touched × raw-memories). Turn it on per bank via MIP config; off by default.
+
+---
+
+## 3.1 Triggering model
+
+Two triggers, same underlying machinery:
+
+| Trigger | Who initiates | Scope input |
+|---------|--------------|-------------|
+| **Threshold** (automatic) | CompileEngine background worker | None — scope is *discovered* (§3.2) |
+| **Explicit** `brain.compile(scope, bank_id)` | Caller | Scope string provided — discovery skipped |
+
+The threshold fires when **both conditions are evaluated** after each retain:
+
+- **Size:** ≥ N new memories accumulated since the last compile for this bank (default: 50)
+- **Staleness:** last compile is older than T (default: 7 days) AND ≥ M new memories exist (default: 10)
+
+Either condition alone is sufficient to enqueue. The thresholds are configurable per bank (§8).
+
+---
+
+## 3.2 Scope discovery (automatic trigger only)
+
+When no caller-provided scope is available, the CompileEngine must discover what to compile. It operates in two passes over the uncompiled memories in the bank:
+
+**Pass 1 — Tagged memories → group by tag**
+
+Memories that carry tags (assigned at retain time via caller, extraction profile, or MIP routing) are grouped by tag. Each unique tag becomes a compile scope. This is cheap — no LLM, no clustering — and produces the most semantically coherent groups because tags were assigned at the point of knowledge.
+
+**Pass 2 — Untagged memories → DBSCAN clustering**
+
+Memories with no tags are clustered by embedding similarity using DBSCAN (density-based spatial clustering). DBSCAN is chosen over k-means because:
+- Does not require knowing the number of clusters in advance
+- Handles organic growth — new topics emerge without reconfiguration
+- Naturally produces noise points (memories that don't cluster) rather than forcing them into wrong buckets
+
+Each cluster is then labelled with a short topic string via a lightweight LLM call over the cluster's most representative memories. The label becomes the scope string on the resulting WikiPage.
+
+```
+untagged memories
+    ↓
+DBSCAN(vectors, eps=ε, min_samples=M)
+    ↓
+cluster_0, cluster_1, ..., cluster_n, noise
+    ↓ (per cluster)
+LLM("What is the topic of these memories?") → "incident response"
+    ↓
+compile scope = "incident response"
+```
+
+Noise points (memories DBSCAN could not assign to any cluster) are held for the next compile cycle, where they may cluster with newly retained memories.
+
+**Unified scope list**: Pass 1 and Pass 2 results are merged into a single `list[CompileScope]`. The CompileEngine synthesises each scope identically regardless of whether it came from a tag or a cluster label.
 
 ---
 
@@ -138,13 +196,27 @@ banks:
       enabled: true
       page_kinds: ["entity", "topic"]         # Subset; "concept" is more expensive
       min_memories_to_create_page: 3
+
+      trigger:
+        # Automatic threshold — either condition fires a compile job
+        size_threshold: 50                    # New memories since last compile
+        staleness_days: 7                     # Days since last compile (paired with…)
+        staleness_min_memories: 10            # …minimum new memories for staleness to trigger
+
+      clustering:
+        # DBSCAN parameters for untagged memory scope discovery (§3.2)
+        eps: 0.25                             # Cosine distance threshold for neighbourhood
+        min_samples: 5                        # Minimum memories to form a cluster
+        noise_holdover: true                  # Hold noise points for next compile cycle
+
       schedule:
-        compile_queue: async                   # "async" | "inline" (inline = debug only)
-        lint: "0 4 * * *"                     # Cron; daily 4am
-      wiki_confidence_threshold: 0.7          # §6 tier fallback
+        compile_queue: async                  # "async" | "inline" (inline = debug only)
+        lint: "0 4 * * *"                    # Cron; daily 4am
+
+      wiki_confidence_threshold: 0.7         # §6 tier fallback
       llm:
-        compile_model: openai/gpt-4o-mini      # Cheap model for merge ops
-        lint_model: openai/gpt-4o              # Stronger for contradictions
+        compile_model: openai/gpt-4o-mini     # Cheap model for merge + cluster labelling
+        lint_model: openai/gpt-4o             # Stronger for contradictions
 ```
 
 Defaults: **disabled**. Banks that don't opt in keep today's behaviour exactly.
@@ -181,7 +253,33 @@ If these don't land, compile stays opt-in experimental and we don't wire it into
 
 ---
 
-## 10. Open questions
+## 10. Explicit API
+
+```python
+# Explicit compile with scope — scope acts as both filter and wiki page label
+await brain.compile("incident response", bank_id="eng-team")
+
+# Explicit compile without scope — triggers full scope discovery (§3.2)
+await brain.compile(bank_id="eng-team")
+```
+
+Both forms are async and return a `CompileResult`:
+
+```python
+@dataclass
+class CompileResult:
+    bank_id: str
+    scopes_compiled: list[str]       # Scope strings that produced wiki pages
+    pages_created: int
+    pages_updated: int
+    noise_memories: int              # Untagged memories held for next cycle (DBSCAN noise)
+    tokens_used: int
+    elapsed_ms: int
+```
+
+---
+
+## 11. Open questions
 
 - **Page granularity.** Is `entity:alice` one page, or one-per-bank? Cross-bank entity consolidation is a governance minefield — defer.
 - **Write amplification budget.** A single retain can touch many pages. Do we cap pages-touched-per-retain, or cap tokens-per-hour per bank?
@@ -189,10 +287,12 @@ If these don't land, compile stays opt-in experimental and we don't wire it into
 - **Multi-actor contention.** Two retains hitting the same page concurrently — last-write-wins, CRDT, or queue-serialised per page? Queue-per-page is simplest.
 - **Does wiki obsolete `reflect()`?** Probably not — `reflect()` still composes across pages at query time. But the two need a clear division of labour.
 - **Schema drift across models.** Compile output depends on the model. Version the compile prompt and re-run on major model swaps.
+- **DBSCAN parameter tuning.** The right `eps` and `min_samples` values depend on the embedding model and typical memory length. Will need empirical calibration against LongMemEval corpus before shipping.
+- **Noise holdover accumulation.** If a memory is noise for many consecutive compile cycles (no cluster forms around it), should it eventually be force-assigned to the nearest cluster, or flagged for operator review?
 
 ---
 
-## 11. Relationship to existing Astrocyte components
+## 12. Relationship to existing Astrocyte components
 
 | Component | Relationship |
 |---|---|
@@ -204,27 +304,26 @@ If these don't land, compile stays opt-in experimental and we don't wire it into
 
 ---
 
-## 12. Delivery plan (v0.9-era)
-
-**Release numbering note:** per `product-roadmap.md`, the team ships this wave on `v0.8.x` tags, not a semver `v0.9.0` tag. When this doc says "v0.9-era" it means the feature wave, not the git tag.
+## 13. Delivery plan (v0.8.x)
 
 Rough sequencing (each numbered item is a candidate milestone for roadmap):
 
 1. **W1 — WikiPage memory kind + storage.** Rewritable, versioned, provenance. No compile yet; just the type and its persistence.
-2. **W2 — CompileEngine MVP.** Inline (for debugging), single page kind (`entity`), hybrid topic pick.
-3. **W3 — Async queue + per-bank opt-in config.** Wire MIP config, move off inline.
-4. **W4 — Recall wiki-tier precedence.** §6 two-tier search with threshold.
-5. **W5 — Lint pass.** Contradictions, stale, orphans. Scheduled cron.
-6. **W6 — Evaluation harness A/B + regression gate.** §9. Ship only if gate passes.
-7. **W7 — Deferred:** cross-bank entity pages, concept pages, recompile-on-forget storm controls.
+2. **W2 — CompileEngine MVP.** Inline (for debugging), single page kind (`entity`), explicit `brain.compile(scope, bank_id)` only.
+3. **W3 — Scope discovery.** Tag grouping + DBSCAN clustering (§3.2) for automatic scope resolution.
+4. **W4 — Threshold trigger + async queue + per-bank opt-in config.** Wire MIP config, move off inline.
+5. **W5 — Recall wiki-tier precedence.** §6 two-tier search with threshold.
+6. **W6 — Lint pass.** Contradictions, stale, orphans. Scheduled cron.
+7. **W7 — Evaluation harness A/B + regression gate.** §9. Ship only if gate passes.
+8. **W8 — Deferred:** cross-bank entity pages, concept pages, recompile-on-forget storm controls.
 
 Each step has a clean rollback: disable compile in config, wiki tier falls back to raw RAG.
 
 ---
 
-## 13. Non-goals (explicit)
+## 14. Non-goals (explicit)
 
 - **Not a documentation system.** Wiki pages are internal memory artefacts, not user-facing markdown docs.
 - **Not a replacement for raw memory.** Raw memories remain the source of truth; pages are derived.
 - **Not a graph database.** Cross-links are soft references, not a formal graph ontology. Graph store remains orthogonal.
-- **Not shipped on by default in v0.9-era.** Opt-in until the evaluation gate proves it wins consistently.
+- **Not shipped on by default.** Opt-in until the evaluation gate proves it wins consistently.
