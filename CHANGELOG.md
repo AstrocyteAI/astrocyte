@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-04-25 (patch — widen adapter dep range)
+
+### Fixed
+
+- **All adapter packages** (`astrocyte-pgvector`, `astrocyte-qdrant`, `astrocyte-neo4j`, `astrocyte-elasticsearch`, `astrocyte-ingestion-*`, `astrocyte-llm-litellm`): dependency was `astrocyte>=0.7.0,<0.9`, causing `ResolutionImpossible` when installing alongside `astrocyte==0.9.0`. Widened to `<2`.
+
 ## [0.9.0] — 2026-04-25 (M8–M11 — wiki compile, time travel, gap analysis, entity resolution)
 
 Four milestones completing the pre-GA feature surface. M8 (wiki compile) ships on the v0.8.x engineering track; M9–M11 constitute the v1.0.0 scope and are now fully implemented. v1.0.0 GA will be declared after the v0.9.x eval gates pass.
@@ -103,7 +109,8 @@ This release bundles **M5** (production storage providers), **M6** (standalone H
 - Profile-driven `metadata_mapping`, `tag_rules`, `entity_extraction`, and `fact_type` on retain.
 - Packaged defaults: `astrocyte/pipeline/extraction_builtin.yaml`; stable imports: `prepare_retain_input`, `merged_extraction_profiles`, `extraction_profile_for_source`, `PreparedRetainInput`.
 
-[Unreleased]: https://github.com/AstrocyteAI/astrocyte/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/AstrocyteAI/astrocyte/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/AstrocyteAI/astrocyte/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/AstrocyteAI/astrocyte/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/AstrocyteAI/astrocyte/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/AstrocyteAI/astrocyte/releases/tag/v0.8.0
