@@ -57,24 +57,27 @@ jobs:
         id: ver
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Wait for astrocyte, astrocyte-pgvector and astrocyte-age on PyPI
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          # Poll via pip download (checks the simple index, same path pip uses at build time).
-          # The JSON API can return 200 before the simple index propagates to all CDN nodes,
-          # so curl-based checks are unreliable for gating Docker builds.
-          pip install --quiet uv
+          # Poll via pip download — checks the simple index, the same path pip uses
+          # at Docker build time. The JSON API can return 200 before the simple index
+          # propagates to all CDN nodes, so JSON-only checks are unreliable here.
           for pkg in astrocyte astrocyte-pgvector astrocyte-age; do
-            echo "Waiting for ${pkg}==${VERSION} to be pip-installable..."
+            echo "Waiting for ${pkg}==${VERSION} to be pip-downloadable..."
             for i in $(seq 1 40); do
-              if uv pip download "${pkg}==${VERSION}" --no-deps -q -d /tmp/pypi-check 2>/dev/null; then
-                echo "✓ ${pkg}==${VERSION} resolvable via pip"
+              if pip download "${pkg}==${VERSION}" --no-deps -q -d /tmp/pypi-check; then
+                echo "✓ ${pkg}==${VERSION} available"
                 rm -rf /tmp/pypi-check
                 break
               fi
               if [ "$i" = "40" ]; then
-                echo "✗ ${pkg}==${VERSION} not resolvable after ~6 minutes"
+                echo "✗ ${pkg}==${VERSION} not available after ~6 minutes"
                 exit 1
               fi
               echo "  Attempt ${i}/40 — ${pkg}==${VERSION} not yet available, retrying in 10s..."
