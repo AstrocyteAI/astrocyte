@@ -92,12 +92,14 @@ async def parallel_retrieve(
 
     # Temporal search if the vector store can enumerate. Capped scan keeps
     # cost bounded; rank by metadata[_created_at]/occurred_at recency decay.
+    as_of = filters.as_of if filters is not None else None
     if enable_temporal and hasattr(vector_store, "list_vectors"):
         tasks["temporal"] = asyncio.create_task(
             _temporal_search(
                 vector_store, bank_id, limit,
                 scan_cap=temporal_scan_cap,
                 half_life_days=temporal_half_life_days,
+                as_of=as_of,
             )
         )
 
@@ -130,6 +132,7 @@ async def _semantic_search(
             fact_type=h.fact_type,
             metadata=h.metadata,
             tags=h.tags,
+            retained_at=getattr(h, "retained_at", None),
         )
         for h in hits
     ]
@@ -180,6 +183,7 @@ async def _temporal_search(
     *,
     scan_cap: int,
     half_life_days: float,
+    as_of: datetime | None = None,
 ) -> list[ScoredItem]:
     """Recency-ranked strategy.
 
@@ -217,6 +221,9 @@ async def _temporal_search(
     now = datetime.now(timezone.utc)
     scored: list[tuple[float, VectorItem]] = []
     for item in scanned:
+        # M9: time-travel filter — skip items retained after as_of
+        if as_of is not None and item.retained_at is not None and item.retained_at > as_of:
+            continue
         timestamp = _extract_timestamp(item)
         if timestamp is None:
             continue
@@ -237,6 +244,7 @@ async def _temporal_search(
             metadata=item.metadata,
             tags=item.tags,
             memory_layer=item.memory_layer,
+            retained_at=getattr(item, "retained_at", None),
         )
         for score, item in top
     ]

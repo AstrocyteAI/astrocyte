@@ -49,6 +49,7 @@ class VectorItem:
     fact_type: str | None = None  # "world", "experience", "observation"
     occurred_at: datetime | None = None
     memory_layer: str | None = None  # "fact", "observation", "model" — memory hierarchy
+    retained_at: datetime | None = None  # UTC wall-clock when this item was stored (M9)
 
     def __post_init__(self) -> None:
         if not self.text:
@@ -62,6 +63,7 @@ class VectorFilters:
     fact_types: list[str] | None = None
     time_range: tuple[datetime, datetime] | None = None
     metadata_filters: Metadata | None = None
+    as_of: datetime | None = None  # Time-travel: only return items retained on or before this timestamp (M9)
 
 
 @dataclass
@@ -74,6 +76,7 @@ class VectorHit:
     fact_type: str | None = None
     occurred_at: datetime | None = None
     memory_layer: str | None = None  # "fact", "observation", "model"
+    retained_at: datetime | None = None  # UTC timestamp when item was retained (M9)
 
     def __post_init__(self) -> None:
         if self.score < 0.0:
@@ -192,6 +195,7 @@ class RecallRequest:
     layer_weights: dict[str, float] | None = None  # {"fact": 1.0, "observation": 1.5, "model": 2.0}
     detail_level: str | None = None  # "titles" | "bodies" | "full" | None (default=full)
     external_context: list[MemoryHit] | None = None  # External RAG/graph results for cross-source fusion
+    as_of: datetime | None = None  # Time-travel: recall as if it were this UTC moment (M9)
 
 
 @dataclass
@@ -207,6 +211,7 @@ class MemoryHit:
     bank_id: str | None = None  # set by multi-bank / hybrid recall
     memory_layer: str | None = None  # "fact", "observation", "model"
     utility_score: float | None = None  # 0.0 – 1.0 composite utility
+    retained_at: datetime | None = None  # UTC timestamp when item was retained (M9)
 
 
 @dataclass
@@ -229,6 +234,22 @@ class RecallResult:
     trace: RecallTrace | None = None
     #: Optional labeled sections + rules for synthesis (M7 structured recall authority).
     authority_context: str | None = None
+
+
+@dataclass
+class HistoryResult:
+    """Result of ``brain.history()`` — what the agent knew at a past point in time (M9).
+
+    Wraps a :class:`RecallResult` and carries the ``as_of`` timestamp so
+    callers can log/display the reconstruction point without parsing the request.
+    """
+
+    hits: list[MemoryHit]
+    total_available: int
+    truncated: bool
+    as_of: datetime  # The UTC timestamp used for the time-travel query
+    bank_id: str
+    trace: RecallTrace | None = None
 
 
 @dataclass

@@ -39,6 +39,7 @@ from astrocyte.types import (
     ForgetRequest,
     ForgetResult,
     HealthStatus,
+    HistoryResult,
     LegalHold,
     LifecycleRunResult,
     MemoryHit,
@@ -467,6 +468,7 @@ class Astrocyte:
             layer_weights=params.layer_weights,
             detail_level=params.detail_level,
             external_context=ext,
+            as_of=params.as_of,  # M9
         )
 
     async def recall(
@@ -486,6 +488,7 @@ class Astrocyte:
         include_sources: bool = False,
         layer_weights: dict[str, float] | None = None,
         detail_level: str | None = None,
+        as_of: datetime | None = None,
     ) -> RecallResult:
         """Retrieve relevant memories for a query.
 
@@ -525,6 +528,7 @@ class Astrocyte:
                 include_sources=include_sources,
                 layer_weights=layer_weights,
                 detail_level=detail_level,
+                as_of=as_of,  # M9
             )
 
             # Single bank — direct
@@ -1031,6 +1035,66 @@ class Astrocyte:
             )
 
         return result
+
+    async def history(
+        self,
+        query: str,
+        bank_id: str,
+        as_of: datetime,
+        *,
+        max_results: int = 10,
+        max_tokens: int | None = None,
+        tags: list[str] | None = None,
+    ) -> HistoryResult:
+        """Reconstruct what the agent knew at a past point in time (M9 time travel).
+
+        Returns memories that existed in *bank_id* at the moment *as_of* — i.e.
+        only memories whose ``retained_at`` timestamp is on or before *as_of*.
+        Memories retained after *as_of* are excluded, giving a faithful snapshot
+        of the agent's knowledge at that instant.
+
+        Args:
+            query: The recall query to run against the historical snapshot.
+            bank_id: Bank to query.
+            as_of: UTC datetime.  Memories retained after this moment are hidden.
+            max_results: Maximum number of hits to return.
+            max_tokens: Optional token budget for the result set.
+            tags: Optional tag filter (applied on top of the time filter).
+
+        Returns:
+            :class:`~astrocyte.types.HistoryResult` with hits and the ``as_of``
+            timestamp embedded for traceability.
+
+        Raises:
+            ConfigError: If no pipeline is configured (no vector store to query).
+
+        Example::
+
+            from datetime import datetime, UTC
+            snapshot = await brain.history(
+                "What did we know about Alice?",
+                bank_id="user-alice",
+                as_of=datetime(2025, 1, 1, tzinfo=UTC),
+            )
+            for hit in snapshot.hits:
+                print(hit.retained_at, hit.text)
+        """
+        recall_result = await self.recall(
+            query,
+            bank_id=bank_id,
+            max_results=max_results,
+            max_tokens=max_tokens,
+            tags=tags,
+            as_of=as_of,
+        )
+        return HistoryResult(
+            hits=recall_result.hits,
+            total_available=recall_result.total_available,
+            truncated=recall_result.truncated,
+            as_of=as_of,
+            bank_id=bank_id,
+            trace=recall_result.trace,
+        )
 
     async def health(self) -> HealthStatus:
         """Check system health."""

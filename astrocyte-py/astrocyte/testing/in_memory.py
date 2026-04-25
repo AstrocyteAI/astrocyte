@@ -88,6 +88,10 @@ class InMemoryVectorStore:
                 if filters.fact_types and item.fact_type:
                     if item.fact_type not in filters.fact_types:
                         continue
+                # M9: time-travel filter — exclude items retained after as_of
+                if filters.as_of is not None and item.retained_at is not None:
+                    if item.retained_at > filters.as_of:
+                        continue
             sim = _cosine_sim(query_vector, item.vector)
             results.append((sim, item))
 
@@ -102,6 +106,7 @@ class InMemoryVectorStore:
                 fact_type=item.fact_type,
                 occurred_at=item.occurred_at,
                 memory_layer=item.memory_layer,
+                retained_at=item.retained_at,  # M9
             )
             for sim, item in results[:limit]
         ]

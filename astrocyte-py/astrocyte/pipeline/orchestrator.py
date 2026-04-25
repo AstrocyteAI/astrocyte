@@ -330,6 +330,7 @@ class PipelineOrchestrator:
                     tags=prepared.tags,
                     fact_type=prepared.fact_type,
                     occurred_at=request.occurred_at,
+                    retained_at=datetime.now(timezone.utc),  # M9: wall-clock store time
                 )
             )
 
@@ -418,6 +419,7 @@ class PipelineOrchestrator:
             tags=request.tags,
             fact_types=request.fact_types,
             time_range=request.time_range,
+            as_of=request.as_of,  # M9: time-travel filter
         )
 
         # 2b. Extract entities from query for graph search
@@ -567,6 +569,7 @@ class PipelineOrchestrator:
                 tags=item.tags,
                 memory_id=item.id,
                 bank_id=request.bank_id,
+                retained_at=getattr(item, "retained_at", None),  # M9
             )
             for item in trimmed
         ]

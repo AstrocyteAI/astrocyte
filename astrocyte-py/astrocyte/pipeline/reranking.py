@@ -139,6 +139,8 @@ def basic_rerank(
                 fact_type=item.fact_type,
                 metadata=item.metadata,
                 tags=item.tags,
+                memory_layer=item.memory_layer,
+                retained_at=item.retained_at,
             )
             for item, item_terms in item_terms_by_item
         ),
