@@ -1,6 +1,6 @@
 # PostgreSQL 16 with both Apache AGE and pgvector extensions.
 #
-# Base: apache/age:v1.5.0-pg16 (AGE pre-installed for PG16).
+# Base: apache/age:release_PG16_1.6.0 (AGE 1.6.0 pre-installed for PG16).
 # Added: postgresql-16-pgvector via the official PostgreSQL apt repository,
 #        which is already configured in the base image.
 #
@@ -15,7 +15,7 @@
 # Or via docker-compose:
 #   docker compose -f astrocyte-services-py/docker-compose-age.yml up --build
 
-FROM apache/age:v1.5.0-pg16
+FROM apache/age:release_PG16_1.6.0
 
 # Install pgvector from the PostgreSQL apt repository (pre-configured in the
 # base image).  The postgresql-16-pgvector package provides the .so shared

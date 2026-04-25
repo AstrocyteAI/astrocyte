@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres-age:
-        image: apache/age:v1.5.0-pg16
+        image: apache/age:release_PG16_1.6.0
         env:
           POSTGRES_USER: astrocyte
           POSTGRES_PASSWORD: astrocyte
