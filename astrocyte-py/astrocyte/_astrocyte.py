@@ -35,6 +35,7 @@ from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
     BankHealth,
+    CompileResult,
     ForgetRequest,
     ForgetResult,
     HealthStatus,
@@ -114,6 +115,9 @@ class Astrocyte:
         # Multi-bank orchestrator (wired lazily after provider is set)
         self._multi_bank: MultiBankOrchestrator | None = None
 
+        # M8: wiki store (optional; enables brain.compile())
+        self._wiki_store: object | None = None
+
     @property
     def config(self) -> AstrocyteConfig:
         """Loaded :class:`~astrocyte.config.AstrocyteConfig` (read-only for callers)."""
@@ -151,6 +155,22 @@ class Astrocyte:
             self._dispatcher.capabilities = provider.capabilities()
         self._rebuild_tiered_retrieval()
         self._rebuild_multi_bank()
+
+    def set_wiki_store(self, wiki_store: object) -> None:
+        """Set the WikiStore provider (M8 wiki compile). Optional.
+
+        When a WikiStore is configured, ``brain.compile()`` becomes available.
+        Compile is disabled by default — banks that don't opt in keep today's
+        retain/recall behaviour exactly.
+
+        Args:
+            wiki_store: Any object satisfying the
+                :class:`~astrocyte.provider.WikiStore` protocol.
+        """
+        from astrocyte.provider import check_spi_version
+
+        check_spi_version(wiki_store, "WikiStore")
+        self._wiki_store = wiki_store
 
     def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
@@ -898,6 +918,95 @@ class Astrocyte:
                 {"bank_id": bank_id},
             )
         return too_young
+
+    async def compile(
+        self,
+        bank_id: str,
+        scope: str | None = None,
+    ) -> CompileResult:
+        """Compile raw memories into WikiPages for ``bank_id`` (M8).
+
+        Synthesises a structured wiki page for each detected topic scope using
+        an LLM. Compiled pages are stored in the WikiStore and embedded back
+        into the VectorStore (``memory_layer="compiled"``) so the recall pipeline
+        can surface them ahead of raw memory fragments.
+
+        Args:
+            bank_id: Bank to compile.
+            scope: If provided, compile only memories tagged with this scope string.
+                   If ``None``, trigger full scope discovery:
+
+                   1. Tagged memories are grouped by tag (each tag = one page).
+                   2. Untagged memories are clustered by embedding similarity
+                      (DBSCAN); each cluster is labelled with a lightweight LLM
+                      call. Noise points are held for the next compile cycle.
+
+        Returns:
+            :class:`~astrocyte.types.CompileResult` with pages created/updated,
+            noise count, and token usage.
+
+        Raises:
+            :class:`~astrocyte.errors.ConfigError`: If no WikiStore has been
+                configured (call ``set_wiki_store()`` before ``compile()``).
+            :class:`~astrocyte.errors.ProviderUnavailable`: If the Tier 1 pipeline
+                has not been configured.
+
+        Example::
+
+            # Explicit — compile memories tagged "incident-response"
+            result = await brain.compile("eng-team", scope="incident-response")
+
+            # Automatic — discover scopes from tags and embedding clusters
+            result = await brain.compile("eng-team")
+
+            print(result.pages_created, result.pages_updated, result.tokens_used)
+        """
+        validate_bank_id(bank_id)
+
+        if self._wiki_store is None:
+            raise ConfigError(
+                "brain.compile() requires a WikiStore. "
+                "Call brain.set_wiki_store(store) before compiling."
+            )
+
+        if self._pipeline is None:
+            raise ProviderUnavailable(
+                "brain.compile() requires a Tier 1 pipeline. "
+                "Call brain.set_pipeline(pipeline) before compiling."
+            )
+
+        from astrocyte.pipeline.compile import CompileEngine
+
+        engine = CompileEngine(
+            vector_store=self._pipeline.vector_store,
+            llm_provider=self._pipeline.llm_provider,
+            wiki_store=self._wiki_store,  # type: ignore[arg-type]
+        )
+
+        with span("compile", {"bank_id": bank_id, "scope": scope or "auto"}):
+            result = await engine.run(bank_id, scope=scope)
+
+        if result.error:
+            logger.warning(
+                "compile failed for bank %s scope %s: %s",
+                bank_id,
+                scope or "auto",
+                result.error,
+            )
+        else:
+            logger.info(
+                "compile complete bank=%s scope=%s pages_created=%d pages_updated=%d "
+                "noise=%d tokens=%d elapsed_ms=%d",
+                bank_id,
+                scope or "auto",
+                result.pages_created,
+                result.pages_updated,
+                result.noise_memories,
+                result.tokens_used,
+                result.elapsed_ms,
+            )
+
+        return result
 
     async def health(self) -> HealthStatus:
         """Check system health."""

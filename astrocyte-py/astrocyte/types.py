@@ -297,6 +297,7 @@ class EngineCapabilities:
     supports_entities: bool = False
     supports_tags: bool = False
     supports_metadata: bool = True
+    supports_compile: bool = False  # M8: wiki compile via brain.compile()
     max_retain_bytes: int | None = None
     max_recall_results: int | None = None
     max_embedding_dims: int | None = None
@@ -659,6 +660,82 @@ class RoutingDecision:
     pipeline: PipelineSpec | None = None  # Optional pipeline-shaping overrides from rule
     forget: ForgetSpec | None = None  # Optional forget-policy overrides from rule (Phase 4)
     observability_tags: list[str] | None = None  # Per-rule operator labels (Phase 5)
+
+
+# ---------------------------------------------------------------------------
+# M8: Wiki Compile
+# ---------------------------------------------------------------------------
+
+WikiPageKind = Literal["entity", "topic", "concept"]
+
+
+@dataclass
+class WikiPage:
+    """A compiled topic/entity/concept page synthesised from raw memories (M8).
+
+    WikiPages are additive artefacts — raw memories are never removed when a
+    page is compiled. Each page carries ``source_ids`` back to every raw memory
+    that contributed, enabling provenance tracing and recompile-on-forget.
+
+    Pages are mutable: each compile pass produces a new revision. Past revisions
+    are kept in the WikiStore audit log (not indexed for recall).
+    """
+
+    page_id: str  # Stable ID, e.g. "topic:incident-response", "entity:alice"
+    bank_id: str
+    kind: WikiPageKind  # "entity" | "topic" | "concept"
+    title: str
+    content: str  # LLM-maintained markdown
+    scope: str  # Scope string used for this compile (tag name or cluster label)
+    source_ids: list[str]  # Raw memory IDs that contributed (provenance)
+    cross_links: list[str]  # Other page_ids referenced in this page
+    revision: int  # Monotonically increasing, starts at 1
+    revised_at: datetime
+    tags: list[str] | None = None  # Inherited from contributing memories
+    metadata: Metadata | None = None
+
+
+@dataclass
+class WikiPageHit:
+    """A wiki page returned from a semantic search during recall tiering."""
+
+    page_id: str
+    title: str
+    content: str
+    scope: str
+    kind: str
+    score: float  # 0.0 – 1.0 similarity
+    source_ids: list[str]
+    bank_id: str
+
+
+@dataclass
+class CompileScope:
+    """A resolved compile scope — either from a tag or a DBSCAN cluster label."""
+
+    scope: str  # Scope string (tag name or cluster label)
+    source: Literal["tag", "cluster", "explicit"]  # How it was discovered
+    memory_ids: list[str]  # Memory IDs belonging to this scope
+
+
+@dataclass
+class CompileRequest:
+    bank_id: str
+    scope: str | None = None  # If None, triggers full scope discovery (§3.2)
+
+
+@dataclass
+class CompileResult:
+    """Result of a brain.compile() call."""
+
+    bank_id: str
+    scopes_compiled: list[str]  # Scope strings that produced wiki pages
+    pages_created: int
+    pages_updated: int
+    noise_memories: int  # Untagged memories DBSCAN could not cluster (held for next cycle)
+    tokens_used: int
+    elapsed_ms: int
+    error: str | None = None
 
 
 # ---------------------------------------------------------------------------

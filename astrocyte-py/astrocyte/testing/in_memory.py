@@ -37,6 +37,7 @@ from astrocyte.types import (
     VectorFilters,
     VectorHit,
     VectorItem,
+    WikiPage,
 )
 
 
@@ -421,6 +422,76 @@ class InMemoryEngineProvider:
             return ForgetResult(deleted_count=before - len(bank_memories))
 
         return ForgetResult(deleted_count=0)
+
+
+# ---------------------------------------------------------------------------
+# In-memory Wiki Store (M8)
+# ---------------------------------------------------------------------------
+
+
+class InMemoryWikiStore:
+    """Fully functional in-memory wiki store for testing (M8).
+
+    Stores current-revision pages and an audit log of past revisions.
+    Vector embeddings of pages are managed separately by the VectorStore
+    (stored with ``memory_layer="compiled"``); this store holds only the
+    structured WikiPage metadata.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    def __init__(self) -> None:
+        # bank_id → {page_id → WikiPage} (current revisions)
+        self._pages: dict[str, dict[str, WikiPage]] = {}
+        # bank_id → {page_id → list[WikiPage]} (past revisions, newest last)
+        self._history: dict[str, dict[str, list[WikiPage]]] = {}
+
+    async def upsert_page(self, page: WikiPage, bank_id: str) -> str:
+        if bank_id not in self._pages:
+            self._pages[bank_id] = {}
+            self._history[bank_id] = {}
+
+        existing = self._pages[bank_id].get(page.page_id)
+        if existing is not None:
+            # Archive current revision before replacing
+            self._history[bank_id].setdefault(page.page_id, []).append(existing)
+            # Increment revision on the incoming page
+            from dataclasses import replace as _replace
+            page = _replace(page, revision=existing.revision + 1)
+
+        self._pages[bank_id][page.page_id] = page
+        return page.page_id
+
+    async def get_page(self, page_id: str, bank_id: str) -> WikiPage | None:
+        return self._pages.get(bank_id, {}).get(page_id)
+
+    async def list_pages(
+        self,
+        bank_id: str,
+        scope: str | None = None,
+        kind: str | None = None,
+    ) -> list[WikiPage]:
+        pages = list(self._pages.get(bank_id, {}).values())
+        if scope is not None:
+            pages = [p for p in pages if p.scope == scope]
+        if kind is not None:
+            pages = [p for p in pages if p.kind == kind]
+        return pages
+
+    async def delete_page(self, page_id: str, bank_id: str) -> bool:
+        bank_pages = self._pages.get(bank_id, {})
+        if page_id not in bank_pages:
+            return False
+        del bank_pages[page_id]
+        self._history.get(bank_id, {}).pop(page_id, None)
+        return True
+
+    async def health(self) -> HealthStatus:
+        return HealthStatus(healthy=True, message="in-memory wiki store")
+
+    def revision_history(self, page_id: str, bank_id: str) -> list[WikiPage]:
+        """Return past revisions for a page (oldest first). Testing helper."""
+        return list(self._history.get(bank_id, {}).get(page_id, []))
 
 
 # ---------------------------------------------------------------------------

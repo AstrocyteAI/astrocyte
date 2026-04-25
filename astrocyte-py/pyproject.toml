@@ -103,6 +103,9 @@ in_memory = "astrocyte.testing.in_memory:InMemoryGraphStore"
 [project.entry-points."astrocyte.document_stores"]
 in_memory = "astrocyte.testing.in_memory:InMemoryDocumentStore"
 
+[project.entry-points."astrocyte.wiki_stores"]
+in_memory = "astrocyte.testing.in_memory:InMemoryWikiStore"
+
 [project.entry-points."astrocyte.llm_providers"]
 mock = "astrocyte.testing.in_memory:MockLLMProvider"
 openai = "astrocyte.providers.openai:OpenAIProvider"
