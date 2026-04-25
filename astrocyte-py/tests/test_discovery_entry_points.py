@@ -42,7 +42,8 @@ def test_kafka_ingest_stream_driver_entry_point() -> None:
         cls = resolve_provider("kafka", "ingest_stream_drivers")
     except LookupError:
         pytest.skip("astrocyte-ingestion-kafka not installed (no kafka stream driver entry point)")
-    assert cls.__name__ == "KafkaStreamIngestSource"
+    else:
+        assert cls.__name__ == "KafkaStreamIngestSource"
 
 
 def test_redis_ingest_stream_driver_entry_point() -> None:
@@ -50,7 +51,8 @@ def test_redis_ingest_stream_driver_entry_point() -> None:
         cls = resolve_provider("redis", "ingest_stream_drivers")
     except LookupError:
         pytest.skip("astrocyte-ingestion-redis not installed (no redis stream driver entry point)")
-    assert cls.__name__ == "RedisStreamIngestSource"
+    else:
+        assert cls.__name__ == "RedisStreamIngestSource"
 
 
 def test_github_ingest_poll_driver_entry_point() -> None:
@@ -58,4 +60,5 @@ def test_github_ingest_poll_driver_entry_point() -> None:
         cls = resolve_provider("github", "ingest_poll_drivers")
     except LookupError:
         pytest.skip("astrocyte-ingestion-github not installed (no github poll driver entry point)")
-    assert cls.__name__ == "GithubPollIngestSource"
+    else:
+        assert cls.__name__ == "GithubPollIngestSource"
