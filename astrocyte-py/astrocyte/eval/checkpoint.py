@@ -137,7 +137,7 @@ class BenchmarkCheckpoint:
             self.path.unlink()
             log.debug("Checkpoint deleted after successful completion: %s", self.path)
         except FileNotFoundError:
-            pass
+            pass  # already deleted — nothing to do
 
     # ── Summary ───────────────────────────────────────────────────────────────
 
