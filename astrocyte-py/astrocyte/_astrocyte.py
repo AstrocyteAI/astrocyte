@@ -117,6 +117,8 @@ class Astrocyte:
 
         # M8: wiki store (optional; enables brain.compile())
         self._wiki_store: object | None = None
+        # M8 W4: async compile queue (optional; enables automatic threshold triggering)
+        self._compile_queue: object | None = None
 
     @property
     def config(self) -> AstrocyteConfig:
@@ -171,6 +173,24 @@ class Astrocyte:
 
         check_spi_version(wiki_store, "WikiStore")
         self._wiki_store = wiki_store
+
+    def set_compile_queue(self, queue: object) -> None:
+        """Set the async compile queue (M8 W4 threshold trigger). Optional.
+
+        When a :class:`~astrocyte.pipeline.compile_trigger.CompileQueue` is
+        configured, each successful ``brain.retain()`` call notifies the queue.
+        The queue fires a background compile job whenever the bank crosses the
+        configured size or staleness threshold.
+
+        The queue must be started (``await queue.start()``) before the first
+        retain call, and stopped (``await queue.stop()``) on shutdown.
+
+        Args:
+            queue: A :class:`~astrocyte.pipeline.compile_trigger.CompileQueue`
+                instance (or any object with a compatible ``notify_retain``
+                method).
+        """
+        self._compile_queue = queue
 
     def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
@@ -401,6 +421,10 @@ class Astrocyte:
                         "content_length": len(content),
                     },
                 )
+                # M8 W4: notify the compile queue so it can trigger a background
+                # compile when the bank crosses the configured threshold.
+                if self._compile_queue is not None and result.stored:
+                    self._compile_queue.notify_retain(bank_id)  # type: ignore[union-attr]
                 return result
             except ProviderUnavailable:
                 self._policy.handle_degraded_retain(self._provider_name)
