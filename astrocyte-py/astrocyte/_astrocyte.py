@@ -34,6 +34,7 @@ from astrocyte.recall.authority import apply_recall_authority
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
+    AuditResult,
     BankHealth,
     CompileResult,
     ForgetRequest,
@@ -1093,6 +1094,74 @@ class Astrocyte:
             truncated=recall_result.truncated,
             as_of=as_of,
             bank_id=bank_id,
+            trace=recall_result.trace,
+        )
+
+    async def audit(
+        self,
+        scope: str,
+        bank_id: str,
+        *,
+        max_memories: int = 50,
+        max_tokens: int | None = None,
+        tags: list[str] | None = None,
+    ) -> AuditResult:
+        """Identify knowledge gaps for a topic in a memory bank (M10 gap analysis).
+
+        Recalls up to *max_memories* relevant memories for *scope*, then calls
+        an LLM audit judge to assess what is missing or under-covered.  The
+        result includes a list of :class:`~astrocyte.types.GapItem` objects and
+        a ``coverage_score`` between 0 (empty bank) and 1 (comprehensive).
+
+        This is a diagnostic operation — it does not modify any stored memory.
+        It does consume LLM tokens proportional to the number of memories scanned.
+
+        Args:
+            scope: Natural-language description of the topic to audit
+                (e.g. ``"Alice's employment history"``).
+            bank_id: Bank to audit.
+            max_memories: Maximum number of memories to retrieve and pass to
+                the audit judge.  Defaults to ``50``.
+            max_tokens: Optional token budget applied to retrieved memories
+                before the judge call.
+            tags: Optional tag filter to narrow which memories are retrieved.
+
+        Returns:
+            :class:`~astrocyte.types.AuditResult` with gaps and coverage score.
+
+        Raises:
+            ConfigError: If no pipeline is configured.
+
+        Example::
+
+            result = await brain.audit(
+                "Alice's employment history",
+                bank_id="user-alice",
+            )
+            print(f"Coverage: {result.coverage_score:.0%}")
+            for gap in result.gaps:
+                print(f"[{gap.severity}] {gap.topic}: {gap.reason}")
+        """
+        from astrocyte.pipeline.audit import run_audit
+
+        recall_result = await self.recall(
+            scope,
+            bank_id=bank_id,
+            max_results=max_memories,
+            max_tokens=max_tokens,
+            tags=tags,
+        )
+
+        pipeline = self._pipeline
+        if pipeline is None:
+            from astrocyte.exceptions import ConfigError
+            raise ConfigError("No pipeline configured — call set_pipeline() first.")
+
+        return await run_audit(
+            scope=scope,
+            bank_id=bank_id,
+            memories=recall_result.hits,
+            llm_provider=pipeline.llm_provider,
             trace=recall_result.trace,
         )
 

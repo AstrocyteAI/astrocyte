@@ -253,6 +253,60 @@ class HistoryResult:
 
 
 @dataclass
+class GapItem:
+    """A single knowledge gap identified by ``brain.audit()`` (M10).
+
+    A gap is a topic or question that the memory bank cannot answer
+    adequately — either because no memories cover it, or because coverage
+    is too thin to draw a reliable conclusion.
+    """
+
+    topic: str
+    """Short label for the missing or under-covered topic (e.g. ``"Alice's current role"``)."""
+
+    severity: Literal["high", "medium", "low"]
+    """How critical the gap is.
+
+    - ``"high"`` — likely to cause a wrong or confidently-wrong answer.
+    - ``"medium"`` — partial coverage; answer may be incomplete.
+    - ``"low"`` — minor; nuance or context is missing.
+    """
+
+    reason: str
+    """One-sentence explanation of why the gap exists."""
+
+
+@dataclass
+class AuditResult:
+    """Result of ``brain.audit()`` — structured gap analysis for a scope (M10).
+
+    Summarises what the agent *doesn't* know about a given topic, together
+    with a 0–1 coverage score and provenance counts.
+    """
+
+    scope: str
+    """The scope string passed to ``brain.audit()``."""
+
+    bank_id: str
+    """The bank that was audited."""
+
+    gaps: list[GapItem]
+    """Identified knowledge gaps, ordered roughly by severity."""
+
+    coverage_score: float
+    """0–1 composite score (memory density × recency × topic breadth).
+
+    1.0 means the bank covers the scope well; < 0.5 indicates sparse coverage.
+    """
+
+    memories_scanned: int
+    """Number of memories retrieved and fed to the audit judge."""
+
+    trace: RecallTrace | None = None
+    """Diagnostic trace from the recall pass, if available."""
+
+
+@dataclass
 class Dispositions:
     """Personality modifiers for synthesis."""
 
