@@ -200,6 +200,15 @@ class AgeGraphStore:
                 return
             conn = await self._conn()
             try:
+                # Ensure the AGE extension exists (idempotent; requires superuser).
+                # This is a no-op when migrations have already run 001_age_extension.sql.
+                async with conn.cursor() as cur:
+                    await cur.execute("CREATE EXTENSION IF NOT EXISTS age")
+                    await cur.execute("LOAD 'age'")
+                    await cur.execute(
+                        "SET search_path = ag_catalog, \"$user\", public"
+                    )
+
                 # Create the graph if it doesn't exist yet.
                 # AGE raises an error if you call create_graph twice,
                 # so we check the catalog first.
@@ -264,8 +273,7 @@ class AgeGraphStore:
                 _logger.debug("Cypher error: %s\nQuery: %s", exc, sql)
                 raise
             rows = await cur.fetchall()
-
-        col_names = [desc.name for desc in cur.description] if cur.description else columns
+            col_names = [desc.name for desc in cur.description] if cur.description else columns
         return [dict(zip(col_names, row)) for row in rows]
 
     # ------------------------------------------------------------------
@@ -388,7 +396,7 @@ class AgeGraphStore:
         return [
             GraphHit(
                 memory_id=row[0],
-                text=f"[graph result for {row[0]}]",
+                text="",
                 connected_entities=list(entity_ids),
                 depth=1,
                 score=0.5,

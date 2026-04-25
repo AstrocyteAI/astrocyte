@@ -92,3 +92,45 @@ jobs:
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="
+
+  # AGE runs in its own job: the image is large and its service is PostgreSQL
+  # (port 5432), so keeping it separate avoids port conflicts and lets it
+  # pull / start in parallel with the other adapter tests.
+  adapters-age:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    services:
+      postgres-age:
+        image: apache/age:v1.5.0-pg16
+        env:
+          POSTGRES_USER: astrocyte
+          POSTGRES_PASSWORD: astrocyte
+          POSTGRES_DB: astrocyte
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U astrocyte -d astrocyte"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+
+    env:
+      ASTROCYTE_AGE_TEST_DSN: postgresql://astrocyte:astrocyte@localhost:5434/astrocyte
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: astrocyte-age
+        working-directory: adapters-storage-py/astrocyte-age
+        run: |
+          uv sync --extra dev
+          uv run pytest tests -v --override-ini="addopts="
