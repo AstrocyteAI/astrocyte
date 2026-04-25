@@ -286,14 +286,14 @@ The four diagnostic tests define *what* matters. The research agenda defines *ho
 
 ### Projected ceiling with research phases
 
-| Benchmark | v1.1.x (M8–M11) | After R1–R5 | Theoretical max |
+| Benchmark | v1.0.0 (M9–M11) | After R1–R5 | Theoretical max |
 |-----------|-----------------|-------------|-----------------|
 | **LoCoMo** (canonical) | ~78–85% | ~92–95% | ~95–97% |
 | **LongMemEval** (canonical) | ~68–75% | ~90–93% | ~93–97% |
 
 The last 3–5% requires a purpose-built synthesis model fine-tuned on structured memory QA — not a general-purpose LLM. Astrocyte's SPI means such a model plugs in as a Tier 2 engine without framework changes.
 
-Full phase details, eval gates, and per-technique projections: `product-roadmap.md` § v1.2.0+ — Research track.
+Full phase details, eval gates, and per-technique projections: `product-roadmap.md` § v0.9.0 — Research track.
 
 ---
 

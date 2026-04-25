@@ -4,7 +4,7 @@ The installable Python package lives under **`astrocyte-py/`** and uses **Hatch 
 
 ## Tags and milestones
 
-| Tag      | Milestone (see `docs/_design/product-roadmap-v1.md`) |
+| Tag      | Milestone (see `docs/_design/product-roadmap.md`) |
 |----------|-------------------------------------------------------|
 | `v0.6.0` | M3 — Extraction pipeline                              |
 | `v0.7.0` | M4 — External data sources (library ingest)         |

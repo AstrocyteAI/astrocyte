@@ -17,18 +17,20 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 | M5 | Production Storage Providers | v0.8.0 | Gap 6 | None (parallel) | Adapters |
 | M6 | Standalone Gateway | v0.8.0 | Gap 3 | M1, M2 | Shipped in-repo (`astrocyte-gateway-py`); **v0.8.x** tags (see § Release numbering) |
 | M7 | Structured recall authority | v0.8.0 | Gap 8 | M5 | Core |
-| M8 | LLM wiki compile | v1.1.x | — | M3, M5, M9–M11 | Core; opt-in per bank; ships when evaluation confirms ≥10pp lift on multi-session/knowledge-update — [`llm-wiki-compile.md`](llm-wiki-compile.md) |
-| M9 | Time travel | v1.1.x | — | M5 | Core; `retained_at` + `forgotten_at` + `as_of` on VectorFilters + `brain.history()` |
-| M10 | Gap analysis | v1.1.x | — | M7, M9 | Core; `brain.audit()` → `AuditResult(gaps, coverage_score)` |
-| M11 | Entity resolution | v1.1.x | — | M5 (GraphStore) | Core; retain-time `EntityResolver` + evidence chains + `astrocyte-age` default adapter |
+| M8 | LLM wiki compile | v0.8.x | — | M3, M5 | Core; opt-in per bank; ships when evaluation confirms ≥10pp lift on multi-session/knowledge-update — [`llm-wiki-compile.md`](llm-wiki-compile.md) |
+| M9 | Time travel | v1.0.0 | — | M5 | Core; `retained_at` + `forgotten_at` + `as_of` on VectorFilters + `brain.history()` |
+| M10 | Gap analysis | v1.0.0 | — | M7, M9 | Core; `brain.audit()` → `AuditResult(gaps, coverage_score)` |
+| M11 | Entity resolution | v1.0.0 | — | M5 (GraphStore) | Core; retain-time `EntityResolver` + evidence chains + `astrocyte-age` default adapter |
 
 **Release pairing:** **M1 and M2 ship together in a single v0.5.0 tag** (identity + structured context first; config schema immediately after in the same minor). Later milestones renumber as above.
 
 **v0.8.0 ships three milestones:** **M5** (production storage adapters), **M6** (standalone gateway — deployment models / Gap 3), and **M7** (structured recall authority). M7 depends on multi-store hybrid recall from M5; **M6** is logically last but ships on the **same v0.8.x line** as M5/M7.
 
-**v1.0.0 general availability requires M1–M7 complete** (all shipped as of this document). **v1.1.x** ships M8–M11: the three new primitives (time travel, gap analysis, entity resolution) and LLM wiki compile. Together these constitute the full "third option" answer to the capability gaps identified in *Familiarity is the Enemy* — see `platform-positioning.md` for the diagnostic test framing.
+**v0.8.x ships M8** (LLM wiki compile) after the eval gate passes — opt-in per bank, depends on M3 + M5, no dependency on M9–M11. M9–M11 will enrich M8 (provenance timestamps, lint-driven gap detection, entity cross-links) when they land in v1.0.0.
 
-**Release numbering (project policy):** Prefer **v0.8.x** git tags for this era (storage + authority + standalone gateway). The team **does not plan a separate v0.9.0 semver tag** for marketing; use **v0.8.1**, **v0.8.2**, … for follow-on work (streams, poll, gateway plugins) until **v1.0.0** GA, unless semver policy changes.
+**v1.0.0 general availability requires M1–M11 complete.** M9 (time travel), M10 (gap analysis), and M11 (entity resolution) are v1.0.0 scope — they constitute the full "third option" answer and are required before GA, not deferred. See `platform-positioning.md` for the diagnostic test framing.
+
+**v0.9.0 — research track:** Five research phases (R1–R5) targeting fundamental barriers to benchmark accuracy. Runs between v0.8.x and v1.0.0; each phase has an eval gate before promotion to core. See § v0.9.0 below.
 
 **v0.7.4** closes out pre-**v0.8** standalone gateway and repository packaging (image workflows, Helm, CI gates, docs alignment) before **v0.8.0** milestone work.
 
@@ -444,13 +446,12 @@ graph LR
     M5 -.->|parallel| M2
     M5 -.->|parallel| M3
     M5 --> M7["M7: Structured recall authority (v0.8.0)"]
-    M5 --> M9["M9: Time Travel (v1.1.x)"]
-    M7 --> M10["M10: Gap Analysis (v1.1.x)"]
+    M3 --> M8["M8: LLM Wiki Compile (v0.8.x)"]
+    M5 --> M8
+    M5 --> M9["M9: Time Travel (v1.0.0)"]
+    M7 --> M10["M10: Gap Analysis (v1.0.0)"]
     M9 --> M10
-    M5 --> M11["M11: Entity Resolution (v1.1.x)"]
-    M9 --> M8["M8: LLM Wiki Compile (v1.1.x)"]
-    M10 --> M8
-    M11 --> M8
+    M5 --> M11["M11: Entity Resolution (v1.0.0)"]
 
     style M1 fill:#e1f5fe
     style M2 fill:#e1f5fe
@@ -465,15 +466,19 @@ graph LR
     style M11 fill:#e0f2f1
 ```
 
-**Critical path (M1–M7)**: M1 → M2 → M3 → M4 (M1 and M2 are one **v0.5.0** release; order is logical / doc sequencing)
+**Critical path to v1.0.0**: M1 → M2 → M3 → M4 → M5 → M7 → M9 → M10; M5 → M11 (parallel with M9). M8 ships on the v0.8.x track before v0.9.0.
 
-**Parallel track**: M5 (storage providers) can proceed independently
+**Parallel track**: M5 (storage providers) can proceed independently of M1–M4
 
 **Gateway track**: v0.5.0 (M1+M2) → M6 (can start after M2, parallel with M3/M4). **M6** ships on the **v0.8.0** line **with M5/M7** (see § Milestone Overview).
 
 **Authority track**: **M5 → M7** (both ship **v0.8.0**)
 
-**Third-option track (v1.1.x)**: M5 → M9 (time travel) → M10 (gap analysis); M5 → M11 (entity resolution); M9 + M10 + M11 → M8 (LLM wiki compile). M8 gates on evaluation confirming lift.
+**Wiki compile track (v0.8.x)**: M3 + M5 → M8. Eval-gated; no dependency on M9–M11. Ships before v0.9.0; M9/M10/M11 will enrich it when they land.
+
+**Third-option track (v1.0.0)**: M5 → M9 (time travel) → M10 (gap analysis); M5 → M11 (entity resolution). All three required for v1.0.0 GA.
+
+**Research track (v0.9.0, between v0.8.x and v1.0.0)**: R1–R5 phases targeting benchmark accuracy barriers; eval gates promotion.
 
 ---
 
@@ -561,7 +566,7 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 - Additional event stream / poll connectors (beyond Kafka, Redis, GitHub) and NATS where needed
 - **Gateway plugins — shipped:** Thin integration plugins for **Kong** (Lua), **Apache APISIX** (Lua), and **Azure API Management** (XML policy fragments + Bicep/Terraform/APIOps deployment). Located in **`gateway-plugins/`** at the repo root. Each plugin intercepts OpenAI-compatible `/chat/completions` requests and calls the standalone gateway for recall (pre-hook) and retain (post-hook). See **[`gateway-plugins/README.md`](../../gateway-plugins/README.md)**.
 - Hardening: CORS, body limits, admin auth, rate limits at the edge (as product requires)
-- **LLM wiki compile (M8 — v1.1.x):** Async CompileEngine maintains rewritable **`WikiPage`** memories (entity/topic/concept) from raw memories, with provenance and cross-links; recall tiers wiki hits ahead of raw with fallback; periodic **lint** pass catches contradictions, stale claims, and orphans. Opt-in per bank via MIP config; defaults **off**. Depends on M9 (time-stamped history for provenance), M10 (gap detection drives lint), M11 (entity links enrich wiki cross-references). Ships when LongMemEval **compile vs no-compile** A/B gate passes (≥ 10-point absolute lift on `multi-session` or `knowledge-update`, no other category regressing > 2 points; retain p95 unchanged). Full design: **[`llm-wiki-compile.md`](llm-wiki-compile.md)**.
+- **LLM wiki compile (M8 — v0.8.x):** Async CompileEngine maintains rewritable **`WikiPage`** memories (entity/topic/concept) from raw memories, with provenance and cross-links; recall tiers wiki hits ahead of raw with fallback; periodic **lint** pass catches contradictions, stale claims, and orphans. Opt-in per bank via MIP config; defaults **off**. Depends on M3 (extraction pipeline) and M5 (production storage); ships before v0.9.0 when the LongMemEval **compile vs no-compile** A/B gate passes (≥ 10-point absolute lift on `multi-session` or `knowledge-update`, no other category regressing > 2 points; retain p95 unchanged). M9/M10/M11 will deepen M8 (provenance timestamps, lint-driven gap audit, entity cross-links) when they land in v1.0.0. Full design: **[`llm-wiki-compile.md`](llm-wiki-compile.md)**.
 
 SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this track — **§ Stability: SPI, adapters, and config files**.
 
@@ -572,23 +577,29 @@ SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this tra
 - Phase 2 integration adapter migration (framework-native identity extraction)
 - Benchmark validation across storage backends as appropriate
 
-### v1.1.x — The third-option primitives (M9–M11 + M8)
-These four milestones together constitute the complete answer to the capability gaps identified in *Familiarity is the Enemy* (see `platform-positioning.md`). Each passes one or more of the four diagnostic tests:
+### v1.0.0 — General Availability (M1–M11)
+
+M9, M10, and M11 are v1.0.0 scope — they are required for GA, not deferred. Together with M1–M7 they constitute the full "third option" system that passes all four diagnostic tests.
 
 | Milestone | Diagnostic test | What it delivers |
 |-----------|----------------|-----------------|
 | **M9: Time travel** | Test 3 — time travel | `retained_at` + `forgotten_at` + `as_of` filter + `brain.history()` |
 | **M10: Gap analysis** | Test 1 — gap analysis | `brain.audit()` → `AuditResult(gaps, coverage_score)` |
 | **M11: Entity resolution** | Test 2 — entity resolution | `EntityResolver` + `EntityLink` with evidence + `astrocyte-age` default graph adapter |
-| **M8: LLM wiki compile** | All four (synthesizes across them) | `WikiPage` compiled memories with provenance + cross-links + lint pass |
 
-**M8 ships after M9–M11** and when evaluation confirms ≥10pp absolute lift on LongMemEval `multi-session` or `knowledge-update` categories, with no other category regressing > 2pp.
+**`astrocyte-age` is the default graph store from v1.0.0** — Apache AGE runs inside the same PostgreSQL instance as pgvector, eliminating the need for a separate graph database for most deployments.
 
-**`astrocyte-age` is the new default graph store** from v1.1.x — Apache AGE runs inside the same PostgreSQL instance as pgvector, eliminating the need for a separate graph database for most deployments.
+### v0.8.x — LLM wiki compile (M8)
 
-### v1.2.0+ — Research track + post-primitives
+M8 ships on the v0.8.x track — after M5 (production storage) but before v0.9.0 (research track). Eval gate: ≥10pp absolute lift on LongMemEval `multi-session` or `knowledge-update`, no other category regressing > 2pp, retain p95 unchanged. Full design: [`llm-wiki-compile.md`](llm-wiki-compile.md).
 
-**Post-primitive engineering:**
+When M9–M11 land in v1.0.0, M8 gains: `retained_at`-stamped provenance on WikiPage edits, gap-audit-driven lint pass, and entity cross-links via the AGE graph. These are additive enhancements — M8 ships useful without them.
+
+### v0.9.0 — Research track (parallel with M9–M11 engineering)
+
+The research track runs in parallel with the v1.0.0 engineering track. v0.9.0 is a valid semver label for this work; eval gates determine promotion of each technique to core. All techniques are additive — no SPI breaking changes.
+
+**Post-GA engineering (on the v0.9.0 line):**
 - Additional storage adapters (Pinecone, Weaviate, Memgraph)
 - Multi-region / global deployment patterns
 - Tavus CVI integration (bidirectional) — HTTP client package **`astrocyte-integration-tavus`** (`adapters-integration-py/`); full bidirectional + e2e deferred
@@ -597,7 +608,7 @@ These four milestones together constitute the complete answer to the capability 
 
 **Research track: path to 100% benchmark accuracy**
 
-Five research phases targeting the fundamental barriers remaining after v1.1.x. Each phase addresses a distinct barrier identified by benchmark category-level analysis. Phases are independent and can proceed in parallel on the v1.2.x line; evaluation gates determine promotion to core. All techniques are additive — no SPI breaking changes.
+Five research phases targeting the fundamental barriers remaining after v1.0.0. Each phase addresses a distinct barrier identified by benchmark category-level analysis. Phases are independent and can proceed in parallel on the v0.9.0 line; evaluation gates determine promotion to core. All techniques are additive — no SPI breaking changes.
 
 See `platform-positioning.md` § Research Agenda for the full diagnostic-test grounding.
 
@@ -660,7 +671,8 @@ See `platform-positioning.md` § Research Agenda for the full diagnostic-test gr
 | Phase | LoCoMo (canonical) | LongMemEval (canonical) | Primary categories improved |
 |-------|-------------------|------------------------|----------------------------|
 | **Current** | ~70–78% | ~75% (20Q) | — |
-| **After v1.1.x (M9–M11+M8)** | ~78–85% | ~68–75% (200Q) | Multi-hop, temporal, reasoning, update |
+| **v0.8.x + M8 (wiki compile)** | ~72–80% | ~60–68% (200Q) | Multi-session, knowledge-update |
+| **v1.0.0 (M9–M11)** | ~78–85% | ~68–75% (200Q) | Multi-hop, temporal, reasoning, update |
 | **After R1 (retrieval)** | ~82–88% | ~75–82% | All (higher recall hit rate) |
 | **After R2 (synthesis)** | ~85–90% | ~80–85% | Multi-hop, open-domain, reasoning |
 | **After R3 (structured)** | ~88–92% | ~83–88% | Multi-hop, update |
@@ -687,19 +699,22 @@ See `platform-positioning.md` § Research Agenda for the full diagnostic-test gr
 
 ---
 
-## Next milestone focus (toward v1.1.x)
+## Next milestone focus
 
-**v1.0.0 GA is shipped** — M1–M7 complete. The active engineering line is **v1.1.x: M9 → M11 → M10 → M8**.
+**Current state:** M1–M7 complete. Active lines in order:
 
-**Third-option primitive track — v1.1.x**
+**1. M8 (v0.8.x) — LLM wiki compile, eval-gated**
+Ships on the current v0.8.x line once the LongMemEval compile vs no-compile A/B gate passes. Depends on M3 + M5 (both done). No dependency on M9–M11.
 
-These are ordered by dependency, not priority (all four are equal priority):
+**2. v0.9.0 — Research track (R1–R5)**
+Runs after M8 ships, before v1.0.0 GA. Five research phases targeting fundamental benchmark accuracy barriers; each has its own eval gate. See § v0.9.0.
 
-1. **M9 (time travel)** — add `retained_at` / `forgotten_at` to `VectorItem`, `as_of` to `VectorFilters`, update pgvector + age adapters, add `brain.history()`. Unblocks M10.
-2. **M11 (entity resolution)** — `EntityResolver` pipeline stage, `EntityLink` type, `GraphStore` SPI extensions, `astrocyte-age` package. Can proceed in parallel with M9.
-3. **M10 (gap analysis)** — `brain.audit()` + `AuditResult`. Depends on M9 (temporal context for coverage scoring) and M7 (existing structured recall).
-4. **M8 (LLM wiki compile)** — depends on M9 + M10 + M11. Ships when evaluation gate passes.
+**3. v1.0.0 GA — Third-option primitives (M9–M11)**
+Required for GA. Ordered by dependency; M9 and M11 can proceed in parallel:
+
+1. **M9 (time travel)** — `retained_at` / `forgotten_at` on `VectorItem`, `as_of` on `VectorFilters`, pgvector + age adapter updates, `brain.history()`. Unblocks M10.
+2. **M11 (entity resolution)** — `EntityResolver`, `EntityLink`, `GraphStore` SPI extensions, `astrocyte-age` package. Parallel with M9.
+3. **M10 (gap analysis)** — `brain.audit()` + `AuditResult`. Depends on M9 and M7.
+4. **Tag v1.0.0** once M1–M11 all pass CI.
 
 **SPI, adapter, `astrocyte.yaml`, and `mip.yaml` stability:** follow **§ Stability**; encode deprecations before breaking changes.
-
-**After v1.1.x:** additional backends, multi-region patterns, Phase 3 identity, graph-enhanced wiki — see **§ v1.2.0+**; **gRPC** may remain optional longer.

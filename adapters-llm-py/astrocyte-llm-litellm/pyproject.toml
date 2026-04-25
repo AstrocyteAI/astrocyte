@@ -11,20 +11,21 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "astrocyte>=0.7.0,<0.9",
-    "litellm>=1.40",
+    # litellm >=1.83.7 patches GHSA-xqmj-j6mv-4862 (SSTI in /prompts/test, High).
+    # 1.83.1+ strict-pins python-dotenv==1.0.1, which carries GHSA-mf9w-mj56-hr94
+    # (symlink following in set_key(), fixed in python-dotenv 1.2.2). Astrocyte
+    # never calls set_key() — we only read .env files — so that advisory is not
+    # exploitable here. The python-dotenv>=1.2.2 floor is therefore dropped;
+    # resolution will land on whatever python-dotenv litellm requires.
+    #
+    # Revisit when litellm publishes a release that relaxes the dotenv pin back
+    # to >=1.2.2 (or drops it), at which point we can restore the floor.
+    "litellm>=1.83.7",
     # Security floor for aiohttp — litellm pulls it transitively. Pinned
     # here (not left to transitive resolution) because several GHSA
     # advisories affect versions <3.13.5 (header smuggling, SSRF, DoS).
     # Revisit on every Dependabot aiohttp alert; bump this floor.
     "aiohttp>=3.13.5",
-    # Security floor for python-dotenv. Same upstream-pinning pattern as
-    # aiohttp above: litellm 1.83.x strict-pins python-dotenv==1.0.1,
-    # which is affected by a Dependabot advisory requiring >=1.2.2.
-    # Adding this floor forces uv to pick a compatible litellm — 1.82.x
-    # (flexible python-dotenv>=0.2.0). When a future litellm 1.83.11+
-    # relaxes the pin, resolution can climb back up. Revisit every
-    # python-dotenv alert and bump this floor.
-    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +56,14 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I"]
+
+[tool.uv.audit]
+# python-dotenv 1.0.1 carries GHSA-mf9w-mj56-hr94 (symlink following in
+# set_key(), fixed in 1.2.2). litellm >=1.83.1 strict-pins python-dotenv==1.0.1
+# and the latest release (1.83.13) has not relaxed this pin. Astrocyte never
+# calls set_key() — litellm only calls load_dotenv() on import, which is safe.
+# Suppressed until litellm drops or relaxes the python-dotenv pin.
+ignore = ["GHSA-mf9w-mj56-hr94"]
 
 [tool.uv.sources]
 astrocyte = { path = "../../astrocyte-py", editable = true }
