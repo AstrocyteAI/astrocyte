@@ -6,8 +6,10 @@ on:
   workflow_call:
 
 # Least privilege for checkout + local tests (no registry push or PR writes).
+# packages: read is required to pull the combined postgres-age-pgvector image from GHCR.
 permissions:
   contents: read
+  packages: read
 
 env:
   PYTHON_VERSION: "3.12"
