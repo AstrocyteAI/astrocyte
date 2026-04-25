@@ -26,6 +26,7 @@ from astrocyte.pipeline.fusion import (
     rrf_fusion,
     weighted_rrf_fusion,
 )
+from astrocyte.pipeline.hyde import generate_hyde_vector
 from astrocyte.pipeline.query_intent import (
     QueryIntent,
     classify_query_intent,
@@ -169,6 +170,7 @@ class PipelineOrchestrator:
         temporal_half_life_days: float = 7.0,
         enable_intent_aware_recall: bool = True,
         enable_multi_query_expansion: bool = False,
+        enable_hyde: bool = False,
         wiki_store: WikiStore | None = None,
         wiki_confidence_threshold: float = 0.7,
         entity_resolver: EntityResolver | None = None,
@@ -199,6 +201,10 @@ class PipelineOrchestrator:
         # coverage at the cost of N-1 extra embedding + retrieval passes per query.
         # Disabled by default; enable in config for multi-hop-heavy workloads.
         self.enable_multi_query_expansion = enable_multi_query_expansion
+        # HyDE (R1): generate a hypothetical answer, embed it, and run a second
+        # semantic search pass with that vector.  Disabled by default — adds one
+        # LLM call per recall.  Enable for multi-hop / paraphrase-heavy workloads.
+        self.enable_hyde = enable_hyde
         self._dedup = DedupDetector(similarity_threshold=0.95)
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when ``recall_authority`` is configured.
         self.recall_authority: RecallAuthorityConfig | None = None
@@ -472,6 +478,13 @@ class PipelineOrchestrator:
             else self.temporal_half_life_days
         )
 
+        # 2c. HyDE (R1) — generate hypothetical document embedding.
+        # Runs concurrently with the retrieval step below via a separate task.
+        # Failures return None; parallel_retrieve treats None as "HyDE disabled".
+        hyde_vec: list[float] | None = None
+        if self.enable_hyde:
+            hyde_vec = await generate_hyde_vector(request.query, self.llm_provider)
+
         # 3. Parallel retrieval
         overfetch_limit = request.max_results * self.semantic_overfetch
         strategy_results = await parallel_retrieve(
@@ -487,6 +500,7 @@ class PipelineOrchestrator:
             enable_temporal=self.enable_temporal_retrieval,
             temporal_scan_cap=self.temporal_scan_cap,
             temporal_half_life_days=effective_half_life,
+            hyde_vector=hyde_vec,
         )
 
         # 4. RRF fusion (local strategies + optional federated / manual external_context)

@@ -60,6 +60,7 @@ async def parallel_retrieve(
     enable_temporal: bool = True,
     temporal_scan_cap: int = DEFAULT_TEMPORAL_SCAN_CAP,
     temporal_half_life_days: float = DEFAULT_TEMPORAL_HALF_LIFE_DAYS,
+    hyde_vector: list[float] | None = None,
 ) -> dict[str, list[ScoredItem]]:
     """Run parallel retrieval across all configured stores.
 
@@ -76,11 +77,23 @@ async def parallel_retrieve(
         temporal_half_life_days: Exponential decay half-life for temporal
             score. Tune shorter (e.g. 1.0) for fast-moving chat workloads,
             longer (e.g. 30.0) for slower knowledge bases.
+        hyde_vector: Optional pre-computed HyDE embedding (hypothetical
+            document embedding).  When provided, an additional ``"hyde"``
+            strategy runs semantic search with this vector and its results
+            are fused via RRF alongside the standard ``"semantic"`` strategy.
+            Generate with :func:`astrocyte.pipeline.hyde.generate_hyde_vector`.
     """
     tasks: dict[str, asyncio.Task[list[ScoredItem]]] = {}
 
     # Always run semantic search
     tasks["semantic"] = asyncio.create_task(_semantic_search(vector_store, query_vector, bank_id, limit, filters))
+
+    # HyDE (R1): second semantic pass with hypothetical-document embedding.
+    # Runs concurrently with the standard semantic strategy; RRF fusion merges
+    # both result sets.  No-op when hyde_vector is None (feature disabled or
+    # generation failed upstream).
+    if hyde_vector is not None:
+        tasks["hyde"] = asyncio.create_task(_semantic_search(vector_store, hyde_vector, bank_id, limit, filters))
 
     # Graph search if store configured and entities found
     if graph_store and entity_ids:
