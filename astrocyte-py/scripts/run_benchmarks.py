@@ -231,12 +231,15 @@ async def run_longmemeval(
     brain, data_path: str | None, max_questions: int | None,
     *, use_canonical_judge: bool = False, system: str = "astrocyte",
     max_sessions: int | None = None,
+    checkpoint_dir: Path | None = None,
+    resume: bool = False,
 ) -> BenchmarkRunOutcome:
     """Run LongMemEval benchmark."""
     from astrocyte.eval.benchmarks.longmemeval import (
         LongMemEvalBenchmark,
         LongMemEvalQuestion,
     )
+    from astrocyte.eval.checkpoint import checkpoint_dir_for, load_or_create
 
     bench = LongMemEvalBenchmark(brain)
 
@@ -250,6 +253,15 @@ async def run_longmemeval(
     else:
         has_dataset = False
 
+    cp_dir = checkpoint_dir or checkpoint_dir_for(Path("benchmark-results"))
+    is_resumable = _pipeline_is_persistent(brain)
+    cp = load_or_create(
+        "longmemeval", "bench-longmemeval", cp_dir,
+        resume=resume, is_resumable=is_resumable,
+    )
+    if resume and not is_resumable:
+        print("  [LongMemEval] WARNING: in-memory store — retain phase will re-run (data was lost on exit).")
+
     if has_dataset:
         result = await bench.run(
             data_path=data_path,
@@ -257,6 +269,7 @@ async def run_longmemeval(
             max_questions=max_questions,
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
+            checkpoint=cp,
         )
     else:
         if data_path:
@@ -304,6 +317,7 @@ async def run_longmemeval(
             max_questions=max_questions,
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
+            checkpoint=cp,
         )
 
     _print_result(result, "LongMemEval")
@@ -315,6 +329,25 @@ async def run_longmemeval(
         ),
         has_dataset,
     )
+
+
+def _pipeline_is_persistent(brain) -> bool:
+    """Return True when the pipeline's vector store is persistent (not in-memory).
+
+    Used by the checkpoint resume logic: with a persistent store, retained
+    sessions survive a process exit so the retain phase can be skipped on
+    resume. With an in-memory store, data is lost and retain must re-run.
+    """
+    try:
+        from astrocyte.testing.in_memory import InMemoryVectorStore
+
+        pipeline = getattr(brain, "_pipeline", None)
+        if pipeline is None:
+            return False
+        vs = getattr(pipeline, "vector_store", None)
+        return not isinstance(vs, InMemoryVectorStore)
+    except ImportError:
+        return True  # InMemoryVectorStore not present → real provider
 
 
 def _locomo_llm_judge(brain, *, use_canonical_judge: bool):
@@ -352,6 +385,8 @@ def _locomo_llm_judge(brain, *, use_canonical_judge: bool):
 async def run_locomo(
     brain, data_path: str | None, max_questions: int | None,
     *, use_canonical_judge: bool = False, system: str = "astrocyte",
+    checkpoint_dir: Path | None = None,
+    resume: bool = False,
 ) -> BenchmarkRunOutcome:
     """Run LoCoMo benchmark."""
     from astrocyte.eval.benchmarks.locomo import (
@@ -360,6 +395,7 @@ async def run_locomo(
         LoCoMoQuestion,
         LoCoMoSession,
     )
+    from astrocyte.eval.checkpoint import checkpoint_dir_for, load_or_create
 
     bench = LoComoBenchmark(brain)
 
@@ -373,6 +409,15 @@ async def run_locomo(
     else:
         has_dataset = False
 
+    cp_dir = checkpoint_dir or checkpoint_dir_for(Path("benchmark-results"))
+    is_resumable = _pipeline_is_persistent(brain)
+    cp = load_or_create(
+        "locomo", "bench-locomo", cp_dir,
+        resume=resume, is_resumable=is_resumable,
+    )
+    if resume and not is_resumable:
+        print("  [LoCoMo] WARNING: in-memory store — retain phase will re-run (data was lost on exit).")
+
     llm_judge = _locomo_llm_judge(brain, use_canonical_judge=use_canonical_judge)
     if has_dataset:
         result = await bench.run(
@@ -381,6 +426,7 @@ async def run_locomo(
             max_questions=max_questions,
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
+            checkpoint=cp,
         )
     else:
         if data_path:
@@ -489,6 +535,7 @@ async def run_locomo(
             max_questions=max_questions,
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
+            checkpoint=cp,
         )
 
     if llm_judge is not None:
@@ -623,6 +670,18 @@ async def main() -> None:
             "evidence while halving retain cost. Default: retain all."
         ),
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help=(
+            "Resume an interrupted benchmark run from a checkpoint file in "
+            "benchmark-results/checkpoints/. Already-retained sessions are "
+            "skipped (with persistent stores only) and already-evaluated "
+            "questions reuse their cached scores, saving LLM calls. "
+            "No-op if no checkpoint exists (starts fresh)."
+        ),
+    )
     args = parser.parse_args()
 
     # Build brain
@@ -647,16 +706,22 @@ async def main() -> None:
     run_lme = "longmemeval" in args.benchmarks
     run_loc = "locomo" in args.benchmarks
 
+    cp_dir = Path(args.output_dir or "benchmark-results") / "checkpoints"
+
     if run_lme and run_loc:
         lme_outcome, loc_outcome = await asyncio.gather(
             run_longmemeval(
                 brain, args.longmemeval_path, args.max_questions,
                 use_canonical_judge=args.canonical_judge,
                 max_sessions=args.max_sessions,
+                checkpoint_dir=cp_dir,
+                resume=args.resume,
             ),
             run_locomo(
                 brain, args.locomo_path, args.max_questions,
                 use_canonical_judge=args.canonical_judge,
+                checkpoint_dir=cp_dir,
+                resume=args.resume,
             ),
         )
         if lme_outcome.result:
@@ -671,6 +736,8 @@ async def main() -> None:
                 brain, args.longmemeval_path, args.max_questions,
                 use_canonical_judge=args.canonical_judge,
                 max_sessions=args.max_sessions,
+                checkpoint_dir=cp_dir,
+                resume=args.resume,
             )
             if outcome.result:
                 all_results["longmemeval"] = outcome.result
@@ -680,6 +747,8 @@ async def main() -> None:
             outcome = await run_locomo(
                 brain, args.locomo_path, args.max_questions,
                 use_canonical_judge=args.canonical_judge,
+                checkpoint_dir=cp_dir,
+                resume=args.resume,
             )
             if outcome.result:
                 all_results["locomo"] = outcome.result

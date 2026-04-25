@@ -133,13 +133,15 @@ bench: fetch-datasets
 
 # Full canonical run — LME + LoCoMo in parallel, LLM-judge, competitor-comparable numbers.
 # Requires API key (use: doppler run -- make bench-full)
+# Pass RESUME=1 to continue an interrupted run: doppler run -- make bench-full RESUME=1
 bench-full: fetch-datasets
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval locomo \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--locomo-path $(LOCOMO_DIR)/data \
-		--canonical-judge
+		--canonical-judge \
+		$(if $(RESUME),--resume,)
 
 # Smoke test — in-memory providers, no API key needed.
 # Uses the real LoCoMo dataset (all 200q) so the regression gate in CI

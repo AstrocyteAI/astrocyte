@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from astrocyte.eval.checkpoint import BenchmarkCheckpoint
 from astrocyte.eval.metrics import ndcg_at_k, text_overlap_score
 from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 
@@ -128,6 +129,7 @@ class LongMemEvalBenchmark:
         max_questions: int | None = None,
         max_sessions: int | None = None,
         use_canonical_judge: bool = False,
+        checkpoint: BenchmarkCheckpoint | None = None,
     ) -> LongMemEvalResult:
         """Run the LongMemEval benchmark.
 
@@ -152,9 +154,17 @@ class LongMemEvalBenchmark:
                 When False (default), uses the legacy
                 ``text_overlap_score`` scorer.
 
+            checkpoint: Optional :class:`~astrocyte.eval.checkpoint.BenchmarkCheckpoint`
+                from a previous interrupted run. Already-retained sessions are
+                skipped and already-evaluated questions use their cached score
+                without making fresh LLM calls.
+
         Returns:
             LongMemEvalResult with accuracy breakdown by category.
         """
+        if checkpoint is not None:
+            print(f"  [LongMemEval] {checkpoint.resume_summary()}")
+
         if questions is None and data_path is not None:
             questions = load_longmemeval_dataset(data_path, max_questions=max_questions)
         elif questions is None:
@@ -197,6 +207,10 @@ class LongMemEvalBenchmark:
                     continue
                 if max_sessions is not None and len(sessions_retained) >= max_sessions:
                     continue
+                # Skip sessions already retained in a previous interrupted run.
+                if checkpoint is not None and checkpoint.is_session_retained(session_key):
+                    sessions_retained.add(session_key)
+                    continue
                 sessions_retained.add(session_key)
 
                 content = msg.get("content", "")
@@ -223,6 +237,8 @@ class LongMemEvalBenchmark:
                 )
                 retain_latencies.append((time.monotonic() - t0) * 1000)
                 retain_count += 1
+                if checkpoint is not None:
+                    checkpoint.record_session(session_key)
                 if retain_count % 20 == 0:
                     elapsed_r = time.monotonic() - retain_phase_start
                     rate = retain_count / elapsed_r
@@ -262,6 +278,36 @@ class LongMemEvalBenchmark:
         eval_phase_start = time.monotonic()
         for qi, q in enumerate(questions, 1):
             category_total[q.category] = category_total.get(q.category, 0) + 1
+
+            # Restore cached result from a previous interrupted run.
+            if checkpoint is not None and checkpoint.is_question_evaluated(q.question_id):
+                cached = checkpoint.get_question_result(q.question_id)
+                is_correct = cached.get("correct", False)
+                if is_correct:
+                    correct += 1
+                    category_correct[q.category] = category_correct.get(q.category, 0) + 1
+                per_question.append(cached)
+                # Restore placeholder QueryResult so aggregate metrics stay aligned.
+                query_results.append(
+                    QueryResult(
+                        query=q.question,
+                        expected=[q.answer],
+                        actual=[],
+                        relevant_found=0,
+                        precision=cached.get("_precision", 0.0),
+                        reciprocal_rank=cached.get("_reciprocal_rank", 0.0),
+                        latency_ms=cached.get("_latency_ms", 0.0),
+                    )
+                )
+                ndcg_sum += cached.get("_ndcg", 0.0)
+                if qi % 10 == 0 or qi == total_questions:
+                    acc_so_far = correct / qi
+                    print(
+                        f"  [LongMemEval] Question {qi}/{total_questions} — "
+                        f"accuracy: {acc_so_far:.1%} ({correct}/{qi}) [resumed]",
+                        flush=True,
+                    )
+                continue
 
             t0 = time.monotonic()
             result = await self.brain.recall(q.question, bank_id=bank_id, max_results=10)
@@ -317,26 +363,37 @@ class LongMemEvalBenchmark:
                     flush=True,
                 )
 
-            per_question.append(
-                {
-                    "question_id": q.question_id,
-                    "category": q.category,
-                    "question": q.question,
-                    "expected_answer": q.answer,
-                    "correct": is_correct,
-                    "recall_hits": len(result.hits),
-                    "reflect_answer_preview": reflect_result.answer[:200],
-                }
-            )
-
             # Build QueryResult for standard metrics
             relevant_ids: set[str] = set()
             for h in result.hits:
                 if h.memory_id and text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD:
                     relevant_ids.add(h.memory_id)
             retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
+            q_precision = len(relevant_ids) / max(len(retrieved_ids), 1)
+            q_rr = next(
+                (1.0 / (i + 1) for i, rid in enumerate(retrieved_ids) if rid in relevant_ids),
+                0.0,
+            )
             q_ndcg = ndcg_at_k(relevant_ids, retrieved_ids)
             ndcg_sum += q_ndcg
+
+            q_record: dict[str, Any] = {
+                "question_id": q.question_id,
+                "category": q.category,
+                "question": q.question,
+                "expected_answer": q.answer,
+                "correct": is_correct,
+                "recall_hits": len(result.hits),
+                "reflect_answer_preview": reflect_result.answer[:200],
+                # Hidden fields used when restoring from checkpoint
+                "_precision": q_precision,
+                "_reciprocal_rank": q_rr,
+                "_latency_ms": elapsed,
+                "_ndcg": q_ndcg,
+            }
+            per_question.append(q_record)
+            if checkpoint is not None:
+                checkpoint.record_question(q.question_id, q_record)
 
             query_results.append(
                 QueryResult(
@@ -344,11 +401,8 @@ class LongMemEvalBenchmark:
                     expected=[q.answer],
                     actual=result.hits,
                     relevant_found=len(relevant_ids),
-                    precision=len(relevant_ids) / max(len(retrieved_ids), 1),
-                    reciprocal_rank=next(
-                        (1.0 / (i + 1) for i, rid in enumerate(retrieved_ids) if rid in relevant_ids),
-                        0.0,
-                    ),
+                    precision=q_precision,
+                    reciprocal_rank=q_rr,
                     latency_ms=elapsed,
                 )
             )
@@ -393,6 +447,9 @@ class LongMemEvalBenchmark:
                 await self.brain._do_forget(ForgetRequest(bank_id=bank_id, scope="all"))
             except Exception:
                 logging.getLogger("astrocyte.eval").debug("Cleanup forget failed for bank %s", bank_id, exc_info=True)
+
+        if checkpoint is not None:
+            checkpoint.complete()
 
         return LongMemEvalResult(
             overall_accuracy=overall_accuracy,
