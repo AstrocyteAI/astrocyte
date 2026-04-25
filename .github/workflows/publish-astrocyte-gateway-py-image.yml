@@ -61,19 +61,23 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
+          # Poll via pip download (checks the simple index, same path pip uses at build time).
+          # The JSON API can return 200 before the simple index propagates to all CDN nodes,
+          # so curl-based checks are unreliable for gating Docker builds.
+          pip install --quiet uv
           for pkg in astrocyte astrocyte-pgvector astrocyte-age; do
-            echo "Waiting for ${pkg}==${VERSION} on PyPI..."
-            for i in $(seq 1 30); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/${pkg}/${VERSION}/json")
-              if [ "$STATUS" = "200" ]; then
-                echo "✓ ${pkg}==${VERSION} available on PyPI"
+            echo "Waiting for ${pkg}==${VERSION} to be pip-installable..."
+            for i in $(seq 1 40); do
+              if uv pip download "${pkg}==${VERSION}" --no-deps -q -d /tmp/pypi-check 2>/dev/null; then
+                echo "✓ ${pkg}==${VERSION} resolvable via pip"
+                rm -rf /tmp/pypi-check
                 break
               fi
-              if [ "$i" = "30" ]; then
-                echo "✗ ${pkg}==${VERSION} not found on PyPI after 5 minutes"
+              if [ "$i" = "40" ]; then
+                echo "✗ ${pkg}==${VERSION} not resolvable after ~6 minutes"
                 exit 1
               fi
-              echo "  Attempt ${i}/30 — ${pkg}==${VERSION} not yet available (HTTP ${STATUS}), retrying in 10s..."
+              echo "  Attempt ${i}/40 — ${pkg}==${VERSION} not yet available, retrying in 10s..."
               sleep 10
             done
           done
