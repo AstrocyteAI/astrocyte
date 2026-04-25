@@ -37,6 +37,7 @@ from astrocyte.types import (
     VectorFilters,
     VectorHit,
     VectorItem,
+    WikiPage,
 )
 
 
@@ -87,6 +88,10 @@ class InMemoryVectorStore:
                 if filters.fact_types and item.fact_type:
                     if item.fact_type not in filters.fact_types:
                         continue
+                # M9: time-travel filter — exclude items retained after as_of
+                if filters.as_of is not None and item.retained_at is not None:
+                    if item.retained_at > filters.as_of:
+                        continue
             sim = _cosine_sim(query_vector, item.vector)
             results.append((sim, item))
 
@@ -101,6 +106,7 @@ class InMemoryVectorStore:
                 fact_type=item.fact_type,
                 occurred_at=item.occurred_at,
                 memory_layer=item.memory_layer,
+                retained_at=item.retained_at,  # M9
             )
             for sim, item in results[:limit]
         ]
@@ -201,6 +207,36 @@ class InMemoryGraphStore:
         bank_entities = self._entities.get(bank_id, {})
         results = [e for e in bank_entities.values() if query_lower in e.name.lower()]
         return results[:limit]
+
+    async def find_entity_candidates(
+        self,
+        name: str,
+        bank_id: str,
+        threshold: float = 0.8,
+        limit: int = 5,
+    ) -> list[Entity]:
+        """Return entities whose name contains *name* as a substring (case-insensitive).
+
+        The in-memory implementation uses substring overlap as a proxy for
+        similarity; production adapters use vector or edit-distance similarity.
+        The *threshold* parameter is accepted for interface compatibility but
+        ignored — substring match is all-or-nothing.
+        """
+        name_lower = name.lower()
+        bank_entities = self._entities.get(bank_id, {})
+        results = [
+            e for e in bank_entities.values()
+            if name_lower in e.name.lower() or e.name.lower() in name_lower
+        ]
+        return results[:limit]
+
+    async def store_entity_link(self, link: EntityLink, bank_id: str) -> str:
+        """Store a single resolved entity link (M11 entity resolution)."""
+        if bank_id not in self._links:
+            self._links[bank_id] = []
+        lid = uuid.uuid4().hex[:12]
+        self._links[bank_id].append(link)
+        return lid
 
     async def health(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="in-memory graph store")
@@ -421,6 +457,76 @@ class InMemoryEngineProvider:
             return ForgetResult(deleted_count=before - len(bank_memories))
 
         return ForgetResult(deleted_count=0)
+
+
+# ---------------------------------------------------------------------------
+# In-memory Wiki Store (M8)
+# ---------------------------------------------------------------------------
+
+
+class InMemoryWikiStore:
+    """Fully functional in-memory wiki store for testing (M8).
+
+    Stores current-revision pages and an audit log of past revisions.
+    Vector embeddings of pages are managed separately by the VectorStore
+    (stored with ``memory_layer="compiled"``); this store holds only the
+    structured WikiPage metadata.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    def __init__(self) -> None:
+        # bank_id → {page_id → WikiPage} (current revisions)
+        self._pages: dict[str, dict[str, WikiPage]] = {}
+        # bank_id → {page_id → list[WikiPage]} (past revisions, newest last)
+        self._history: dict[str, dict[str, list[WikiPage]]] = {}
+
+    async def upsert_page(self, page: WikiPage, bank_id: str) -> str:
+        if bank_id not in self._pages:
+            self._pages[bank_id] = {}
+            self._history[bank_id] = {}
+
+        existing = self._pages[bank_id].get(page.page_id)
+        if existing is not None:
+            # Archive current revision before replacing
+            self._history[bank_id].setdefault(page.page_id, []).append(existing)
+            # Increment revision on the incoming page
+            from dataclasses import replace as _replace
+            page = _replace(page, revision=existing.revision + 1)
+
+        self._pages[bank_id][page.page_id] = page
+        return page.page_id
+
+    async def get_page(self, page_id: str, bank_id: str) -> WikiPage | None:
+        return self._pages.get(bank_id, {}).get(page_id)
+
+    async def list_pages(
+        self,
+        bank_id: str,
+        scope: str | None = None,
+        kind: str | None = None,
+    ) -> list[WikiPage]:
+        pages = list(self._pages.get(bank_id, {}).values())
+        if scope is not None:
+            pages = [p for p in pages if p.scope == scope]
+        if kind is not None:
+            pages = [p for p in pages if p.kind == kind]
+        return pages
+
+    async def delete_page(self, page_id: str, bank_id: str) -> bool:
+        bank_pages = self._pages.get(bank_id, {})
+        if page_id not in bank_pages:
+            return False
+        del bank_pages[page_id]
+        self._history.get(bank_id, {}).pop(page_id, None)
+        return True
+
+    async def health(self) -> HealthStatus:
+        return HealthStatus(healthy=True, message="in-memory wiki store")
+
+    def revision_history(self, page_id: str, bank_id: str) -> list[WikiPage]:
+        """Return past revisions for a page (oldest first). Testing helper."""
+        return list(self._history.get(bank_id, {}).get(page_id, []))
 
 
 # ---------------------------------------------------------------------------

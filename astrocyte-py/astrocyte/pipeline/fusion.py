@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime
 
 from astrocyte.types import MemoryHit
 
@@ -27,6 +28,7 @@ class ScoredItem:
     metadata: dict[str, str | int | float | bool | None] | None = None
     tags: list[str] | None = None
     memory_layer: str | None = None  # "fact", "observation", "model"
+    retained_at: datetime | None = None  # M9: wall-clock time item was stored
 
 
 def rrf_fusion(
@@ -71,6 +73,7 @@ def rrf_fusion(
                 metadata=item.metadata,
                 tags=item.tags,
                 memory_layer=item.memory_layer,
+                retained_at=item.retained_at,
             )
         )
 
@@ -135,6 +138,7 @@ def weighted_rrf_fusion(
             metadata=items[iid].metadata,
             tags=items[iid].tags,
             memory_layer=items[iid].memory_layer,
+            retained_at=items[iid].retained_at,
         )
         for iid in sorted_ids
     ]
@@ -170,6 +174,7 @@ def layer_weighted_rrf_fusion(
             metadata=item.metadata,
             tags=item.tags,
             memory_layer=item.memory_layer,
+            retained_at=item.retained_at,
         )
         for item in fused
     ]
@@ -196,6 +201,7 @@ def memory_hits_as_scored(hits: list[MemoryHit]) -> list[ScoredItem]:
                 metadata=h.metadata,
                 tags=h.tags,
                 memory_layer=h.memory_layer,
+                retained_at=getattr(h, "retained_at", None),
             )
         )
     return out

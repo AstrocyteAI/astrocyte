@@ -43,6 +43,7 @@ jobs:
   gateway-publish-test-gate:
     permissions:
       contents: read
+      packages: read
     uses: ./.github/workflows/gateway-publish-test-gate.yml
 
   wait-for-pypi:
@@ -56,23 +57,30 @@ jobs:
         id: ver
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for astrocyte and astrocyte-pgvector on PyPI
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Wait for astrocyte, astrocyte-pgvector and astrocyte-age on PyPI
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          for pkg in astrocyte astrocyte-pgvector; do
-            echo "Waiting for ${pkg}==${VERSION} on PyPI..."
-            for i in $(seq 1 30); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/${pkg}/${VERSION}/json")
-              if [ "$STATUS" = "200" ]; then
-                echo "✓ ${pkg}==${VERSION} available on PyPI"
+          # Poll via pip download — checks the simple index, the same path pip uses
+          # at Docker build time. The JSON API can return 200 before the simple index
+          # propagates to all CDN nodes, so JSON-only checks are unreliable here.
+          for pkg in astrocyte astrocyte-pgvector astrocyte-age; do
+            echo "Waiting for ${pkg}==${VERSION} to be pip-downloadable..."
+            for i in $(seq 1 40); do
+              if pip download "${pkg}==${VERSION}" --no-deps -q -d /tmp/pypi-check; then
+                echo "✓ ${pkg}==${VERSION} available"
+                rm -rf /tmp/pypi-check
                 break
               fi
-              if [ "$i" = "30" ]; then
-                echo "✗ ${pkg}==${VERSION} not found on PyPI after 5 minutes"
+              if [ "$i" = "40" ]; then
+                echo "✗ ${pkg}==${VERSION} not available after ~6 minutes"
                 exit 1
               fi
-              echo "  Attempt ${i}/30 — ${pkg}==${VERSION} not yet available (HTTP ${STATUS}), retrying in 10s..."
+              echo "  Attempt ${i}/40 — ${pkg}==${VERSION} not yet available, retrying in 10s..."
               sleep 10
             done
           done

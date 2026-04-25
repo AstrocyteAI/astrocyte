@@ -109,6 +109,7 @@ jobs:
   gateway-publish-test-gate:
     permissions:
       contents: read
+      packages: read
     uses: ./.github/workflows/gateway-publish-test-gate.yml
 
   adapters-integration-tavus:

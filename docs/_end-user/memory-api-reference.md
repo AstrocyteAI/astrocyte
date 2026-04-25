@@ -1,6 +1,6 @@
 # Memory API reference
 
-Complete reference for Astrocyte's four core memory operations -- retain, recall, reflect, and forget -- via Python library and REST gateway.
+Complete reference for Astrocyte's core memory operations -- retain, recall, reflect, forget, history, audit, and entity graph -- via Python library and REST gateway.
 
 ---
 
@@ -12,6 +12,8 @@ Complete reference for Astrocyte's four core memory operations -- retain, recall
 | **recall** | Retrieve relevant memories | `astrocyte.recall()` | `POST /v1/recall` |
 | **reflect** | Synthesize an answer from memory | `astrocyte.reflect()` | `POST /v1/reflect` |
 | **forget** | Remove memories | `astrocyte.forget()` | `POST /v1/forget` |
+| **history** | Recall memories as they existed at a past point in time | `astrocyte.history()` | `POST /v1/history` |
+| **audit** | LLM-judged coverage analysis for a memory bank | `brain.audit()` | `POST /v1/audit` |
 
 ---
 
@@ -141,6 +143,7 @@ async def recall(
     include_sources: bool = False,
     layer_weights: dict[str, float] | None = None,
     detail_level: str | None = None,
+    as_of: datetime | None = None,
 ) -> RecallResult:
 ```
 
@@ -162,6 +165,7 @@ async def recall(
 | `include_sources` | `bool` | Include source metadata in each hit. Defaults to `False`. |
 | `layer_weights` | `dict[str, float]` | Per-layer scoring weights (e.g. `{"semantic": 1.2, "episodic": 0.8}`). |
 | `detail_level` | `str` | Controls verbosity of returned text. |
+| `as_of` | `datetime \| None` | Time-travel filter. When set, only memories whose `retained_at` is on or before this UTC timestamp are returned. Defaults to `None` (no filter). See also [`history()`](#history----recall-a-point-in-time-snapshot). |
 
 ### RecallResult
 
@@ -183,7 +187,8 @@ async def recall(
 | `bank_id` | `str` | Bank the memory belongs to. |
 | `metadata` | `dict` | Attached metadata. |
 | `tags` | `list[str]` | Tags on the memory. |
-| `occurred_at` | `datetime \| None` | When the content originally occurred. |
+| `occurred_at` | `datetime \| None` | When the content originally occurred (domain time, caller-supplied). |
+| `retained_at` | `datetime \| None` | UTC wall-clock time when this memory was stored. Populated by the retain pipeline; use with `as_of` for time-travel queries. |
 | `source` | `str \| None` | Source label. |
 | `memory_layer` | `str \| None` | Layer (e.g. `"episodic"`, `"semantic"`). |
 
@@ -265,6 +270,290 @@ curl -X POST https://gateway.example.com/v1/recall \
     "banks": ["incidents", "runbooks", "team-notes"],
     "strategy": "parallel",
     "max_results": 20
+  }'
+```
+
+---
+
+## history() -- Recall a point-in-time snapshot
+
+Returns the memories that existed in a bank **at a specific past moment** — only memories whose `retained_at` timestamp is on or before `as_of` are included. Use this for post-mortems, compliance audits, and debugging ("what did the agent believe on date X?").
+
+For most use cases `history()` is the right call. If you need finer control (multi-bank queries, layer weights, etc.) pass `as_of` directly to `recall()` instead.
+
+### Python signature
+
+```python
+async def history(
+    self,
+    query: str,
+    bank_id: str,
+    as_of: datetime,
+    *,
+    max_results: int = 10,
+    max_tokens: int | None = None,
+    tags: list[str] | None = None,
+) -> HistoryResult:
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | `str` | Natural-language search query to run against the historical snapshot. |
+| `bank_id` | `str` | Bank to query. |
+| `as_of` | `datetime` | UTC timestamp. Memories retained after this moment are excluded. Must be timezone-aware. |
+| `max_results` | `int` | Maximum number of hits to return. Defaults to `10`. |
+| `max_tokens` | `int` | Optional token budget for the result set. |
+| `tags` | `list[str]` | Optional tag filter applied on top of the time filter. |
+
+### HistoryResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hits` | `list[MemoryHit]` | Ranked memories visible at `as_of`. |
+| `total_available` | `int` | Total matches before `max_results` truncation. |
+| `truncated` | `bool` | Whether results were truncated. |
+| `as_of` | `datetime` | The timestamp used for the snapshot query (echoed back for traceability). |
+| `bank_id` | `str` | The bank that was queried. |
+| `trace` | `RecallTrace \| None` | Diagnostic trace of the recall pipeline. |
+
+Each `MemoryHit` in `hits` includes a `retained_at` field showing exactly when that memory was stored.
+
+### Python examples
+
+**Post-mortem — what did the agent know on 1 Jan 2025?**
+
+```python
+from datetime import datetime, UTC
+
+snapshot = await ast.history(
+    "What did we know about Alice's employer?",
+    bank_id="user-alice",
+    as_of=datetime(2025, 1, 1, tzinfo=UTC),
+)
+
+print(f"Snapshot at: {snapshot.as_of}")
+for hit in snapshot.hits:
+    print(f"  retained={hit.retained_at:%Y-%m-%d}  {hit.text}")
+```
+
+**Compliance audit — memory state before a policy change:**
+
+```python
+from datetime import datetime, UTC
+
+policy_change = datetime(2025, 6, 1, tzinfo=UTC)
+snapshot = await ast.history(
+    "user consent preferences",
+    bank_id="gdpr-audit",
+    as_of=policy_change,
+    tags=["consent"],
+)
+
+for hit in snapshot.hits:
+    print(hit.memory_id, hit.retained_at, hit.text)
+```
+
+**Check what changed between two snapshots:**
+
+```python
+from datetime import datetime, UTC
+
+before = await ast.history("Alice employment", bank_id="contacts", as_of=datetime(2025, 1, 1, tzinfo=UTC))
+after  = await ast.history("Alice employment", bank_id="contacts", as_of=datetime(2025, 6, 1, tzinfo=UTC))
+
+before_ids = {h.memory_id for h in before.hits}
+after_ids  = {h.memory_id for h in after.hits}
+
+print("Added:  ", after_ids - before_ids)
+print("Removed:", before_ids - after_ids)
+```
+
+### REST equivalent
+
+```
+POST /v1/history
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "query": "What did we know about Alice's employer?",
+  "bank_id": "user-alice",
+  "as_of": "2025-01-01T00:00:00Z",
+  "max_results": 10
+}
+```
+
+### curl example
+
+```bash
+curl -X POST https://gateway.example.com/v1/history \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{
+    "query": "What did we know about Alice'\''s employer?",
+    "bank_id": "user-alice",
+    "as_of": "2025-01-01T00:00:00Z"
+  }'
+```
+
+---
+
+## audit() -- Gap analysis for a memory bank
+
+Scans a memory bank and asks an LLM judge to identify **topical gaps** — subject areas that are missing, thin, or outdated given the purpose of the bank. Use `audit()` to surface coverage blind spots before they affect recall quality.
+
+> **Requires**: `brain` (the `Brain` façade from `astrocyte.brain`). The lower-level `Astrocyte` class does not expose `audit()` directly.
+
+### Python signature
+
+```python
+async def audit(
+    self,
+    scope: str,
+    bank_id: str,
+    *,
+    max_memories: int = 50,
+    max_tokens: int | None = None,
+    tags: list[str] | None = None,
+) -> AuditResult:
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `scope` | `str` | Natural-language description of what this bank is _supposed_ to cover. The LLM judge uses this to evaluate coverage. Example: `"customer support interactions for ACME Corp"`. |
+| `bank_id` | `str` | Bank to audit. |
+| `max_memories` | `int` | Maximum number of recent memories to feed to the judge. Defaults to `50`. Increase for thorough audits; lower for faster / cheaper scans. |
+| `max_tokens` | `int` | Optional token budget. When set, only memories that fit within this budget are passed to the judge. |
+| `tags` | `list[str]` | Optional tag filter — only memories with at least one of these tags are included in the sample. |
+
+### AuditResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `scope` | `str` | The scope string passed to `audit()`. |
+| `bank_id` | `str` | The bank that was audited. |
+| `coverage_score` | `float` | 0.0–1.0 score from the LLM judge. 1.0 = excellent coverage, 0.0 = severely lacking. |
+| `gaps` | `list[GapItem]` | Identified gap areas, ordered by severity. Empty when coverage is complete. |
+| `memories_scanned` | `int` | Number of memories the judge actually saw. |
+| `trace` | `RecallTrace \| None` | Diagnostic trace of the underlying recall used to sample memories. |
+
+### GapItem
+
+| Field | Type | Allowed values |
+|-------|------|----------------|
+| `topic` | `str` | Short label for the missing topic area. |
+| `severity` | `str` | `"high"`, `"medium"`, or `"low"` |
+| `reason` | `str` | One-sentence explanation of why the gap matters. |
+
+### Python examples
+
+**Quick coverage check:**
+
+```python
+from astrocyte.brain import Brain
+
+brain = Brain(config_path="astrocyte.yaml")
+result = await brain.audit(
+    "customer support tickets and resolutions for ACME Corp",
+    bank_id="support-acme",
+)
+
+print(f"Coverage score: {result.coverage_score:.0%}")
+for gap in result.gaps:
+    print(f"  [{gap.severity.upper()}] {gap.topic} — {gap.reason}")
+```
+
+**Scheduled weekly audit with alerting:**
+
+```python
+import asyncio
+from astrocyte.brain import Brain
+
+async def weekly_audit():
+    brain = Brain(config_path="astrocyte.yaml")
+    result = await brain.audit(
+        "internal engineering runbooks and incident postmortems",
+        bank_id="eng-runbooks",
+        max_memories=100,
+    )
+
+    high_gaps = [g for g in result.gaps if g.severity == "high"]
+    if high_gaps:
+        print(f"⚠️  {len(high_gaps)} high-severity gaps found (score: {result.coverage_score:.0%})")
+        for g in high_gaps:
+            print(f"   • {g.topic}: {g.reason}")
+    else:
+        print(f"✅ Coverage looks good ({result.coverage_score:.0%})")
+
+asyncio.run(weekly_audit())
+```
+
+**Tag-scoped audit — only check onboarding content:**
+
+```python
+result = await brain.audit(
+    "employee onboarding guides and HR policies",
+    bank_id="hr-docs",
+    tags=["onboarding"],
+    max_memories=30,
+)
+```
+
+### REST equivalent
+
+```
+POST /v1/audit
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "scope": "customer support tickets and resolutions for ACME Corp",
+  "bank_id": "support-acme",
+  "max_memories": 50
+}
+```
+
+Response:
+
+```json
+{
+  "scope": "customer support tickets and resolutions for ACME Corp",
+  "bank_id": "support-acme",
+  "coverage_score": 0.62,
+  "memories_scanned": 47,
+  "gaps": [
+    {
+      "topic": "Billing disputes",
+      "severity": "high",
+      "reason": "No memories found covering refund or chargeback resolution procedures."
+    },
+    {
+      "topic": "Escalation paths",
+      "severity": "medium",
+      "reason": "Only one memory references the escalation process; edge cases are absent."
+    }
+  ]
+}
+```
+
+### curl example
+
+```bash
+curl -X POST https://gateway.example.com/v1/audit \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{
+    "scope": "customer support tickets and resolutions for ACME Corp",
+    "bank_id": "support-acme",
+    "max_memories": 50
   }'
 ```
 
@@ -465,6 +754,156 @@ curl -X POST https://gateway.example.com/v1/forget \
 
 ---
 
+## Entity graph — M11
+
+Astrocyte can maintain a **knowledge graph of named entities** alongside your vector memories. When entity extraction is enabled, `retain()` automatically identifies entities (people, companies, projects, etc.) and stores them in a graph store. The entity graph powers cross-bank relationship queries and alias-of deduplication (entity resolution).
+
+> **Requires**: a `GraphStore` backend. The built-in `InMemoryGraphStore` is available for testing; production deployments use `astrocyte-age` (Apache AGE / PostgreSQL) or `astrocyte-neo4j` (Neo4j).
+
+### Entity types
+
+#### Entity
+
+Represents a named thing in the knowledge graph.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `str` | Stable identifier, unique within a bank. |
+| `name` | `str` | Human-readable display name. |
+| `entity_type` | `str` | Category label, e.g. `"PERSON"`, `"ORG"`, `"PROJECT"`. |
+| `metadata` | `dict \| None` | Arbitrary key-value metadata. |
+
+#### EntityLink
+
+Represents a directed relationship between two entities.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entity_a` | `str` | ID of the source entity. |
+| `entity_b` | `str` | ID of the target entity. |
+| `link_type` | `str` | Relationship type, e.g. `"alias_of"`, `"co_occurs_with"`, `"reports_to"`. |
+| `evidence` | `str` | Free-text passage that supports this link. Defaults to `""`. |
+| `confidence` | `float` | 0.0–1.0 confidence score. Defaults to `1.0`. |
+| `created_at` | `datetime \| None` | When the link was created. Set automatically when stored. |
+| `metadata` | `dict \| None` | Arbitrary key-value metadata. |
+
+### Entity resolution (alias detection)
+
+When `EntityResolver` is wired into the orchestrator, each `retain()` call runs an **alias-of** check in the background: new entities are compared against existing candidates and, if an LLM judge confirms they refer to the same real-world entity, an `alias_of` link is created automatically.
+
+```python
+from astrocyte.brain import Brain
+
+# Enable entity resolution by setting graph_store + resolver in astrocyte.yaml:
+#   graph_store:
+#     type: age                    # or neo4j / in_memory
+#     dsn: postgresql://...
+#   entity_resolution:
+#     enabled: true
+#     similarity_threshold: 0.8   # vector similarity for candidate lookup
+#     confirmation_threshold: 0.75 # LLM confidence to accept the alias
+
+brain = Brain(config_path="astrocyte.yaml")
+
+# retain() runs extraction + resolution automatically
+await brain.retain(
+    "Alice Smith (formerly Alice Johnson) joined the platform team.",
+    bank_id="people",
+)
+```
+
+### Querying the entity graph (advanced)
+
+For direct graph access use the `GraphStore` SPI via the `Brain.graph_store` attribute (or inject it into your own orchestrator).
+
+**Find entity candidates by name:**
+
+```python
+candidates = await brain.graph_store.find_entity_candidates(
+    name="Alice",
+    bank_id="people",
+    threshold=0.8,
+    limit=5,
+)
+for c in candidates:
+    print(c.id, c.name, c.entity_type)
+```
+
+**Query neighbors — which memories mention entities related to a given entity?**
+
+```python
+from astrocyte.types import MemoryEntityAssociation
+
+hits = await brain.graph_store.query_neighbors(
+    entity_ids=["person:alice-smith"],
+    bank_id="people",
+    limit=20,
+)
+for h in hits:
+    print(h.memory_id, h.entity_id)
+```
+
+**Manually store a link:**
+
+```python
+from astrocyte.types import EntityLink
+
+link = EntityLink(
+    entity_a="person:alice-smith",
+    entity_b="person:alice-johnson",
+    link_type="alias_of",
+    evidence="Alice Smith (formerly Alice Johnson)",
+    confidence=0.95,
+)
+link_id = await brain.graph_store.store_links([link], bank_id="people")
+```
+
+### Setting up `astrocyte-age` (PostgreSQL + Apache AGE)
+
+`astrocyte-age` is the recommended open-source graph backend. It uses Apache AGE on PostgreSQL 16 and supports pgvector on the same instance.
+
+**1. Start the database:**
+
+```bash
+docker compose -f astrocyte-services-py/docker-compose-age.yml up -d
+```
+
+**2. Run migrations:**
+
+```bash
+docker compose -f astrocyte-services-py/docker-compose-age.yml \
+    exec postgres psql -U astrocyte -d astrocyte \
+    -f /migrations/001_age_extension.sql \
+    -f /migrations/002_graph.sql \
+    -f /migrations/003_memory_entity_map.sql
+```
+
+**3. Configure `astrocyte.yaml`:**
+
+```yaml
+graph_store:
+  type: age
+  dsn: postgresql://astrocyte:astrocyte@localhost:5434/astrocyte
+  graph_name: astrocyte          # AGE graph name — created automatically
+entity_resolution:
+  enabled: true
+```
+
+**4. Install the adapter:**
+
+```bash
+pip install astrocyte-age
+```
+
+**Running integration tests:**
+
+```bash
+ASTROCYTE_AGE_TEST_DSN=postgresql://astrocyte:astrocyte@localhost:5434/astrocyte \
+    uv run pytest adapters-storage-py/astrocyte-age/tests/ -v
+```
+
+---
+
 ## Initialization
 
 ### From configuration file
@@ -563,3 +1002,7 @@ Error responses follow a consistent JSON structure:
 - [Access control setup](access-control-setup/) — role-based and attribute-based policies
 - [Storage backend setup](storage-backend-setup/) — pgvector, Qdrant, Neo4j, Elasticsearch
 - [MIP developer guide](/plugins/mip-developer-guide/) — declarative routing rules for retain operations
+- [Time travel guide](time-travel/) — patterns for point-in-time snapshots, post-mortems, and compliance audits
+- [Gap analysis guide](gap-analysis/) — scheduling audits, interpreting scores, and acting on gaps
+- [Entity graph guide](entity-graph/) — entity extraction, alias resolution, and graph query patterns
+- [astrocyte-age setup](storage-backend-setup/#apache-age) — AGE + pgvector on PostgreSQL 16

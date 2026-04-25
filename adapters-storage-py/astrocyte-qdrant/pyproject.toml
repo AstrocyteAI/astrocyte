@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-    "astrocyte>=0.7.0,<0.9",
+    "astrocyte>=0.7.0,<2",
     "qdrant-client>=1.17,<2",
 ]
 

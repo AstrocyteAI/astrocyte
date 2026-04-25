@@ -26,6 +26,7 @@ from astrocyte.pipeline.fusion import (
     rrf_fusion,
     weighted_rrf_fusion,
 )
+from astrocyte.pipeline.hyde import generate_hyde_vector
 from astrocyte.pipeline.query_intent import (
     QueryIntent,
     classify_query_intent,
@@ -57,7 +58,8 @@ from astrocyte.types import (
 if TYPE_CHECKING:
     from astrocyte.mip.router import MipRouter
     from astrocyte.mip.schema import PipelineSpec
-    from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore
+    from astrocyte.pipeline.entity_resolution import EntityResolver
+    from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore, WikiStore
 
 
 _logger = logging.getLogger("astrocyte.mip")
@@ -168,6 +170,10 @@ class PipelineOrchestrator:
         temporal_half_life_days: float = 7.0,
         enable_intent_aware_recall: bool = True,
         enable_multi_query_expansion: bool = False,
+        enable_hyde: bool = False,
+        wiki_store: WikiStore | None = None,
+        wiki_confidence_threshold: float = 0.7,
+        entity_resolver: EntityResolver | None = None,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -195,12 +201,25 @@ class PipelineOrchestrator:
         # coverage at the cost of N-1 extra embedding + retrieval passes per query.
         # Disabled by default; enable in config for multi-hop-heavy workloads.
         self.enable_multi_query_expansion = enable_multi_query_expansion
+        # HyDE (R1): generate a hypothetical answer, embed it, and run a second
+        # semantic search pass with that vector.  Disabled by default — adds one
+        # LLM call per recall.  Enable for multi-hop / paraphrase-heavy workloads.
+        self.enable_hyde = enable_hyde
         self._dedup = DedupDetector(similarity_threshold=0.95)
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when ``recall_authority`` is configured.
         self.recall_authority: RecallAuthorityConfig | None = None
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when MIP is configured.
         #: Used by :meth:`recall` to resolve per-bank rerank/reflect overrides (P3).
         self.mip_router: MipRouter | None = None
+        # M8 W5 — wiki tier precedence.  When a WikiStore is wired up and a
+        # compiled wiki page scores above ``wiki_confidence_threshold``, recall
+        # returns the wiki hit + raw-memory citations instead of running the full
+        # parallel-retrieve / RRF pipeline.
+        self.wiki_store: WikiStore | None = wiki_store
+        self.wiki_confidence_threshold: float = wiki_confidence_threshold
+        # M11: entity resolution — alias-of links between entities.
+        # None means the stage is skipped (opt-in, no cost when disabled).
+        self.entity_resolver: EntityResolver | None = entity_resolver
 
     @property
     def tokens_used(self) -> int:
@@ -322,6 +341,7 @@ class PipelineOrchestrator:
                     tags=prepared.tags,
                     fact_type=prepared.fact_type,
                     occurred_at=request.occurred_at,
+                    retained_at=datetime.now(timezone.utc),  # M9: wall-clock store time
                 )
             )
 
@@ -370,14 +390,30 @@ class PipelineOrchestrator:
             if len(entity_ids) > 1:
                 links = [
                     EntityLink(
-                        source_entity_id=entity_ids[i],
-                        target_entity_id=entity_ids[j],
+                        entity_a=entity_ids[i],
+                        entity_b=entity_ids[j],
                         link_type="co_occurs",
                     )
                     for i in range(len(entity_ids))
                     for j in range(i + 1, len(entity_ids))
                 ]
                 await self.graph_store.store_links(links, request.bank_id)
+
+            # 5b. Entity resolution (M11) — find alias-of links for newly stored entities.
+            # Opt-in: skipped when entity_resolver is None (default).
+            # Runs after store_entities so the new entities are queryable as candidates.
+            if self.entity_resolver is not None:
+                try:
+                    await self.entity_resolver.resolve(
+                        new_entities=entities,
+                        source_text=prepared.text,
+                        bank_id=request.bank_id,
+                        graph_store=self.graph_store,
+                        llm_provider=self.llm_provider,
+                    )
+                except Exception as exc:
+                    # Resolution failures must never abort a retain — degrade gracefully.
+                    _logger.warning("entity resolution failed during retain: %s", exc)
 
         # 6. Update dedup cache with stored embeddings
         for mem_id, emb in zip(memory_ids, embeddings):
@@ -394,12 +430,23 @@ class PipelineOrchestrator:
         query_embeddings = await generate_embeddings([request.query], self.llm_provider)
         query_vector = query_embeddings[0]
 
+        # 1b. Wiki-tier precedence (M8 W5) — search compiled wiki pages first.
+        # If the top hit scores above wiki_confidence_threshold, return wiki hits
+        # + raw-memory citations and skip the full parallel-retrieve pipeline.
+        # Caller can bypass this tier by setting fact_types (which implies they
+        # want raw memories, not compiled wiki pages).
+        if self.wiki_store is not None and not request.fact_types:
+            wiki_result = await self._try_wiki_tier(request, query_vector)
+            if wiki_result is not None:
+                return wiki_result
+
         # 2. Build filters
         filters = VectorFilters(
             bank_id=request.bank_id,
             tags=request.tags,
             fact_types=request.fact_types,
             time_range=request.time_range,
+            as_of=request.as_of,  # M9: time-travel filter
         )
 
         # 2b. Extract entities from query for graph search
@@ -431,6 +478,13 @@ class PipelineOrchestrator:
             else self.temporal_half_life_days
         )
 
+        # 2c. HyDE (R1) — generate hypothetical document embedding.
+        # Runs concurrently with the retrieval step below via a separate task.
+        # Failures return None; parallel_retrieve treats None as "HyDE disabled".
+        hyde_vec: list[float] | None = None
+        if self.enable_hyde:
+            hyde_vec = await generate_hyde_vector(request.query, self.llm_provider)
+
         # 3. Parallel retrieval
         overfetch_limit = request.max_results * self.semantic_overfetch
         strategy_results = await parallel_retrieve(
@@ -446,6 +500,7 @@ class PipelineOrchestrator:
             enable_temporal=self.enable_temporal_retrieval,
             temporal_scan_cap=self.temporal_scan_cap,
             temporal_half_life_days=effective_half_life,
+            hyde_vector=hyde_vec,
         )
 
         # 4. RRF fusion (local strategies + optional federated / manual external_context)
@@ -549,6 +604,7 @@ class PipelineOrchestrator:
                 tags=item.tags,
                 memory_id=item.id,
                 bank_id=request.bank_id,
+                retained_at=getattr(item, "retained_at", None),  # M9
             )
             for item in trimmed
         ]
@@ -578,6 +634,119 @@ class PipelineOrchestrator:
                 strategies_used=strategies_used,
                 total_candidates=total_candidates,
                 fusion_method="rrf",
+            ),
+        )
+
+    async def _try_wiki_tier(
+        self,
+        request: RecallRequest,
+        query_vector: list[float],
+    ) -> RecallResult | None:
+        """Search compiled wiki pages and return hits if the top score meets the threshold.
+
+        Returns ``None`` when:
+        - No wiki pages exist in the bank.
+        - The top wiki score is below ``wiki_confidence_threshold``.
+        - The vector store raises (wiki tier is non-fatal; full recall continues).
+
+        When a wiki hit is returned the result also includes raw-memory citations
+        derived from ``_wiki_source_ids`` stored in VectorItem metadata during
+        compile.  The citations are returned as additional MemoryHits with
+        ``memory_layer="raw"`` so callers can distinguish synthesised wiki
+        content from the underlying evidence.
+        """
+        try:
+            wiki_filters = VectorFilters(
+                bank_id=request.bank_id,
+                tags=request.tags,
+                fact_types=["wiki"],
+            )
+            wiki_hits = await self.vector_store.search_similar(
+                query_vector,
+                request.bank_id,
+                limit=request.max_results,
+                filters=wiki_filters,
+            )
+        except Exception:
+            _logger.debug("Wiki-tier search failed; falling back to standard recall", exc_info=True)
+            return None
+
+        if not wiki_hits or wiki_hits[0].score < self.wiki_confidence_threshold:
+            return None
+
+        # Convert wiki VectorHits → MemoryHits
+        hits: list[MemoryHit] = [
+            MemoryHit(
+                text=h.text,
+                score=h.score,
+                fact_type=h.fact_type,
+                metadata=h.metadata,
+                tags=h.tags,
+                memory_id=h.id,
+                bank_id=request.bank_id,
+                memory_layer="compiled",
+            )
+            for h in wiki_hits
+        ]
+
+        # Append raw-memory citations from source_ids stored in metadata
+        citation_ids: list[str] = []
+        for h in wiki_hits:
+            raw_ids_str = (h.metadata or {}).get("_wiki_source_ids", "")
+            if raw_ids_str:
+                citation_ids.extend(raw_ids_str.split(","))
+
+        if citation_ids:
+            # Fetch raw memories by scanning the vector store.
+            # We use list_vectors (paginated) to find matches by ID — the
+            # VectorStore SPI has no get_by_ids, so we scan once and filter.
+            raw_map: dict[str, VectorItem] = {}
+            offset = 0
+            batch = 100
+            target = set(citation_ids)
+            while target:
+                chunk = await self.vector_store.list_vectors(request.bank_id, offset=offset, limit=batch)
+                if not chunk:
+                    break
+                for item in chunk:
+                    if item.id in target:
+                        raw_map[item.id] = item
+                        target.discard(item.id)
+                if len(chunk) < batch:
+                    break
+                offset += batch
+
+            for cid in citation_ids:
+                item = raw_map.get(cid)
+                if item is None:
+                    continue
+                hits.append(
+                    MemoryHit(
+                        text=item.text,
+                        score=0.0,  # citations are provenance, not ranked hits
+                        fact_type=item.fact_type,
+                        metadata=item.metadata,
+                        tags=item.tags,
+                        memory_id=item.id,
+                        bank_id=request.bank_id,
+                        memory_layer="raw",
+                    )
+                )
+
+        # Apply token budget if requested
+        truncated = False
+        if request.max_tokens:
+            hits, truncated = enforce_token_budget(hits, request.max_tokens)
+
+        return RecallResult(
+            hits=hits[: request.max_results],
+            total_available=len(wiki_hits),
+            truncated=truncated,
+            trace=RecallTrace(
+                strategies_used=["wiki"],
+                total_candidates=len(wiki_hits),
+                fusion_method="wiki_tier",
+                wiki_tier_used=True,
             ),
         )
 

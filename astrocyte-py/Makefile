@@ -133,13 +133,15 @@ bench: fetch-datasets
 
 # Full canonical run — LME + LoCoMo in parallel, LLM-judge, competitor-comparable numbers.
 # Requires API key (use: doppler run -- make bench-full)
+# Pass RESUME=1 to continue an interrupted run: doppler run -- make bench-full RESUME=1
 bench-full: fetch-datasets
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval locomo \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--locomo-path $(LOCOMO_DIR)/data \
-		--canonical-judge
+		--canonical-judge \
+		$(if $(RESUME),--resume,)
 
 # Smoke test — in-memory providers, no API key needed.
 # Uses the real LoCoMo dataset (all 200q) so the regression gate in CI
@@ -158,15 +160,23 @@ CODEQL_DB      := /tmp/astrocyte-codeql-db
 CODEQL_OUT     := /tmp/astrocyte-findings.csv
 CODEQL_QUERIES := \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/StatementNoEffect.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/UnreachableCode.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/AssertOnTuple.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/RedundantAssignment.ql \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Functions/ConsistentReturns.ql \
-	~/.codeql/packages/codeql/python-queries/1.8.0/Imports/ImportandImportFrom.ql
+	~/.codeql/packages/codeql/python-queries/1.8.0/Functions/ModificationOfParameterWithDefault.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Imports/ImportandImportFrom.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Imports/UnusedImport.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Exceptions/EmptyExcept.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Exceptions/IncorrectExceptOrder.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Variables/UninitializedLocal.ql
 
 .PHONY: codeql
 codeql:
 	codeql database create $(CODEQL_DB) --language=python --source-root . --overwrite
 	codeql database analyze $(CODEQL_DB) $(CODEQL_QUERIES) --format=csv --output=$(CODEQL_OUT)
-	@echo "--- Findings ($(CODEQL_OUT)) ---"
-	@cat $(CODEQL_OUT) || echo "(none)"
+	@echo "--- Findings (excluding datasets/) ---"
+	@python3 scripts/filter_codeql.py $(CODEQL_OUT)
 
 # ---------------------------------------------------------------------------
 # Cleanup

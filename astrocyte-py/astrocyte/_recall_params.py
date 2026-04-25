@@ -18,3 +18,4 @@ class RecallParams:
     include_sources: bool = False
     layer_weights: dict[str, float] | None = None
     detail_level: str | None = None
+    as_of: datetime | None = None  # M9: time-travel filter

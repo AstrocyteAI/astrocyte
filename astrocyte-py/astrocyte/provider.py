@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         VectorFilters,
         VectorHit,
         VectorItem,
+        WikiPage,
     )
 
 
@@ -210,6 +211,39 @@ class GraphStore(Protocol):
         """
         pass
 
+    async def find_entity_candidates(
+        self,
+        name: str,
+        bank_id: str,
+        threshold: float = 0.8,
+        limit: int = 5,
+    ) -> list[Entity]:
+        """Return entities whose name is similar to *name* above *threshold*.
+
+        Used by the entity resolution pipeline (M11) to find candidate
+        entities that may be aliases of a newly-extracted entity before
+        calling the LLM confirmation step.
+
+        A simple implementation may use case-insensitive substring matching;
+        production adapters should use vector similarity or full-text search.
+
+        Returns:
+            Candidate entities ordered by similarity descending.
+        """
+        pass
+
+    async def store_entity_link(self, link: EntityLink, bank_id: str) -> str:
+        """Persist a single typed relationship between two entities.
+
+        Unlike ``store_links`` (bulk, co-occurrence), this method is called
+        by the entity resolution pipeline for confirmed alias links that carry
+        ``evidence`` and ``confidence``.
+
+        Returns:
+            The stored link ID.
+        """
+        pass
+
     async def health(self) -> HealthStatus:
         """Check database connectivity."""
         pass
@@ -258,6 +292,75 @@ class DocumentStore(Protocol):
 
     async def health(self) -> HealthStatus:
         """Check database connectivity."""
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Tier 1: Wiki Store (M8)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class WikiStore(Protocol):
+    """SPI for wiki page storage (M8 LLM wiki compile). Optional.
+
+    WikiStore persists structured WikiPage metadata. Vector embeddings of
+    compiled pages are stored separately in the VectorStore with
+    ``memory_layer="compiled"`` and ``fact_type="wiki"``, so recall tiering
+    can search them via the standard ``search_similar`` path.
+
+    Implement this protocol to enable ``brain.compile()`` persistence.
+    See ``astrocyte.testing.in_memory.InMemoryWikiStore`` for a reference.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    async def upsert_page(self, page: WikiPage, bank_id: str) -> str:
+        """Create or update a wiki page. Upsert semantics — if a page with
+        the same ``page_id`` exists in this bank, its revision is incremented
+        and content replaced. The previous revision is archived (not deleted).
+
+        Returns:
+            The stored ``page_id``.
+        """
+        pass
+
+    async def get_page(self, page_id: str, bank_id: str) -> WikiPage | None:
+        """Retrieve the current revision of a wiki page by ID.
+
+        Returns:
+            The page, or ``None`` if not found in this bank.
+        """
+        pass
+
+    async def list_pages(
+        self,
+        bank_id: str,
+        scope: str | None = None,
+        kind: str | None = None,
+    ) -> list[WikiPage]:
+        """List current-revision wiki pages for a bank.
+
+        Args:
+            bank_id: The bank to list pages for.
+            scope: If set, return only pages whose ``scope`` matches exactly.
+            kind: If set, return only pages of this kind ("entity", "topic", "concept").
+
+        Returns:
+            All matching pages, unsorted.
+        """
+        pass
+
+    async def delete_page(self, page_id: str, bank_id: str) -> bool:
+        """Delete a wiki page (current revision and audit log).
+
+        Returns:
+            ``True`` if the page was found and deleted, ``False`` if not found.
+        """
+        pass
+
+    async def health(self) -> HealthStatus:
+        """Check storage connectivity."""
         pass
 
 
@@ -411,6 +514,7 @@ _SUPPORTED_VERSIONS: dict[str, set[int]] = {
     "VectorStore": {1},
     "GraphStore": {1},
     "DocumentStore": {1},
+    "WikiStore": {1},
     "EngineProvider": {1},
     "LLMProvider": {1},
     "OutboundTransportProvider": {1},

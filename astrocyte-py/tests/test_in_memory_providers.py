@@ -255,7 +255,7 @@ class TestInMemoryGraphStore:
     @pytest.mark.asyncio
     async def test_store_links(self):
         gs = InMemoryGraphStore()
-        links = [EntityLink(source_entity_id="e1", target_entity_id="e2", link_type="knows")]
+        links = [EntityLink(entity_a="e1", entity_b="e2", link_type="knows")]
         ids = await gs.store_links(links, "b1")
         assert len(ids) == 1
 

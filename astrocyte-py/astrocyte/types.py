@@ -49,6 +49,7 @@ class VectorItem:
     fact_type: str | None = None  # "world", "experience", "observation"
     occurred_at: datetime | None = None
     memory_layer: str | None = None  # "fact", "observation", "model" — memory hierarchy
+    retained_at: datetime | None = None  # UTC wall-clock when this item was stored (M9)
 
     def __post_init__(self) -> None:
         if not self.text:
@@ -62,6 +63,7 @@ class VectorFilters:
     fact_types: list[str] | None = None
     time_range: tuple[datetime, datetime] | None = None
     metadata_filters: Metadata | None = None
+    as_of: datetime | None = None  # Time-travel: only return items retained on or before this timestamp (M9)
 
 
 @dataclass
@@ -74,6 +76,7 @@ class VectorHit:
     fact_type: str | None = None
     occurred_at: datetime | None = None
     memory_layer: str | None = None  # "fact", "observation", "model"
+    retained_at: datetime | None = None  # UTC timestamp when item was retained (M9)
 
     def __post_init__(self) -> None:
         if self.score < 0.0:
@@ -96,10 +99,33 @@ class Entity:
 
 @dataclass
 class EntityLink:
-    source_entity_id: str
-    target_entity_id: str
-    link_type: str  # "works_at", "located_in", "related_to", …
+    """A typed relationship between two entities in the knowledge graph.
+
+    M11: fields renamed from ``source_entity_id``/``target_entity_id`` to
+    ``entity_a``/``entity_b`` to be direction-neutral; ``evidence``,
+    ``confidence``, and ``created_at`` added for entity resolution provenance.
+    """
+
+    entity_a: str
+    """ID of the first entity in the relationship."""
+
+    entity_b: str
+    """ID of the second entity in the relationship."""
+
+    link_type: str
+    """Relationship label — e.g. ``"alias_of"``, ``"co_occurs"``, ``"works_at"``."""
+
+    evidence: str = ""
+    """Verbatim quote from the source memory that justifies this link."""
+
+    confidence: float = 1.0
+    """0–1 confidence score. 1.0 = rule-derived; < 1.0 = LLM-confirmed."""
+
+    created_at: datetime | None = None
+    """UTC wall-clock time this link was created. None for legacy links."""
+
     metadata: Metadata | None = None
+    """Optional extra key-value pairs (preserved for backward compatibility)."""
 
 
 @dataclass
@@ -192,6 +218,7 @@ class RecallRequest:
     layer_weights: dict[str, float] | None = None  # {"fact": 1.0, "observation": 1.5, "model": 2.0}
     detail_level: str | None = None  # "titles" | "bodies" | "full" | None (default=full)
     external_context: list[MemoryHit] | None = None  # External RAG/graph results for cross-source fusion
+    as_of: datetime | None = None  # Time-travel: recall as if it were this UTC moment (M9)
 
 
 @dataclass
@@ -207,6 +234,7 @@ class MemoryHit:
     bank_id: str | None = None  # set by multi-bank / hybrid recall
     memory_layer: str | None = None  # "fact", "observation", "model"
     utility_score: float | None = None  # 0.0 – 1.0 composite utility
+    retained_at: datetime | None = None  # UTC timestamp when item was retained (M9)
 
 
 @dataclass
@@ -218,6 +246,7 @@ class RecallTrace:
     tier_used: int | None = None  # Which retrieval tier resolved the query
     layer_distribution: dict[str, int] | None = None  # {"fact": 5, "observation": 3, "model": 1}
     cache_hit: bool | None = None  # Whether recall cache was used
+    wiki_tier_used: bool | None = None  # True when wiki tier satisfied the query (M8 W5)
 
 
 @dataclass
@@ -228,6 +257,76 @@ class RecallResult:
     trace: RecallTrace | None = None
     #: Optional labeled sections + rules for synthesis (M7 structured recall authority).
     authority_context: str | None = None
+
+
+@dataclass
+class HistoryResult:
+    """Result of ``brain.history()`` — what the agent knew at a past point in time (M9).
+
+    Wraps a :class:`RecallResult` and carries the ``as_of`` timestamp so
+    callers can log/display the reconstruction point without parsing the request.
+    """
+
+    hits: list[MemoryHit]
+    total_available: int
+    truncated: bool
+    as_of: datetime  # The UTC timestamp used for the time-travel query
+    bank_id: str
+    trace: RecallTrace | None = None
+
+
+@dataclass
+class GapItem:
+    """A single knowledge gap identified by ``brain.audit()`` (M10).
+
+    A gap is a topic or question that the memory bank cannot answer
+    adequately — either because no memories cover it, or because coverage
+    is too thin to draw a reliable conclusion.
+    """
+
+    topic: str
+    """Short label for the missing or under-covered topic (e.g. ``"Alice's current role"``)."""
+
+    severity: Literal["high", "medium", "low"]
+    """How critical the gap is.
+
+    - ``"high"`` — likely to cause a wrong or confidently-wrong answer.
+    - ``"medium"`` — partial coverage; answer may be incomplete.
+    - ``"low"`` — minor; nuance or context is missing.
+    """
+
+    reason: str
+    """One-sentence explanation of why the gap exists."""
+
+
+@dataclass
+class AuditResult:
+    """Result of ``brain.audit()`` — structured gap analysis for a scope (M10).
+
+    Summarises what the agent *doesn't* know about a given topic, together
+    with a 0–1 coverage score and provenance counts.
+    """
+
+    scope: str
+    """The scope string passed to ``brain.audit()``."""
+
+    bank_id: str
+    """The bank that was audited."""
+
+    gaps: list[GapItem]
+    """Identified knowledge gaps, ordered roughly by severity."""
+
+    coverage_score: float
+    """0–1 composite score (memory density × recency × topic breadth).
+
+    1.0 means the bank covers the scope well; < 0.5 indicates sparse coverage.
+    """
+
+    memories_scanned: int
+    """Number of memories retrieved and fed to the audit judge."""
+
+    trace: RecallTrace | None = None
+    """Diagnostic trace from the recall pass, if available."""
 
 
 @dataclass
@@ -297,6 +396,7 @@ class EngineCapabilities:
     supports_entities: bool = False
     supports_tags: bool = False
     supports_metadata: bool = True
+    supports_compile: bool = False  # M8: wiki compile via brain.compile()
     max_retain_bytes: int | None = None
     max_recall_results: int | None = None
     max_embedding_dims: int | None = None
@@ -659,6 +759,82 @@ class RoutingDecision:
     pipeline: PipelineSpec | None = None  # Optional pipeline-shaping overrides from rule
     forget: ForgetSpec | None = None  # Optional forget-policy overrides from rule (Phase 4)
     observability_tags: list[str] | None = None  # Per-rule operator labels (Phase 5)
+
+
+# ---------------------------------------------------------------------------
+# M8: Wiki Compile
+# ---------------------------------------------------------------------------
+
+WikiPageKind = Literal["entity", "topic", "concept"]
+
+
+@dataclass
+class WikiPage:
+    """A compiled topic/entity/concept page synthesised from raw memories (M8).
+
+    WikiPages are additive artefacts — raw memories are never removed when a
+    page is compiled. Each page carries ``source_ids`` back to every raw memory
+    that contributed, enabling provenance tracing and recompile-on-forget.
+
+    Pages are mutable: each compile pass produces a new revision. Past revisions
+    are kept in the WikiStore audit log (not indexed for recall).
+    """
+
+    page_id: str  # Stable ID, e.g. "topic:incident-response", "entity:alice"
+    bank_id: str
+    kind: WikiPageKind  # "entity" | "topic" | "concept"
+    title: str
+    content: str  # LLM-maintained markdown
+    scope: str  # Scope string used for this compile (tag name or cluster label)
+    source_ids: list[str]  # Raw memory IDs that contributed (provenance)
+    cross_links: list[str]  # Other page_ids referenced in this page
+    revision: int  # Monotonically increasing, starts at 1
+    revised_at: datetime
+    tags: list[str] | None = None  # Inherited from contributing memories
+    metadata: Metadata | None = None
+
+
+@dataclass
+class WikiPageHit:
+    """A wiki page returned from a semantic search during recall tiering."""
+
+    page_id: str
+    title: str
+    content: str
+    scope: str
+    kind: str
+    score: float  # 0.0 – 1.0 similarity
+    source_ids: list[str]
+    bank_id: str
+
+
+@dataclass
+class CompileScope:
+    """A resolved compile scope — either from a tag or a DBSCAN cluster label."""
+
+    scope: str  # Scope string (tag name or cluster label)
+    source: Literal["tag", "cluster", "explicit"]  # How it was discovered
+    memory_ids: list[str]  # Memory IDs belonging to this scope
+
+
+@dataclass
+class CompileRequest:
+    bank_id: str
+    scope: str | None = None  # If None, triggers full scope discovery (§3.2)
+
+
+@dataclass
+class CompileResult:
+    """Result of a brain.compile() call."""
+
+    bank_id: str
+    scopes_compiled: list[str]  # Scope strings that produced wiki pages
+    pages_created: int
+    pages_updated: int
+    noise_memories: int  # Untagged memories DBSCAN could not cluster (held for next cycle)
+    tokens_used: int
+    elapsed_ms: int
+    error: str | None = None
 
 
 # ---------------------------------------------------------------------------

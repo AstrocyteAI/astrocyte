@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocyte-age"
+dynamic = ["version"]
+description = "Apache AGE (PostgreSQL graph extension) GraphStore adapter for Astrocyte"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "astrocyte>=0.8.0,<2",
+    "psycopg[binary]>=3.1",
+    "psycopg-pool>=3.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.2",
+]
+
+[project.entry-points."astrocyte.graph_stores"]
+age = "astrocyte_age.store:AgeGraphStore"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }
+
+[tool.hatch.build.targets.wheel]
+packages = ["astrocyte_age"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-x --timeout=60 --tb=short"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]
+
+[tool.uv.sources]
+astrocyte = { path = "../../astrocyte-py", editable = true }

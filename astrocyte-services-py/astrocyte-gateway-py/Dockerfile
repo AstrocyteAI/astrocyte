@@ -8,6 +8,7 @@ FROM python:3.11-slim AS builder
 WORKDIR /build
 COPY astrocyte-py /build/astrocyte-py
 COPY adapters-storage-py/astrocyte-pgvector /build/astrocyte-pgvector
+COPY adapters-storage-py/astrocyte-age /build/astrocyte-age
 COPY astrocyte-services-py/astrocyte-gateway-py /build/astrocyte-gateway-py
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -21,6 +22,7 @@ RUN python -m venv /venv \
     && /venv/bin/pip install --upgrade pip \
     && /venv/bin/pip install /build/astrocyte-py \
     && /venv/bin/pip install /build/astrocyte-pgvector \
+    && /venv/bin/pip install /build/astrocyte-age \
     && /venv/bin/pip install /build/astrocyte-gateway-py \
     && rm -rf /build
 

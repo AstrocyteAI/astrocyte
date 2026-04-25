@@ -60,6 +60,7 @@ async def parallel_retrieve(
     enable_temporal: bool = True,
     temporal_scan_cap: int = DEFAULT_TEMPORAL_SCAN_CAP,
     temporal_half_life_days: float = DEFAULT_TEMPORAL_HALF_LIFE_DAYS,
+    hyde_vector: list[float] | None = None,
 ) -> dict[str, list[ScoredItem]]:
     """Run parallel retrieval across all configured stores.
 
@@ -76,11 +77,23 @@ async def parallel_retrieve(
         temporal_half_life_days: Exponential decay half-life for temporal
             score. Tune shorter (e.g. 1.0) for fast-moving chat workloads,
             longer (e.g. 30.0) for slower knowledge bases.
+        hyde_vector: Optional pre-computed HyDE embedding (hypothetical
+            document embedding).  When provided, an additional ``"hyde"``
+            strategy runs semantic search with this vector and its results
+            are fused via RRF alongside the standard ``"semantic"`` strategy.
+            Generate with :func:`astrocyte.pipeline.hyde.generate_hyde_vector`.
     """
     tasks: dict[str, asyncio.Task[list[ScoredItem]]] = {}
 
     # Always run semantic search
     tasks["semantic"] = asyncio.create_task(_semantic_search(vector_store, query_vector, bank_id, limit, filters))
+
+    # HyDE (R1): second semantic pass with hypothetical-document embedding.
+    # Runs concurrently with the standard semantic strategy; RRF fusion merges
+    # both result sets.  No-op when hyde_vector is None (feature disabled or
+    # generation failed upstream).
+    if hyde_vector is not None:
+        tasks["hyde"] = asyncio.create_task(_semantic_search(vector_store, hyde_vector, bank_id, limit, filters))
 
     # Graph search if store configured and entities found
     if graph_store and entity_ids:
@@ -92,12 +105,14 @@ async def parallel_retrieve(
 
     # Temporal search if the vector store can enumerate. Capped scan keeps
     # cost bounded; rank by metadata[_created_at]/occurred_at recency decay.
+    as_of = filters.as_of if filters is not None else None
     if enable_temporal and hasattr(vector_store, "list_vectors"):
         tasks["temporal"] = asyncio.create_task(
             _temporal_search(
                 vector_store, bank_id, limit,
                 scan_cap=temporal_scan_cap,
                 half_life_days=temporal_half_life_days,
+                as_of=as_of,
             )
         )
 
@@ -130,6 +145,7 @@ async def _semantic_search(
             fact_type=h.fact_type,
             metadata=h.metadata,
             tags=h.tags,
+            retained_at=getattr(h, "retained_at", None),
         )
         for h in hits
     ]
@@ -180,6 +196,7 @@ async def _temporal_search(
     *,
     scan_cap: int,
     half_life_days: float,
+    as_of: datetime | None = None,
 ) -> list[ScoredItem]:
     """Recency-ranked strategy.
 
@@ -217,6 +234,9 @@ async def _temporal_search(
     now = datetime.now(timezone.utc)
     scored: list[tuple[float, VectorItem]] = []
     for item in scanned:
+        # M9: time-travel filter — skip items retained after as_of
+        if as_of is not None and item.retained_at is not None and item.retained_at > as_of:
+            continue
         timestamp = _extract_timestamp(item)
         if timestamp is None:
             continue
@@ -237,6 +257,7 @@ async def _temporal_search(
             metadata=item.metadata,
             tags=item.tags,
             memory_layer=item.memory_layer,
+            retained_at=getattr(item, "retained_at", None),
         )
         for score, item in top
     ]

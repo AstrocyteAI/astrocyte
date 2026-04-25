@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from astrocyte.eval.checkpoint import BenchmarkCheckpoint
 from astrocyte.eval.metrics import ndcg_at_k, word_overlap_score
 from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 
@@ -108,6 +109,7 @@ class LoComoBenchmark:
         max_questions: int | None = None,
         use_canonical_judge: bool = False,
         llm_judge: object | None = None,
+        checkpoint: BenchmarkCheckpoint | None = None,
     ) -> LoCoMoResult:
         """Run the LoCoMo benchmark.
 
@@ -127,10 +129,16 @@ class LoComoBenchmark:
                 judgment, matching the convention used by Mem0 (ECAI 2025),
                 Hindsight, and MemMachine. This is required for numbers
                 directly comparable to published competitor scores.
+            checkpoint: Optional :class:`~astrocyte.eval.checkpoint.BenchmarkCheckpoint`
+                from a previous interrupted run. Already-retained sessions are
+                skipped and already-evaluated questions use their cached score.
 
         Returns:
             LoCoMoResult with accuracy breakdown by category.
         """
+        if checkpoint is not None:
+            print(f"  [LoCoMo] {checkpoint.resume_summary()}")
+
         if conversations is None and data_path is not None:
             conversations = load_locomo_dataset(data_path)
         elif conversations is None:
@@ -148,6 +156,8 @@ class LoComoBenchmark:
         total_sessions = sum(len(c.sessions) for c in conversations)
         print(f"  [LoCoMo] Retaining {total_sessions} sessions from {len(conversations)} conversations...")
         retain_count = 0
+        date_parse_attempts = 0
+        unparseable_date_count = 0
         retain_phase_start = time.monotonic()
         for convo in conversations:
             for session in convo.sessions:
@@ -162,11 +172,16 @@ class LoComoBenchmark:
                 if not session_text_parts:
                     continue
 
+                session_key = f"{convo.conversation_id}:{session.session_id}"
+                if checkpoint is not None and checkpoint.is_session_retained(session_key):
+                    continue
+
                 session_text = "\n".join(session_text_parts)
 
                 # Parse session date for temporal retrieval
                 occurred_at = None
                 if session.date_time:
+                    date_parse_attempts += 1
                     date_formats = ("%B %d, %Y", "%Y-%m-%d", "%m/%d/%Y", "%d %B %Y")
                     parsed = False
                     for fmt in date_formats:
@@ -177,6 +192,7 @@ class LoComoBenchmark:
                         except ValueError:
                             continue
                     if not parsed:
+                        unparseable_date_count += 1
                         logging.getLogger("astrocyte.eval").debug(
                             "LoCoMo: failed to parse session date_time '%s' for "
                             "conversation_id=%s session_id=%s; supported formats=%s",
@@ -202,6 +218,8 @@ class LoComoBenchmark:
                 )
                 retain_latencies.append((time.monotonic() - t0) * 1000)
                 retain_count += 1
+                if checkpoint is not None:
+                    checkpoint.record_session(session_key)
                 if retain_count % 20 == 0:
                     elapsed_r = time.monotonic() - retain_phase_start
                     rate = retain_count / elapsed_r
@@ -213,6 +231,13 @@ class LoComoBenchmark:
                     )
 
         print(f"  [LoCoMo] Retain complete: {retain_count} sessions stored.")
+        if unparseable_date_count > 0:
+            logging.getLogger("astrocyte.eval").warning(
+                "LoCoMo: %d/%d session date_time values were unparseable during retain phase. "
+                "Consider extending supported date formats.",
+                unparseable_date_count,
+                date_parse_attempts,
+            )
 
         # ── Phase 2: Collect all questions ──
         all_questions: list[LoCoMoQuestion] = []
@@ -242,6 +267,40 @@ class LoComoBenchmark:
         eval_phase_start = time.monotonic()
         for qi, q in enumerate(all_questions, 1):
             category_total[q.category] = category_total.get(q.category, 0) + 1
+            q_key = f"{q.conversation_id}:{qi}"
+
+            # Restore cached result from a previous interrupted run.
+            if checkpoint is not None and checkpoint.is_question_evaluated(q_key):
+                cached = checkpoint.get_question_result(q_key)
+                is_correct = cached.get("correct", False)
+                if is_correct:
+                    correct += 1
+                    category_correct[q.category] = category_correct.get(q.category, 0) + 1
+                cached_f1 = cached.get("canonical_f1")
+                if cached_f1 is not None:
+                    total_f1_sum += cached_f1
+                    category_f1_sum[q.category] = category_f1_sum.get(q.category, 0.0) + cached_f1
+                per_question.append(cached)
+                query_results.append(
+                    QueryResult(
+                        query=q.question,
+                        expected=[q.answer],
+                        actual=[],
+                        relevant_found=0,
+                        precision=cached.get("_precision", 0.0),
+                        reciprocal_rank=cached.get("_reciprocal_rank", 0.0),
+                        latency_ms=cached.get("_latency_ms", 0.0),
+                    )
+                )
+                ndcg_sum += cached.get("_ndcg", 0.0)
+                if qi % 10 == 0 or qi == total_q:
+                    acc_so_far = correct / qi
+                    print(
+                        f"  [LoCoMo] Question {qi}/{total_q} — "
+                        f"accuracy: {acc_so_far:.1%} ({correct}/{qi}) [resumed]",
+                        flush=True,
+                    )
+                continue
 
             t0 = time.monotonic()
             result = await self.brain.recall(q.question, bank_id=bank_id, max_results=10)
@@ -312,31 +371,42 @@ class LoComoBenchmark:
                     flush=True,
                 )
 
-            per_question.append(
-                {
-                    "question": q.question,
-                    "expected_answer": q.answer,
-                    "category": q.category,
-                    "correct": is_correct,
-                    "recall_hits": len(result.hits),
-                    "reflect_answer_preview": reflect_result.answer[:200],
-                    # Canonical F1 per question, when judge is on. None
-                    # under legacy scorer. Enables per-question post-hoc
-                    # failure analysis (e.g. which questions scored 0.25
-                    # F1 vs which scored 0.35 — the ones at the boundary
-                    # are the most informative).
-                    "canonical_f1": canonical_f1,
-                }
-            )
-
             # Build QueryResult for standard metrics
             relevant_ids: set[str] = set()
             for h in result.hits:
                 if h.memory_id and word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD:
                     relevant_ids.add(h.memory_id)
             retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
+            q_precision = len(relevant_ids) / max(len(retrieved_ids), 1)
+            q_rr = next(
+                (1.0 / (i + 1) for i, rid in enumerate(retrieved_ids) if rid in relevant_ids),
+                0.0,
+            )
             q_ndcg = ndcg_at_k(relevant_ids, retrieved_ids)
             ndcg_sum += q_ndcg
+
+            q_record: dict[str, Any] = {
+                "question": q.question,
+                "expected_answer": q.answer,
+                "category": q.category,
+                "correct": is_correct,
+                "recall_hits": len(result.hits),
+                "reflect_answer_preview": reflect_result.answer[:200],
+                # Canonical F1 per question, when judge is on. None
+                # under legacy scorer. Enables per-question post-hoc
+                # failure analysis (e.g. which questions scored 0.25
+                # F1 vs which scored 0.35 — the ones at the boundary
+                # are the most informative).
+                "canonical_f1": canonical_f1,
+                # Hidden fields used when restoring from checkpoint
+                "_precision": q_precision,
+                "_reciprocal_rank": q_rr,
+                "_latency_ms": elapsed,
+                "_ndcg": q_ndcg,
+            }
+            per_question.append(q_record)
+            if checkpoint is not None:
+                checkpoint.record_question(q_key, q_record)
 
             query_results.append(
                 QueryResult(
@@ -344,11 +414,8 @@ class LoComoBenchmark:
                     expected=[q.answer],
                     actual=result.hits,
                     relevant_found=len(relevant_ids),
-                    precision=len(relevant_ids) / max(len(retrieved_ids), 1),
-                    reciprocal_rank=next(
-                        (1.0 / (i + 1) for i, rid in enumerate(retrieved_ids) if rid in relevant_ids),
-                        0.0,
-                    ),
+                    precision=q_precision,
+                    reciprocal_rank=q_rr,
                     latency_ms=elapsed,
                 )
             )
@@ -385,7 +452,7 @@ class LoComoBenchmark:
             retain_latency_p95_ms=percentile(retain_latencies, 95),
             recall_latency_p50_ms=percentile(recall_latencies, 50),
             recall_latency_p95_ms=percentile(recall_latencies, 95),
-            total_tokens_used=self.brain._pipeline.tokens_used if self.brain._pipeline else 0,
+            total_tokens_used=getattr(getattr(self.brain, "_pipeline", None), "tokens_used", 0),
             total_duration_seconds=total_duration,
             reflect_accuracy=overall_accuracy,
         )
@@ -406,6 +473,9 @@ class LoComoBenchmark:
                 await self.brain._do_forget(ForgetRequest(bank_id=bank_id, scope="all"))
             except Exception:
                 logging.getLogger("astrocyte.eval").debug("Cleanup forget failed for bank %s", bank_id, exc_info=True)
+
+        if checkpoint is not None:
+            checkpoint.complete()
 
         return LoCoMoResult(
             overall_accuracy=overall_accuracy,

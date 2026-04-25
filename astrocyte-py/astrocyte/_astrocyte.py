@@ -34,10 +34,13 @@ from astrocyte.recall.authority import apply_recall_authority
 from astrocyte.types import (
     AccessGrant,
     AstrocyteContext,
+    AuditResult,
     BankHealth,
+    CompileResult,
     ForgetRequest,
     ForgetResult,
     HealthStatus,
+    HistoryResult,
     LegalHold,
     LifecycleRunResult,
     MemoryHit,
@@ -114,6 +117,11 @@ class Astrocyte:
         # Multi-bank orchestrator (wired lazily after provider is set)
         self._multi_bank: MultiBankOrchestrator | None = None
 
+        # M8: wiki store (optional; enables brain.compile())
+        self._wiki_store: object | None = None
+        # M8 W4: async compile queue (optional; enables automatic threshold triggering)
+        self._compile_queue: object | None = None
+
     @property
     def config(self) -> AstrocyteConfig:
         """Loaded :class:`~astrocyte.config.AstrocyteConfig` (read-only for callers)."""
@@ -151,6 +159,40 @@ class Astrocyte:
             self._dispatcher.capabilities = provider.capabilities()
         self._rebuild_tiered_retrieval()
         self._rebuild_multi_bank()
+
+    def set_wiki_store(self, wiki_store: object) -> None:
+        """Set the WikiStore provider (M8 wiki compile). Optional.
+
+        When a WikiStore is configured, ``brain.compile()`` becomes available.
+        Compile is disabled by default — banks that don't opt in keep today's
+        retain/recall behaviour exactly.
+
+        Args:
+            wiki_store: Any object satisfying the
+                :class:`~astrocyte.provider.WikiStore` protocol.
+        """
+        from astrocyte.provider import check_spi_version
+
+        check_spi_version(wiki_store, "WikiStore")
+        self._wiki_store = wiki_store
+
+    def set_compile_queue(self, queue: object) -> None:
+        """Set the async compile queue (M8 W4 threshold trigger). Optional.
+
+        When a :class:`~astrocyte.pipeline.compile_trigger.CompileQueue` is
+        configured, each successful ``brain.retain()`` call notifies the queue.
+        The queue fires a background compile job whenever the bank crosses the
+        configured size or staleness threshold.
+
+        The queue must be started (``await queue.start()``) before the first
+        retain call, and stopped (``await queue.stop()``) on shutdown.
+
+        Args:
+            queue: A :class:`~astrocyte.pipeline.compile_trigger.CompileQueue`
+                instance (or any object with a compatible ``notify_retain``
+                method).
+        """
+        self._compile_queue = queue
 
     def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
@@ -381,6 +423,10 @@ class Astrocyte:
                         "content_length": len(content),
                     },
                 )
+                # M8 W4: notify the compile queue so it can trigger a background
+                # compile when the bank crosses the configured threshold.
+                if self._compile_queue is not None and result.stored:
+                    self._compile_queue.notify_retain(bank_id)  # type: ignore[union-attr]
                 return result
             except ProviderUnavailable:
                 self._policy.handle_degraded_retain(self._provider_name)
@@ -423,6 +469,7 @@ class Astrocyte:
             layer_weights=params.layer_weights,
             detail_level=params.detail_level,
             external_context=ext,
+            as_of=params.as_of,  # M9
         )
 
     async def recall(
@@ -442,6 +489,7 @@ class Astrocyte:
         include_sources: bool = False,
         layer_weights: dict[str, float] | None = None,
         detail_level: str | None = None,
+        as_of: datetime | None = None,
     ) -> RecallResult:
         """Retrieve relevant memories for a query.
 
@@ -481,6 +529,7 @@ class Astrocyte:
                 include_sources=include_sources,
                 layer_weights=layer_weights,
                 detail_level=detail_level,
+                as_of=as_of,  # M9
             )
 
             # Single bank — direct
@@ -898,6 +947,223 @@ class Astrocyte:
                 {"bank_id": bank_id},
             )
         return too_young
+
+    async def compile(
+        self,
+        bank_id: str,
+        scope: str | None = None,
+    ) -> CompileResult:
+        """Compile raw memories into WikiPages for ``bank_id`` (M8).
+
+        Synthesises a structured wiki page for each detected topic scope using
+        an LLM. Compiled pages are stored in the WikiStore and embedded back
+        into the VectorStore (``memory_layer="compiled"``) so the recall pipeline
+        can surface them ahead of raw memory fragments.
+
+        Args:
+            bank_id: Bank to compile.
+            scope: If provided, compile only memories tagged with this scope string.
+                   If ``None``, trigger full scope discovery:
+
+                   1. Tagged memories are grouped by tag (each tag = one page).
+                   2. Untagged memories are clustered by embedding similarity
+                      (DBSCAN); each cluster is labelled with a lightweight LLM
+                      call. Noise points are held for the next compile cycle.
+
+        Returns:
+            :class:`~astrocyte.types.CompileResult` with pages created/updated,
+            noise count, and token usage.
+
+        Raises:
+            :class:`~astrocyte.errors.ConfigError`: If no WikiStore has been
+                configured (call ``set_wiki_store()`` before ``compile()``).
+            :class:`~astrocyte.errors.ProviderUnavailable`: If the Tier 1 pipeline
+                has not been configured.
+
+        Example::
+
+            # Explicit — compile memories tagged "incident-response"
+            result = await brain.compile("eng-team", scope="incident-response")
+
+            # Automatic — discover scopes from tags and embedding clusters
+            result = await brain.compile("eng-team")
+
+            print(result.pages_created, result.pages_updated, result.tokens_used)
+        """
+        validate_bank_id(bank_id)
+
+        if self._wiki_store is None:
+            raise ConfigError(
+                "brain.compile() requires a WikiStore. "
+                "Call brain.set_wiki_store(store) before compiling."
+            )
+
+        if self._pipeline is None:
+            raise ProviderUnavailable(
+                "brain.compile() requires a Tier 1 pipeline. "
+                "Call brain.set_pipeline(pipeline) before compiling."
+            )
+
+        from astrocyte.pipeline.compile import CompileEngine
+
+        engine = CompileEngine(
+            vector_store=self._pipeline.vector_store,
+            llm_provider=self._pipeline.llm_provider,
+            wiki_store=self._wiki_store,  # type: ignore[arg-type]
+        )
+
+        with span("compile", {"bank_id": bank_id, "scope": scope or "auto"}):
+            result = await engine.run(bank_id, scope=scope)
+
+        if result.error:
+            logger.warning(
+                "compile failed for bank %s scope %s: %s",
+                bank_id,
+                scope or "auto",
+                result.error,
+            )
+        else:
+            logger.info(
+                "compile complete bank=%s scope=%s pages_created=%d pages_updated=%d "
+                "noise=%d tokens=%d elapsed_ms=%d",
+                bank_id,
+                scope or "auto",
+                result.pages_created,
+                result.pages_updated,
+                result.noise_memories,
+                result.tokens_used,
+                result.elapsed_ms,
+            )
+
+        return result
+
+    async def history(
+        self,
+        query: str,
+        bank_id: str,
+        as_of: datetime,
+        *,
+        max_results: int = 10,
+        max_tokens: int | None = None,
+        tags: list[str] | None = None,
+    ) -> HistoryResult:
+        """Reconstruct what the agent knew at a past point in time (M9 time travel).
+
+        Returns memories that existed in *bank_id* at the moment *as_of* — i.e.
+        only memories whose ``retained_at`` timestamp is on or before *as_of*.
+        Memories retained after *as_of* are excluded, giving a faithful snapshot
+        of the agent's knowledge at that instant.
+
+        Args:
+            query: The recall query to run against the historical snapshot.
+            bank_id: Bank to query.
+            as_of: UTC datetime.  Memories retained after this moment are hidden.
+            max_results: Maximum number of hits to return.
+            max_tokens: Optional token budget for the result set.
+            tags: Optional tag filter (applied on top of the time filter).
+
+        Returns:
+            :class:`~astrocyte.types.HistoryResult` with hits and the ``as_of``
+            timestamp embedded for traceability.
+
+        Raises:
+            ConfigError: If no pipeline is configured (no vector store to query).
+
+        Example::
+
+            from datetime import datetime, UTC
+            snapshot = await brain.history(
+                "What did we know about Alice?",
+                bank_id="user-alice",
+                as_of=datetime(2025, 1, 1, tzinfo=UTC),
+            )
+            for hit in snapshot.hits:
+                print(hit.retained_at, hit.text)
+        """
+        recall_result = await self.recall(
+            query,
+            bank_id=bank_id,
+            max_results=max_results,
+            max_tokens=max_tokens,
+            tags=tags,
+            as_of=as_of,
+        )
+        return HistoryResult(
+            hits=recall_result.hits,
+            total_available=recall_result.total_available,
+            truncated=recall_result.truncated,
+            as_of=as_of,
+            bank_id=bank_id,
+            trace=recall_result.trace,
+        )
+
+    async def audit(
+        self,
+        scope: str,
+        bank_id: str,
+        *,
+        max_memories: int = 50,
+        max_tokens: int | None = None,
+        tags: list[str] | None = None,
+    ) -> AuditResult:
+        """Identify knowledge gaps for a topic in a memory bank (M10 gap analysis).
+
+        Recalls up to *max_memories* relevant memories for *scope*, then calls
+        an LLM audit judge to assess what is missing or under-covered.  The
+        result includes a list of :class:`~astrocyte.types.GapItem` objects and
+        a ``coverage_score`` between 0 (empty bank) and 1 (comprehensive).
+
+        This is a diagnostic operation — it does not modify any stored memory.
+        It does consume LLM tokens proportional to the number of memories scanned.
+
+        Args:
+            scope: Natural-language description of the topic to audit
+                (e.g. ``"Alice's employment history"``).
+            bank_id: Bank to audit.
+            max_memories: Maximum number of memories to retrieve and pass to
+                the audit judge.  Defaults to ``50``.
+            max_tokens: Optional token budget applied to retrieved memories
+                before the judge call.
+            tags: Optional tag filter to narrow which memories are retrieved.
+
+        Returns:
+            :class:`~astrocyte.types.AuditResult` with gaps and coverage score.
+
+        Raises:
+            ConfigError: If no pipeline is configured.
+
+        Example::
+
+            result = await brain.audit(
+                "Alice's employment history",
+                bank_id="user-alice",
+            )
+            print(f"Coverage: {result.coverage_score:.0%}")
+            for gap in result.gaps:
+                print(f"[{gap.severity}] {gap.topic}: {gap.reason}")
+        """
+        from astrocyte.pipeline.audit import run_audit
+
+        recall_result = await self.recall(
+            scope,
+            bank_id=bank_id,
+            max_results=max_memories,
+            max_tokens=max_tokens,
+            tags=tags,
+        )
+
+        pipeline = self._pipeline
+        if pipeline is None:
+            from astrocyte.exceptions import ConfigError
+            raise ConfigError("No pipeline configured — call set_pipeline() first.")
+
+        return await run_audit(
+            scope=scope,
+            bank_id=bank_id,
+            memories=recall_result.hits,
+            llm_provider=pipeline.llm_provider,
+            trace=recall_result.trace,
+        )
 
     async def health(self) -> HealthStatus:
         """Check system health."""

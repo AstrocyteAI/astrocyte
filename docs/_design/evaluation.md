@@ -302,7 +302,7 @@ astrocyte eval --suite basic --format json > results.json
 astrocyte eval --suite basic --format table
 ```
 
-> **Note:** The CLI is specified but not yet implemented. Use the Python API or the GitHub Actions workflow for now.
+> **Note:** The `astrocyte eval` CLI above is specified but not yet implemented. Use `scripts/run_benchmarks.py` directly or the `make` targets described in section 7.3.
 
 ---
 
@@ -321,30 +321,58 @@ Astrocyte includes adapters for two academic memory benchmarks that test retriev
 | Open-domain | Broad knowledge questions | 96 |
 | Temporal | Time-aware reasoning (ordering, dates) | 841 |
 
-The dataset contains 10 conversations with ~200 sessions each and 1,986 total questions. The adapter (`astrocyte.eval.benchmarks.locomo`) retains each session as a conversational memory with `occurred_at` timestamps and dialogue-aware chunking, then evaluates recall + reflect against ground-truth answers using word overlap scoring.
+The dataset contains 10 conversations with ~200 sessions each and 1,986 total questions. The adapter (`astrocyte.eval.benchmarks.locomo`) retains each session as a conversational memory with `occurred_at` timestamps and dialogue-aware chunking.
+
+**Scoring conventions:** Two judges are supported:
+
+- **Stemmed token-F1** (`--canonical-judge` without a real LLM provider) — the original paper's metric. Reproducible and deterministic.
+- **LLM-judge** (`--canonical-judge` with a real provider) — binary yes/no per question, matching the convention used by Mem0 (ECAI 2025), Hindsight, and MemMachine. **Required for numbers directly comparable to published competitor scores.** Automatically used when `bench-full` runs with a real provider; falls back to stemmed F1 with the mock provider so `bench-smoke` stays API-key-free.
 
 ### 7.2 LongMemEval
 
-[LongMemEval](https://github.com/xiaowu0162/LongMemEval) tests memory extraction, reasoning, and temporal ordering from long conversation histories. The adapter (`astrocyte.eval.benchmarks.longmemeval`) loads conversation context, retains it, and evaluates against labeled QA pairs.
+[LongMemEval](https://github.com/xiaowu0162/LongMemEval) (ICLR 2025) tests five long-term memory abilities across 500 questions: information extraction, multi-session reasoning, temporal reasoning, knowledge updates, and abstention. The adapter (`astrocyte.eval.benchmarks.longmemeval`) retains full session haystacks (~1,500 unique sessions) and evaluates recall + reflect against labeled QA pairs.
+
+**Scoring:** `--canonical-judge` uses the paper's LLM-judge (one LLM call per question). Without the flag, the legacy `text_overlap_score > 0.3` scorer is used (faster, not comparable to published numbers).
 
 ### 7.3 Running benchmarks locally
 
-Benchmarks are run via `make` targets in `astrocyte-py/`:
+Datasets are fetched automatically on first run to `datasets/` (gitignored). Results are written to `benchmark-results/`. Requires Doppler for API keys on real-provider runs.
 
 ```bash
-make bench-smoke              # In-memory, no API key needed
-make bench-locomo-quick       # 50 questions, ~2-3 min (requires OPENAI_API_KEY)
-make bench-locomo             # Full dataset, ~30-60 min
-make bench-longmemeval        # LongMemEval
-make bench-compare            # Side-by-side: built-in OpenAI vs LiteLLM adapter
-make bench                    # All benchmarks
+# Smoke test — in-memory, no API key needed (~25s)
+make bench-smoke
+
+# Quick subsets (requires API key via Doppler)
+doppler run -- make bench-locomo-quick       # 50 questions, ~2-3 min
+doppler run -- make bench-longmemeval-quick  # 100 questions, ~30-60 min
+
+# Full canonical run — LME + LoCoMo in parallel, LLM-judge
+# Produces competitor-comparable numbers
+doppler run -- make bench-full
+
+# Resume after interruption (laptop close, kill signal, etc.)
+doppler run -- make bench-full RESUME=1
 ```
 
-Datasets are fetched automatically on first run to `datasets/` (gitignored). Results are written to `benchmark-results/`.
+**Key CLI flags** (`scripts/run_benchmarks.py`):
+
+| Flag | Effect |
+|---|---|
+| `--canonical-judge` | Use each benchmark's paper-specified judge. Required for competitor comparisons. |
+| `--multi-query` | Enable multi-query expansion in retrieval (extra LLM calls, improves multi-hop recall). |
+| `--max-sessions N` | Cap LongMemEval retain phase at N unique sessions (default: all ~1,500). |
+| `--resume` | Continue an interrupted run from `benchmark-results/checkpoints/`. |
+| `--max-questions N` | Limit questions per benchmark (for quick testing). |
+
+**Checkpoint / resume:** Every evaluated question is checkpointed to `benchmark-results/checkpoints/`. If a run is interrupted, `--resume` (or `RESUME=1` in `make bench-full`) replays already-scored questions from cache and skips already-retained sessions (with persistent stores). The checkpoint is deleted on successful completion.
+
+**Parallel execution:** When both `longmemeval` and `locomo` are requested (e.g. `bench-full`), they run concurrently via `asyncio.gather()`. Each uses its own bank ID so there is no state conflict.
 
 ### 7.4 CI integration
 
-The GitHub Actions workflow (`.github/workflows/benchmarks.yml`) runs benchmarks weekly and on manual dispatch. It clones datasets, runs the selected benchmarks with `--max-questions 200` by default, and uploads results as artifacts.
+The GitHub Actions workflow (`.github/workflows/benchmarks.yml`) runs benchmarks weekly and on manual dispatch. It uses `--canonical-judge` and compares results against `benchmarks/baselines-openai.json` (falling back to `baselines-test-provider.json` if no real-provider baseline exists yet). The `bench-smoke` job runs on every PR using the mock provider and `baselines-test-provider.json`.
+
+The regression gate (`scripts/check_benchmark_regression.py`) exits non-zero when any metric drops more than a configurable tolerance (default: 2pp overall, 3pp per category, 3pp retrieval metrics).
 
 ---
 
