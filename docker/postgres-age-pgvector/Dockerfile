@@ -25,7 +25,9 @@ RUN apt-get update \
        postgresql-16-pgvector \
     && rm -rf /var/lib/apt/lists/*
 
-# Pre-load AGE on every server start so sessions don't need LOAD 'age'.
-# Appended to the default postgresql.conf supplied by the base image.
+# Pre-load AGE by setting runtime config on first cluster initialization.
+# This is applied to the actual data directory config via ALTER SYSTEM.
 # Callers still need SET search_path = ag_catalog, ... per connection.
-RUN echo "shared_preload_libraries = 'age'" >> /usr/share/postgresql/16/postgresql.conf.sample
+RUN mkdir -p /docker-entrypoint-initdb.d \
+    && printf "%s\n" "ALTER SYSTEM SET shared_preload_libraries = 'age';" \
+       > /docker-entrypoint-initdb.d/10-age-preload.sql
