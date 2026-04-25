@@ -30,13 +30,19 @@ pipeline change, with a descriptive name.
 | Version | What landed | LoCoMo overall | LongMemEval overall |
 |---------|-------------|----------------|---------------------|
 | v0 | Pre-RRF-improvements baseline | 60.6% | 20.0% |
-| v1 | Temporal retrieval strategy   | 61.8% (+1.2pp) | 19.0% (-1pp) |
+| v1 | Temporal retrieval strategy | 61.8% (+1.2pp) | 19.0% (-1pp) |
 | v2 | Intent-aware recall + weighted RRF | 61.2% | 21.0% (+2pp) |
+| v3 | Session-level retain (was per-turn), InMemoryDocumentStore added for BM25 fusion | 55.0% | 26.0% (+5pp) |
+| v4 | Stratified sampling for max_questions, occurred_at timestamps from dataset dates | 87.5% (+32.5pp) | 80.0% (+54pp) |
+| v5 | recall_ndcg tracking, canonical LLM-judge for LoCoMo, regression gate wired into CI | 87.5% | 80.0% |
+| v6 | Stratified NDCG baseline, bench-smoke uses full 200q (no cap), --benchmarks filter in regression check | 60.5% | 36.0% |
+
+> **v4 → v6 note:** The large jump at v4 was a dataset loading fix (retaining full sessions rather than the first turn of each). v5–v6 scores reflect the mock provider with bag-of-words embeddings. Real-provider runs (pgvector + OpenAI embeddings) are materially higher — see `baselines-openai.json` once the first real run is promoted.
 
 Scores are with `MockLLMProvider` + bag-of-words embeddings so
 real-provider runs will differ (generally higher). Real-provider
-baselines should live in a parallel file (e.g. `baselines-openai.json`)
-once a CI job consistently runs against OpenAI.
+baselines live in `baselines-openai.json` (promoted after a full
+`doppler run -- make bench-full` run).
 
 ## When to add a snapshot
 
