@@ -99,10 +99,33 @@ class Entity:
 
 @dataclass
 class EntityLink:
-    source_entity_id: str
-    target_entity_id: str
-    link_type: str  # "works_at", "located_in", "related_to", …
+    """A typed relationship between two entities in the knowledge graph.
+
+    M11: fields renamed from ``source_entity_id``/``target_entity_id`` to
+    ``entity_a``/``entity_b`` to be direction-neutral; ``evidence``,
+    ``confidence``, and ``created_at`` added for entity resolution provenance.
+    """
+
+    entity_a: str
+    """ID of the first entity in the relationship."""
+
+    entity_b: str
+    """ID of the second entity in the relationship."""
+
+    link_type: str
+    """Relationship label — e.g. ``"alias_of"``, ``"co_occurs"``, ``"works_at"``."""
+
+    evidence: str = ""
+    """Verbatim quote from the source memory that justifies this link."""
+
+    confidence: float = 1.0
+    """0–1 confidence score. 1.0 = rule-derived; < 1.0 = LLM-confirmed."""
+
+    created_at: datetime | None = None
+    """UTC wall-clock time this link was created. None for legacy links."""
+
     metadata: Metadata | None = None
+    """Optional extra key-value pairs (preserved for backward compatibility)."""
 
 
 @dataclass

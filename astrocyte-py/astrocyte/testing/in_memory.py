@@ -208,6 +208,36 @@ class InMemoryGraphStore:
         results = [e for e in bank_entities.values() if query_lower in e.name.lower()]
         return results[:limit]
 
+    async def find_entity_candidates(
+        self,
+        name: str,
+        bank_id: str,
+        threshold: float = 0.8,
+        limit: int = 5,
+    ) -> list[Entity]:
+        """Return entities whose name contains *name* as a substring (case-insensitive).
+
+        The in-memory implementation uses substring overlap as a proxy for
+        similarity; production adapters use vector or edit-distance similarity.
+        The *threshold* parameter is accepted for interface compatibility but
+        ignored — substring match is all-or-nothing.
+        """
+        name_lower = name.lower()
+        bank_entities = self._entities.get(bank_id, {})
+        results = [
+            e for e in bank_entities.values()
+            if name_lower in e.name.lower() or e.name.lower() in name_lower
+        ]
+        return results[:limit]
+
+    async def store_entity_link(self, link: EntityLink, bank_id: str) -> str:
+        """Store a single resolved entity link (M11 entity resolution)."""
+        if bank_id not in self._links:
+            self._links[bank_id] = []
+        lid = uuid.uuid4().hex[:12]
+        self._links[bank_id].append(link)
+        return lid
+
     async def health(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="in-memory graph store")
 

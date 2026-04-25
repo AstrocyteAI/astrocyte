@@ -64,21 +64,24 @@ class Neo4jGraphStore:
                     WITH s, t
                     WHERE s IS NOT NULL AND t IS NOT NULL
                     MERGE (s)-[r:ENTITY_LINK {link_type: $lt}]->(t)
-                    SET r.metadata = $meta
+                    SET r.metadata = $meta, r.evidence = $evidence,
+                        r.confidence = $confidence
                     RETURN s IS NOT NULL AS source_found, t IS NOT NULL AS target_found
                     """,
-                    sid=link.source_entity_id,
-                    tid=link.target_entity_id,
+                    sid=link.entity_a,
+                    tid=link.entity_b,
                     bank=bank_id,
                     lt=link.link_type,
                     meta=dict(link.metadata or {}),
+                    evidence=link.evidence,
+                    confidence=link.confidence,
                 )
                 record = await result.single()
                 if record is None or not record["source_found"] or not record["target_found"]:
                     _logger.warning(
                         "store_links: entity not found for link %s -> %s in bank '%s'",
-                        link.source_entity_id,
-                        link.target_entity_id,
+                        link.entity_a,
+                        link.entity_b,
                         bank_id,
                     )
                 ids.append(f"lnk_{i}")

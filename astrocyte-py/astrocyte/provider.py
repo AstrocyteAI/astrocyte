@@ -211,6 +211,39 @@ class GraphStore(Protocol):
         """
         pass
 
+    async def find_entity_candidates(
+        self,
+        name: str,
+        bank_id: str,
+        threshold: float = 0.8,
+        limit: int = 5,
+    ) -> list[Entity]:
+        """Return entities whose name is similar to *name* above *threshold*.
+
+        Used by the entity resolution pipeline (M11) to find candidate
+        entities that may be aliases of a newly-extracted entity before
+        calling the LLM confirmation step.
+
+        A simple implementation may use case-insensitive substring matching;
+        production adapters should use vector similarity or full-text search.
+
+        Returns:
+            Candidate entities ordered by similarity descending.
+        """
+        pass
+
+    async def store_entity_link(self, link: EntityLink, bank_id: str) -> str:
+        """Persist a single typed relationship between two entities.
+
+        Unlike ``store_links`` (bulk, co-occurrence), this method is called
+        by the entity resolution pipeline for confirmed alias links that carry
+        ``evidence`` and ``confidence``.
+
+        Returns:
+            The stored link ID.
+        """
+        pass
+
     async def health(self) -> HealthStatus:
         """Check database connectivity."""
         pass

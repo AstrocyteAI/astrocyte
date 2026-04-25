@@ -68,8 +68,13 @@ class TestDataclassInstantiation:
         assert e.aliases is None
 
     def test_entity_link(self):
-        link = EntityLink(source_entity_id="e1", target_entity_id="e2", link_type="works_at")
+        link = EntityLink(entity_a="e1", entity_b="e2", link_type="works_at")
         assert link.link_type == "works_at"
+        assert link.entity_a == "e1"
+        assert link.entity_b == "e2"
+        assert link.evidence == ""
+        assert link.confidence == 1.0
+        assert link.created_at is None
 
     def test_graph_hit(self):
         g = GraphHit(memory_id="m1", text="test", connected_entities=["e1"], depth=1, score=0.5)

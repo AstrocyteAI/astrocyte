@@ -57,6 +57,7 @@ from astrocyte.types import (
 if TYPE_CHECKING:
     from astrocyte.mip.router import MipRouter
     from astrocyte.mip.schema import PipelineSpec
+    from astrocyte.pipeline.entity_resolution import EntityResolver
     from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore, WikiStore
 
 
@@ -170,6 +171,7 @@ class PipelineOrchestrator:
         enable_multi_query_expansion: bool = False,
         wiki_store: WikiStore | None = None,
         wiki_confidence_threshold: float = 0.7,
+        entity_resolver: EntityResolver | None = None,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -209,6 +211,9 @@ class PipelineOrchestrator:
         # parallel-retrieve / RRF pipeline.
         self.wiki_store: WikiStore | None = wiki_store
         self.wiki_confidence_threshold: float = wiki_confidence_threshold
+        # M11: entity resolution — alias-of links between entities.
+        # None means the stage is skipped (opt-in, no cost when disabled).
+        self.entity_resolver: EntityResolver | None = entity_resolver
 
     @property
     def tokens_used(self) -> int:
@@ -379,14 +384,30 @@ class PipelineOrchestrator:
             if len(entity_ids) > 1:
                 links = [
                     EntityLink(
-                        source_entity_id=entity_ids[i],
-                        target_entity_id=entity_ids[j],
+                        entity_a=entity_ids[i],
+                        entity_b=entity_ids[j],
                         link_type="co_occurs",
                     )
                     for i in range(len(entity_ids))
                     for j in range(i + 1, len(entity_ids))
                 ]
                 await self.graph_store.store_links(links, request.bank_id)
+
+            # 5b. Entity resolution (M11) — find alias-of links for newly stored entities.
+            # Opt-in: skipped when entity_resolver is None (default).
+            # Runs after store_entities so the new entities are queryable as candidates.
+            if self.entity_resolver is not None:
+                try:
+                    await self.entity_resolver.resolve(
+                        new_entities=entities,
+                        source_text=prepared.text,
+                        bank_id=request.bank_id,
+                        graph_store=self.graph_store,
+                        llm_provider=self.llm_provider,
+                    )
+                except Exception as exc:
+                    # Resolution failures must never abort a retain — degrade gracefully.
+                    _logger.warning("entity resolution failed during retain: %s", exc)
 
         # 6. Update dedup cache with stored embeddings
         for mem_id, emb in zip(memory_ids, embeddings):
