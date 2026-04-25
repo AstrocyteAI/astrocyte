@@ -156,6 +156,8 @@ class LoComoBenchmark:
         total_sessions = sum(len(c.sessions) for c in conversations)
         print(f"  [LoCoMo] Retaining {total_sessions} sessions from {len(conversations)} conversations...")
         retain_count = 0
+        date_parse_attempts = 0
+        unparseable_date_count = 0
         retain_phase_start = time.monotonic()
         for convo in conversations:
             for session in convo.sessions:
@@ -179,6 +181,7 @@ class LoComoBenchmark:
                 # Parse session date for temporal retrieval
                 occurred_at = None
                 if session.date_time:
+                    date_parse_attempts += 1
                     date_formats = ("%B %d, %Y", "%Y-%m-%d", "%m/%d/%Y", "%d %B %Y")
                     parsed = False
                     for fmt in date_formats:
@@ -189,6 +192,7 @@ class LoComoBenchmark:
                         except ValueError:
                             continue
                     if not parsed:
+                        unparseable_date_count += 1
                         logging.getLogger("astrocyte.eval").debug(
                             "LoCoMo: failed to parse session date_time '%s' for "
                             "conversation_id=%s session_id=%s; supported formats=%s",
@@ -227,6 +231,13 @@ class LoComoBenchmark:
                     )
 
         print(f"  [LoCoMo] Retain complete: {retain_count} sessions stored.")
+        if unparseable_date_count > 0:
+            logging.getLogger("astrocyte.eval").warning(
+                "LoCoMo: %d/%d session date_time values were unparseable during retain phase. "
+                "Consider extending supported date formats.",
+                unparseable_date_count,
+                date_parse_attempts,
+            )
 
         # ── Phase 2: Collect all questions ──
         all_questions: list[LoCoMoQuestion] = []
