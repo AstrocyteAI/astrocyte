@@ -249,6 +249,9 @@ class CompileEngine:
                                     tags=page.tags,
                                     memory_layer="compiled",
                                     fact_type="wiki",
+                                    # Store source_ids so the recall wiki-tier can surface
+                                    # provenance citations without a WikiStore lookup.
+                                    metadata={"_wiki_source_ids": ",".join(page.source_ids)},
                                 )
                             ]
                         )

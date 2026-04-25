@@ -218,6 +218,7 @@ class RecallTrace:
     tier_used: int | None = None  # Which retrieval tier resolved the query
     layer_distribution: dict[str, int] | None = None  # {"fact": 5, "observation": 3, "model": 1}
     cache_hit: bool | None = None  # Whether recall cache was used
+    wiki_tier_used: bool | None = None  # True when wiki tier satisfied the query (M8 W5)
 
 
 @dataclass
