@@ -34,4 +34,4 @@ Fused recall (semantic + graph + keyword) returns a single ranked list. Downstre
 ## Related
 
 - `docs/_design/built-in-pipeline.md` — retrieval strategies.
-- `docs/_design/product-roadmap-v1.md` — M7.
+- `docs/_design/product-roadmap.md` — M7.

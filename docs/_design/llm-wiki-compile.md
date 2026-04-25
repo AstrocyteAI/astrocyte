@@ -1,6 +1,6 @@
 # LLM wiki compile — compounding knowledge pages for Astrocyte
 
-**Status:** Draft design note (exploratory). Targeted for the **v0.9-era** feature wave (tagged on the `v0.8.x` train; see `product-roadmap-v1.md` § Release numbering).
+**Status:** Draft design note (exploratory). Targeted for the **v0.9-era** feature wave (tagged on the `v0.8.x` train; see `product-roadmap.md` § Release numbering).
 
 **Origin:** Karpathy's [LLM wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — "a structured, interlinked collection of markdown files that sits between you and the raw sources," with the LLM doing the bookkeeping (summaries, cross-references, lint) so humans only supply curation and direction.
 
@@ -206,7 +206,7 @@ If these don't land, compile stays opt-in experimental and we don't wire it into
 
 ## 12. Delivery plan (v0.9-era)
 
-**Release numbering note:** per `product-roadmap-v1.md`, the team ships this wave on `v0.8.x` tags, not a semver `v0.9.0` tag. When this doc says "v0.9-era" it means the feature wave, not the git tag.
+**Release numbering note:** per `product-roadmap.md`, the team ships this wave on `v0.8.x` tags, not a semver `v0.9.0` tag. When this doc says "v0.9-era" it means the feature wave, not the git tag.
 
 Rough sequencing (each numbered item is a candidate milestone for roadmap):
 

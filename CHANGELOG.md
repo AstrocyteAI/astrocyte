@@ -31,7 +31,7 @@ All M1–M7 milestones are complete. This release finalises the evaluation harne
 
 ## [0.8.0] — 2026-04-12 (M5 + M6 + M7 — production adapters, gateway, recall authority)
 
-This release bundles **M5** (production storage providers), **M6** (standalone HTTP gateway), and **M7** (structured recall authority) on one minor version line, per `docs/_design/product-roadmap-v1.md`. Subsequent connector and edge work ships as **v0.8.1**, **v0.8.2**, …
+This release bundles **M5** (production storage providers), **M6** (standalone HTTP gateway), and **M7** (structured recall authority) on one minor version line, per `docs/_design/product-roadmap.md`. Subsequent connector and edge work ships as **v0.8.1**, **v0.8.2**, …
 
 ### Changed
 

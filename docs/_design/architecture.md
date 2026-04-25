@@ -4,7 +4,7 @@ This document defines the layer boundaries, composition model, and relationship 
 
 **AuthN / AuthZ in one sentence:** proving **who** the caller is (**AuthN**) is the **application’s** job (IdP, tokens, API keys); the app maps credentials to an `AstrocyteContext` (at minimum a **principal** string; optionally structured **`actor`**, **`on_behalf_of`** (**OBO** — *on-behalf-of / delegated access*; standard in OAuth·identity; see [ADR-002](./adr/adr-002-identity-model.md)), **`tenant`**). Deciding **what** that identity may do on each memory bank (**AuthZ**) is enforced **in the framework** via configurable `access_grants` (including **OBO** permission intersection) and, in future, optional external policy engines — see section 4.6.
 
-For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the design principles these layers implement, see `design-principles.md`. For **C4 context/container diagrams**, deployment-model trade-offs, bounded-context map, and sequence diagrams aligned to product milestones, see `c4-deployment-domain.md` and `product-roadmap-v1.md`.
+For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the design principles these layers implement, see `design-principles.md`. For **C4 context/container diagrams**, deployment-model trade-offs, bounded-context map, and sequence diagrams aligned to product milestones, see `c4-deployment-domain.md` and `product-roadmap.md`.
 
 ---
 
@@ -12,7 +12,7 @@ For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the desig
 
 Astrocyte is the **third option** for enterprise knowledge management — structure that emerges from content automatically via LLMs, governed and queried by a deterministic harness. Not hand-encoded ontologies (Option 1 — accurate but unmaintainable). Not skip-the-structure RAG (Option 2 — searchable but unintelligent). LLMs propose structure; the harness verifies, persists, and queries it.
 
-From v1.1.x, Astrocyte passes four diagnostic tests that separate genuine third-option systems from sophisticated RAG: **gap analysis** (reason about absence), **entity resolution** (unify identities with evidence), **time travel** (as-of queries), and **sovereignty** (fully self-hosted). See `platform-positioning.md` for the framing and `product-roadmap-v1.md` §M9–M11 for the implementation.
+From v1.1.x, Astrocyte passes four diagnostic tests that separate genuine third-option systems from sophisticated RAG: **gap analysis** (reason about absence), **entity resolution** (unify identities with evidence), **time travel** (as-of queries), and **sovereignty** (fully self-hosted). See `platform-positioning.md` for the framing and `product-roadmap.md` §M9–M11 for the implementation.
 
 Astrocyte is an **open-source memory framework** that sits between AI agents and memory storage. It provides:
 
@@ -641,9 +641,9 @@ Beyond intelligence and governance, the framework provides capabilities that no 
 | AuthN wiring + external AuthZ | Map IdP claims to principals / `AstrocyteContext`; optional PDP/Casbin adapters beyond config grants | [ADR-002](./adr/adr-002-identity-model.md); see [access control setup](/end-user/access-control-setup/) |
 | Presentation / multimodal (non-LLM API) | How Tavus-class video, voice (e.g. ElevenLabs), and related APIs compose **beside** the LLM SPI | `presentation-layer-and-multimodal-services.md` |
 | Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for multi-provider gateways (LiteLLM / OpenRouter–class and similar) | `multimodal-llm-spi.md` |
-| **Time travel** | `retained_at` + `forgotten_at` soft-delete + `as_of: datetime` on `VectorFilters` + `brain.history()` — point-in-time queries and audit trails (v1.1.x, M9) | `product-roadmap-v1.md` §M9 |
-| **Gap analysis** | `brain.audit(scope, bank_id)` — reasons about absent topics, returns `AuditResult(gaps, coverage_score)` (v1.1.x, M10) | `product-roadmap-v1.md` §M10 |
-| **Entity resolution** | Retain-time `EntityResolver` — extracts entities, confirms aliases via LLM with evidence quotes, writes `EntityLink` to graph; `astrocyte-age` default graph adapter on same PostgreSQL instance as pgvector (v1.1.x, M11) | `product-roadmap-v1.md` §M11 |
+| **Time travel** | `retained_at` + `forgotten_at` soft-delete + `as_of: datetime` on `VectorFilters` + `brain.history()` — point-in-time queries and audit trails (v1.1.x, M9) | `product-roadmap.md` §M9 |
+| **Gap analysis** | `brain.audit(scope, bank_id)` — reasons about absent topics, returns `AuditResult(gaps, coverage_score)` (v1.1.x, M10) | `product-roadmap.md` §M10 |
+| **Entity resolution** | Retain-time `EntityResolver` — extracts entities, confirms aliases via LLM with evidence quotes, writes `EntityLink` to graph; `astrocyte-age` default graph adapter on same PostgreSQL instance as pgvector (v1.1.x, M11) | `product-roadmap.md` §M11 |
 
 ### 7.4 Pipeline innovations
 
