@@ -300,7 +300,7 @@ class LongMemEvalBenchmark:
                     )
                 )
                 ndcg_sum += cached.get("_ndcg", 0.0)
-                if qi % 10 == 0 or qi == total_questions:
+                if qi == 1 or qi % 10 == 0 or qi == total_questions:
                     acc_so_far = correct / qi
                     print(
                         f"  [LongMemEval] Question {qi}/{total_questions} — "
@@ -351,7 +351,7 @@ class LongMemEvalBenchmark:
                 correct += 1
                 category_correct[q.category] = category_correct.get(q.category, 0) + 1
 
-            if qi % 10 == 0 or qi == total_questions:
+            if qi == 1 or qi % 10 == 0 or qi == total_questions:
                 acc_so_far = correct / qi
                 elapsed_e = time.monotonic() - eval_phase_start
                 rate_e = qi / elapsed_e if elapsed_e > 0 else 0
