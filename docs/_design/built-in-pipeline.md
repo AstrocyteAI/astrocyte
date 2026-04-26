@@ -179,6 +179,11 @@ pipeline:
 
 ## 5. Consolidation pipeline
 
+Two complementary consolidation mechanisms: scheduled Tier 1 dedup, and opt-in
+post-retain observation consolidation.
+
+### 5a. Tier 1 consolidation (scheduled)
+
 Basic memory maintenance that runs on a schedule or on-demand.
 
 ```mermaid
@@ -188,11 +193,43 @@ flowchart TD
   D2 --> D3[3. Entity cleanup - if graph store]
 ```
 
-### Dedup scan implementation
-
 The dedup scan paginates through all vectors in a bank via `VectorStore.list_vectors()`, compares embeddings pairwise using cosine similarity, and deletes near-duplicates (keeping the first occurrence). The scan is safety-capped at 100k vectors to prevent runaway operations.
 
 If the VectorStore does not implement `list_vectors()`, consolidation is skipped with a warning.
+
+### 5b. Observation consolidation (opt-in, post-retain)
+
+Inspired by Hindsight (vectorize-io/hindsight). When enabled via
+`enable_observation_consolidation=True` on `PipelineOrchestrator`, a
+fire-and-forget async LLM pass runs after each `retain()` call:
+
+```mermaid
+flowchart LR
+  R[retain - stores raw chunks] -->|async task| C[ObservationConsolidator]
+  C --> F[Fetch top-K semantically-related existing observations]
+  F --> L[LLM: produce create/update/delete actions]
+  L --> A[Apply actions to vector store]
+```
+
+Each observation is stored as a `VectorItem` with `fact_type="observation"` and
+additional bookkeeping metadata:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `_obs_proof_count` | int | # raw memories supporting this observation |
+| `_obs_source_ids` | str (JSON) | IDs of contributing raw memories |
+| `_obs_confidence` | str (float) | LLM-assigned confidence 0–1 |
+| `_obs_updated_at` | str (ISO) | Last mutation timestamp |
+
+**Recall integration**: when enabled, the orchestrator runs an additional
+`observation` retrieval strategy (`search_similar` with `fact_types=["observation"]`)
+and injects results into the RRF fusion at `observation_weight=1.5` (configurable).
+The `basic_rerank` step adds a further `+0.025 × (proof_count - 1)` bonus per
+additional corroborating memory, capped at `+0.10`.
+
+**Cost**: one embedding + one LLM call per retain call, fire-and-forget (no
+latency added to retain response). At 500 tokens input / 50 tokens output,
+this is ~$0.003 per retain at gpt-4o-mini pricing.
 
 ### Configuration
 
@@ -203,6 +240,16 @@ pipeline:
     archive_unretrieved_after_days: 90  # null to disable
     entity_dedup_enabled: true
     schedule: "0 3 * * *"               # Cron: 3am daily (or null for manual only)
+```
+
+```python
+# Observation consolidation — constructor flag
+orchestrator = PipelineOrchestrator(
+    vector_store=vs,
+    llm_provider=llm,
+    enable_observation_consolidation=True,  # default: False
+    observation_weight=1.5,                 # RRF weight for observation strategy
+)
 ```
 
 ---
@@ -224,13 +271,13 @@ This table captures what users get at each tier, helping them make informed upgr
 | **Reranking** | Optional flashrank or LLM | Native cross-encoder, always-on |
 | **Reflect** | Single-pass LLM synthesis | Agentic multi-turn with tool use (lookup, recall, learn, expand) |
 | **Dispositions** | Basic prompt guidance (limited) | Native personality modulation (skepticism, literalism, empathy) |
-| **Consolidation** | Dedup + archive by age | Quality-based loss functions, observation formation, mental models |
+| **Consolidation** | Dedup + archive by age; **opt-in: observation consolidation** (post-retain LLM pass, create/update/delete) | Quality-based loss functions, full observation formation, mental models |
 | **Entity resolution** | LLM-extracted entities + exact-match dedup | Canonical resolution with co-occurrence tracking, alias management |
 | **Scale** | Single process | Multi-tenant, distributed, production-grade |
 | **Temporal links** | Not supported | Temporal proximity links between memories |
-| **Observations** | Not supported | Synthesized knowledge consolidated from raw facts |
+| **Observations** | **Opt-in**: `enable_observation_consolidation=True` — fire-and-forget LLM pass synthesizes deduplicated observations with `proof_count` tracking; boosted in recall via weighted RRF (weight=1.5) and reranking | Synthesized knowledge consolidated from raw facts |
 
-The built-in pipeline is **good enough** to build real products. Mystique is **materially better** in every dimension - particularly reflect (agentic vs single-pass), fusion (tuned vs standard), and consolidation (observation formation vs simple dedup).
+The built-in pipeline is **good enough** to build real products. Mystique is **materially better** in every dimension - particularly reflect (agentic vs single-pass), fusion (tuned vs standard), and consolidation (full observation layer vs opt-in post-retain pass).
 
 ---
 

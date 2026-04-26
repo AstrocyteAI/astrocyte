@@ -174,6 +174,8 @@ class PipelineOrchestrator:
         wiki_store: WikiStore | None = None,
         wiki_confidence_threshold: float = 0.7,
         entity_resolver: EntityResolver | None = None,
+        enable_observation_consolidation: bool = False,
+        observation_weight: float = 1.5,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -220,6 +222,19 @@ class PipelineOrchestrator:
         # M11: entity resolution — alias-of links between entities.
         # None means the stage is skipped (opt-in, no cost when disabled).
         self.entity_resolver: EntityResolver | None = entity_resolver
+        # Observation consolidation — post-retain background LLM pass that
+        # maintains a deduplicated observations layer.  Disabled by default
+        # (opt-in).  When enabled, recall also runs a separate "observation"
+        # strategy that searches the observations layer and fuses results into
+        # the main RRF pipeline with a configurable weight boost.
+        self.enable_observation_consolidation: bool = enable_observation_consolidation
+        self.observation_weight: float = observation_weight
+        if enable_observation_consolidation:
+            from astrocyte.pipeline.observation import ObservationConsolidator
+
+            self._observation_consolidator: ObservationConsolidator | None = ObservationConsolidator()
+        else:
+            self._observation_consolidator = None
 
     @property
     def tokens_used(self) -> int:
@@ -419,6 +434,38 @@ class PipelineOrchestrator:
         for mem_id, emb in zip(memory_ids, embeddings):
             self._dedup.add(request.bank_id, mem_id, emb)
 
+        # 7. Observation consolidation (fire-and-forget async task).
+        # Runs after the retain response is returned so it never adds latency
+        # to the caller.  A failure here must never surface to the caller —
+        # the raw memories are already stored and the consolidation is
+        # best-effort.  The representative vector is the first chunk's
+        # embedding, which is sufficient for the observation similarity search.
+        if self._observation_consolidator is not None and memory_ids and chunks:
+            representative_vec = embeddings[0]
+            consolidator = self._observation_consolidator
+            bank_id = request.bank_id
+            first_chunk = chunks[0]
+            all_ids = list(memory_ids)
+            vs = self.vector_store
+            llm = self.llm_provider
+
+            async def _run_consolidation() -> None:
+                try:
+                    await consolidator.consolidate(
+                        new_memory_text=first_chunk,
+                        new_memory_ids=all_ids,
+                        bank_id=bank_id,
+                        vector_store=vs,
+                        llm_provider=llm,
+                        query_vector=representative_vec,
+                    )
+                except Exception as exc:
+                    _logger.warning(
+                        "Observation consolidation task failed for bank %s: %s", bank_id, exc
+                    )
+
+            asyncio.create_task(_run_consolidation())
+
         return RetainResult(
             stored=True,
             memory_id=memory_ids[0] if memory_ids else None,
@@ -503,6 +550,21 @@ class PipelineOrchestrator:
             hyde_vector=hyde_vec,
         )
 
+        # 3b. Observation strategy — search the observations layer separately.
+        # Observations are distilled, multi-evidence facts that should rank
+        # above raw memories in most recall scenarios.  We inject them into
+        # strategy_results here so weighted_rrf_fusion can apply the
+        # ``observation_weight`` boost before the main fusion pass.  Only
+        # runs when observation consolidation is enabled AND the caller has
+        # not restricted fact_types (if they asked for fact_types=["world"]
+        # we respect that and skip observation injection).
+        if self._observation_consolidator is not None and not request.fact_types:
+            obs_results = await self._retrieve_observations(
+                query_vector, request.bank_id, overfetch_limit, request.as_of
+            )
+            if obs_results:
+                strategy_results["observation"] = obs_results
+
         # 4. RRF fusion (local strategies + optional federated / manual external_context)
         # When intent-aware recall is enabled, weight each strategy's RRF
         # contribution by a bias derived from the query's classified
@@ -518,9 +580,14 @@ class PipelineOrchestrator:
         for strategy, results in strategy_results.items():
             if not results:
                 continue
-            # Map strategy name → weight. External/proxy results use
-            # semantic weight (they're typically semantic fusions upstream).
-            weight = getattr(intent_weights, strategy, 1.0)
+            # Observation strategy always uses the configured observation_weight;
+            # other strategies use intent-derived weights.
+            if strategy == "observation":
+                weight = self.observation_weight
+            else:
+                # Map strategy name → weight. External/proxy results use
+                # semantic weight (they're typically semantic fusions upstream).
+                weight = getattr(intent_weights, strategy, 1.0)
             weighted_inputs.append((results, weight))
         if request.external_context:
             weighted_inputs.append(
@@ -636,6 +703,48 @@ class PipelineOrchestrator:
                 fusion_method="rrf",
             ),
         )
+
+    async def _retrieve_observations(
+        self,
+        query_vector: list[float],
+        bank_id: str,
+        limit: int,
+        as_of: Any | None,
+    ) -> list[Any]:
+        """Retrieve observation-layer hits for RRF fusion.
+
+        Runs ``search_similar`` with ``fact_types=["observation"]`` so only
+        consolidated observations are returned.  Converts ``VectorHit``
+        objects to ``ScoredItem`` to match the format expected by the
+        weighted RRF fusion step.
+        """
+        from astrocyte.pipeline.fusion import ScoredItem
+
+        obs_filters = VectorFilters(
+            bank_id=bank_id,
+            fact_types=["observation"],
+            as_of=as_of,
+        )
+        try:
+            hits = await self.vector_store.search_similar(
+                query_vector, bank_id, limit=limit, filters=obs_filters
+            )
+        except Exception as exc:
+            _logger.warning("Observation retrieval failed for bank %s: %s", bank_id, exc)
+            return []
+
+        return [
+            ScoredItem(
+                id=h.id,
+                text=h.text,
+                score=h.score,
+                fact_type=h.fact_type,
+                metadata=h.metadata,
+                tags=h.tags,
+                retained_at=getattr(h, "retained_at", None),
+            )
+            for h in hits
+        ]
 
     async def _try_wiki_tier(
         self,

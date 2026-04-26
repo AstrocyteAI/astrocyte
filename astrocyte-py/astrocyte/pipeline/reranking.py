@@ -39,6 +39,11 @@ COMMON_QUESTION_WORDS: set[str] = {
 
 KEYWORD_OVERLAP_WEIGHT = 0.05
 PROPER_NOUN_WEIGHT = 0.10
+# Observation proof-count boost: each additional confirming memory adds this
+# to the score, capped at OBSERVATION_PROOF_CAP × weight.  A 5-evidence
+# observation gets a +0.10 bonus over a single-evidence raw memory.
+OBSERVATION_PROOF_WEIGHT = 0.025
+OBSERVATION_PROOF_CAP = 4  # clamp at 4 additional proofs
 
 # Characters allowed inside proper names (apostrophes and hyphens).
 # Straight apostrophe, left/right single quotation marks, and hyphen.
@@ -135,7 +140,8 @@ def basic_rerank(
                 text=item.text,
                 score=item.score
                 + len(query_terms & item_terms) * keyword_weight
-                + len(proper_nouns & item_terms) * proper_noun_weight,
+                + len(proper_nouns & item_terms) * proper_noun_weight
+                + _observation_proof_boost(item),
                 fact_type=item.fact_type,
                 metadata=item.metadata,
                 tags=item.tags,
@@ -147,3 +153,21 @@ def basic_rerank(
         key=lambda x: x.score,
         reverse=True,
     )
+
+
+def _observation_proof_boost(item: ScoredItem) -> float:
+    """Additive boost for observation items proportional to their proof count.
+
+    A single-evidence observation (``_obs_proof_count=1``) gets +0.0.
+    Each additional corroborating memory adds ``OBSERVATION_PROOF_WEIGHT``,
+    capped at ``OBSERVATION_PROOF_CAP`` extra proofs (+0.10 total).
+    Raw memories (no ``_obs_proof_count``) are unaffected.
+    """
+    if item.fact_type != "observation" or not item.metadata:
+        return 0.0
+    proof = item.metadata.get("_obs_proof_count", 1)
+    try:
+        extra = max(0, int(proof) - 1)
+    except (TypeError, ValueError):
+        return 0.0
+    return min(extra, OBSERVATION_PROOF_CAP) * OBSERVATION_PROOF_WEIGHT
