@@ -644,6 +644,7 @@ class AgeGraphStore:
     async def health(self) -> HealthStatus:
         """Check AGE connectivity by querying the graph catalog."""
         try:
+            await self._ensure_schema()
             pool = await self._ensure_pool()
             conn = await pool.getconn()
             try:

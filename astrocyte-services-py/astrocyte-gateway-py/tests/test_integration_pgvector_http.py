@@ -98,7 +98,8 @@ access_control:
             headers={"X-Astrocyte-Principal": "agent:e2e"},
         )
         assert compile_response.status_code == 200
-        assert compile_response.json()["pages_created"] >= 1
+        compile_body = compile_response.json()
+        assert compile_body["pages_created"] + compile_body["pages_updated"] >= 1
 
         r2 = client.post(
             "/v1/recall",

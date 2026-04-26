@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+from types import SimpleNamespace
 
 import pytest
+from astrocyte_gateway.app import _warm_reference_stack_providers
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.tasks import start_gateway_task_worker
 from astrocyte_gateway.wiring import build_tier1_pipeline, resolve_wiki_store
@@ -181,3 +183,23 @@ async def test_gateway_starts_pgqueuer_task_worker_with_in_memory_backend(
     assert isinstance(worker.queue, PgQueuerMemoryTaskQueue)
     assert worker.worker_task is None
     await worker.stop()
+
+
+@pytest.mark.anyio
+async def test_gateway_startup_warms_graph_provider() -> None:
+    class WarmableGraphStore:
+        def __init__(self) -> None:
+            self.warmed = False
+
+        async def health(self):
+            self.warmed = True
+
+    graph_store = WarmableGraphStore()
+    brain = SimpleNamespace(
+        _pipeline=SimpleNamespace(graph_store=graph_store),
+        _wiki_store=None,
+    )
+
+    await _warm_reference_stack_providers(brain)
+
+    assert graph_store.warmed is True

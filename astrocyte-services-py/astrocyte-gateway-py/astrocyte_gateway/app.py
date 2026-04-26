@@ -107,6 +107,17 @@ def require_admin_if_configured(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token")
 
 
+async def _warm_reference_stack_providers(brain: Astrocyte) -> None:
+    """Warm optional Tier 1 providers so bootstrap DDL runs during startup."""
+
+    pipeline = getattr(brain, "_pipeline", None)
+    graph_store = getattr(pipeline, "graph_store", None) if pipeline is not None else None
+    for provider in (graph_store, getattr(brain, "_wiki_store", None)):
+        health = getattr(provider, "health", None)
+        if health is not None:
+            await health()
+
+
 def create_app(brain: Astrocyte | None = None) -> FastAPI:
     """Build the FastAPI app. Pass a pre-built ``brain`` for tests and overhead benchmarks."""
     if brain is None:
@@ -121,6 +132,7 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         task_worker = await start_gateway_task_worker(brain)
         await brain.start_background_tasks()
+        await _warm_reference_stack_providers(brain)
         await ingest_supervisor.start()
         try:
             yield
