@@ -24,6 +24,24 @@ vector_store_config:
 
 graph_store: age
 
+wiki_store: pgvector
+wiki_store_config:
+  bootstrap_schema: true
+
+wiki_compile:
+  enabled: true
+  auto_start: true
+  size_threshold: 50
+
+entity_resolution:
+  enabled: true
+
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  install_on_start: true
+  auto_start_worker: true
+
 # -- LLM & Embedding --
 # The OpenAI provider handles both completions and embeddings.
 # Requires OPENAI_API_KEY env var (or pass api_key below).

@@ -105,7 +105,7 @@ bench-locomo: fetch-locomo bench-db-start
 		$(if $(RESUME),--resume,)
 
 # Quick LoCoMo subset (50 questions, ~2-3 min)
-bench-locomo-quick: fetch-locomo
+bench-locomo-quick: fetch-locomo bench-db-start
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
@@ -124,7 +124,7 @@ bench-longmemeval: fetch-longmemeval bench-db-start
 		$(if $(RESUME),--resume,)
 
 # Quick LongMemEval subset (100 questions, stratified across all categories, ~30-60 min)
-bench-longmemeval-quick: fetch-longmemeval
+bench-longmemeval-quick: fetch-longmemeval bench-db-start
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval \
@@ -168,13 +168,13 @@ bench-compare: fetch-locomo
 	@echo "Results: $(RESULTS_DIR)/openai/latest.json vs $(RESULTS_DIR)/litellm/latest.json"
 
 # Built-in eval suites (basic + accuracy)
-bench-builtin:
+bench-builtin: bench-db-start
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks builtin
 
 # All benchmarks
-bench: fetch-datasets
+bench: fetch-datasets bench-db-start
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks builtin longmemeval locomo \

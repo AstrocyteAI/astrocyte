@@ -1,6 +1,6 @@
 # astrocyte-pgvector
 
-**PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)** implementation of the Astrocyte **`VectorStore`** SPI ([`provider-spi.md`](../../docs/_plugins/provider-spi.md)).
+**PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)** implementation of the Astrocyte **`VectorStore`** and **`WikiStore`** SPIs ([`provider-spi.md`](../../docs/_plugins/provider-spi.md)).
 
 ## Install
 
@@ -12,7 +12,10 @@ uv sync
 # or: pip install -e ../../astrocyte-py && pip install -e .
 ```
 
-Entry point name: **`pgvector`** (group `astrocyte.vector_stores`).
+Entry point names:
+
+- **`pgvector`** (group `astrocyte.vector_stores`) for raw/compiled memory vectors.
+- **`pgvector`** (group `astrocyte.wiki_stores`) for durable wiki pages/revisions/provenance.
 
 ## PostgreSQL with Docker
 
@@ -54,6 +57,8 @@ After migrations are applied, set **`bootstrap_schema: false`** in `vector_store
 
 **Custom `table_name`:** The shipped SQL targets **`astrocyte_vectors`**. If you use another table name, copy and adjust the migration files accordingly.
 
+The later migrations add the Hindsight-comparable Postgres substrate around vectors: bank metadata and access grants, lifecycle columns (`retained_at`, `forgotten_at`), durable wiki pages/revisions/provenance, canonical entity/link tables, and normalized temporal facts.
+
 ## Configuration
 
 | Constructor / YAML `vector_store_config` | Meaning |
@@ -79,6 +84,10 @@ llm_provider: mock
 vector_store_config:
   dsn: postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte
   embedding_dimensions: 128
+  bootstrap_schema: false
+wiki_store: pgvector
+wiki_store_config:
+  dsn: postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte
   bootstrap_schema: false
 ```
 

@@ -107,3 +107,38 @@ def test_serialize_result_persists_per_question_and_failure_report() -> None:
             "_evidence_id_hit": True,
         }
     ]
+
+
+def test_build_pipeline_brain_wires_wiki_and_entity_resolution(tmp_path: Path) -> None:
+    config_path = tmp_path / "bench.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "provider_tier: storage",
+                "vector_store: in_memory",
+                "graph_store: in_memory",
+                "wiki_store: in_memory",
+                "llm_provider: mock",
+                "wiki_compile:",
+                "  enabled: true",
+                "  auto_start: true",
+                "entity_resolution:",
+                "  enabled: true",
+                "async_tasks:",
+                "  enabled: true",
+                "  backend: pgqueuer_in_memory",
+                "  install_on_start: true",
+                "  auto_start_worker: false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    brain = _RUNNER._build_pipeline_brain(str(config_path))
+    pipeline = getattr(brain, "_pipeline")
+
+    assert getattr(brain, "_wiki_store") is not None
+    assert pipeline.wiki_store is getattr(brain, "_wiki_store")
+    assert pipeline.entity_resolver is not None
+    assert getattr(brain, "_compile_queue") is not None
+    assert brain.config.async_tasks.enabled is True

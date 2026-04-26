@@ -91,7 +91,7 @@ def resolve_wiki_store(config: AstrocyteConfig) -> WikiStore | None:
     return _instantiate(cls, _cfg_dict(config.wiki_store_config), f"wiki_store {name!r}")
 
 
-def build_tier1_pipeline(config: AstrocyteConfig) -> PipelineOrchestrator:
+def build_tier1_pipeline(config: AstrocyteConfig, *, wiki_store: WikiStore | None = None) -> PipelineOrchestrator:
     """Construct `PipelineOrchestrator` from config using registered entry points or import paths."""
     if config.provider_tier != "storage":
         raise ConfigError("build_tier1_pipeline requires provider_tier == 'storage'")
@@ -115,5 +115,6 @@ def build_tier1_pipeline(config: AstrocyteConfig) -> PipelineOrchestrator:
         llm_provider=llm,
         graph_store=graph_store,
         document_store=document_store,
+        wiki_store=wiki_store,
         entity_resolver=entity_resolver,
     )

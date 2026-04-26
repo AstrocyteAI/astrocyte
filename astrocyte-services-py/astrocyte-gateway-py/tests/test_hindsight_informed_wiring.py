@@ -46,6 +46,20 @@ def test_gateway_resolves_wiki_store_provider() -> None:
     assert wiki_store is not None
 
 
+def test_build_tier1_pipeline_receives_configured_wiki_store() -> None:
+    config = AstrocyteConfig(
+        provider_tier="storage",
+        vector_store="in_memory",
+        wiki_store="in_memory",
+        llm_provider="mock",
+    )
+    wiki_store = resolve_wiki_store(config)
+
+    pipeline = build_tier1_pipeline(config, wiki_store=wiki_store)
+
+    assert pipeline.wiki_store is wiki_store
+
+
 def test_build_astrocyte_attaches_compile_queue_when_auto_start_enabled(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -89,6 +103,7 @@ def test_build_astrocyte_parses_async_task_worker_config(
                 "async_tasks:",
                 "  enabled: true",
                 "  backend: pgqueuer_in_memory",
+                "  install_on_start: true",
                 "  auto_start_worker: false",
                 "  batch_size: 4",
             ]
@@ -101,7 +116,36 @@ def test_build_astrocyte_parses_async_task_worker_config(
 
     assert brain.config.async_tasks.enabled is True
     assert brain.config.async_tasks.backend == "pgqueuer_in_memory"
+    assert brain.config.async_tasks.install_on_start is True
     assert brain.config.async_tasks.batch_size == 4
+
+
+def test_build_astrocyte_parses_full_reference_stack_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ASTROCYTE_CONFIG_PATH", raising=False)
+    monkeypatch.setenv("ASTROCYTE_VECTOR_STORE", "in_memory")
+    monkeypatch.setenv("ASTROCYTE_GRAPH_STORE", "in_memory")
+    monkeypatch.setenv("ASTROCYTE_WIKI_STORE", "in_memory")
+    monkeypatch.setenv("ASTROCYTE_WIKI_COMPILE_ENABLED", "true")
+    monkeypatch.setenv("ASTROCYTE_WIKI_COMPILE_AUTO_START", "true")
+    monkeypatch.setenv("ASTROCYTE_ENTITY_RESOLUTION_ENABLED", "true")
+    monkeypatch.setenv("ASTROCYTE_ASYNC_TASKS_ENABLED", "true")
+    monkeypatch.setenv("ASTROCYTE_ASYNC_TASKS_BACKEND", "pgqueuer_in_memory")
+    monkeypatch.setenv("ASTROCYTE_ASYNC_TASKS_INSTALL_ON_START", "true")
+    monkeypatch.setenv("ASTROCYTE_ASYNC_TASKS_AUTO_START_WORKER", "false")
+
+    brain = build_astrocyte()
+
+    assert brain.config.wiki_compile.enabled is True
+    assert brain.config.wiki_compile.auto_start is True
+    assert brain.config.entity_resolution.enabled is True
+    assert brain.config.async_tasks.enabled is True
+    assert brain.config.async_tasks.backend == "pgqueuer_in_memory"
+    assert brain.config.async_tasks.install_on_start is True
+    assert brain.config.async_tasks.auto_start_worker is False
+    assert getattr(brain, "_wiki_store") is not None
+    assert getattr(brain, "_pipeline").wiki_store is getattr(brain, "_wiki_store")
 
 
 @pytest.mark.anyio

@@ -91,6 +91,7 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
     from astrocyte._astrocyte import Astrocyte
     from astrocyte._discovery import resolve_provider
     from astrocyte.config import load_config
+    from astrocyte.pipeline.entity_resolution import EntityResolver
     from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 
     config = load_config(config_path)
@@ -109,6 +110,11 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
     if config.graph_store:
         gs_cls = resolve_provider(config.graph_store, "graph_stores")
         graph_store = gs_cls(**(config.graph_store_config or {}))
+
+    wiki_store = None
+    if config.wiki_store:
+        ws_cls = resolve_provider(config.wiki_store, "wiki_stores")
+        wiki_store = ws_cls(**(config.wiki_store_config or {}))
 
     document_store = None
     if config.document_store:
@@ -132,17 +138,116 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
 
         llm_provider = MockLLMProvider()
 
+    entity_resolver = None
+    if config.entity_resolution.enabled:
+        if graph_store is None:
+            raise ValueError("entity_resolution.enabled requires graph_store in benchmark config")
+        entity_resolver = EntityResolver(
+            similarity_threshold=config.entity_resolution.similarity_threshold,
+            confirmation_threshold=config.entity_resolution.confirmation_threshold,
+            max_candidates_per_entity=config.entity_resolution.max_candidates_per_entity,
+        )
+
     pipeline = PipelineOrchestrator(
         vector_store=vector_store,
         llm_provider=llm_provider,
         graph_store=graph_store,
         document_store=document_store,
+        wiki_store=wiki_store,
+        entity_resolver=entity_resolver,
         enable_multi_query_expansion=enable_multi_query_expansion,
         final_rerank_mode=os.environ.get("ASTROCYTE_BENCHMARK_RERANK_MODE", "llm_pairwise"),
         final_rerank_keep_n=8,
     )
     brain.set_pipeline(pipeline)
+    if wiki_store is not None:
+        brain.set_wiki_store(wiki_store)
+        if config.wiki_compile.auto_start:
+            from astrocyte.pipeline.compile import CompileEngine
+            from astrocyte.pipeline.compile_trigger import CompileQueue, CompileTriggerConfig
+
+            brain.set_compile_queue(
+                CompileQueue(
+                    CompileEngine(vector_store, llm_provider, wiki_store),
+                    CompileTriggerConfig(
+                        size_threshold=config.wiki_compile.size_threshold,
+                        staleness_days=config.wiki_compile.staleness_days,
+                        staleness_min_memories=config.wiki_compile.staleness_min_memories,
+                    ),
+                    max_queue_size=config.wiki_compile.max_queue_size,
+                )
+            )
     return brain
+
+
+async def _start_benchmark_task_worker(brain):
+    """Start the configured PgQueuer worker for benchmark preprocessing tasks."""
+
+    config = brain.config.async_tasks
+    if not config.enabled:
+        return None
+    from astrocyte.pipeline.pgqueuer_tasks import PgQueuerMemoryTaskQueue
+
+    if config.backend == "pgqueuer_in_memory":
+        connection = None
+
+        queue = PgQueuerMemoryTaskQueue.in_memory()
+    elif config.backend == "pgqueuer":
+        import psycopg
+
+        dsn = config.dsn or os.environ.get("ASTROCYTE_TASKS_DSN") or os.environ.get("DATABASE_URL")
+        if not dsn:
+            raise ValueError("async_tasks.backend=pgqueuer requires async_tasks.dsn, ASTROCYTE_TASKS_DSN, or DATABASE_URL")
+        connection = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
+        queue = PgQueuerMemoryTaskQueue.from_psycopg_connection(connection)
+    else:
+        raise ValueError(f"Unsupported benchmark async_tasks backend: {config.backend}")
+
+    if config.install_on_start:
+        await queue.install()
+
+    from astrocyte.pipeline.compile import CompileEngine
+    from astrocyte.pipeline.lint import LintEngine
+    from astrocyte.pipeline.tasks import MemoryTaskDispatcher, TaskHandlerContext
+
+    pipeline = getattr(brain, "_pipeline", None)
+    wiki_store = getattr(brain, "_wiki_store", None)
+    dispatcher = MemoryTaskDispatcher(
+        TaskHandlerContext(
+            vector_store=pipeline.vector_store,
+            llm_provider=pipeline.llm_provider,
+            wiki_store=wiki_store,
+            graph_store=getattr(pipeline, "graph_store", None),
+            compile_engine=CompileEngine(pipeline.vector_store, pipeline.llm_provider, wiki_store) if wiki_store else None,
+            lint_engine=LintEngine(pipeline.vector_store, wiki_store, pipeline.llm_provider) if wiki_store else None,
+        )
+    )
+    queue.register_dispatcher(dispatcher)
+
+    worker_task = None
+    if config.auto_start_worker:
+        worker_task = asyncio.create_task(
+            queue.run_continuous(batch_size=config.batch_size),
+            name="astrocyte.benchmark_pgqueuer_worker",
+        )
+    return {"queue": queue, "connection": connection, "worker_task": worker_task}
+
+
+async def _stop_benchmark_task_worker(runtime: dict | None) -> None:
+    if runtime is None:
+        return
+    queue = runtime["queue"]
+    await queue.shutdown()
+    worker_task = runtime.get("worker_task")
+    if worker_task is not None:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+    connection = runtime.get("connection")
+    if connection is not None:
+        await connection.close()
 
 
 def _serialize_result(
@@ -812,6 +917,9 @@ async def main() -> None:
     else:
         brain = _build_pipeline_brain(args.config, enable_multi_query_expansion=args.multi_query)
 
+    benchmark_task_worker = await _start_benchmark_task_worker(brain)
+    await brain.start_background_tasks()
+
     # Run benchmarks
     all_results: dict = {}
     used_real_data: dict[str, bool] = {}
@@ -924,6 +1032,9 @@ async def main() -> None:
     latest = output_dir / "latest.json"
     with open(latest, "w") as f:
         json.dump(all_results, f, indent=2, default=str)
+
+    await brain.stop_background_tasks()
+    await _stop_benchmark_task_worker(benchmark_task_worker)
 
     # Exit non-zero if a real dataset benchmark had 0% accuracy (likely broken).
     # Only check benchmarks that actually loaded real data (synthetic tests may

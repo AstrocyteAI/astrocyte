@@ -44,13 +44,13 @@ Track completion in your issue tracker or PRs as needed.
 ### 3.1 Memory backends and durability (not in-memory)
 
 - [ ] **Tier 1 adapters:** Use production **VectorStore** (and optional GraphStore / DocumentStore) per `provider-spi.md`. Avoid in-process-only stores for durable memory.
-- [ ] **PostgreSQL + pgvector (example):** Optional **[`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md)**; **[`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml)** under **`astrocyte-services-py/`** can run API + Postgres. Wire **`pgvector`** via config and the same **`astrocyte_gateway/wiring.py`** path as other Tier 1 stores.
+- [ ] **PostgreSQL reference stack:** Optional **[`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md)** plus **`astrocyte-age`** and PgQueuer; **[`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml)** under **`astrocyte-services-py/`** can run API + Postgres. The default reference stack wires `vector_store: pgvector`, `graph_store: age`, `wiki_store: pgvector`, wiki compile, entity resolution, normalized temporal facts, and PgQueuer-backed async memory tasks.
 - [ ] **Compose networking & DSN:** The API container must use a DSN with the Postgres **service hostname** (`postgres`), not a host-only URL such as `127.0.0.1:5433`. Compose sets **`DATABASE_URL`** from **`ASTROCYTE_REST_DATABASE_URL`** or builds `...@postgres:5432/...` from **`POSTGRES_*`**. For **host-side** `migrate.sh`, use **`MIGRATE_DATABASE_URL`** (or a one-off shell `DATABASE_URL`), not the in-cluster API DSN—see [`astrocyte-services-py/.env.example`](../astrocyte-services-py/.env.example).
 - [ ] **Tier 2 (optional):** If using a memory engine provider, wire **EngineProvider** and validate **capability negotiation** (`reflect`, `forget`, etc.).
 - [ ] **LLM / embeddings:** Use real **LLMProvider** (and embedding path) appropriate to latency and cost.
 - [ ] **Configuration:** Load provider entry points from **config** (YAML/env) with validation; fail fast on missing required settings in prod.
 - [ ] **Data durability:** Define **backup, restore, and RPO/RTO** for each store; test restore drills.
-- [ ] **Migrations:** If stores require schema migrations, own a **migration** process (job or init container) and versioning. For **`astrocyte-pgvector`**, use the shipped **SQL** files and **`psql`** runner ([`migrate.sh`](../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh)); set **`bootstrap_schema: false`** in `vector_store_config` after applying migrations.
+- [ ] **Migrations:** If stores require schema migrations, own a **migration** process (job or init container) and versioning. For the Postgres reference stack, use the shipped **SQL** files and **`psql`** runner ([`migrate.sh`](../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh)); set **`bootstrap_schema: false`** in `vector_store_config` and `wiki_store_config` after applying migrations.
 
 ### 3.2 Authentication (AuthN) - do not trust client-supplied principals
 
@@ -166,7 +166,7 @@ This repository ships an optional **`astrocyte-gateway-py`** HTTP service that e
 
 ### 4.2 Current behavior (non-production defaults)
 
-- **Tier 1 pipeline** resolved from config: defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocyte-py`). Optional YAML / env can select other registered providers or **`module:Class`** paths (for example **`pgvector`** after installing [`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md)). Data is **not** durable when using the built-in in-memory stack.
+- **Tier 1 pipeline** resolved from config: library/dev defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocyte-py`). The service Compose/runbook defaults use the full Postgres reference stack: `pgvector`, `age`, `wiki_store: pgvector`, and PgQueuer. Data is **not** durable when using the built-in in-memory stack.
 - **Access control** defaults to **off** when no config file is loaded; when you enable **`access_control`** in YAML, **`access_grants`** and **`banks.*.access`** are loaded from config and applied via **`set_access_grants`** (see §5). You still need a **deliberate** prod policy—do not rely on defaults.
 - **Identity:** **`ASTROCYTE_AUTH_MODE`** selects **`dev`** (trusts **`X-Astrocyte-Principal`** only—use only behind a trusted gateway), **`api_key`**, **`jwt_hs256`** / **`jwt`** (HS256 Bearer, `sub` → principal), or **`jwt_oidc`** (RS256 + JWKS; maps claims to **`AstrocyteContext`**). This is a **starting point** for §3.2, not a full IdP integration (no discovery document automation, per-key API-key store, or mTLS in-process).
 

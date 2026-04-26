@@ -13,7 +13,7 @@ Optional Python packages beside the core [`astrocyte-py`](../astrocyte-py/) libr
 
 ## Runbook
 
-Use this for a **production-shaped** local or demo deploy: SQL migrations (including **HNSW**), then **`astrocyte-gateway-py`** with **`bootstrap_schema: false`** ([`config.runbook.example.yaml`](config.runbook.example.yaml)). This is the default Hindsight-informed reference stack: one PostgreSQL instance provides dense vectors (pgvector), entity graph traversal (Apache AGE), and the operational substrate for future async task persistence.
+Use this for a **production-shaped** local or demo deploy: SQL migrations (including **HNSW**), then **`astrocyte-gateway-py`** with **`bootstrap_schema: false`** ([`config.runbook.example.yaml`](config.runbook.example.yaml)). This is the default Hindsight-informed reference stack: one PostgreSQL instance provides dense vectors (pgvector), durable wiki pages/revisions/provenance, entity graph traversal (Apache AGE with SQL-owned entity/link truth), normalized temporal facts, bank/access metadata, and PgQueuer-backed async memory tasks.
 
 ### One command
 

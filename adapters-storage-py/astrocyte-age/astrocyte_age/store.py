@@ -39,6 +39,7 @@ from astrocyte.types import (
     HealthStatus,
     MemoryEntityAssociation,
 )
+from psycopg.types.json import Json
 from psycopg_pool import AsyncConnectionPool
 
 _logger = logging.getLogger("astrocyte.age")
@@ -270,6 +271,48 @@ class AgeGraphStore:
                         CREATE INDEX IF NOT EXISTS idx_age_mem_entity_bank_entity
                         ON astrocyte_age_mem_entity (bank_id, entity_id)
                     """)
+                    await cur.execute("""
+                        CREATE TABLE IF NOT EXISTS astrocyte_entities (
+                            id TEXT NOT NULL,
+                            bank_id TEXT NOT NULL,
+                            name TEXT NOT NULL,
+                            entity_type TEXT NOT NULL,
+                            aliases TEXT[],
+                            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            PRIMARY KEY (bank_id, id)
+                        )
+                    """)
+                    await cur.execute("""
+                        CREATE TABLE IF NOT EXISTS astrocyte_entity_links (
+                            id BIGSERIAL PRIMARY KEY,
+                            bank_id TEXT NOT NULL,
+                            entity_a TEXT NOT NULL,
+                            entity_b TEXT NOT NULL,
+                            link_type TEXT NOT NULL,
+                            evidence TEXT,
+                            confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            UNIQUE (bank_id, entity_a, entity_b, link_type)
+                        )
+                    """)
+                    await cur.execute("""
+                        CREATE TABLE IF NOT EXISTS astrocyte_memory_entities (
+                            bank_id TEXT NOT NULL,
+                            memory_id TEXT NOT NULL,
+                            entity_id TEXT NOT NULL,
+                            evidence TEXT,
+                            confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            PRIMARY KEY (bank_id, memory_id, entity_id)
+                        )
+                    """)
+                    await cur.execute("""
+                        CREATE INDEX IF NOT EXISTS astrocyte_memory_entities_entity_idx
+                        ON astrocyte_memory_entities (bank_id, entity_id)
+                    """)
 
                 await conn.commit()
                 self._schema_ready = True
@@ -319,6 +362,28 @@ class AgeGraphStore:
         ids: list[str] = []
         try:
             for entity in entities:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO astrocyte_entities
+                            (bank_id, id, name, entity_type, aliases, metadata, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT (bank_id, id) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            entity_type = EXCLUDED.entity_type,
+                            aliases = EXCLUDED.aliases,
+                            metadata = EXCLUDED.metadata,
+                            updated_at = NOW()
+                        """,
+                        [
+                            bank_id,
+                            entity.id,
+                            entity.name,
+                            entity.entity_type or "OTHER",
+                            entity.aliases,
+                            Json(entity.metadata or {}),
+                        ],
+                    )
                 aliases_json = json.dumps(entity.aliases or [])
                 etype = _q(entity.entity_type or "OTHER")
                 cypher = (
@@ -345,6 +410,28 @@ class AgeGraphStore:
         link_ids: list[str] = []
         try:
             for i, link in enumerate(links):
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        INSERT INTO astrocyte_entity_links
+                            (bank_id, entity_a, entity_b, link_type, evidence, confidence, metadata, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (bank_id, entity_a, entity_b, link_type) DO UPDATE SET
+                            evidence = EXCLUDED.evidence,
+                            confidence = EXCLUDED.confidence,
+                            metadata = EXCLUDED.metadata
+                        """,
+                        [
+                            bank_id,
+                            link.entity_a,
+                            link.entity_b,
+                            link.link_type,
+                            link.evidence,
+                            float(link.confidence),
+                            Json(link.metadata or {}),
+                            link.created_at or datetime.now(timezone.utc),
+                        ],
+                    )
                 cypher = (
                     f"MATCH (a:Entity {{id: '{_q(link.entity_a)}', bank: '{_q(bank_id)}'}}), "
                     f"      (b:Entity {{id: '{_q(link.entity_b)}', bank: '{_q(bank_id)}'}}) "
@@ -390,6 +477,14 @@ class AgeGraphStore:
                         """,
                         [bank_id, assoc.memory_id, assoc.entity_id],
                     )
+                    await cur.execute(
+                        """
+                        INSERT INTO astrocyte_memory_entities (bank_id, memory_id, entity_id)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (bank_id, memory_id, entity_id) DO NOTHING
+                        """,
+                        [bank_id, assoc.memory_id, assoc.entity_id],
+                    )
             await conn.commit()
         except Exception:
             await conn.rollback()
@@ -415,7 +510,7 @@ class AgeGraphStore:
                 await cur.execute(
                     f"""
                     SELECT DISTINCT memory_id
-                    FROM astrocyte_age_mem_entity
+                    FROM astrocyte_memory_entities
                     WHERE bank_id = %s AND entity_id IN ({placeholders})
                     LIMIT %s
                     """,
@@ -442,36 +537,42 @@ class AgeGraphStore:
         bank_id: str,
         limit: int = 10,
     ) -> list[Entity]:
-        """Search for entities whose name contains the query string."""
+        """Search canonical SQL entities by name or alias."""
         await self._ensure_schema()
         conn = await self._conn()
         try:
             q_lower = query.strip().lower()
-            cypher = (
-                f"MATCH (e:Entity {{bank: '{_q(bank_id)}'}}) "
-                f"WHERE toLower(e.name) CONTAINS '{_q(q_lower)}' "
-                f"RETURN e "
-                f"LIMIT {int(limit)}"
-            )
-            rows = await self._cypher(conn, cypher, ["e"])
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT id, name, entity_type, aliases, metadata
+                    FROM astrocyte_entities
+                    WHERE bank_id = %s
+                      AND (
+                        lower(name) LIKE %s
+                        OR EXISTS (
+                            SELECT 1
+                            FROM unnest(COALESCE(aliases, ARRAY[]::text[])) AS alias
+                            WHERE lower(alias) LIKE %s
+                        )
+                      )
+                    ORDER BY name
+                    LIMIT %s
+                    """,
+                    [bank_id, f"%{q_lower}%", f"%{q_lower}%", limit],
+                )
+                rows = await cur.fetchall()
         finally:
             await self._release(conn)
 
         entities: list[Entity] = []
         for row in rows:
-            props = _parse_agtype(row.get("e"))
-            if not props:
-                continue
-            aliases_raw = props.get("aliases", "[]")
-            try:
-                aliases = json.loads(aliases_raw) if isinstance(aliases_raw, str) else aliases_raw
-            except (json.JSONDecodeError, ValueError):
-                aliases = []
             entities.append(Entity(
-                id=_parse_scalar(props.get("id", "")),
-                name=_parse_scalar(props.get("name", "")),
-                entity_type=_parse_scalar(props.get("entity_type", "OTHER")),
-                aliases=aliases or None,
+                id=str(row[0]),
+                name=str(row[1]),
+                entity_type=str(row[2] or "OTHER"),
+                aliases=list(row[3]) if row[3] else None,
+                metadata=dict(row[4]) if row[4] else None,
             ))
         return entities
 
@@ -499,6 +600,28 @@ class AgeGraphStore:
         conn = await self._conn()
         try:
             ts = (link.created_at or datetime.now(timezone.utc)).isoformat()
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO astrocyte_entity_links
+                        (bank_id, entity_a, entity_b, link_type, evidence, confidence, metadata, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (bank_id, entity_a, entity_b, link_type) DO UPDATE SET
+                        evidence = EXCLUDED.evidence,
+                        confidence = EXCLUDED.confidence,
+                        metadata = EXCLUDED.metadata
+                    """,
+                    [
+                        bank_id,
+                        link.entity_a,
+                        link.entity_b,
+                        link.link_type,
+                        link.evidence,
+                        float(link.confidence),
+                        Json(link.metadata or {}),
+                        link.created_at or datetime.now(timezone.utc),
+                    ],
+                )
             cypher = (
                 f"MATCH (a:Entity {{id: '{_q(link.entity_a)}', bank: '{_q(bank_id)}'}}), "
                 f"      (b:Entity {{id: '{_q(link.entity_b)}', bank: '{_q(bank_id)}'}}) "

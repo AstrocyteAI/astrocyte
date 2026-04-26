@@ -20,6 +20,18 @@ def _apply_dev_defaults_when_no_config_file(config: AstrocyteConfig) -> None:
     config.access_control.enabled = False
 
 
+def _env_bool(name: str) -> bool | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
 def _load_astrocyte_config() -> AstrocyteConfig:
     path = os.environ.get("ASTROCYTE_CONFIG_PATH")
     if path and Path(path).is_file():
@@ -35,6 +47,22 @@ def _load_astrocyte_config() -> AstrocyteConfig:
         config.document_store = v
     if v := os.environ.get("ASTROCYTE_WIKI_STORE"):
         config.wiki_store = v
+    if (v := _env_bool("ASTROCYTE_WIKI_COMPILE_ENABLED")) is not None:
+        config.wiki_compile.enabled = v
+    if (v := _env_bool("ASTROCYTE_WIKI_COMPILE_AUTO_START")) is not None:
+        config.wiki_compile.auto_start = v
+    if (v := _env_bool("ASTROCYTE_ENTITY_RESOLUTION_ENABLED")) is not None:
+        config.entity_resolution.enabled = v
+    if (v := _env_bool("ASTROCYTE_ASYNC_TASKS_ENABLED")) is not None:
+        config.async_tasks.enabled = v
+    if v := os.environ.get("ASTROCYTE_ASYNC_TASKS_BACKEND"):
+        config.async_tasks.backend = v
+    if v := os.environ.get("ASTROCYTE_TASKS_DSN"):
+        config.async_tasks.dsn = v
+    if (v := _env_bool("ASTROCYTE_ASYNC_TASKS_INSTALL_ON_START")) is not None:
+        config.async_tasks.install_on_start = v
+    if (v := _env_bool("ASTROCYTE_ASYNC_TASKS_AUTO_START_WORKER")) is not None:
+        config.async_tasks.auto_start_worker = v
     return config
 
 
@@ -45,9 +73,9 @@ def build_astrocyte() -> Astrocyte:
     _apply_dev_defaults_when_no_config_file(config)
 
     brain = Astrocyte(config)
-    pipeline = build_tier1_pipeline(config)
-    brain.set_pipeline(pipeline)
     wiki_store = resolve_wiki_store(config)
+    pipeline = build_tier1_pipeline(config, wiki_store=wiki_store)
+    brain.set_pipeline(pipeline)
     if wiki_store is not None:
         brain.set_wiki_store(wiki_store)
         if config.wiki_compile.auto_start:

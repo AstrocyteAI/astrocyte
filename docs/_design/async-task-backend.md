@@ -32,6 +32,8 @@ Use PostgreSQL as the default backend for the reference stack. The production wo
 - Retry: exponential backoff with a capped `run_after`.
 - Dead letter: keep failed rows with final status for operators.
 
+The `astrocyte_tasks` table below is the logical task model. The reference worker persists that model as PgQueuer jobs: PgQueuer owns the queue tables and Astrocyte owns the JSON payload contract plus task handlers. Deployments should call `PgQueuerMemoryTaskQueue.install()` during startup (`async_tasks.install_on_start: true`) or run the equivalent PgQueuer installation step before starting workers.
+
 This mirrors the Hindsight operating lesson without adding Kafka or another queue to the default deployment. Stream systems can still enqueue through an adapter later.
 
 The framework-facing API remains `MemoryTask` + `MemoryTaskDispatcher`. PgQueuer lives at the worker boundary:
@@ -50,6 +52,26 @@ pip install 'astrocyte[worker]'
 ```
 
 When using psycopg, PgQueuer requires the async connection to be opened with `autocommit=True`.
+
+### PgQueuer Payload Mapping
+
+Each PgQueuer job has an entrypoint equal to `MemoryTask.task_type` and a JSON payload with this stable shape:
+
+```json
+{
+  "id": "task-id",
+  "task_type": "normalize_temporal_facts",
+  "bank_id": "bench-locomo",
+  "payload": {"memory_ids": ["m1"]},
+  "idempotency_key": "normalize:bench-locomo",
+  "attempts": 0,
+  "max_attempts": 5,
+  "run_after": "2026-04-26T12:00:00+00:00",
+  "created_at": "2026-04-26T11:00:00+00:00"
+}
+```
+
+`astrocyte.pipeline.pgqueuer_tasks.task_to_pgqueuer_payload()` is the source of truth for encoding this shape, and `task_from_pgqueuer_payload()` decodes it before dispatching to `MemoryTaskDispatcher`. PgQueuer's `dedupe_key` receives `MemoryTask.idempotency_key`; `execute_after` receives the delay derived from `MemoryTask.run_after`.
 
 ### Schema Sketch
 

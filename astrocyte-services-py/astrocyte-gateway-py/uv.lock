@@ -295,6 +295,8 @@ age = [
 ]
 dev = [
     { name = "astrocyte", extra = ["worker"] },
+    { name = "astrocyte-age" },
+    { name = "astrocyte-pgvector" },
     { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pytest" },
@@ -325,8 +327,10 @@ requires-dist = [
     { name = "astrocyte", extras = ["worker"], marker = "extra == 'dev'", editable = "../../astrocyte-py" },
     { name = "astrocyte", extras = ["worker"], marker = "extra == 'worker'", editable = "../../astrocyte-py" },
     { name = "astrocyte-age", marker = "extra == 'age'", editable = "../../adapters-storage-py/astrocyte-age" },
+    { name = "astrocyte-age", marker = "extra == 'dev'", editable = "../../adapters-storage-py/astrocyte-age" },
     { name = "astrocyte-ingestion-document", marker = "extra == 'document'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-document" },
     { name = "astrocyte-ingestion-s3", marker = "extra == 's3'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-s3" },
+    { name = "astrocyte-pgvector", marker = "extra == 'dev'", editable = "../../adapters-storage-py/astrocyte-pgvector" },
     { name = "astrocyte-pgvector", marker = "extra == 'pgvector'", editable = "../../adapters-storage-py/astrocyte-pgvector" },
     { name = "cryptography", specifier = ">=42" },
     { name = "fastapi", specifier = ">=0.115" },

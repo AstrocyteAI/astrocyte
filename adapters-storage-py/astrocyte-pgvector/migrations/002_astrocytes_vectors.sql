@@ -9,5 +9,7 @@ CREATE TABLE IF NOT EXISTS astrocyte_vectors (
     metadata JSONB,
     tags TEXT[],
     fact_type TEXT,
-    occurred_at TIMESTAMPTZ
+    occurred_at TIMESTAMPTZ,
+    retained_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    forgotten_at TIMESTAMPTZ
 );

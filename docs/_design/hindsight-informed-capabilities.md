@@ -49,7 +49,7 @@ The reference self-hosted stack is:
 - `astrocyte-pgvector` for dense retrieval and compiled-page search projections.
 - `astrocyte-age` for graph traversal projections over pages, entities, and cited memories.
 - Optional `DocumentStore` for BM25 when a lexical backend is configured.
-- `wiki_store` and `wiki_compile.auto_start` for background compilation in the gateway lifecycle. Local demos may use `wiki_store: in_memory`; production should use a durable Postgres-backed wiki store.
+- `wiki_store: pgvector` and `wiki_compile.auto_start` for durable background compilation in the gateway lifecycle. `wiki_store: in_memory` is test/demo-only.
 - Benchmark reports from LoCoMo and LongMemEval before making external accuracy claims.
 
 ## Database Comparison
@@ -63,7 +63,7 @@ Astrocyte should copy the operational lesson while preserving its SPIs:
 | Durable truth | PostgreSQL tables | PostgreSQL tables |
 | Dense retrieval | pgvector | `astrocyte-pgvector` |
 | Graph retrieval | SQL entity/link tables | `astrocyte-age` projection, with SQL still owning truth |
-| Async queue | PostgreSQL rows claimed by workers | `astrocyte_tasks` with `FOR UPDATE SKIP LOCKED` |
+| Async queue | PostgreSQL rows claimed by workers | PgQueuer jobs carrying the Astrocyte `MemoryTask` payload |
 | Memory isolation | Banks / tenant schema support | Banks + `AstrocyteContext` + access grants |
 
 Rule of thumb for Astrocyte: **SQL owns truth, pgvector owns similarity, AGE owns traversal, Postgres tasks own durable background work**.

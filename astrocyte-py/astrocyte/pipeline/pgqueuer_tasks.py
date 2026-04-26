@@ -124,7 +124,7 @@ class PgQueuerMemoryTaskQueue:
     ) -> None:
         @self.pgq.entrypoint(task_type)
         async def _handle(job: Job) -> None:
-            task = _decode_task(job.payload, fallback_task_type=task_type)
+            task = task_from_pgqueuer_payload(job.payload, fallback_task_type=task_type)
             await dispatcher.run(task)
 
     def _queries(self) -> Any:
@@ -132,23 +132,28 @@ class PgQueuerMemoryTaskQueue:
 
 
 def _encode_task(task: MemoryTask) -> bytes:
-    return json.dumps(
-        {
-            "id": task.id,
-            "task_type": task.task_type,
-            "bank_id": task.bank_id,
-            "payload": task.payload,
-            "idempotency_key": task.idempotency_key,
-            "attempts": task.attempts,
-            "max_attempts": task.max_attempts,
-            "run_after": task.run_after.isoformat(),
-            "created_at": task.created_at.isoformat(),
-        },
-        sort_keys=True,
-    ).encode("utf-8")
+    return json.dumps(task_to_pgqueuer_payload(task), sort_keys=True).encode("utf-8")
 
 
-def _decode_task(payload: bytes | None, *, fallback_task_type: str) -> MemoryTask:
+def task_to_pgqueuer_payload(task: MemoryTask) -> dict[str, Any]:
+    """Return the stable JSON payload shape stored in PgQueuer jobs."""
+
+    return {
+        "id": task.id,
+        "task_type": task.task_type,
+        "bank_id": task.bank_id,
+        "payload": task.payload,
+        "idempotency_key": task.idempotency_key,
+        "attempts": task.attempts,
+        "max_attempts": task.max_attempts,
+        "run_after": task.run_after.isoformat(),
+        "created_at": task.created_at.isoformat(),
+    }
+
+
+def task_from_pgqueuer_payload(payload: bytes | None, *, fallback_task_type: str) -> MemoryTask:
+    """Decode the stable PgQueuer JSON payload shape into a MemoryTask."""
+
     if not payload:
         raise ValueError("PgQueuer job payload is required for Astrocyte memory tasks")
     raw = json.loads(payload.decode("utf-8"))

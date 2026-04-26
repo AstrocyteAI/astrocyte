@@ -9,7 +9,7 @@ How to install, configure, and run each Astrocyte storage adapter. All adapters 
 | Store type | Role | Adapters | When to use |
 |------------|------|----------|-------------|
 | **Vector store** | Semantic search (embeddings) | `pgvector`, `qdrant` | Always — required for Tier 1 recall |
-| **Graph store** | Entity relationships and traversal | `neo4j` | When you need "who knows whom" or relationship-aware recall |
+| **Graph store** | Entity relationships and traversal | `age`, `neo4j` | When you need "who knows whom" or relationship-aware recall |
 | **Document store** | BM25 full-text / keyword search | `elasticsearch` | When you need keyword recall alongside semantic |
 
 You can combine stores for **hybrid recall** — e.g. pgvector (semantic) + Neo4j (graph) + Elasticsearch (keyword). Results are fused with reciprocal rank fusion (RRF).
@@ -28,9 +28,15 @@ No persistence — data is lost on restart.
 
 ---
 
-## PostgreSQL + pgvector
+## PostgreSQL Reference Stack
 
-Recommended default for production. Stores embeddings in PostgreSQL with the `pgvector` extension.
+Recommended default for production and Hindsight-comparable deployments. One PostgreSQL instance provides:
+
+- Durable memory rows, lifecycle columns, banks, and access grants.
+- Dense retrieval through `pgvector`.
+- Durable wiki pages, revisions, source provenance, links, and lint state through the `pgvector` package's `WikiStore`.
+- Graph traversal through Apache AGE, with canonical entity/link truth mirrored in SQL tables.
+- Durable background work through PgQueuer.
 
 ### Install
 
@@ -43,32 +49,43 @@ cd adapters-storage-py/astrocyte-pgvector && pip install -e .
 ### Run PostgreSQL
 
 ```bash
-# Docker (quickest)
-docker run -d --name astrocyte-pg \
-  -e POSTGRES_USER=astrocyte \
-  -e POSTGRES_PASSWORD=astrocyte \
-  -e POSTGRES_DB=astrocyte \
-  -p 5433:5432 \
-  pgvector/pgvector:pg16
-```
-
-Or use the included Docker Compose stack:
-
-```bash
+# Docker Compose (quickest full stack)
 cd astrocyte-services-py
 cp .env.example .env
-docker compose up -d postgres
+docker compose up --build
 ```
+
+The Compose stack uses the repository's combined Postgres image with `pgvector` and Apache AGE. For production-shaped local runs with migrations applied first, use `./scripts/runbook-up.sh` from `astrocyte-services-py/`.
 
 ### Configure
 
 ```yaml
 provider_tier: storage
 vector_store: pgvector
+graph_store: age
+wiki_store: pgvector
+llm_provider: mock
 vector_store_config:
   dsn: ${DATABASE_URL}
   embedding_dimensions: 1536        # must match your embedding model
   bootstrap_schema: true            # auto-create tables (dev)
+graph_store_config:
+  dsn: ${DATABASE_URL}
+  bootstrap_schema: true
+wiki_store_config:
+  dsn: ${DATABASE_URL}
+  bootstrap_schema: true
+wiki_compile:
+  enabled: true
+  auto_start: true
+entity_resolution:
+  enabled: true
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  dsn: ${DATABASE_URL}
+  install_on_start: true
+  auto_start_worker: true
 ```
 
 | Key | Type | Default | Description |
@@ -111,6 +128,10 @@ Migrations are plain SQL in `migrations/`:
 | `002_astrocytes_vectors.sql` | Create vectors table |
 | `003_indexes.sql` | B-tree on `bank_id`, HNSW on embeddings |
 | `004_memory_layer.sql` | Add memory layer column |
+| `005_banks_access.sql` | Add bank metadata and access grants |
+| `006_lifecycle_indexes.sql` | Add `retained_at` / `forgotten_at` lifecycle columns and time indexes |
+| `007_wiki_tables.sql` | Add durable wiki pages, revisions, provenance, links, and lint issues |
+| `008_entities_temporal.sql` | Add canonical entity/link tables and normalized temporal facts |
 
 Requires: `psql` client on PATH, PostgreSQL 15+.
 
