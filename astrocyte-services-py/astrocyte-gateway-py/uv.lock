@@ -52,6 +52,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "astrocyte-age", marker = "extra == 'dev'", editable = "../../adapters-storage-py/astrocyte-age" },
     { name = "astrocyte-ingestion-github", marker = "extra == 'all'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-github", marker = "extra == 'dev'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-github", marker = "extra == 'poll'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
@@ -61,6 +62,7 @@ requires-dist = [
     { name = "astrocyte-ingestion-redis", marker = "extra == 'all'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'dev'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'stream'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
+    { name = "astrocyte-pgvector", marker = "extra == 'dev'", editable = "../../adapters-storage-py/astrocyte-pgvector" },
     { name = "deepeval", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0" },
@@ -87,11 +89,34 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "snowballstemmer", marker = "extra == 'all'", specifier = ">=2.2" },
+    { name = "snowballstemmer", marker = "extra == 'dev'", specifier = ">=2.2" },
+    { name = "snowballstemmer", marker = "extra == 'eval'", specifier = ">=2.2" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'all'", specifier = ">=0.30" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'dev'", specifier = ">=0.30" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'gateway'", specifier = ">=0.30" },
 ]
 provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "poll", "prometheus", "stream"]
+
+[[package]]
+name = "astrocyte-age"
+source = { editable = "../../adapters-storage-py/astrocyte-age" }
+dependencies = [
+    { name = "astrocyte" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "psycopg-pool" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "astrocyte", editable = "../../astrocyte-py" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
+    { name = "psycopg-pool", specifier = ">=3.2" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.2" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "astrocyte-gateway-py"
@@ -106,6 +131,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+age = [
+    { name = "astrocyte-age" },
+]
 dev = [
     { name = "httpx" },
     { name = "pytest" },
@@ -123,6 +151,7 @@ pgvector = [
 [package.metadata]
 requires-dist = [
     { name = "astrocyte", editable = "../../astrocyte-py" },
+    { name = "astrocyte-age", marker = "extra == 'age'", editable = "../../adapters-storage-py/astrocyte-age" },
     { name = "astrocyte-pgvector", marker = "extra == 'pgvector'", editable = "../../adapters-storage-py/astrocyte-pgvector" },
     { name = "cryptography", specifier = ">=42" },
     { name = "fastapi", specifier = ">=0.115" },
@@ -135,7 +164,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
-provides-extras = ["dev", "pgvector", "otel"]
+provides-extras = ["dev", "pgvector", "age", "otel"]
 
 [[package]]
 name = "astrocyte-pgvector"
