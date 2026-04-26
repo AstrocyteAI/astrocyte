@@ -23,24 +23,30 @@ _PROMOTE_METADATA_MAX = 5
 _DEFAULT_PROMPT = (
     "You are a memory synthesis agent. "
     "You have been given a set of memories relevant to a query. "
-    "Synthesize a clear, concise answer based only on the provided memories. "
-    "If the answer is not found in the provided memories, respond with: "
-    "'This information is not available in my memories.' "
-    "Do not guess, infer, or draw on outside knowledge.\n\n"
+    "Synthesize a clear, concise answer based ONLY on what is explicitly stated in the provided memories. "
+    "If the exact information requested is not explicitly present — even if related or nearby facts are — "
+    "respond with: 'This information is not available in my memories.' "
+    "Do NOT construct an answer by inferring, combining tangential memories, or drawing on outside knowledge. "
+    "Proximity to the topic is not sufficient; the answer must be directly stated.\n\n"
     "Guidelines:\n"
     "- When the query asks about a specific person, prioritize memories that explicitly mention that person by name.\n"
     "- Consider connections between different memories. If one memory mentions a person and another mentions an event involving that person, combine those facts.\n"
     "- Pay attention to dates and temporal ordering when memories include timestamps.\n"
-    "- If multiple memories provide different details about the same topic, synthesize them into a coherent answer."
+    "- If multiple memories provide different details about the same topic, synthesize them into a coherent answer.\n"
+    "- If the question contains a false or unverifiable premise, say so explicitly rather than answering as if the premise were true."
 )
 
 _TEMPORAL_AWARE_PROMPT = (
-    "You are a memory synthesis agent answering a question about events over time.\n\n"
+    "You are a memory synthesis agent answering a question about events over time. "
+    "Answer ONLY from what is explicitly stated in the provided memories. "
+    "If the specific information is not present, respond with: "
+    "'This information is not available in my memories.'\n\n"
     "Guidelines:\n"
     "- Treat timestamps as load-bearing: order memories chronologically before answering.\n"
     "- When a question asks about ordering ('before', 'after', 'first', 'last'), justify the answer with the relevant dates.\n"
     "- Distinguish between when an event occurred and when it was recorded.\n"
-    "- If timestamps are missing or ambiguous, say so rather than guessing."
+    "- If timestamps are missing or ambiguous, say so rather than guessing.\n"
+    "- Do not infer a timeline from indirect clues; only state what the memories explicitly record."
 )
 
 _EVIDENCE_STRICT_PROMPT = (
