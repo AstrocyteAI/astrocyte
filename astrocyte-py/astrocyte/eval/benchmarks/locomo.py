@@ -444,30 +444,51 @@ class LoComoBenchmark:
                     )
             return session_key, (time.monotonic() - t0) * 1000, parse_attempts, unparseable_count
 
-        tasks = [
-            asyncio.create_task(_retain_session(convo, session, session_key))
-            for convo, session, session_key in session_work
-        ]
-        for task in asyncio.as_completed(tasks):
-            retained = await task
+        work_queue: asyncio.Queue[tuple[LoCoMoConversation, LoCoMoSession, str]] = asyncio.Queue()
+        for item in session_work:
+            work_queue.put_nowait(item)
+
+        progress_lock = asyncio.Lock()
+
+        async def _record_retained(
+            retained: tuple[str, float, int, int] | None,
+        ) -> None:
+            nonlocal retain_count, date_parse_attempts, unparseable_date_count
             if retained is None:
-                continue
+                return
             session_key, latency_ms, parse_attempts, unparseable_count = retained
-            retain_latencies.append(latency_ms)
-            date_parse_attempts += parse_attempts
-            unparseable_date_count += unparseable_count
-            retain_count += 1
-            if checkpoint is not None:
-                checkpoint.record_session(session_key)
-            if retain_count % 20 == 0 or retain_count == len(session_work):
-                elapsed_r = time.monotonic() - retain_phase_start
-                rate = retain_count / elapsed_r
-                remaining = (len(session_work) - retain_count) / rate if rate > 0 else 0
-                print(
-                    f"  [LoCoMo] Retained {retain_count}/{len(session_work)} sessions "
-                    f"({elapsed_r:.0f}s elapsed, ~{remaining:.0f}s remaining)",
-                    flush=True,
-                )
+            async with progress_lock:
+                retain_latencies.append(latency_ms)
+                date_parse_attempts += parse_attempts
+                unparseable_date_count += unparseable_count
+                retain_count += 1
+                if checkpoint is not None:
+                    checkpoint.record_session(session_key)
+                if retain_count % 20 == 0 or retain_count == len(session_work):
+                    elapsed_r = time.monotonic() - retain_phase_start
+                    rate = retain_count / elapsed_r
+                    remaining = (len(session_work) - retain_count) / rate if rate > 0 else 0
+                    print(
+                        f"  [LoCoMo] Retained {retain_count}/{len(session_work)} sessions "
+                        f"({elapsed_r:.0f}s elapsed, ~{remaining:.0f}s remaining)",
+                        flush=True,
+                    )
+
+        async def _retain_worker() -> None:
+            while True:
+                try:
+                    convo, session, session_key = work_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    await _record_retained(await _retain_session(convo, session, session_key))
+                finally:
+                    work_queue.task_done()
+
+        worker_count = min(max(1, retain_concurrency), len(session_work))
+        workers = [asyncio.create_task(_retain_worker()) for _ in range(worker_count)]
+        if workers:
+            await asyncio.gather(*workers)
 
         print(f"  [LoCoMo] Retain complete: {retain_count} sessions stored.")
         if unparseable_date_count > 0:
