@@ -230,12 +230,16 @@ async def _start_benchmark_task_worker(brain):
             queue.run_continuous(batch_size=config.batch_size),
             name="astrocyte.benchmark_pgqueuer_worker",
         )
-    return {"queue": queue, "connection": connection, "worker_task": worker_task}
+    setattr(brain, "_benchmark_task_queue", queue)
+    return {"queue": queue, "connection": connection, "worker_task": worker_task, "brain": brain}
 
 
 async def _stop_benchmark_task_worker(runtime: dict | None) -> None:
     if runtime is None:
         return
+    brain = runtime.get("brain")
+    if brain is not None:
+        setattr(brain, "_benchmark_task_queue", None)
     queue = runtime["queue"]
     await queue.shutdown()
     worker_task = runtime.get("worker_task")

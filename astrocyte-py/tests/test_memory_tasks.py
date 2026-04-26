@@ -9,7 +9,6 @@ from astrocyte.pipeline.lint import LintEngine
 from astrocyte.pipeline.tasks import (
     ANALYZE_BENCHMARK_FAILURES,
     COMPILE_PERSONA_PAGE,
-    INDEX_WIKI_PAGE_VECTOR,
     LINT_WIKI_PAGE,
     NORMALIZE_TEMPORAL_FACTS,
     PROJECT_ENTITY_EDGES,
@@ -117,12 +116,7 @@ async def test_compile_persona_page_and_index_vector() -> None:
     compile_result = await dispatcher.run(MemoryTask(
         task_type=COMPILE_PERSONA_PAGE,
         bank_id="b1",
-        payload={"person": "Alice"},
-    ))
-    index_result = await dispatcher.run(MemoryTask(
-        task_type=INDEX_WIKI_PAGE_VECTOR,
-        bank_id="b1",
-        payload={"page_id": "person:alice"},
+        payload={"person": "Alice", "index_vector": True},
     ))
 
     page = await wiki_store.get_page("person:alice", "b1")
@@ -130,7 +124,7 @@ async def test_compile_persona_page_and_index_vector() -> None:
     assert compile_result["source_count"] == 1
     assert page is not None
     assert page.source_ids == ["m1"]
-    assert index_result["indexed_page_id"] == "person:alice"
+    assert compile_result["indexed_page_id"] == "person:alice"
     assert any(item.id == "person:alice" and item.fact_type == "wiki" for item in indexed)
 
 

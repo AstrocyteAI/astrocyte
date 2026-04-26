@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import psycopg
@@ -28,6 +29,7 @@ def test_gateway_retain_recall_health_pgvector(monkeypatch: pytest.MonkeyPatch, 
         "true",
         "yes",
     )
+    embedding_dimensions = _embedding_dimensions_for_database(os.environ["DATABASE_URL"])
     cfg = tmp_path / "g.yaml"
     cfg.write_text(
         f"""
@@ -36,8 +38,10 @@ vector_store: pgvector
 graph_store: age
 wiki_store: pgvector
 llm_provider: mock
+llm_provider_config:
+  embedding_dimensions: {embedding_dimensions}
 vector_store_config:
-  embedding_dimensions: 128
+  embedding_dimensions: {embedding_dimensions}
   bootstrap_schema: {str(not migrated).lower()}
 graph_store_config:
   bootstrap_schema: true
@@ -121,6 +125,32 @@ def _skip_if_age_unavailable(dsn: str) -> None:
         pytest.skip(f"Apache AGE is not available for full reference-stack integration test: {exc}")
 
 
+def _embedding_dimensions_for_database(dsn: str) -> int:
+    env_value = os.environ.get("ASTROCYTE_EMBEDDING_DIMENSIONS")
+    if env_value and env_value.isdigit():
+        return int(env_value)
+
+    try:
+        with psycopg.connect(dsn) as conn:
+            row = conn.execute(
+                """
+                SELECT format_type(a.atttypid, a.atttypmod)
+                FROM pg_attribute a
+                JOIN pg_class c ON c.oid = a.attrelid
+                WHERE c.relname = 'astrocyte_vectors'
+                  AND a.attname = 'embedding'
+                  AND NOT a.attisdropped
+                """
+            ).fetchone()
+    except Exception:
+        row = None
+    if row:
+        match = re.fullmatch(r"vector\((\d+)\)", str(row[0]))
+        if match:
+            return int(match.group(1))
+    return 128
+
+
 def _assert_reference_stack_rows(dsn: str, bank: str) -> None:
     with psycopg.connect(dsn) as conn:
         assert conn.execute("SELECT 1 FROM astrocyte_banks WHERE id = %s", (bank,)).fetchone() == (1,)
@@ -136,8 +166,9 @@ def _assert_reference_stack_rows(dsn: str, bank: str) -> None:
             """
             SELECT 1
             FROM information_schema.tables
-            WHERE table_name IN ('astrocyte_entities', 'astrocyte_entity_links', 'astrocyte_memory_entities')
-            HAVING count(*) = 3
+            WHERE table_schema = 'public'
+              AND table_name IN ('astrocyte_entities', 'astrocyte_entity_links', 'astrocyte_memory_entities')
+            HAVING count(DISTINCT table_name) = 3
             """
         ).fetchone() == (1,)
         assert conn.execute(

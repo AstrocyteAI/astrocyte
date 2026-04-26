@@ -221,12 +221,22 @@ class MemoryTaskDispatcher:
         existing = await self._ctx.wiki_store.get_page(page_id, task.bank_id)
         page = await self._build_persona_page(task.bank_id, person, relevant, existing)
         await self._ctx.wiki_store.upsert_page(page, task.bank_id)
-        return {
+        result = {
             "pages_created": 1 if existing is None else 0,
             "pages_updated": 0 if existing is None else 1,
             "page_ids": [page_id],
             "source_count": len(relevant),
         }
+        if task.payload.get("index_vector"):
+            index_result = await self._index_wiki_page_vector(
+                MemoryTask(
+                    task_type=INDEX_WIKI_PAGE_VECTOR,
+                    bank_id=task.bank_id,
+                    payload={"page_id": page_id},
+                )
+            )
+            result.update(index_result)
+        return result
 
     async def _index_wiki_page_vector(self, task: MemoryTask) -> dict[str, Any]:
         if self._ctx.wiki_store is None:

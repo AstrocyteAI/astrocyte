@@ -553,8 +553,14 @@ class MockLLMProvider:
 
     _embed_dim: ClassVar[int] = 128
 
-    def __init__(self, default_response: str = "Mock LLM response") -> None:
+    def __init__(
+        self,
+        default_response: str = "Mock LLM response",
+        embedding_dimensions: int | None = None,
+    ) -> None:
         self._default_response = default_response
+        if embedding_dimensions is not None:
+            self._embed_dim = int(embedding_dimensions)
         self._call_count = 0
         #: Last ``complete()`` user message content (for tests asserting prompt structure).
         self.last_user_message: str | None = None

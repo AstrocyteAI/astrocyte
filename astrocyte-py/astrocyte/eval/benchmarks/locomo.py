@@ -33,8 +33,9 @@ from typing import TYPE_CHECKING, Any
 from astrocyte.eval.checkpoint import BenchmarkCheckpoint
 from astrocyte.eval.metrics import ndcg_at_k, word_overlap_score
 from astrocyte.eval.rate_limiter import EvalRateLimiter
+from astrocyte.pipeline.tasks import COMPILE_PERSONA_PAGE, MemoryTask
 from astrocyte.pipeline.temporal import temporal_metadata
-from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
+from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult, RetainRequest
 
 # Minimum text overlap score to consider an answer correct.
 # Tuned empirically: 0.3 balances recall (catching paraphrases) against
@@ -162,6 +163,87 @@ def _persona_pages_for_session(
             ]
         )
     return pages
+
+
+def _persona_batch_for_session(
+    conversation_id: str,
+    session_id: str,
+    turns: list[dict[str, str]],
+) -> tuple[list[str], str] | None:
+    """Return one batched persona evidence document for a session."""
+
+    pages = _persona_pages_for_session(conversation_id, session_id, turns)
+    if not pages:
+        return None
+    speakers = sorted(pages)
+    text = "\n\n".join(pages[speaker] for speaker in speakers)
+    return speakers, text
+
+
+def _persona_retain_request(
+    *,
+    bank_id: str,
+    conversation_id: str,
+    session_id: str,
+    turns: list[dict[str, str]],
+    source_ids: list[str],
+    occurred_at: datetime | None,
+) -> RetainRequest | None:
+    persona_batch = _persona_batch_for_session(conversation_id, session_id, turns)
+    if persona_batch is None:
+        return None
+    speakers, page_text = persona_batch
+    return RetainRequest(
+        content=page_text,
+        bank_id=bank_id,
+        tags=[
+            "locomo",
+            "persona",
+            *(f"person:{speaker.lower()}" for speaker in speakers),
+            f"convo:{conversation_id}",
+        ],
+        metadata={
+            "source": "locomo_persona_compile",
+            "person": ",".join(speakers),
+            "locomo_persons": ",".join(speakers),
+            "conversation_id": conversation_id,
+            "session_id": session_id,
+            "_wiki_source_ids": json.dumps(source_ids),
+            "locomo_persona_page": ",".join(f"person:{speaker}" for speaker in speakers),
+        },
+        occurred_at=occurred_at,
+        content_type="document",
+        extraction_profile="locomo_persona",
+    )
+
+
+def _persona_compile_tasks_for_session(
+    *,
+    bank_id: str,
+    conversation_id: str,
+    session_id: str,
+    turns: list[dict[str, str]],
+    source_ids: list[str],
+) -> list[MemoryTask]:
+    pages = _persona_pages_for_session(conversation_id, session_id, turns)
+    tasks: list[MemoryTask] = []
+    for speaker in sorted(pages):
+        key_speaker = re.sub(r"[^a-z0-9]+", "-", speaker.lower()).strip("-") or "unknown"
+        tasks.append(
+            MemoryTask(
+                task_type=COMPILE_PERSONA_PAGE,
+                bank_id=bank_id,
+                payload={
+                    "person": speaker,
+                    "source_ids": source_ids,
+                    "index_vector": True,
+                },
+                idempotency_key=(
+                    f"locomo:persona:{bank_id}:{conversation_id}:{session_id}:{key_speaker}"
+                ),
+            )
+        )
+    return tasks
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
@@ -318,6 +400,9 @@ class LoComoBenchmark:
             rpm=retain_rpm,
             tpm=retain_tpm,
         )
+        persona_task_queue = getattr(self.brain, "_benchmark_task_queue", None)
+        deferred_persona_tasks: list[MemoryTask] = []
+        deferred_persona_requests: list[RetainRequest] = []
 
         def _session_text_and_metadata(
             convo: LoCoMoConversation,
@@ -415,34 +500,111 @@ class LoComoBenchmark:
                     extraction_profile="locomo_conversation",
                 )
             source_ids = [raw_result.memory_id] if raw_result.memory_id else []
-            for speaker, page_text in _persona_pages_for_session(
-                convo.conversation_id,
-                session.session_id,
-                session.turns,
-            ).items():
-                async with retain_rate_limiter:
-                    await self.brain.retain(
-                        page_text,
-                        bank_id=bank_id,
-                        tags=[
-                            "locomo",
-                            "persona",
-                            f"person:{speaker.lower()}",
-                            f"convo:{convo.conversation_id}",
-                        ],
-                        metadata={
-                            "source": "locomo_persona_compile",
-                            "person": speaker,
-                            "conversation_id": convo.conversation_id,
-                            "session_id": session.session_id,
-                            "_wiki_source_ids": json.dumps(source_ids),
-                            "locomo_persona_page": f"person:{speaker}",
-                        },
-                        occurred_at=occurred_at,
-                        content_type="document",
-                        extraction_profile="locomo_persona",
-                    )
+            if persona_task_queue is not None:
+                deferred_persona_tasks.extend(_persona_compile_tasks_for_session(
+                    bank_id=bank_id,
+                    conversation_id=convo.conversation_id,
+                    session_id=session.session_id,
+                    turns=session.turns,
+                    source_ids=source_ids,
+                ))
+            else:
+                persona_request = _persona_retain_request(
+                    bank_id=bank_id,
+                    conversation_id=convo.conversation_id,
+                    session_id=session.session_id,
+                    turns=session.turns,
+                    source_ids=source_ids,
+                    occurred_at=occurred_at,
+                )
+                if persona_request is not None:
+                    deferred_persona_requests.append(persona_request)
             return session_key, (time.monotonic() - t0) * 1000, parse_attempts, unparseable_count
+
+        async def _retain_pipeline_batch(
+            batch: list[tuple[LoCoMoConversation, LoCoMoSession, str]],
+        ) -> list[tuple[str, float, int, int] | None]:
+            pipeline = getattr(self.brain, "_pipeline", None)
+            if pipeline is None or not hasattr(pipeline, "retain_many"):
+                return [await _retain_session(convo, session, session_key) for convo, session, session_key in batch]
+
+            prepared_sessions: list[dict[str, Any]] = []
+            raw_requests: list[RetainRequest] = []
+            t0 = time.monotonic()
+            for convo, session, session_key in batch:
+                session_text, metadata, occurred_at, parse_attempts, unparseable_count = _session_text_and_metadata(
+                    convo,
+                    session,
+                )
+                if session_text is None:
+                    prepared_sessions.append({"session_key": session_key, "skip": True})
+                    continue
+                raw_requests.append(
+                    RetainRequest(
+                        content=session_text,
+                        bank_id=bank_id,
+                        tags=["locomo", f"convo:{convo.conversation_id}", f"session:{session.session_id}"],
+                        metadata=metadata,
+                        occurred_at=occurred_at,
+                        content_type="conversation",
+                        extraction_profile="locomo_conversation",
+                    )
+                )
+                prepared_sessions.append({
+                    "convo": convo,
+                    "session": session,
+                    "session_key": session_key,
+                    "occurred_at": occurred_at,
+                    "parse_attempts": parse_attempts,
+                    "unparseable_count": unparseable_count,
+                })
+
+            if raw_requests:
+                async with retain_rate_limiter:
+                    raw_results = await pipeline.retain_many(raw_requests)
+            else:
+                raw_results = []
+            raw_results_iter = iter(raw_results)
+            for index, prepared_session in enumerate(prepared_sessions):
+                if prepared_session.get("skip"):
+                    continue
+                raw_result = next(raw_results_iter)
+                convo = prepared_session["convo"]
+                session = prepared_session["session"]
+                source_ids = [raw_result.memory_id] if raw_result.memory_id else []
+                if persona_task_queue is not None:
+                    deferred_persona_tasks.extend(_persona_compile_tasks_for_session(
+                        bank_id=bank_id,
+                        conversation_id=convo.conversation_id,
+                        session_id=session.session_id,
+                        turns=session.turns,
+                        source_ids=source_ids,
+                    ))
+                else:
+                    persona_request = _persona_retain_request(
+                        bank_id=bank_id,
+                        conversation_id=convo.conversation_id,
+                        session_id=session.session_id,
+                        turns=session.turns,
+                        source_ids=source_ids,
+                        occurred_at=prepared_session["occurred_at"],
+                    )
+                    if persona_request is not None:
+                        deferred_persona_requests.append(persona_request)
+
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            results_for_batch: list[tuple[str, float, int, int] | None] = []
+            for prepared_session in prepared_sessions:
+                if prepared_session.get("skip"):
+                    results_for_batch.append(None)
+                else:
+                    results_for_batch.append((
+                        prepared_session["session_key"],
+                        elapsed_ms,
+                        int(prepared_session["parse_attempts"]),
+                        int(prepared_session["unparseable_count"]),
+                    ))
+            return results_for_batch
 
         work_queue: asyncio.Queue[tuple[LoCoMoConversation, LoCoMoSession, str]] = asyncio.Queue()
         for item in session_work:
@@ -485,10 +647,18 @@ class LoComoBenchmark:
                 finally:
                     work_queue.task_done()
 
-        worker_count = min(max(1, retain_concurrency), len(session_work))
-        workers = [asyncio.create_task(_retain_worker()) for _ in range(worker_count)]
-        if workers:
-            await asyncio.gather(*workers)
+        pipeline = getattr(self.brain, "_pipeline", None)
+        batch_size = max(1, retain_concurrency)
+        if pipeline is not None and hasattr(pipeline, "retain_many"):
+            for start in range(0, len(session_work), batch_size):
+                retained_batch = await _retain_pipeline_batch(session_work[start:start + batch_size])
+                for retained in retained_batch:
+                    await _record_retained(retained)
+        else:
+            worker_count = min(batch_size, len(session_work))
+            workers = [asyncio.create_task(_retain_worker()) for _ in range(worker_count)]
+            if workers:
+                await asyncio.gather(*workers)
 
         print(f"  [LoCoMo] Retain complete: {retain_count} sessions stored.")
         if unparseable_date_count > 0:
@@ -498,6 +668,37 @@ class LoComoBenchmark:
                 unparseable_date_count,
                 date_parse_attempts,
             )
+
+        if persona_task_queue is not None and deferred_persona_tasks:
+            print(
+                f"  [LoCoMo] Enqueuing {len(deferred_persona_tasks)} persona compile tasks via PgQueuer...",
+                flush=True,
+            )
+            for task in deferred_persona_tasks:
+                await persona_task_queue.enqueue(task)
+        elif deferred_persona_requests:
+            print(
+                f"  [LoCoMo] Running deferred persona retain phase for "
+                f"{len(deferred_persona_requests)} documents...",
+                flush=True,
+            )
+            pipeline = getattr(self.brain, "_pipeline", None)
+            if pipeline is not None and hasattr(pipeline, "retain_many"):
+                for start in range(0, len(deferred_persona_requests), batch_size):
+                    async with retain_rate_limiter:
+                        await pipeline.retain_many(deferred_persona_requests[start:start + batch_size])
+            else:
+                for request in deferred_persona_requests:
+                    async with retain_rate_limiter:
+                        await self.brain.retain(
+                            request.content,
+                            bank_id=request.bank_id,
+                            tags=request.tags,
+                            metadata=request.metadata,
+                            occurred_at=request.occurred_at,
+                            content_type=request.content_type,
+                            extraction_profile=request.extraction_profile,
+                        )
 
         # ── Phase 2: Collect all questions ──
         all_questions: list[LoCoMoQuestion] = []

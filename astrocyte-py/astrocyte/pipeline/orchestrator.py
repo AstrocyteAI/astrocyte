@@ -510,6 +510,258 @@ class PipelineOrchestrator:
             memory_id=memory_ids[0] if memory_ids else None,
         )
 
+    async def retain_many(self, requests: list[RetainRequest]) -> list[RetainResult]:
+        """Retain multiple requests while batching embedding generation and vector writes."""
+
+        if not requests:
+            return []
+
+        results: list[RetainResult | None] = [None] * len(requests)
+        records: list[dict[str, Any]] = []
+        all_chunks: list[str] = []
+        profile_table = merged_user_and_builtin_profiles(self.extraction_profiles)
+
+        for index, request in enumerate(requests):
+            profile = profile_table.get(request.extraction_profile) if request.extraction_profile else None
+            mip_pipeline = request.mip_pipeline
+            mip_chunker = mip_pipeline.chunker if mip_pipeline else None
+            prepared = prepare_retain_input(
+                request,
+                profile,
+                graph_store_configured=self.graph_store is not None,
+            )
+            chunking = resolve_retain_chunking(
+                prepared.effective_content_type,
+                profile=profile,
+                default_strategy=self.chunk_strategy,
+                default_max_chunk_size=self.max_chunk_size,
+                mip_chunker=mip_chunker,
+            )
+            chunk_kwargs: dict[str, int] = {"max_chunk_size": chunking.max_size}
+            if chunking.overlap is not None:
+                chunk_kwargs["overlap"] = chunking.overlap
+            chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
+            if not chunks:
+                results[index] = RetainResult(stored=False, error="No content after chunking")
+                continue
+
+            start = len(all_chunks)
+            all_chunks.extend(chunks)
+            records.append({
+                "index": index,
+                "request": request,
+                "profile": profile,
+                "prepared": prepared,
+                "chunks": chunks,
+                "start": start,
+                "end": len(all_chunks),
+            })
+
+        if not records:
+            return [result or RetainResult(stored=False, error="No content after chunking") for result in results]
+
+        all_embeddings = await generate_embeddings(all_chunks, self.llm_provider)
+        stored_records: list[dict[str, Any]] = []
+        all_items: list[VectorItem] = []
+
+        for record in records:
+            request: RetainRequest = record["request"]
+            profile: ExtractionProfileConfig | None = record["profile"]
+            prepared = record["prepared"]
+            chunks = record["chunks"]
+            embeddings = all_embeddings[record["start"]:record["end"]]
+            mip_pipeline = request.mip_pipeline
+            mip_dedup = mip_pipeline.dedup if mip_pipeline else None
+            dedup_threshold_override = mip_dedup.threshold if mip_dedup else None
+            dedup_action = (mip_dedup.action if mip_dedup else None) or "skip_chunk"
+
+            keep_indices: list[int] = []
+            any_duplicate = False
+            for chunk_index, embedding in enumerate(embeddings):
+                is_dup, _sim = self._dedup.is_duplicate(
+                    request.bank_id,
+                    embedding,
+                    threshold_override=dedup_threshold_override,
+                )
+                if is_dup:
+                    any_duplicate = True
+                if dedup_action == "warn" or not is_dup:
+                    keep_indices.append(chunk_index)
+
+            result_index = record["index"]
+            if dedup_action == "skip" and any_duplicate:
+                results[result_index] = RetainResult(
+                    stored=False,
+                    deduplicated=True,
+                    error="Duplicate chunk(s) found; rule action=skip",
+                )
+                continue
+            if not keep_indices:
+                results[result_index] = RetainResult(
+                    stored=False,
+                    deduplicated=True,
+                    error="All chunks are near-duplicates",
+                )
+                continue
+
+            chunks = [chunks[i] for i in keep_indices]
+            embeddings = [embeddings[i] for i in keep_indices]
+            if profile is not None and profile.entity_extraction == "metadata":
+                entities = _entities_from_metadata(prepared.metadata)
+            elif prepared.extract_entities:
+                entities = await extract_entities(prepared.text, self.llm_provider)
+            else:
+                entities = []
+
+            profile_tier = profile.authority_tier if profile else None
+            chunk_metadata = merge_retain_metadata_authority_tier(
+                prepared.metadata,
+                bank_id=request.bank_id,
+                profile_authority_tier=profile_tier,
+                recall_authority=self.recall_authority,
+            )
+            chunk_metadata = dict(chunk_metadata or {})
+            if request.mip_rule_name:
+                chunk_metadata["_mip.rule"] = request.mip_rule_name
+            if mip_pipeline and mip_pipeline.version is not None:
+                chunk_metadata["_mip.pipeline_version"] = int(mip_pipeline.version)
+            chunk_metadata.setdefault("_created_at", datetime.now(timezone.utc).isoformat())
+
+            memory_ids: list[str] = []
+            items: list[VectorItem] = []
+            for chunk, embedding in zip(chunks, embeddings, strict=False):
+                mem_id = uuid.uuid4().hex[:16]
+                memory_ids.append(mem_id)
+                items.append(
+                    VectorItem(
+                        id=mem_id,
+                        bank_id=request.bank_id,
+                        vector=embedding,
+                        text=chunk,
+                        metadata=chunk_metadata,
+                        tags=prepared.tags,
+                        fact_type=prepared.fact_type,
+                        occurred_at=request.occurred_at,
+                        retained_at=datetime.now(timezone.utc),
+                    )
+                )
+
+            record.update({
+                "chunks": chunks,
+                "embeddings": embeddings,
+                "entities": entities,
+                "memory_ids": memory_ids,
+                "items": items,
+            })
+            stored_records.append(record)
+            all_items.extend(items)
+
+        if all_items:
+            await self.vector_store.store_vectors(all_items)
+
+        if self.document_store is not None:
+            from astrocyte.types import Document
+
+            for record in stored_records:
+                request = record["request"]
+                for item in record["items"]:
+                    try:
+                        await self.document_store.store_document(
+                            Document(
+                                id=item.id,
+                                text=item.text,
+                                metadata=item.metadata,
+                                tags=item.tags,
+                            ),
+                            request.bank_id,
+                        )
+                    except Exception as exc:
+                        _logger.warning(
+                            "document_store.store_document failed for chunk %s: %s "
+                            "(keyword retrieval will miss this chunk)",
+                            item.id,
+                            exc,
+                        )
+
+        for record in stored_records:
+            request: RetainRequest = record["request"]
+            prepared = record["prepared"]
+            memory_ids: list[str] = record["memory_ids"]
+            embeddings: list[list[float]] = record["embeddings"]
+            chunks: list[str] = record["chunks"]
+            entities = record["entities"]
+
+            if self.graph_store and entities:
+                entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
+                associations = [
+                    MemoryEntityAssociation(memory_id=mid, entity_id=eid)
+                    for mid in memory_ids
+                    for eid in entity_ids
+                ]
+                await self.graph_store.link_memories_to_entities(associations, request.bank_id)
+                if len(entity_ids) > 1:
+                    links = [
+                        EntityLink(
+                            entity_a=entity_ids[i],
+                            entity_b=entity_ids[j],
+                            link_type="co_occurs",
+                        )
+                        for i in range(len(entity_ids))
+                        for j in range(i + 1, len(entity_ids))
+                    ]
+                    await self.graph_store.store_links(links, request.bank_id)
+                if self.entity_resolver is not None:
+                    try:
+                        await self.entity_resolver.resolve(
+                            new_entities=entities,
+                            source_text=prepared.text,
+                            bank_id=request.bank_id,
+                            graph_store=self.graph_store,
+                            llm_provider=self.llm_provider,
+                        )
+                    except Exception as exc:
+                        _logger.warning("entity resolution failed during retain: %s", exc)
+
+            for mem_id, embedding in zip(memory_ids, embeddings, strict=False):
+                self._dedup.add(request.bank_id, mem_id, embedding)
+
+            if self._observation_consolidator is not None and memory_ids and chunks:
+                representative_vec = embeddings[0]
+                consolidator = self._observation_consolidator
+                bank_id = request.bank_id
+                first_chunk = chunks[0]
+                all_ids = list(memory_ids)
+                vs = self.vector_store
+                llm = self.llm_provider
+
+                async def _run_consolidation() -> None:
+                    try:
+                        await consolidator.consolidate(
+                            new_memory_text=first_chunk,
+                            new_memory_ids=all_ids,
+                            bank_id=bank_id,
+                            vector_store=vs,
+                            llm_provider=llm,
+                            query_vector=representative_vec,
+                        )
+                    except Exception as exc:
+                        _logger.warning(
+                            "Observation consolidation task failed for bank %s: %s",
+                            bank_id,
+                            exc,
+                        )
+
+                task = asyncio.create_task(_run_consolidation())
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
+
+            results[record["index"]] = RetainResult(
+                stored=True,
+                memory_id=memory_ids[0] if memory_ids else None,
+            )
+
+        return [result or RetainResult(stored=False, error="Not retained") for result in results]
+
     async def recall(self, request: RecallRequest) -> RecallResult:
         """Recall pipeline: embed query → parallel retrieve → fuse → rerank → budget."""
         # 1. Embed query

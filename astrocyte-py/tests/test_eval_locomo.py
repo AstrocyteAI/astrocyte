@@ -15,6 +15,7 @@ from astrocyte.eval.benchmarks.locomo import (
     LoCoMoSession,
     load_locomo_dataset,
 )
+from astrocyte.pipeline.tasks import COMPILE_PERSONA_PAGE, MemoryTask
 from astrocyte.testing.in_memory import InMemoryEngineProvider
 
 
@@ -100,8 +101,52 @@ class TestLoComoBenchmark:
         assert raw.metadata["locomo_speakers"] == "Alice,Bob"
         assert raw.metadata["locomo_turn_count"] == 3
         persona = next(mem for mem in stored if mem.metadata and mem.metadata.get("source") == "locomo_persona_compile")
-        assert persona.metadata["person"] in {"Alice", "Bob"}
+        assert persona.metadata["person"] == "Alice,Bob"
         assert "_wiki_source_ids" in persona.metadata
+
+    async def test_persona_compile_is_enqueued_when_task_queue_is_configured(self):
+        class RecordingQueue:
+            def __init__(self) -> None:
+                self.tasks: list[MemoryTask] = []
+
+            async def enqueue(self, task: MemoryTask) -> str:
+                self.tasks.append(task)
+                return task.id
+
+        brain, engine = _make_brain()
+        queue = RecordingQueue()
+        setattr(brain, "_benchmark_task_queue", queue)
+        bench = LoComoBenchmark(brain)
+        conversations = [
+            LoCoMoConversation(
+                conversation_id="c1",
+                sessions=[
+                    LoCoMoSession(
+                        session_id="session_1",
+                        turns=[
+                            {"speaker": "Alice", "text": "I just got a new puppy named Max"},
+                            {"speaker": "Bob", "text": "That's great! What breed is Max?"},
+                        ],
+                    ),
+                ],
+                questions=[
+                    LoCoMoQuestion(
+                        question="What is the name of Alice's dog?",
+                        answer="Max",
+                        category="single-hop",
+                        evidence_ids=[],
+                        conversation_id="c1",
+                    ),
+                ],
+            ),
+        ]
+
+        await bench.run(conversations=conversations, bank_id="bench-locomo-queue", clean_after=False)
+
+        assert {task.task_type for task in queue.tasks} == {COMPILE_PERSONA_PAGE}
+        assert all(task.payload["index_vector"] is True for task in queue.tasks)
+        stored = engine._memories["bench-locomo-queue"]
+        assert not any(mem.metadata and mem.metadata.get("source") == "locomo_persona_compile" for mem in stored)
 
     async def test_retain_phase_uses_configured_concurrency(self):
         class SlowEngine(InMemoryEngineProvider):

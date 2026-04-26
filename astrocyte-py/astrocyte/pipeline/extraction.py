@@ -46,6 +46,7 @@ BUILTIN_EXTRACTION_PROFILES: dict[str, ExtractionProfileConfig] = {
     "locomo_persona": ExtractionProfileConfig(
         content_type="document",
         chunking_strategy="paragraph",
+        entity_extraction="metadata",
         fact_type="wiki",
     ),
 }

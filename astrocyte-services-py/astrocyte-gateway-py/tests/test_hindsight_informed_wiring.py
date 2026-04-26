@@ -4,7 +4,7 @@ import importlib.util
 from types import SimpleNamespace
 
 import pytest
-from astrocyte_gateway.app import _warm_reference_stack_providers
+from astrocyte_gateway.app import _warm_reference_stack_provider, _warm_reference_stack_providers
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.tasks import start_gateway_task_worker
 from astrocyte_gateway.wiring import build_tier1_pipeline, resolve_wiki_store
@@ -190,6 +190,10 @@ async def test_gateway_startup_warms_graph_provider() -> None:
     class WarmableGraphStore:
         def __init__(self) -> None:
             self.warmed = False
+            self.schema_bootstrapped = False
+
+        async def _ensure_schema(self):
+            self.schema_bootstrapped = True
 
         async def health(self):
             self.warmed = True
@@ -203,3 +207,33 @@ async def test_gateway_startup_warms_graph_provider() -> None:
     await _warm_reference_stack_providers(brain)
 
     assert graph_store.warmed is True
+    assert graph_store.schema_bootstrapped is True
+
+
+@pytest.mark.anyio
+async def test_gateway_startup_rejects_unhealthy_reference_provider() -> None:
+    class UnhealthyProvider:
+        async def health(self):
+            return SimpleNamespace(healthy=False, message="schema failed")
+
+    with pytest.raises(ConfigError, match="schema failed"):
+        await _warm_reference_stack_provider(UnhealthyProvider())
+
+
+@pytest.mark.anyio
+async def test_gateway_startup_skips_schema_helper_that_requires_arguments() -> None:
+    class PoolBackedProvider:
+        def __init__(self) -> None:
+            self.warmed = False
+
+        async def _ensure_schema(self, pool):
+            raise AssertionError("pool-backed schema helper should be warmed through health")
+
+        async def health(self):
+            self.warmed = True
+
+    provider = PoolBackedProvider()
+
+    await _warm_reference_stack_provider(provider)
+
+    assert provider.warmed is True

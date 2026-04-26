@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import secrets
@@ -113,9 +114,42 @@ async def _warm_reference_stack_providers(brain: Astrocyte) -> None:
     pipeline = getattr(brain, "_pipeline", None)
     graph_store = getattr(pipeline, "graph_store", None) if pipeline is not None else None
     for provider in (graph_store, getattr(brain, "_wiki_store", None)):
-        health = getattr(provider, "health", None)
-        if health is not None:
-            await health()
+        await _warm_reference_stack_provider(provider)
+
+
+async def _warm_reference_stack_provider(provider: object | None) -> None:
+    if provider is None:
+        return
+
+    # AGE-compatible providers expose schema bootstrap separately from health.
+    # Call it directly so startup creates reference-stack tables even with
+    # adapter versions whose health check only verifies connectivity.
+    ensure_schema = getattr(provider, "_ensure_schema", None)
+    if ensure_schema is not None and _callable_without_required_args(ensure_schema):
+        await ensure_schema()
+
+    health = getattr(provider, "health", None)
+    if health is None:
+        return
+    status = await health()
+    if getattr(status, "healthy", True) is False:
+        message = getattr(status, "message", "provider health check failed")
+        raise ConfigError(f"Reference stack provider failed startup warm-up: {message}")
+
+
+def _callable_without_required_args(func: object) -> bool:
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return False
+    return all(
+        parameter.default is not inspect.Parameter.empty
+        or parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }
+        for parameter in signature.parameters.values()
+    )
 
 
 def create_app(brain: Astrocyte | None = None) -> FastAPI:
