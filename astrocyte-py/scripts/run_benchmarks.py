@@ -167,6 +167,33 @@ def _serialize_result(
     ``"mem0"`` / ``"zep"`` / etc. so a head-to-head matrix can filter
     and group cleanly without re-parsing filenames.
     """
+    per_question = list(getattr(result, "per_question", []) or [])
+    failed_questions: list[dict] = []
+    failed_by_category: dict[str, int] = {}
+    for record in per_question:
+        if record.get("correct") is not False:
+            continue
+        category = str(record.get("category", "unknown"))
+        failed_by_category[category] = failed_by_category.get(category, 0) + 1
+        failed_questions.append(
+            {
+                key: record[key]
+                for key in (
+                    "question",
+                    "expected_answer",
+                    "category",
+                    "recall_hits",
+                    "reflect_answer_preview",
+                    "canonical_f1",
+                    "_precision",
+                    "_reciprocal_rank",
+                    "_latency_ms",
+                    "_ndcg",
+                )
+                if key in record
+            }
+        )
+
     data = {
         "benchmark": benchmark_name,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -191,6 +218,12 @@ def _serialize_result(
         },
         "provider": result.eval_result.provider,
         "provider_tier": result.eval_result.provider_tier,
+        "per_question": per_question,
+        "failure_report": {
+            "total_failed": len(failed_questions),
+            "by_category": dict(sorted(failed_by_category.items())),
+            "failed_questions": failed_questions,
+        },
     }
     # Canonical F1 means — only populated on LoCoMo canonical-judge runs
     # (attribute exists on LoCoMoResult; None under legacy scorer).
