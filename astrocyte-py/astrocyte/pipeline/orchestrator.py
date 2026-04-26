@@ -174,8 +174,8 @@ class PipelineOrchestrator:
         wiki_store: WikiStore | None = None,
         wiki_confidence_threshold: float = 0.7,
         entity_resolver: EntityResolver | None = None,
-        enable_observation_consolidation: bool = False,
-        observation_weight: float = 1.5,
+        enable_observation_consolidation: bool = True,
+        observation_weight: float = 0.0,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -607,7 +607,10 @@ class PipelineOrchestrator:
         # via a final RRF pass. Only runs when enabled and the LLM judges the
         # question as multi-hop (len > 1). The original query's fused result is
         # always included so the expansion never discards the baseline recall.
-        if self.enable_multi_query_expansion:
+        # Guard on `fused` being non-empty: if initial retrieval returned nothing
+        # (empty bank or no relevant memories), decomposition cannot help and we
+        # avoid a wasted LLM call.
+        if self.enable_multi_query_expansion and fused:
             from astrocyte.pipeline.multi_query import decompose_query
 
             sub_queries = await decompose_query(request.query, self.llm_provider)
@@ -713,21 +716,24 @@ class PipelineOrchestrator:
     ) -> list[Any]:
         """Retrieve observation-layer hits for RRF fusion.
 
-        Runs ``search_similar`` with ``fact_types=["observation"]`` so only
-        consolidated observations are returned.  Converts ``VectorHit``
-        objects to ``ScoredItem`` to match the format expected by the
-        weighted RRF fusion step.
+        Observations are stored in a dedicated bank (``{bank_id}::obs``) that
+        is completely separate from the raw memory bank.  This prevents
+        double-counting: the main semantic/keyword/temporal strategies only
+        search the raw bank, while this method exclusively searches the obs
+        bank.  Converts ``VectorHit`` objects to ``ScoredItem`` to match the
+        format expected by the weighted RRF fusion step.
         """
         from astrocyte.pipeline.fusion import ScoredItem
+        from astrocyte.pipeline.observation import obs_bank_id
 
+        obs_bank = obs_bank_id(bank_id)
         obs_filters = VectorFilters(
-            bank_id=bank_id,
-            fact_types=["observation"],
+            bank_id=obs_bank,
             as_of=as_of,
         )
         try:
             hits = await self.vector_store.search_similar(
-                query_vector, bank_id, limit=limit, filters=obs_filters
+                query_vector, obs_bank, limit=limit, filters=obs_filters
             )
         except Exception as exc:
             _logger.warning("Observation retrieval failed for bank %s: %s", bank_id, exc)
@@ -882,6 +888,24 @@ class PipelineOrchestrator:
             bank_pipeline = self.mip_router.resolve_pipeline_for_bank(request.bank_id)
             if bank_pipeline is not None:
                 mip_reflect = bank_pipeline.reflect
+
+        # 2b. Auto-select temporal_aware prompt when no MIP prompt override is set
+        # and the query is classified as temporal.  The intent classifier is the same
+        # zero-cost regex engine used in recall — no extra LLM call.  A MIP rule that
+        # explicitly sets reflect.prompt always wins over this heuristic.
+        if mip_reflect is None or mip_reflect.prompt is None:
+            from astrocyte.mip.schema import ReflectSpec
+            from astrocyte.pipeline.query_intent import QueryIntent, classify_query_intent
+
+            if classify_query_intent(request.query).intent == QueryIntent.TEMPORAL:
+                if mip_reflect is None:
+                    mip_reflect = ReflectSpec(prompt="temporal_aware")
+                else:
+                    # Preserve any other MIP settings (e.g. promote_metadata)
+                    mip_reflect = ReflectSpec(
+                        prompt="temporal_aware",
+                        promote_metadata=mip_reflect.promote_metadata,
+                    )
 
         # 3. Synthesize via LLM
         return await synthesize(

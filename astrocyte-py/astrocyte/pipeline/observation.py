@@ -71,6 +71,25 @@ logger = logging.getLogger("astrocyte.pipeline.observation")
 _VALID_ACTIONS = frozenset({"create", "update", "delete"})
 
 # ---------------------------------------------------------------------------
+# Observation bank naming
+# ---------------------------------------------------------------------------
+
+_OBS_SUFFIX = "::obs"
+
+
+def obs_bank_id(bank_id: str) -> str:
+    """Return the dedicated observation bank for ``bank_id``.
+
+    Observations are stored in a *separate* bank (``{bank_id}::obs``) so that
+    the main semantic/keyword/temporal strategies never retrieve them.  This
+    prevents observations from double-counting in RRF fusion (they would
+    otherwise appear in both the ``semantic`` results and the ``observation``
+    strategy results, crowding out the raw source memories that carry verbatim
+    answers).
+    """
+    return f"{bank_id}{_OBS_SUFFIX}"
+
+# ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
 
@@ -252,18 +271,16 @@ class ObservationConsolidator:
                 vecs = await llm_provider.embed([new_memory_text])
                 query_vector = vecs[0]
 
-            # 2. Fetch semantically-related existing observations
+            # 2. Fetch semantically-related existing observations from the
+            # dedicated observation bank (separate from the raw memory bank).
             from astrocyte.types import VectorFilters
 
-            obs_filters = VectorFilters(
-                bank_id=bank_id,
-                fact_types=["observation"],
-            )
+            obs_bank = obs_bank_id(bank_id)
             existing_obs = await vector_store.search_similar(
                 query_vector,
-                bank_id,
+                obs_bank,
                 limit=self.observation_recall_limit,
-                filters=obs_filters,
+                filters=VectorFilters(bank_id=obs_bank),
             )
 
             # 3. Build and execute the LLM prompt
@@ -326,7 +343,7 @@ class ObservationConsolidator:
                     elif act == "delete":
                         obs_id = action.get("obs_id", "")
                         if obs_id and obs_id in obs_by_id:
-                            deleted = await vector_store.delete([obs_id], bank_id)
+                            deleted = await vector_store.delete([obs_id], obs_bank)
                             if deleted:
                                 result.deleted += 1
                         else:
@@ -375,12 +392,13 @@ class ObservationConsolidator:
 
         vecs = await llm_provider.embed([text])
         obs_id = uuid.uuid4().hex[:16]
+        target_bank = obs_bank_id(bank_id)
 
         from astrocyte.types import VectorItem
 
         item = VectorItem(
             id=obs_id,
-            bank_id=bank_id,
+            bank_id=target_bank,
             vector=vecs[0],
             text=text,
             fact_type="observation",
@@ -428,9 +446,11 @@ class ObservationConsolidator:
                 old_sources = json.loads(str(meta.get("_obs_source_ids", "[]")))
             except (json.JSONDecodeError, TypeError):
                 old_sources = []
-            # Delete the stale observation first
-            await vector_store.delete([obs_id], bank_id)
+            # Delete the stale observation from the obs bank
+            target_bank = obs_bank_id(bank_id)
+            await vector_store.delete([obs_id], target_bank)
 
+        target_bank = obs_bank_id(bank_id)
         merged_sources = list({*old_sources, *new_source_ids})
         new_proof = old_proof + 1
 
@@ -441,7 +461,7 @@ class ObservationConsolidator:
 
         item = VectorItem(
             id=new_id,
-            bank_id=bank_id,
+            bank_id=target_bank,
             vector=vecs[0],
             text=text,
             fact_type="observation",

@@ -17,6 +17,7 @@ from astrocyte.pipeline.fusion import ScoredItem
 from astrocyte.pipeline.observation import (
     ObservationConsolidator,
     _parse_actions,
+    obs_bank_id,
 )
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 from astrocyte.pipeline.reranking import _observation_proof_boost
@@ -149,10 +150,12 @@ class TestObservationConsolidatorCreate:
         assert result.created == 1
         assert result.errors == []
 
-        # Verify the observation was stored with correct fact_type
-        items = await vs.list_vectors("bank-a")
+        # Verify the observation was stored in the dedicated obs bank
+        items = await vs.list_vectors(obs_bank_id("bank-a"))
         obs = [i for i in items if i.fact_type == "observation"]
         assert len(obs) == 1
+        # Raw memory bank should be untouched by consolidation
+        assert await vs.list_vectors("bank-a") == []
         assert obs[0].text == "Alice is a software engineer."
         assert obs[0].metadata is not None
         assert obs[0].metadata["_obs_proof_count"] == 1
@@ -175,8 +178,8 @@ class TestObservationConsolidatorCreate:
 
         assert result.created == 0
         assert result.skipped == 1
-        items = await vs.list_vectors("bank-b")
-        assert all(i.fact_type != "observation" for i in items)
+        items = await vs.list_vectors(obs_bank_id("bank-b"))
+        assert items == []
 
     @pytest.mark.asyncio
     async def test_empty_actions_noop(self):
@@ -195,8 +198,7 @@ class TestObservationConsolidatorCreate:
         assert result.created == 0
         assert result.updated == 0
         assert result.deleted == 0
-        items = await vs.list_vectors("bank-c")
-        assert items == []
+        assert await vs.list_vectors(obs_bank_id("bank-c")) == []
 
 
 class TestObservationConsolidatorUpdate:
@@ -216,7 +218,7 @@ class TestObservationConsolidatorUpdate:
             llm_provider=llm_create,
         )
 
-        items = await vs.list_vectors("bank-upd")
+        items = await vs.list_vectors(obs_bank_id("bank-upd"))
         obs = [i for i in items if i.fact_type == "observation"]
         assert len(obs) == 1
         obs_id = obs[0].id
@@ -237,7 +239,7 @@ class TestObservationConsolidatorUpdate:
         assert result.updated == 1
         assert result.errors == []
 
-        items = await vs.list_vectors("bank-upd")
+        items = await vs.list_vectors(obs_bank_id("bank-upd"))
         obs_after = [i for i in items if i.fact_type == "observation"]
         assert len(obs_after) == 1  # old one deleted, new one added
         updated = obs_after[0]
@@ -263,7 +265,7 @@ class TestObservationConsolidatorDelete:
             vector_store=vs,
             llm_provider=llm_create,
         )
-        obs = [i for i in await vs.list_vectors("bank-del") if i.fact_type == "observation"]
+        obs = [i for i in await vs.list_vectors(obs_bank_id("bank-del")) if i.fact_type == "observation"]
         assert len(obs) == 1
         obs_id = obs[0].id
 
@@ -277,7 +279,7 @@ class TestObservationConsolidatorDelete:
         )
 
         assert result.deleted == 1
-        obs_after = [i for i in await vs.list_vectors("bank-del") if i.fact_type == "observation"]
+        obs_after = [i for i in await vs.list_vectors(obs_bank_id("bank-del")) if i.fact_type == "observation"]
         assert len(obs_after) == 0
 
 
@@ -301,10 +303,18 @@ class TestOrchestratorObservationIntegration:
         assert orch._observation_consolidator is not None
 
     @pytest.mark.asyncio
-    async def test_orchestrator_observation_disabled_by_default(self):
+    async def test_orchestrator_observation_enabled_by_default(self):
         vs = InMemoryVectorStore()
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vector_store=vs, llm_provider=llm)
+        assert orch.enable_observation_consolidation is True
+        assert orch._observation_consolidator is not None
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_observation_can_be_disabled(self):
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        orch = PipelineOrchestrator(vector_store=vs, llm_provider=llm, enable_observation_consolidation=False)
         assert orch.enable_observation_consolidation is False
         assert orch._observation_consolidator is None
 
@@ -341,16 +351,26 @@ class TestOrchestratorObservationIntegration:
         await asyncio.sleep(0)
 
     @pytest.mark.asyncio
-    async def test_recall_filters_observations_from_fact_type_filter(self):
-        """When caller requests fact_types=["world"], observation strategy should be skipped."""
+    async def test_recall_obs_bank_separate_from_raw_bank(self):
+        """Observations live in the ::obs bank; main recall bank is never polluted.
+
+        With observation_weight=0.0 (default), the observation strategy is disabled
+        in recall — the ::obs bank is written during retain but not injected into RRF.
+        This prevents abstract observation summaries from displacing verbatim raw
+        memories in the top-k, which was observed to halve precision in benchmarks.
+        Observations can be re-enabled for specific query intents via observation_weight.
+        """
+        from astrocyte.pipeline.observation import obs_bank_id
+
         vs = InMemoryVectorStore()
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(
             vector_store=vs,
             llm_provider=llm,
             enable_observation_consolidation=True,
+            # observation_weight=0.0 by default — injection disabled
         )
-        # Manually store a raw memory and a synthetic observation
+        # Raw memory in the main bank
         await vs.store_vectors([
             VectorItem(
                 id="raw001",
@@ -359,25 +379,35 @@ class TestOrchestratorObservationIntegration:
                 text="Charlie plays guitar.",
                 fact_type="world",
             ),
+        ])
+        # Observation in the separate ::obs bank (written by consolidation, not by retain)
+        await vs.store_vectors([
             VectorItem(
                 id="obs001",
-                bank_id="bank-filter",
+                bank_id=obs_bank_id("bank-filter"),
                 vector=[1.0] + [0.0] * 127,
                 text="Charlie is a musician.",
                 fact_type="observation",
                 metadata={"_obs_proof_count": 2},
             ),
         ])
-        # recall with fact_types=["world"] should skip observation injection
+        # Normal recall: only raw bank is searched (observation_weight=0.0 → no injection)
         result = await orch.recall(
-            RecallRequest(
-                query="Charlie",
-                bank_id="bank-filter",
-                fact_types=["world"],
-                max_results=10,
-            )
+            RecallRequest(query="Charlie", bank_id="bank-filter", max_results=10)
         )
         hit_ids = {h.memory_id for h in result.hits}
         assert "raw001" in hit_ids
-        # Observation should not appear since fact_types filter excludes it
-        assert "obs001" not in hit_ids
+        assert "obs001" not in hit_ids  # ::obs bank not injected by default
+
+        # Opt-in: explicit observation_weight > 0 enables injection
+        orch_with_obs = PipelineOrchestrator(
+            vector_store=vs,
+            llm_provider=llm,
+            enable_observation_consolidation=True,
+            observation_weight=1.5,
+        )
+        result_with_obs = await orch_with_obs.recall(
+            RecallRequest(query="Charlie", bank_id="bank-filter", max_results=10)
+        )
+        obs_hit_ids = {h.memory_id for h in result_with_obs.hits}
+        assert "obs001" in obs_hit_ids  # ::obs bank injected at 1.5× weight
