@@ -37,8 +37,10 @@ from astrocyte.types import (
     AuditResult,
     BankHealth,
     CompileResult,
+    Entity,
     ForgetRequest,
     ForgetResult,
+    GraphHit,
     HealthStatus,
     HistoryResult,
     LegalHold,
@@ -1036,6 +1038,86 @@ class Astrocyte:
             )
 
         return result
+
+    # ---------------------------------------------------------------------------
+    # Graph traversal (public API)
+    # ---------------------------------------------------------------------------
+
+    async def graph_search(
+        self,
+        query: str,
+        bank_id: str,
+        limit: int = 10,
+    ) -> list[Entity]:
+        """Search the knowledge graph for entities matching *query*.
+
+        Performs a name/alias search against the graph store and returns
+        matching :class:`~astrocyte.types.Entity` objects.  Useful for
+        resolving entity references before calling :meth:`graph_neighbors`.
+
+        Args:
+            query: Name or partial name to search for.
+            bank_id: Memory bank whose graph to search.
+            limit: Maximum number of entities to return.
+
+        Returns:
+            Matching entities ordered by relevance.
+
+        Raises:
+            :class:`~astrocyte.errors.ConfigError`: If no graph store has been
+                configured (set ``graph_store`` on the pipeline).
+        """
+        from astrocyte.errors import ConfigError
+
+        validate_bank_id(bank_id)
+        graph_store = getattr(self._pipeline, "graph_store", None) if self._pipeline else None
+        if graph_store is None:
+            raise ConfigError(
+                "graph_search() requires a GraphStore. "
+                "Configure a graph_store provider in astrocyte.yaml."
+            )
+        return await graph_store.query_entities(query, bank_id, limit=limit)
+
+    async def graph_neighbors(
+        self,
+        entity_ids: list[str],
+        bank_id: str,
+        max_depth: int = 2,
+        limit: int = 20,
+    ) -> list[GraphHit]:
+        """Traverse the knowledge graph from *entity_ids* and return connected memories.
+
+        Walks the entity graph up to *max_depth* hops from each seed entity
+        and returns the memories attached to discovered entities, scored by
+        proximity.
+
+        Args:
+            entity_ids: Seed entity IDs to start traversal from.
+            bank_id: Memory bank whose graph to traverse.
+            max_depth: Maximum traversal depth (default 2).
+            limit: Maximum number of memory hits to return.
+
+        Returns:
+            :class:`~astrocyte.types.GraphHit` objects sorted by relevance.
+
+        Raises:
+            :class:`~astrocyte.errors.ConfigError`: If no graph store has been
+                configured.
+        """
+        from astrocyte.errors import ConfigError
+
+        validate_bank_id(bank_id)
+        if not entity_ids:
+            return []
+        graph_store = getattr(self._pipeline, "graph_store", None) if self._pipeline else None
+        if graph_store is None:
+            raise ConfigError(
+                "graph_neighbors() requires a GraphStore. "
+                "Configure a graph_store provider in astrocyte.yaml."
+            )
+        return await graph_store.query_neighbors(
+            entity_ids, bank_id, max_depth=max_depth, limit=limit
+        )
 
     async def history(
         self,

@@ -332,6 +332,120 @@ def create_mcp_server(
                 logger.exception("memory_forget failed")
                 return json.dumps({"deleted_count": 0, "error": type(exc).__name__})
 
+    # ── memory_compile ─────────────────────────────────────────────
+
+    @mcp.tool()
+    async def memory_compile(
+        bank_id: str | None = None,
+        scope: str | None = None,
+    ) -> str:
+        """Compile raw memories into structured wiki pages (M8).
+
+        Synthesises a wiki page for each detected topic scope using the LLM.
+        Call this periodically to distil accumulated memories into a curated
+        knowledge base that recall can surface ahead of raw fragments.
+
+        Args:
+            bank_id: Bank to compile. Uses default if omitted.
+            scope: Compile only memories tagged with this scope string.
+                   Omit to trigger full scope discovery (tag grouping +
+                   embedding cluster labelling across the whole bank).
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            result = await brain.compile(bid, scope=scope)
+            out: dict[str, Any] = {
+                "bank_id": result.bank_id,
+                "pages_created": result.pages_created,
+                "pages_updated": result.pages_updated,
+                "scopes_compiled": result.scopes_compiled,
+                "noise_memories": result.noise_memories,
+                "tokens_used": result.tokens_used,
+                "elapsed_ms": result.elapsed_ms,
+            }
+            if result.error:
+                out["error"] = result.error
+            return json.dumps(out)
+        except Exception as exc:
+            logger.exception("memory_compile failed")
+            return json.dumps({"pages_created": 0, "pages_updated": 0, "error": type(exc).__name__})
+
+    # ── memory_graph_search ────────────────────────────────────────
+
+    @mcp.tool()
+    async def memory_graph_search(
+        query: str,
+        bank_id: str | None = None,
+        limit: int = 10,
+    ) -> str:
+        """Search the knowledge graph for entities matching a name.
+
+        Returns matching entities with their IDs. Use the IDs with
+        memory_graph_neighbors to traverse connected memories.
+
+        Args:
+            query: Entity name or partial name to search for.
+            bank_id: Bank whose graph to search. Uses default if omitted.
+            limit: Maximum number of entities to return.
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            entities = await brain.graph_search(query, bid, limit=limit)
+            return json.dumps({
+                "entities": [
+                    {
+                        "id": e.id,
+                        "name": e.name,
+                        "entity_type": e.entity_type,
+                        "aliases": e.aliases or [],
+                    }
+                    for e in entities
+                ]
+            })
+        except Exception as exc:
+            logger.exception("memory_graph_search failed")
+            return json.dumps({"entities": [], "error": type(exc).__name__})
+
+    # ── memory_graph_neighbors ─────────────────────────────────────
+
+    @mcp.tool()
+    async def memory_graph_neighbors(
+        entity_ids: list[str],
+        bank_id: str | None = None,
+        max_depth: int = 2,
+        limit: int = 20,
+    ) -> str:
+        """Traverse the knowledge graph from seed entity IDs.
+
+        Walks the entity graph up to max_depth hops from each seed entity
+        and returns memories attached to discovered entities, scored by
+        proximity. Use memory_graph_search first to resolve entity IDs.
+
+        Args:
+            entity_ids: Seed entity IDs to start traversal from.
+            bank_id: Bank whose graph to traverse. Uses default if omitted.
+            max_depth: Maximum traversal depth (default 2).
+            limit: Maximum number of memory hits to return.
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            hits = await brain.graph_neighbors(entity_ids, bid, max_depth=max_depth, limit=limit)
+            return json.dumps({
+                "hits": [
+                    {
+                        "memory_id": h.memory_id,
+                        "text": h.text,
+                        "connected_entities": h.connected_entities,
+                        "depth": h.depth,
+                        "score": round(h.score, 4),
+                    }
+                    for h in hits
+                ]
+            })
+        except Exception as exc:
+            logger.exception("memory_graph_neighbors failed")
+            return json.dumps({"hits": [], "error": type(exc).__name__})
+
     # ── memory_banks ───────────────────────────────────────────────
 
     @mcp.tool()
