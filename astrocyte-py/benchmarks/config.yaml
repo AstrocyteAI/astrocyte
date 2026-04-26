@@ -16,17 +16,23 @@ provider_tier: storage
 # Uses the production postgres-age-pgvector stack so benchmark scores reflect
 # real-world HNSW retrieval, not in-memory exact NN.
 # Both providers read DATABASE_URL from the environment automatically.
-# Requires: export DATABASE_URL=postgresql://user:pass@localhost:5432/astrocyte_bench
+# `make bench-*` starts the benchmark database and runs HNSW migrations with
+# ASTROCYTE_EMBEDDING_DIMENSIONS=1536 before invoking this config.
+# Manual runs require:
+#   export DATABASE_URL=postgresql://user:pass@localhost:5432/astrocyte_bench
+#   export ASTROCYTE_EMBEDDING_DIMENSIONS=1536
+#   ../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh
 
 vector_store: pgvector
 vector_store_config:
   embedding_dimensions: 1536  # text-embedding-3-small
+  bootstrap_schema: false
 
 graph_store: age
 
 wiki_store: pgvector
 wiki_store_config:
-  bootstrap_schema: true
+  bootstrap_schema: false
 
 wiki_compile:
   enabled: true

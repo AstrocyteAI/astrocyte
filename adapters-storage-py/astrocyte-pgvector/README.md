@@ -53,7 +53,7 @@ Requirements: **PostgreSQL 15+** (for `CREATE INDEX CONCURRENTLY IF NOT EXISTS`)
 
 After migrations are applied, set **`bootstrap_schema: false`** in `vector_store_config` so the app does not run `CREATE TABLE` / indexes at runtime (see configuration table below). For a **single command** that starts Postgres, runs migrations, then starts the stack with runbook config, use **[`runbook-up.sh`](../../astrocyte-services-py/scripts/runbook-up.sh)** (see **[Runbook](../../astrocyte-services-py/README.md#runbook)**).
 
-**Embedding width:** [`migrations/002_astrocyte_vectors.sql`](migrations/002_astrocyte_vectors.sql) defines `vector(128)`. That must match **`embedding_dimensions`** in config. For another width, add a new migration (or edit before first deploy) and keep the Python config aligned.
+**Embedding width:** [`migrations/002_astrocyte_vectors.sql`](migrations/002_astrocyte_vectors.sql) creates `vector(${ASTROCYTE_EMBEDDING_DIMENSIONS:-128})`. That must match **`embedding_dimensions`** in config. For OpenAI `text-embedding-3-small`, run migrations with `ASTROCYTE_EMBEDDING_DIMENSIONS=1536`.
 
 **Custom `table_name`:** The shipped SQL targets **`astrocyte_vectors`**. If you use another table name, copy and adjust the migration files accordingly.
 

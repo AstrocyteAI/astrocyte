@@ -109,6 +109,7 @@ For production, disable `bootstrap_schema` and run migrations explicitly:
 
 ```bash
 export DATABASE_URL='postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte'
+export ASTROCYTE_EMBEDDING_DIMENSIONS=1536  # match your embedding model
 cd adapters-storage-py/astrocyte-pgvector
 ./scripts/migrate.sh
 ```
@@ -134,6 +135,8 @@ Migrations are plain SQL in `migrations/`:
 | `008_entities_temporal.sql` | Add canonical entity/link tables and normalized temporal facts |
 
 Requires: `psql` client on PATH, PostgreSQL 15+.
+
+`migrate.sh` defaults to `vector(128)`. Set `ASTROCYTE_EMBEDDING_DIMENSIONS=1536` for OpenAI `text-embedding-3-small`, or another positive integer matching your embedding provider.
 
 ### Production checklist
 

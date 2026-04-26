@@ -25,6 +25,12 @@ if [ -z "${CONN}" ]; then
   exit 1
 fi
 
+EMBEDDING_DIMENSIONS="${ASTROCYTE_EMBEDDING_DIMENSIONS:-${EMBEDDING_DIMENSIONS:-128}}"
+if ! [[ "${EMBEDDING_DIMENSIONS}" =~ ^[0-9]+$ ]] || [ "${EMBEDDING_DIMENSIONS}" -lt 1 ]; then
+  echo "error: ASTROCYTE_EMBEDDING_DIMENSIONS must be a positive integer" >&2
+  exit 1
+fi
+
 if ! command -v psql >/dev/null 2>&1; then
   echo "error: psql not found; install PostgreSQL client tools" >&2
   exit 1
@@ -35,7 +41,7 @@ while IFS= read -r f; do
   [ -n "${f}" ] || continue
   found=1
   echo "Applying $(basename "$f")..."
-  psql "${CONN}" -v ON_ERROR_STOP=1 -f "$f"
+  psql "${CONN}" -v ON_ERROR_STOP=1 -v "embedding_dimensions=${EMBEDDING_DIMENSIONS}" -f "$f"
 done < <(find "${MIGRATIONS_DIR}" -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' | sort)
 
 if [ "${found}" -eq 0 ]; then

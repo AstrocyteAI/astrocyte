@@ -8,10 +8,38 @@
 # Requires:
 #   pip install astrocyte-llm-litellm   (or: uv pip install -e ../adapters-llm-py/astrocyte-llm-litellm)
 #   export OPENAI_API_KEY=sk-...
+#   make bench-locomo-litellm-quick     # starts migrated vector(1536) HNSW benchmark DB
 
 profile: research
 
 provider_tier: storage
+
+# -- Storage backends --
+# Match benchmarks/config.yaml so LiteLLM comparisons differ only by LLM adapter.
+vector_store: pgvector
+vector_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+graph_store: age
+
+wiki_store: pgvector
+wiki_store_config:
+  bootstrap_schema: false
+
+wiki_compile:
+  enabled: true
+  auto_start: true
+  size_threshold: 50
+
+entity_resolution:
+  enabled: true
+
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  install_on_start: true
+  auto_start_worker: true
 
 # -- LLM & Embedding via LiteLLM --
 llm_provider: litellm
