@@ -26,11 +26,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+# psycopg pool emits WARNING-level "rolling back returned connection" messages
+# when the pgvector adapter returns connections without explicitly ending their
+# read transactions. The pool cleans up correctly; these messages are noise.
+logging.getLogger("psycopg.pool").setLevel(logging.ERROR)
 
 
 @dataclass
