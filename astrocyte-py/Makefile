@@ -20,6 +20,7 @@ BENCH_PG_PASSWORD  := astrocyte
 BENCH_PG_DB        := astrocyte_bench
 BENCH_EMBEDDING_DIMENSIONS := 1536
 BENCH_DATABASE_URL := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0.1:$(BENCH_PG_PORT)/$(BENCH_PG_DB)
+BENCH_UV_RUN := uv run --extra dev
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -113,7 +114,7 @@ bench-db-reset: bench-db-stop bench-db-start
 # Full LoCoMo benchmark (requires OPENAI_API_KEY, ~30-60 min)
 # Pass RESUME=1 to continue an interrupted run: make bench-locomo RESUME=1
 bench-locomo: fetch-locomo bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
@@ -122,7 +123,7 @@ bench-locomo: fetch-locomo bench-db-start
 
 # Quick LoCoMo subset (50 questions, ~2-3 min)
 bench-locomo-quick: fetch-locomo bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
@@ -132,7 +133,7 @@ bench-locomo-quick: fetch-locomo bench-db-start
 # Full LongMemEval benchmark (requires OPENAI_API_KEY, ~2-4 hrs for all 500 questions)
 # Pass RESUME=1 to continue an interrupted run: make bench-longmemeval RESUME=1
 bench-longmemeval: fetch-longmemeval bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
@@ -141,7 +142,7 @@ bench-longmemeval: fetch-longmemeval bench-db-start
 
 # Quick LongMemEval subset (100 questions, stratified across all categories, ~30-60 min)
 bench-longmemeval-quick: fetch-longmemeval bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
@@ -150,14 +151,14 @@ bench-longmemeval-quick: fetch-longmemeval bench-db-start
 
 # LoCoMo via LiteLLM adapter (requires OPENAI_API_KEY + astrocyte-llm-litellm installed)
 bench-locomo-litellm: fetch-locomo bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config-litellm.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data
 
 # Quick LoCoMo via LiteLLM (50 questions)
 bench-locomo-litellm-quick: fetch-locomo bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config-litellm.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
@@ -166,7 +167,7 @@ bench-locomo-litellm-quick: fetch-locomo bench-db-start
 # Side-by-side: built-in OpenAI vs LiteLLM adapter (50 questions each)
 bench-compare: fetch-locomo bench-db-start
 	@echo "=== Built-in OpenAI provider ==="
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
@@ -174,7 +175,7 @@ bench-compare: fetch-locomo bench-db-start
 		--output-dir $(RESULTS_DIR)/openai
 	@echo ""
 	@echo "=== LiteLLM adapter ==="
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config-litellm.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
@@ -185,13 +186,13 @@ bench-compare: fetch-locomo bench-db-start
 
 # Built-in eval suites (basic + accuracy)
 bench-builtin: bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks builtin
 
 # All benchmarks
 bench: fetch-datasets bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks builtin longmemeval locomo \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
@@ -201,7 +202,7 @@ bench: fetch-datasets bench-db-start
 # Requires API key (use: doppler run -- make bench-full)
 # Pass RESUME=1 to continue an interrupted run: doppler run -- make bench-full RESUME=1
 bench-full: fetch-datasets bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval locomo \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
