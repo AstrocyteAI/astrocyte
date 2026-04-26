@@ -39,6 +39,12 @@ COMMON_QUESTION_WORDS: set[str] = {
 
 KEYWORD_OVERLAP_WEIGHT = 0.05
 PROPER_NOUN_WEIGHT = 0.10
+QUERY_INTERACTION_WEIGHT = 0.35
+QUERY_PHRASE_WEIGHT = 0.08
+QUERY_NAME_MATCH_WEIGHT = 0.25
+QUERY_NAME_MISS_PENALTY = 0.20
+COMPILED_LAYER_WEIGHT = 0.30
+OBSERVATION_LAYER_WEIGHT = 0.20
 # Observation proof-count boost: each additional confirming memory adds this
 # to the score, capped at OBSERVATION_PROOF_CAP × weight.  A 5-evidence
 # observation gets a +0.10 bonus over a single-evidence raw memory.
@@ -59,6 +65,10 @@ def _tokenize_terms(text: str) -> list[str]:
     - Drop empty tokens
     """
     return [t for t in (w.strip(punctuation).lower() for w in text.split()) if t]
+
+
+def _content_terms(text: str) -> set[str]:
+    return {t for t in _tokenize_terms(text) if t not in COMMON_QUESTION_WORDS and len(t) > 2}
 
 
 def _is_name_token(token: str) -> bool:
@@ -153,6 +163,79 @@ def basic_rerank(
         key=lambda x: x.score,
         reverse=True,
     )
+
+
+def cross_encoder_like_rerank(
+    items: list[ScoredItem],
+    query: str,
+) -> list[ScoredItem]:
+    """Final precision rerank using query-item interaction features.
+
+    This is a deterministic local stand-in for a cross-encoder: it scores each
+    query/memory pair jointly, then applies entity/person and memory-layer
+    signals. It is intentionally cheap enough to run before ``reflect()``
+    synthesis, where precision matters more than broad candidate coverage.
+    """
+    if not items or not query:
+        return items
+
+    query_terms = _content_terms(query)
+    query_names = _proper_names(query)
+    query_bigrams = _bigrams(_tokenize_terms(query))
+
+    scored: list[ScoredItem] = []
+    for item in items:
+        item_terms = _content_terms(item.text)
+        item_names = _proper_names(item.text)
+        overlap = len(query_terms & item_terms) / max(len(query_terms), 1)
+        phrase_hits = len(query_bigrams & _bigrams(_tokenize_terms(item.text)))
+
+        score = item.score
+        score += overlap * QUERY_INTERACTION_WEIGHT
+        score += min(phrase_hits, 3) * QUERY_PHRASE_WEIGHT
+        score += _layer_boost(item)
+
+        if query_names:
+            if query_names & item_names:
+                score += QUERY_NAME_MATCH_WEIGHT
+            elif item_names:
+                score -= QUERY_NAME_MISS_PENALTY
+
+        scored.append(
+            ScoredItem(
+                id=item.id,
+                text=item.text,
+                score=max(score, 0.0),
+                fact_type=item.fact_type,
+                metadata=item.metadata,
+                tags=item.tags,
+                memory_layer=item.memory_layer,
+                retained_at=item.retained_at,
+            )
+        )
+
+    return sorted(scored, key=lambda x: x.score, reverse=True)
+
+
+def _proper_names(text: str) -> set[str]:
+    names: set[str] = set()
+    for word in text.split():
+        cleaned = word.strip(punctuation)
+        if cleaned and cleaned.istitle() and _is_name_token(cleaned):
+            names.add(cleaned.lower())
+    return names
+
+
+def _bigrams(tokens: list[str]) -> set[tuple[str, str]]:
+    return set(zip(tokens, tokens[1:], strict=False))
+
+
+def _layer_boost(item: ScoredItem) -> float:
+    if item.fact_type == "wiki" or item.memory_layer == "compiled":
+        return COMPILED_LAYER_WEIGHT
+    if item.fact_type == "observation" or item.memory_layer == "observation":
+        return OBSERVATION_LAYER_WEIGHT + _observation_proof_boost(item)
+    return 0.0
 
 
 def _observation_proof_boost(item: ScoredItem) -> float:

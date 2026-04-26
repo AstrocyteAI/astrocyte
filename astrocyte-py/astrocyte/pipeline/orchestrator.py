@@ -6,6 +6,7 @@ Async (coordinates I/O stages). See docs/_design/built-in-pipeline.md.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from astrocyte.pipeline.extraction import (
 )
 from astrocyte.pipeline.fusion import (
     DEFAULT_RRF_K,
+    ScoredItem,
     memory_hits_as_scored,
     rrf_fusion,
     weighted_rrf_fusion,
@@ -33,7 +35,7 @@ from astrocyte.pipeline.query_intent import (
     weights_for_intent,
 )
 from astrocyte.pipeline.reflect import synthesize
-from astrocyte.pipeline.reranking import basic_rerank
+from astrocyte.pipeline.reranking import basic_rerank, cross_encoder_like_rerank
 from astrocyte.pipeline.retrieval import parallel_retrieve
 from astrocyte.policy.homeostasis import enforce_token_budget
 from astrocyte.policy.signal_quality import DedupDetector
@@ -582,10 +584,13 @@ class PipelineOrchestrator:
         #   RELATIONAL:  "How does Alice's role relate to her projects?"
         # For all other intents, effective_obs_weight falls back to the
         # configured observation_weight (default 0.0 = disabled).
+        from astrocyte.pipeline.reflect import _auto_prompt_variant
+
         _OBS_INJECTION_INTENTS = {QueryIntent.EXPLORATORY, QueryIntent.RELATIONAL}
+        prompt_variant = _auto_prompt_variant(request.query)
         effective_obs_weight = (
             self.observation_injection_weight
-            if query_intent in _OBS_INJECTION_INTENTS
+            if query_intent in _OBS_INJECTION_INTENTS or prompt_variant == "evidence_inference"
             else self.observation_weight
         )
         if (
@@ -786,6 +791,7 @@ class PipelineOrchestrator:
                 fact_type=h.fact_type,
                 metadata=h.metadata,
                 tags=h.tags,
+                memory_layer="observation",
                 retained_at=getattr(h, "retained_at", None),
             )
             for h in hits
@@ -914,6 +920,18 @@ class PipelineOrchestrator:
             max_tokens=request.max_tokens,
         )
         recall_result = await self.recall(recall_request)
+        expanded_hits = await self._expand_reflect_sources(
+            request.bank_id,
+            self._rank_reflect_context(request.query, recall_result.hits, limit=12),
+            limit=18,
+        )
+        recall_result.hits = expanded_hits
+        if request.max_tokens:
+            recall_result.hits, expanded_truncated = enforce_token_budget(
+                recall_result.hits,
+                request.max_tokens,
+            )
+            recall_result.truncated = recall_result.truncated or expanded_truncated
 
         auth_ctx: str | None = None
         ra = self.recall_authority
@@ -928,21 +946,21 @@ class PipelineOrchestrator:
             if bank_pipeline is not None:
                 mip_reflect = bank_pipeline.reflect
 
-        # 2b. Auto-select temporal_aware prompt when no MIP prompt override is set
-        # and the query is classified as temporal.  The intent classifier is the same
-        # zero-cost regex engine used in recall — no extra LLM call.  A MIP rule that
-        # explicitly sets reflect.prompt always wins over this heuristic.
+        # 2b. Auto-select a prompt when no MIP prompt override is set.  The
+        # classifier is a zero-cost regex heuristic; explicit MIP prompts
+        # always win over this automatic routing.
         if mip_reflect is None or mip_reflect.prompt is None:
             from astrocyte.mip.schema import ReflectSpec
-            from astrocyte.pipeline.query_intent import QueryIntent, classify_query_intent
+            from astrocyte.pipeline.reflect import _auto_prompt_variant
 
-            if classify_query_intent(request.query).intent == QueryIntent.TEMPORAL:
+            prompt_variant = _auto_prompt_variant(request.query)
+            if prompt_variant is not None:
                 if mip_reflect is None:
-                    mip_reflect = ReflectSpec(prompt="temporal_aware")
+                    mip_reflect = ReflectSpec(prompt=prompt_variant)
                 else:
                     # Preserve any other MIP settings (e.g. promote_metadata)
                     mip_reflect = ReflectSpec(
-                        prompt="temporal_aware",
+                        prompt=prompt_variant,
                         promote_metadata=mip_reflect.promote_metadata,
                     )
 
@@ -956,3 +974,126 @@ class PipelineOrchestrator:
             authority_context=auth_ctx,
             mip_reflect=mip_reflect,
         )
+
+    def _rank_reflect_context(
+        self,
+        query: str,
+        hits: list[MemoryHit],
+        *,
+        limit: int,
+    ) -> list[MemoryHit]:
+        """Apply final precision rerank and hierarchy before synthesis."""
+        if not hits:
+            return hits
+
+        scored = cross_encoder_like_rerank(
+            [
+                ScoredItem(
+                    id=h.memory_id or f"hit-{idx}",
+                    text=h.text,
+                    score=h.score,
+                    fact_type=h.fact_type,
+                    metadata=h.metadata,
+                    tags=h.tags,
+                    memory_layer=h.memory_layer,
+                    retained_at=h.retained_at,
+                )
+                for idx, h in enumerate(hits)
+            ],
+            query,
+        )
+        hit_by_id = {h.memory_id or f"hit-{idx}": h for idx, h in enumerate(hits)}
+        return [hit_by_id[item.id] for item in scored[:limit] if item.id in hit_by_id]
+
+    async def _expand_reflect_sources(
+        self,
+        bank_id: str,
+        hits: list[MemoryHit],
+        *,
+        limit: int,
+    ) -> list[MemoryHit]:
+        """Append raw sources cited by top wiki/observation hits.
+
+        This mirrors Hindsight's reflect loop in a bounded, non-agentic form:
+        start from compiled/observation evidence, then expand to raw facts for
+        grounding before synthesis.
+        """
+        if not hits:
+            return hits
+
+        source_ids: list[str] = []
+        seen_sources: set[str] = set()
+        for hit in hits:
+            for sid in _source_ids_from_metadata(hit.metadata):
+                if sid not in seen_sources:
+                    seen_sources.add(sid)
+                    source_ids.append(sid)
+        if not source_ids:
+            return hits[:limit]
+
+        raw_hits = await self._fetch_memory_hits_by_id(bank_id, source_ids)
+        existing_ids = {h.memory_id for h in hits if h.memory_id}
+        expanded = list(hits)
+        for raw in raw_hits:
+            if raw.memory_id and raw.memory_id not in existing_ids:
+                expanded.append(raw)
+                existing_ids.add(raw.memory_id)
+            if len(expanded) >= limit:
+                break
+        return expanded[:limit]
+
+    async def _fetch_memory_hits_by_id(self, bank_id: str, ids: list[str]) -> list[MemoryHit]:
+        target = set(ids)
+        found: dict[str, VectorItem] = {}
+        offset = 0
+        batch = 100
+        while target:
+            chunk = await self.vector_store.list_vectors(bank_id, offset=offset, limit=batch)
+            if not chunk:
+                break
+            for item in chunk:
+                if item.id in target:
+                    found[item.id] = item
+                    target.discard(item.id)
+            if len(chunk) < batch:
+                break
+            offset += batch
+
+        return [
+            MemoryHit(
+                text=item.text,
+                score=0.0,
+                fact_type=item.fact_type,
+                metadata=item.metadata,
+                tags=item.tags,
+                memory_id=item.id,
+                bank_id=bank_id,
+                memory_layer=item.memory_layer or "raw",
+                retained_at=item.retained_at,
+            )
+            for sid in ids
+            if (item := found.get(sid)) is not None
+        ]
+
+
+def _source_ids_from_metadata(metadata: dict[str, Any] | None) -> list[str]:
+    if not metadata:
+        return []
+    raw = metadata.get("_obs_source_ids") or metadata.get("_wiki_source_ids")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = []
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed if x]
+        return [part.strip() for part in text.split(",") if part.strip()]
+    if isinstance(raw, list):
+        return [str(x) for x in raw if x]
+    return []

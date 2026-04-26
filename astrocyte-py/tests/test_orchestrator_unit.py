@@ -7,11 +7,22 @@ routing, semantic_overfetch multiplier, and _TrackingLLMProvider token tracking.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
+from astrocyte.pipeline import orchestrator as orchestrator_mod
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator, _TrackingLLMProvider
 from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
-from astrocyte.types import Message, RecallRequest, RetainRequest
+from astrocyte.types import (
+    MemoryHit,
+    Message,
+    RecallRequest,
+    ReflectRequest,
+    ReflectResult,
+    RetainRequest,
+    VectorItem,
+)
 
 # ---------------------------------------------------------------------------
 # _TrackingLLMProvider
@@ -114,6 +125,100 @@ class TestRetainDedup:
         r2 = await orch.retain(RetainRequest(content="The sky is blue", bank_id="bank-b"))
         assert r1.stored is True
         assert r2.stored is True
+
+
+class TestReflectAutoPromptRouting:
+    @pytest.mark.asyncio
+    async def test_reflect_routes_likely_question_to_inference_prompt(self, monkeypatch):
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        orch = PipelineOrchestrator(vs, llm)
+        await orch.retain(RetainRequest(content="Caroline wants to become a counselor.", bank_id="b1"))
+
+        captured: dict[str, str | None] = {}
+
+        async def fake_synthesize(**kwargs):
+            captured["prompt"] = kwargs["mip_reflect"].prompt if kwargs.get("mip_reflect") else None
+            return ReflectResult(answer="Likely yes.", sources=kwargs["hits"])
+
+        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
+
+        await orch.reflect(ReflectRequest(query="Would Caroline likely pursue counseling?", bank_id="b1"))
+
+        assert captured["prompt"] == "evidence_inference"
+
+    @pytest.mark.asyncio
+    async def test_reflect_routes_when_question_to_temporal_prompt(self, monkeypatch):
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        orch = PipelineOrchestrator(vs, llm)
+        await orch.retain(RetainRequest(content="Melanie ran a charity race last week.", bank_id="b1"))
+
+        captured: dict[str, str | None] = {}
+
+        async def fake_synthesize(**kwargs):
+            captured["prompt"] = kwargs["mip_reflect"].prompt if kwargs.get("mip_reflect") else None
+            return ReflectResult(answer="The week before.", sources=kwargs["hits"])
+
+        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
+
+        await orch.reflect(ReflectRequest(query="When did Melanie run a charity race?", bank_id="b1"))
+
+        assert captured["prompt"] == "temporal_aware"
+
+
+class TestReflectHierarchy:
+    def test_reflect_context_prefers_compiled_and_observation_layers(self):
+        orch = PipelineOrchestrator(InMemoryVectorStore(), MockLLMProvider())
+        hits = [
+            MemoryHit(
+                text="Caroline bought groceries.",
+                score=0.62,
+                memory_id="raw",
+                fact_type="world",
+            ),
+            MemoryHit(
+                text="Caroline repeatedly talks about becoming a counselor.",
+                score=0.50,
+                memory_id="obs",
+                fact_type="observation",
+                metadata={"_obs_proof_count": 3},
+                memory_layer="observation",
+            ),
+        ]
+
+        ranked = orch._rank_reflect_context("Would Caroline likely pursue counseling?", hits, limit=2)
+
+        assert ranked[0].memory_id == "obs"
+
+    @pytest.mark.asyncio
+    async def test_reflect_expands_observation_sources_to_raw_memories(self):
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        orch = PipelineOrchestrator(vs, llm)
+        await vs.store_vectors([
+            VectorItem(
+                id="raw-1",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Caroline said she wants to become a counselor.",
+                fact_type="world",
+            )
+        ])
+        hits = [
+            MemoryHit(
+                text="Caroline has a stable counseling-career goal.",
+                score=0.90,
+                memory_id="obs-1",
+                fact_type="observation",
+                metadata={"_obs_source_ids": '["raw-1"]'},
+                memory_layer="observation",
+            )
+        ]
+
+        expanded = await orch._expand_reflect_sources("b1", hits, limit=3)
+
+        assert [hit.memory_id for hit in expanded] == ["obs-1", "raw-1"]
 
 
 # ---------------------------------------------------------------------------

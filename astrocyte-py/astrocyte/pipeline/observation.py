@@ -128,6 +128,8 @@ Rules:
 3. DELETE only if the new memory directly contradicts and supersedes an \
 existing observation.
 4. If the new memory is fully redundant, respond with [].
+5. Preserve stable persona and preference facts: identities, goals, hobbies, \
+relationships, repeated activities, values, career plans, and stated likes/dislikes.
 
 Constraints:
 - Each observation must be a single, independently-useful sentence (≤ 30 words).

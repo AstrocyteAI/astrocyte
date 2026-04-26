@@ -5,6 +5,7 @@ Async (I/O-bound). See docs/_design/built-in-pipeline.md section 4.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from astrocyte.mip.schema import ReflectSpec
@@ -45,8 +46,12 @@ _TEMPORAL_AWARE_PROMPT = (
     "- Treat timestamps as load-bearing: order memories chronologically before answering.\n"
     "- When a question asks about ordering ('before', 'after', 'first', 'last'), justify the answer with the relevant dates.\n"
     "- Distinguish between when an event occurred and when it was recorded.\n"
+    "- Normalize relative temporal phrases against the memory timestamp: 'last week', 'previous Friday', "
+    "'yesterday', 'two weekends ago', and similar phrases should be resolved from the recorded date.\n"
+    "- If the memory says an event happened last week, answer in that relative form when useful "
+    "(for example, 'the week before 9 June 2023') instead of saying it happened on the record date.\n"
     "- If timestamps are missing or ambiguous, say so rather than guessing.\n"
-    "- Do not infer a timeline from indirect clues; only state what the memories explicitly record."
+    "- Do not infer a timeline from unrelated clues; only compute dates from explicit temporal phrases and memory timestamps."
 )
 
 _EVIDENCE_STRICT_PROMPT = (
@@ -58,11 +63,48 @@ _EVIDENCE_STRICT_PROMPT = (
     "- Do not paraphrase loosely; preserve nuance, qualifications, and uncertainty markers."
 )
 
+_EVIDENCE_INFERENCE_PROMPT = (
+    "You are a memory synthesis agent answering an inference question from personal memories. "
+    "Use ONLY the provided memories as evidence; do not use outside facts or stereotypes. "
+    "Unlike strict fact lookup, you MAY make a cautious inference when the question asks what someone "
+    "would likely do, prefer, believe, or be considered, as long as the inference is directly supported "
+    "by retrieved memories.\n\n"
+    "Guidelines:\n"
+    "- For 'would' or 'likely' questions, answer with calibrated language such as 'Likely yes' or 'Likely no' plus the evidence.\n"
+    "- Connect preferences, repeated activities, stated goals, and identity facts across memories when they support the inference.\n"
+    "- If the memories support multiple possibilities, say which is more likely and why.\n"
+    "- If the memories contain no relevant evidence, respond with: 'This information is not available in my memories.'\n"
+    "- Never invent facts; every inference must be traceable to the provided memories."
+)
+
 PROMPT_REGISTRY: dict[str, str] = {
     "default": _DEFAULT_PROMPT,
     "temporal_aware": _TEMPORAL_AWARE_PROMPT,
     "evidence_strict": _EVIDENCE_STRICT_PROMPT,
+    "evidence_inference": _EVIDENCE_INFERENCE_PROMPT,
 }
+
+_INFERENCE_QUERY_RE = re.compile(
+    r"\b(would|likely|probably|considered|interested\s+in|prefer|leaning|pursue)\b",
+    re.IGNORECASE,
+)
+
+
+def _auto_prompt_variant(query: str) -> str | None:
+    """Select a reflect prompt variant from lightweight query cues.
+
+    Explicit MIP ``ReflectSpec.prompt`` still wins; this helper is only used
+    when the bank has no prompt override. Temporal takes precedence because
+    date math needs stricter handling than general inference.
+    """
+    from astrocyte.pipeline.query_intent import QueryIntent, classify_query_intent
+
+    intent = classify_query_intent(query).intent
+    if intent == QueryIntent.TEMPORAL:
+        return "temporal_aware"
+    if _INFERENCE_QUERY_RE.search(query or ""):
+        return "evidence_inference"
+    return None
 
 
 def _build_system_prompt(
