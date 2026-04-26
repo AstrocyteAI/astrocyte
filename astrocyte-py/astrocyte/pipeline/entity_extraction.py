@@ -45,7 +45,7 @@ async def extract_entities(
                 Message(role="user", content=user_msg),
             ],
             model=model,
-            max_tokens=512,
+            max_tokens=1024,
             temperature=0.0,
         )
         return _parse_entities(completion.text)

@@ -19,6 +19,8 @@ provider_tier: storage
 # Requires: export DATABASE_URL=postgresql://user:pass@localhost:5432/astrocyte_bench
 
 vector_store: pgvector
+vector_store_config:
+  embedding_dimensions: 1536  # text-embedding-3-small
 
 graph_store: age
 

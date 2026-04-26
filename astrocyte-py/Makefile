@@ -9,6 +9,17 @@ LONGMEMEVAL_DIR := $(DATASETS_DIR)/longmemeval
 RESULTS_DIR   := benchmark-results
 
 # ---------------------------------------------------------------------------
+# Benchmark database (postgres-age-pgvector)
+# ---------------------------------------------------------------------------
+BENCH_PG_CONTAINER := astrocyte-bench-pg
+BENCH_PG_PORT      := 5433
+BENCH_PG_IMAGE     := ghcr.io/astrocyteai/astrocyte/postgres-age-pgvector:latest
+BENCH_PG_LOCAL_IMG := astrocyte/postgres-age-pgvector:local
+BENCH_PG_USER      := astrocyte
+BENCH_PG_PASSWORD  := astrocyte
+BENCH_PG_DB        := astrocyte_bench
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -46,11 +57,46 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench bench-full bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
+.PHONY: bench-db-start bench-db-stop bench bench-full bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
+
+# Start the benchmark Postgres container (postgres-age-pgvector).
+# Pulls from GHCR first; falls back to building locally from the Dockerfile.
+# No-ops if the container is already running. Restarts if stopped.
+bench-db-start:
+	@if docker ps --format '{{.Names}}' | grep -q '^$(BENCH_PG_CONTAINER)$$'; then \
+		echo "  [bench-db] $(BENCH_PG_CONTAINER) already running"; \
+	elif docker ps -a --format '{{.Names}}' | grep -q '^$(BENCH_PG_CONTAINER)$$'; then \
+		echo "  [bench-db] Restarting stopped container $(BENCH_PG_CONTAINER)"; \
+		docker start $(BENCH_PG_CONTAINER); \
+		until docker exec $(BENCH_PG_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		echo "  [bench-db] Postgres ready"; \
+	else \
+		echo "  [bench-db] Pulling $(BENCH_PG_IMAGE)..."; \
+		if docker pull $(BENCH_PG_IMAGE); then \
+			BENCH_IMG=$(BENCH_PG_IMAGE); \
+		else \
+			echo "  [bench-db] Pull failed — building from ../docker/postgres-age-pgvector/Dockerfile"; \
+			docker build -t $(BENCH_PG_LOCAL_IMG) -f ../docker/postgres-age-pgvector/Dockerfile ..; \
+			BENCH_IMG=$(BENCH_PG_LOCAL_IMG); \
+		fi; \
+		docker run -d --name $(BENCH_PG_CONTAINER) \
+			-e POSTGRES_USER=$(BENCH_PG_USER) \
+			-e POSTGRES_PASSWORD=$(BENCH_PG_PASSWORD) \
+			-e POSTGRES_DB=$(BENCH_PG_DB) \
+			-p $(BENCH_PG_PORT):5432 \
+			$$BENCH_IMG; \
+		echo "  [bench-db] Waiting for Postgres to be ready..."; \
+		until docker exec $(BENCH_PG_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		echo "  [bench-db] Postgres ready at localhost:$(BENCH_PG_PORT)"; \
+	fi
+
+# Stop and remove the benchmark Postgres container.
+bench-db-stop:
+	@docker stop $(BENCH_PG_CONTAINER) 2>/dev/null && docker rm $(BENCH_PG_CONTAINER) 2>/dev/null && echo "  [bench-db] $(BENCH_PG_CONTAINER) stopped" || echo "  [bench-db] $(BENCH_PG_CONTAINER) not running"
 
 # Full LoCoMo benchmark (requires OPENAI_API_KEY, ~30-60 min)
 # Pass RESUME=1 to continue an interrupted run: make bench-locomo RESUME=1
-bench-locomo: fetch-locomo
+bench-locomo: fetch-locomo bench-db-start
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
@@ -69,7 +115,7 @@ bench-locomo-quick: fetch-locomo
 
 # Full LongMemEval benchmark (requires OPENAI_API_KEY, ~2-4 hrs for all 500 questions)
 # Pass RESUME=1 to continue an interrupted run: make bench-longmemeval RESUME=1
-bench-longmemeval: fetch-longmemeval
+bench-longmemeval: fetch-longmemeval bench-db-start
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval \
@@ -138,7 +184,7 @@ bench: fetch-datasets
 # Full canonical run — LME + LoCoMo in parallel, LLM-judge, competitor-comparable numbers.
 # Requires API key (use: doppler run -- make bench-full)
 # Pass RESUME=1 to continue an interrupted run: doppler run -- make bench-full RESUME=1
-bench-full: fetch-datasets
+bench-full: fetch-datasets bench-db-start
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval locomo \
