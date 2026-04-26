@@ -257,6 +257,11 @@ class RecallResult:
     trace: RecallTrace | None = None
     #: Optional labeled sections + rules for synthesis (M7 structured recall authority).
     authority_context: str | None = None
+    #: Raw cosine similarity of the top semantic hit before RRF fusion and reranking.
+    #: 0.0 when no semantic results were found.  Used by reflect() to gate the
+    #: evidence_strict prompt: weak retrieval (< threshold) → force citation and
+    #: prevent hallucination from tangential memories.
+    top_semantic_score: float = 0.0
 
 
 @dataclass

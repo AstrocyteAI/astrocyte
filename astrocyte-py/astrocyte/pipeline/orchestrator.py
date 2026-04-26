@@ -177,6 +177,7 @@ class PipelineOrchestrator:
         enable_observation_consolidation: bool = True,
         observation_weight: float = 0.0,
         multi_query_confidence_threshold: float = 0.72,
+        reflect_evidence_strict_threshold: float = 0.5,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -211,6 +212,12 @@ class PipelineOrchestrator:
         # across query runs). Default threshold 0.72 passes ~20-30% of queries.
         self.enable_multi_query_expansion = enable_multi_query_expansion
         self.multi_query_confidence_threshold: float = multi_query_confidence_threshold
+        # Evidence-strict reflect gate: when the top raw semantic score from recall
+        # is below this threshold, reflect() auto-selects the evidence_strict prompt
+        # to force citation and prevent the LLM from constructing answers from
+        # tangential memories. Uses cosine similarity space (same scale as
+        # multi_query_confidence_threshold). MIP explicit prompts always override.
+        self.reflect_evidence_strict_threshold: float = reflect_evidence_strict_threshold
         # HyDE (R1): generate a hypothetical answer, embed it, and run a second
         # semantic search pass with that vector.  Disabled by default — adds one
         # LLM call per recall.  Enable for multi-hop / paraphrase-heavy workloads.
@@ -728,6 +735,7 @@ class PipelineOrchestrator:
                 total_candidates=total_candidates,
                 fusion_method="rrf",
             ),
+            top_semantic_score=_top_semantic_score,
         )
 
     async def _retrieve_observations(
@@ -912,21 +920,42 @@ class PipelineOrchestrator:
             if bank_pipeline is not None:
                 mip_reflect = bank_pipeline.reflect
 
-        # 2b. Auto-select temporal_aware prompt when no MIP prompt override is set
-        # and the query is classified as temporal.  The intent classifier is the same
-        # zero-cost regex engine used in recall — no extra LLM call.  A MIP rule that
-        # explicitly sets reflect.prompt always wins over this heuristic.
+        # 2b. Auto-select reflect prompt based on retrieval confidence and query intent.
+        # Priority (highest → lowest): MIP explicit prompt > evidence_strict gate >
+        # temporal_aware > default.  A MIP rule that explicitly sets reflect.prompt
+        # always wins — heuristics only fire when no prompt is configured.
+        #
+        # evidence_strict gate: when the top raw semantic score is below
+        # reflect_evidence_strict_threshold, retrieval is uncertain — the best match
+        # is only weakly related to the query.  Force citation to prevent the LLM
+        # from constructing answers from tangential memories (the primary adversarial
+        # failure mode).  Uses cosine similarity from RecallResult.top_semantic_score,
+        # which is set to 0.0 when no semantic results were found.
+        #
+        # temporal_aware gate: for temporal queries with adequate retrieval, the
+        # temporal-aware prompt enforces chronological reasoning and date-grounded
+        # answers.  Skipped when evidence_strict already fires (poor retrieval makes
+        # temporal ordering moot).
         if mip_reflect is None or mip_reflect.prompt is None:
             from astrocyte.mip.schema import ReflectSpec
             from astrocyte.pipeline.query_intent import QueryIntent, classify_query_intent
 
-            if classify_query_intent(request.query).intent == QueryIntent.TEMPORAL:
+            top_score = recall_result.top_semantic_score
+            intent = classify_query_intent(request.query).intent
+
+            selected_prompt: str | None = None
+            if top_score < self.reflect_evidence_strict_threshold:
+                selected_prompt = "evidence_strict"
+            elif intent == QueryIntent.TEMPORAL:
+                selected_prompt = "temporal_aware"
+
+            if selected_prompt is not None:
                 if mip_reflect is None:
-                    mip_reflect = ReflectSpec(prompt="temporal_aware")
+                    mip_reflect = ReflectSpec(prompt=selected_prompt)
                 else:
                     # Preserve any other MIP settings (e.g. promote_metadata)
                     mip_reflect = ReflectSpec(
-                        prompt="temporal_aware",
+                        prompt=selected_prompt,
                         promote_metadata=mip_reflect.promote_metadata,
                     )
 
