@@ -332,6 +332,108 @@ def create_mcp_server(
                 logger.exception("memory_forget failed")
                 return json.dumps({"deleted_count": 0, "error": type(exc).__name__})
 
+    # ── memory_history ─────────────────────────────────────────────
+
+    @mcp.tool()
+    async def memory_history(
+        query: str,
+        bank_id: str | None = None,
+        as_of: str | None = None,
+        max_results: int = 10,
+        tags: list[str] | None = None,
+    ) -> str:
+        """Reconstruct what the agent knew at a past point in time (M9 time travel).
+
+        Args:
+            query: Recall query to run against the historical snapshot.
+            bank_id: Bank to query. Uses default if omitted.
+            as_of: ISO 8601 UTC datetime — memories retained after this moment
+                are hidden (e.g. "2025-01-01T00:00:00Z").
+            max_results: Maximum hits to return (default 10).
+            tags: Optional tag filter applied on top of the time filter.
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            tags = _validate_tags(tags)
+            if not as_of:
+                return json.dumps({"hits": [], "error": "as_of (ISO 8601) is required"})
+            try:
+                as_of_dt = datetime.fromisoformat(as_of)
+            except ValueError:
+                return json.dumps({"hits": [], "error": "Invalid as_of format; expected ISO 8601"})
+            result = await brain.history(
+                query,
+                bid,
+                as_of_dt,
+                max_results=max(1, min(max_results, mcp_cfg.max_results_limit)),
+                tags=tags,
+                context=_resolve_context(),
+            )
+            hits = [
+                {
+                    "text": h.text,
+                    "score": round(h.score, 4),
+                    "fact_type": h.fact_type,
+                    "bank_id": h.bank_id,
+                    "memory_id": h.memory_id,
+                }
+                for h in result.hits
+            ]
+            return json.dumps({
+                "hits": hits,
+                "total_available": result.total_available,
+                "truncated": result.truncated,
+                "as_of": result.as_of.isoformat(),
+                "bank_id": result.bank_id,
+            })
+        except Exception as exc:
+            logger.exception("memory_history failed")
+            return json.dumps({"hits": [], "error": type(exc).__name__})
+
+    # ── memory_audit ────────────────────────────────────────────────
+
+    @mcp.tool()
+    async def memory_audit(
+        scope: str,
+        bank_id: str | None = None,
+        max_memories: int = 50,
+        tags: list[str] | None = None,
+    ) -> str:
+        """Identify knowledge gaps for a topic in a memory bank (M10).
+
+        Use this to discover what the agent does not know about a subject
+        before relying on recall for important decisions.
+
+        Args:
+            scope: Natural-language topic to audit (e.g. "Alice's employment history").
+            bank_id: Bank to audit. Uses default if omitted.
+            max_memories: Memories to retrieve and scan (default 50).
+            tags: Optional tag filter to narrow the retrieved memories.
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            tags = _validate_tags(tags)
+            result = await brain.audit(
+                scope,
+                bid,
+                max_memories=max(1, min(max_memories, 200)),
+                tags=tags,
+            )
+            gaps = [
+                {"topic": g.topic, "severity": g.severity, "reason": g.reason}
+                for g in result.gaps
+            ]
+            return json.dumps({
+                "scope": result.scope,
+                "bank_id": result.bank_id,
+                "coverage_score": round(result.coverage_score, 3),
+                "memories_scanned": result.memories_scanned,
+                "gaps": gaps,
+            })
+        except Exception as exc:
+            logger.exception("memory_audit failed")
+            return json.dumps({"gaps": [], "coverage_score": 0.0, "error": type(exc).__name__})
+
     # ── memory_compile ─────────────────────────────────────────────
 
     @mcp.tool()
@@ -445,6 +547,123 @@ def create_mcp_server(
         except Exception as exc:
             logger.exception("memory_graph_neighbors failed")
             return json.dumps({"hits": [], "error": type(exc).__name__})
+
+    # ── admin tools (expose_admin=true) ────────────────────────────
+
+    if mcp_cfg.expose_admin:
+
+        @mcp.tool()
+        async def memory_lifecycle(
+            bank_id: str | None = None,
+        ) -> str:
+            """Run TTL lifecycle sweep on a bank — archives and deletes expired memories.
+
+            Args:
+                bank_id: Bank to sweep. Uses default if omitted.
+            """
+            try:
+                bid = _resolve_bank(bank_id)
+                result = await brain.run_lifecycle(bid)
+                return json.dumps({
+                    "bank_id": bid,
+                    "archived_count": result.archived_count,
+                    "deleted_count": result.deleted_count,
+                    "skipped_count": result.skipped_count,
+                })
+            except Exception as exc:
+                logger.exception("memory_lifecycle failed")
+                return json.dumps({"archived_count": 0, "deleted_count": 0, "error": type(exc).__name__})
+
+        @mcp.tool()
+        async def memory_bank_health(
+            bank_id: str | None = None,
+        ) -> str:
+            """Get health score and issues for a memory bank.
+
+            Args:
+                bank_id: Bank to assess. Uses default if omitted. Pass "__all__"
+                    to get health for every bank that has recorded operations.
+            """
+            try:
+                if bank_id == "__all__":
+                    results = await brain.all_bank_health()
+                    return json.dumps({
+                        "banks": [
+                            {
+                                "bank_id": r.bank_id,
+                                "score": round(r.score, 3),
+                                "status": r.status,
+                                "issues": [
+                                    {"severity": i.severity, "code": i.code, "message": i.message}
+                                    for i in r.issues
+                                ],
+                            }
+                            for r in results
+                        ]
+                    })
+                bid = _resolve_bank(bank_id)
+                result = await brain.bank_health(bid)
+                return json.dumps({
+                    "bank_id": result.bank_id,
+                    "score": round(result.score, 3),
+                    "status": result.status,
+                    "issues": [
+                        {"severity": i.severity, "code": i.code, "message": i.message}
+                        for i in result.issues
+                    ],
+                    "metrics": result.metrics,
+                })
+            except Exception as exc:
+                logger.exception("memory_bank_health failed")
+                return json.dumps({"score": 0.0, "error": type(exc).__name__})
+
+        @mcp.tool()
+        async def memory_hold_set(
+            hold_id: str,
+            reason: str,
+            bank_id: str | None = None,
+            set_by: str = "agent:mcp",
+        ) -> str:
+            """Place a bank under legal hold — blocks memory_forget until released.
+
+            Args:
+                hold_id: Unique identifier for this hold (used to release it later).
+                reason: Human-readable reason for the hold.
+                bank_id: Bank to place on hold. Uses default if omitted.
+                set_by: Actor label, default "agent:mcp".
+            """
+            try:
+                bid = _resolve_bank(bank_id)
+                hold = brain.set_legal_hold(bid, hold_id, reason, set_by=set_by)
+                return json.dumps({
+                    "hold_id": hold.hold_id,
+                    "bank_id": hold.bank_id,
+                    "reason": hold.reason,
+                    "set_by": hold.set_by,
+                    "set_at": hold.set_at.isoformat(),
+                })
+            except Exception as exc:
+                logger.exception("memory_hold_set failed")
+                return json.dumps({"error": type(exc).__name__})
+
+        @mcp.tool()
+        async def memory_hold_release(
+            hold_id: str,
+            bank_id: str | None = None,
+        ) -> str:
+            """Release a legal hold from a bank.
+
+            Args:
+                hold_id: The hold ID to release.
+                bank_id: Bank to release the hold from. Uses default if omitted.
+            """
+            try:
+                bid = _resolve_bank(bank_id)
+                released = brain.release_legal_hold(bid, hold_id)
+                return json.dumps({"bank_id": bid, "hold_id": hold_id, "released": released})
+            except Exception as exc:
+                logger.exception("memory_hold_release failed")
+                return json.dumps({"released": False, "error": type(exc).__name__})
 
     # ── memory_banks ───────────────────────────────────────────────
 

@@ -334,6 +334,7 @@ class McpConfig:
     default_bank_id: str | None = None
     expose_reflect: bool = True
     expose_forget: bool = False
+    expose_admin: bool = False
     max_results_limit: int = 50
     principal: str | None = None
 
@@ -389,6 +390,7 @@ class EntityResolutionConfig:
     """Configuration for M11 retain-time entity resolution."""
 
     enabled: bool = False
+    defer_to_async: bool = False
     similarity_threshold: float = 0.8
     confirmation_threshold: float = 0.75
     max_candidates_per_entity: int = 3
