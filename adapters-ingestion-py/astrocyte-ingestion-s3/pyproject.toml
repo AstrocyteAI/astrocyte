@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocyte-ingestion-s3"
+version = "0.1.0"
+description = "S3/Garage poll and webhook IngestSource adapters for Astrocyte"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "astrocyte>=0.7.0,<2",
+    "aiobotocore>=2.13",
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "moto[s3]>=5.0"]
+
+[project.entry-points."astrocyte.ingest_poll_drivers"]
+s3 = "astrocyte_ingestion_s3.source:S3PollIngestSource"
+
+[project.entry-points."astrocyte.ingest_webhook_drivers"]
+s3 = "astrocyte_ingestion_s3.source:S3WebhookIngestSource"
+
+[tool.hatch.build.targets.wheel]
+packages = ["astrocyte_ingestion_s3"]
+
+[tool.uv.sources]
+astrocyte = { path = "../../astrocyte-py", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]

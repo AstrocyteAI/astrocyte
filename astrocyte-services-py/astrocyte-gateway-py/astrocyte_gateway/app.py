@@ -421,6 +421,20 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         headers = {k: v for k, v in request.headers.items()}
         principal: str | None = ctx.principal if ctx is not None else None
 
+        # Check whether the running source exposes a custom handle_webhook method
+        # (e.g. S3WebhookIngestSource which parses Garage/AWS S3 event notifications).
+        source_instance = ingest_supervisor.registry.get(source_id)
+        if source_instance is not None and hasattr(source_instance, "handle_webhook"):
+            try:
+                summary = await source_instance.handle_webhook(raw, headers)
+            except Exception as exc:
+                if "IngestError" in type(exc).__name__:
+                    return JSONResponse(
+                        content={"ok": False, "error": str(exc)}, status_code=400
+                    )
+                raise
+            return JSONResponse(content={"ok": True, **summary}, status_code=200)
+
         result = await handle_webhook_ingest(
             source_id=source_id,
             source_config=cfg,
