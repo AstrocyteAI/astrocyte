@@ -13,9 +13,6 @@ Configuration (``sources`` block in ``astrocyte.yaml``)
     target_bank: my-bank
     extraction_profile: document
 
-Optional settings (via ``options`` dict in SourceConfig if present, or
-fall through to sane defaults):
-    recursive: true     # watch subdirectories (default: true)
 """
 
 from __future__ import annotations
@@ -91,11 +88,6 @@ class DocumentFolderIngestSource:
             raise IngestError("document poll requires interval_seconds >= 10")
         return float(int(n))
 
-    def _recursive(self) -> bool:
-        # options dict in SourceConfig if it ever exists; default True
-        opts = getattr(self._config, "options", None) or {}
-        return bool(opts.get("recursive", True))
-
     async def start(self) -> None:
         if self._task is not None:
             return
@@ -150,11 +142,10 @@ class DocumentFolderIngestSource:
 
     async def _poll_once(self) -> None:
         folder = self._folder()
-        recursive = self._recursive()
 
         loop = asyncio.get_event_loop()
         # Enumerate files in executor to avoid blocking the event loop on large dirs.
-        files: list[Path] = await loop.run_in_executor(None, self._list_files, folder, recursive)
+        files: list[Path] = await loop.run_in_executor(None, self._list_files, folder)
 
         for fpath in files:
             try:
@@ -168,14 +159,11 @@ class DocumentFolderIngestSource:
             await self._ingest_file(fpath, state)
 
     @staticmethod
-    def _list_files(folder: Path, recursive: bool) -> list[Path]:
+    def _list_files(folder: Path) -> list[Path]:
         result: list[Path] = []
-        if recursive:
-            for root, _dirs, files in os.walk(folder):
-                for fname in files:
-                    result.append(Path(root) / fname)
-        else:
-            result = [f for f in folder.iterdir() if f.is_file()]
+        for root, _dirs, files in os.walk(folder):
+            for fname in files:
+                result.append(Path(root) / fname)
         return result
 
     async def _ingest_file(self, fpath: Path, state: _FileState) -> None:

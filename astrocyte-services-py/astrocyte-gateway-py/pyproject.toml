@@ -24,6 +24,8 @@ dev = [
 ]
 pgvector = ["astrocyte-pgvector"]
 age = ["astrocyte-age"]
+s3 = ["astrocyte-ingestion-s3"]
+document = ["astrocyte-ingestion-document"]
 otel = [
     "opentelemetry-api>=1.20",
     "opentelemetry-sdk>=1.20",
@@ -36,6 +38,8 @@ otel = [
 astrocyte = { path = "../../astrocyte-py", editable = true }
 astrocyte-pgvector = { path = "../../adapters-storage-py/astrocyte-pgvector", editable = true }
 astrocyte-age = { path = "../../adapters-storage-py/astrocyte-age", editable = true }
+astrocyte-ingestion-s3 = { path = "../../adapters-ingestion-py/astrocyte-ingestion-s3", editable = true }
+astrocyte-ingestion-document = { path = "../../adapters-ingestion-py/astrocyte-ingestion-document", editable = true }
 
 [project.scripts]
 astrocyte-gateway-py = "astrocyte_gateway.main:main"
