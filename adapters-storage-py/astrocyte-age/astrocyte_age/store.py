@@ -223,6 +223,38 @@ class AgeGraphStore:
                             "SELECT ag_catalog.create_graph(%s)", [self._graph]
                         )
 
+                    # Pre-create vertex and edge labels so concurrent MERGE
+                    # operations never race to create them lazily. AGE raises
+                    # an error if a label already exists, so guard with a
+                    # catalog check first.
+                    await cur.execute(
+                        """
+                        SELECT count(*) FROM ag_catalog.ag_label l
+                        JOIN ag_catalog.ag_graph g ON g.graphid = l.graph
+                        WHERE g.name = %s AND l.name = 'Entity'
+                        """,
+                        [self._graph],
+                    )
+                    if (await cur.fetchone() or (0,))[0] == 0:
+                        await cur.execute(
+                            "SELECT ag_catalog.create_vlabel(%s, 'Entity')",
+                            [self._graph],
+                        )
+
+                    await cur.execute(
+                        """
+                        SELECT count(*) FROM ag_catalog.ag_label l
+                        JOIN ag_catalog.ag_graph g ON g.graphid = l.graph
+                        WHERE g.name = %s AND l.name = 'LINK'
+                        """,
+                        [self._graph],
+                    )
+                    if (await cur.fetchone() or (0,))[0] == 0:
+                        await cur.execute(
+                            "SELECT ag_catalog.create_elabel(%s, 'LINK')",
+                            [self._graph],
+                        )
+
                     # Memory-entity mapping table (plain SQL)
                     await cur.execute("""
                         CREATE TABLE IF NOT EXISTS astrocyte_age_mem_entity (

@@ -25,6 +25,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "astrocyte-age", marker = "extra == 'dev'", editable = "." },
     { name = "astrocyte-ingestion-github", marker = "extra == 'all'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-github", marker = "extra == 'dev'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-github", marker = "extra == 'poll'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
@@ -34,6 +35,7 @@ requires-dist = [
     { name = "astrocyte-ingestion-redis", marker = "extra == 'all'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'dev'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'stream'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
+    { name = "astrocyte-pgvector", marker = "extra == 'dev'", editable = "../astrocyte-pgvector" },
     { name = "deepeval", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0" },
