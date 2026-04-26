@@ -84,12 +84,16 @@ dev = [
     "astrocyte-ingestion-redis>=0.1.0,<1",
     "astrocyte-ingestion-github>=0.1.0,<1",
     "snowballstemmer>=2.2",
+    "pgqueuer>=0.26.3",
     # Storage adapters — needed for benchmark runs against the real stack
     "astrocyte-pgvector>=0.8.0,<2",
     "astrocyte-age>=0.8.0,<2",
 ]
 all = [
-    "astrocyte[otel,prometheus,mcp,eval,openai,gateway,stream,poll]",
+    "astrocyte[otel,prometheus,mcp,eval,openai,gateway,stream,poll,worker]",
+]
+worker = [
+    "pgqueuer>=0.26.3",
 ]
 
 [project.scripts]

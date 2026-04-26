@@ -35,6 +35,7 @@ from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
 from astrocyte_gateway.rate_limit import SlidingWindowRateLimitMiddleware, rate_limit_max_from_env
 from astrocyte_gateway.serialization import to_jsonable
+from astrocyte_gateway.tasks import start_gateway_task_worker
 
 # Bounds /health latency when the vector store (e.g. pgvector) cannot connect.
 _HEALTH_TIMEOUT_S = 8.0
@@ -118,6 +119,7 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        task_worker = await start_gateway_task_worker(brain)
         await brain.start_background_tasks()
         await ingest_supervisor.start()
         try:
@@ -125,6 +127,8 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         finally:
             await ingest_supervisor.stop()
             await brain.stop_background_tasks()
+            if task_worker is not None:
+                await task_worker.stop()
 
     app = FastAPI(
         title="Astrocyte gateway",

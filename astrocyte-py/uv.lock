@@ -225,6 +225,7 @@ all = [
     { name = "openai" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
+    { name = "pgqueuer" },
     { name = "prometheus-client" },
     { name = "snowballstemmer" },
     { name = "uvicorn", extra = ["standard"] },
@@ -238,6 +239,7 @@ dev = [
     { name = "deepeval" },
     { name = "fastapi" },
     { name = "fastmcp" },
+    { name = "pgqueuer" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -276,6 +278,9 @@ stream = [
     { name = "astrocyte-ingestion-kafka" },
     { name = "astrocyte-ingestion-redis" },
 ]
+worker = [
+    { name = "pgqueuer" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -306,6 +311,9 @@ requires-dist = [
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", marker = "extra == 'all'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20" },
+    { name = "pgqueuer", marker = "extra == 'all'", specifier = ">=0.26.3" },
+    { name = "pgqueuer", marker = "extra == 'dev'", specifier = ">=0.26.3" },
+    { name = "pgqueuer", marker = "extra == 'worker'", specifier = ">=0.26.3" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "prometheus-client", marker = "extra == 'all'", specifier = ">=0.20" },
     { name = "prometheus-client", marker = "extra == 'prometheus'", specifier = ">=0.20" },
@@ -323,7 +331,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'dev'", specifier = ">=0.30" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'gateway'", specifier = ">=0.30" },
 ]
-provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "poll", "prometheus", "stream"]
+provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "poll", "prometheus", "stream", "worker"]
 
 [[package]]
 name = "astrocyte-age"
@@ -813,6 +821,18 @@ wheels = [
 [package.optional-dependencies]
 toml = [
     { name = "tomli", marker = "python_full_version <= '3.11'" },
+]
+
+[[package]]
+name = "croniter"
+version = "6.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/de/5832661ed55107b8a09af3f0a2e71e0957226a59eb1dcf0a445cce6daf20/croniter-6.2.2.tar.gz", hash = "sha256:ba60832a5ec8e12e51b8691c3309a113d1cf6526bdf1a48150ce8ec7a532d0ab", size = 113762, upload-time = "2026-03-15T08:43:48.112Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/39/783980e78cb92c2d7bdb1fc7dbc86e94ccc6d58224d76a7f1f51b6c51e30/croniter-6.2.2-py3-none-any.whl", hash = "sha256:a5d17b1060974d36251ea4faf388233eca8acf0d09cbd92d35f4c4ac8f279960", size = 45422, upload-time = "2026-03-15T08:43:46.626Z" },
 ]
 
 [[package]]
@@ -1993,6 +2013,25 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/55/b748445cb4ea6b125626f15379be7c96d1035d4fa3e8fee362fa92298abf/pathable-0.5.0.tar.gz", hash = "sha256:d81938348a1cacb525e7c75166270644782c0fb9c8cecc16be033e71427e0ef1", size = 16655, upload-time = "2026-02-20T08:47:00.748Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/52/96/5a770e5c461462575474468e5af931cff9de036e7c2b4fea23c1c58d2cbe/pathable-0.5.0-py3-none-any.whl", hash = "sha256:646e3d09491a6351a0c82632a09c02cdf70a252e73196b36d8a15ba0a114f0a6", size = 16867, upload-time = "2026-02-20T08:46:59.536Z" },
+]
+
+[[package]]
+name = "pgqueuer"
+version = "0.26.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "async-timeout" },
+    { name = "croniter" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "tabulate" },
+    { name = "typer" },
+    { name = "uvloop", marker = "sys_platform != 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/07/95/3e668623fd9f3f32fe2e2c64f65113c359b98484a263078b8b9cef1f891e/pgqueuer-0.26.3.tar.gz", hash = "sha256:3552dd9522b7e046699d56e6c824de60369ea8814fa5cda49ff297d618549971", size = 402303, upload-time = "2026-04-02T20:49:08.124Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/3c/29a38d95c16baa7f9ec4449694ab714d6a9943a1754e364cb16968643d82/pgqueuer-0.26.3-py3-none-any.whl", hash = "sha256:7bed2bc65a28b3723cbbd9ce362721522ca3091e25b730057cf52fd8c9483253", size = 99340, upload-time = "2026-04-02T20:49:06.632Z" },
 ]
 
 [[package]]

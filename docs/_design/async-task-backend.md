@@ -24,7 +24,7 @@ class TaskBackend(Protocol):
 
 ## Postgres Default
 
-Use PostgreSQL as the default backend for the reference stack:
+Use PostgreSQL as the default backend for the reference stack. The production worker implementation should use [PgQueuer](https://janbjorge.github.io/pgqueuer/) rather than a bespoke polling loop. PgQueuer gives us the same core primitives in this design (`FOR UPDATE SKIP LOCKED`, transactional enqueue, retries) plus `LISTEN/NOTIFY`, scheduling, heartbeat, completion tracking, metrics, and an in-memory test adapter.
 
 - Table: `astrocyte_tasks`.
 - Claiming: `SELECT ... FOR UPDATE SKIP LOCKED`.
@@ -33,6 +33,23 @@ Use PostgreSQL as the default backend for the reference stack:
 - Dead letter: keep failed rows with final status for operators.
 
 This mirrors the Hindsight operating lesson without adding Kafka or another queue to the default deployment. Stream systems can still enqueue through an adapter later.
+
+The framework-facing API remains `MemoryTask` + `MemoryTaskDispatcher`. PgQueuer lives at the worker boundary:
+
+```text
+MemoryTask
+  -> PgQueuerMemoryTaskQueue.enqueue()
+  -> PgQueuer entrypoint(task_type)
+  -> MemoryTaskDispatcher.run(task)
+```
+
+Install via the worker extra:
+
+```bash
+pip install 'astrocyte[worker]'
+```
+
+When using psycopg, PgQueuer requires the async connection to be opened with `autocommit=True`.
 
 ### Schema Sketch
 
@@ -95,15 +112,43 @@ The same table can act as a projection-repair outbox. For example, a successful 
 
 ## Worker Process
 
-The gateway starts only in-process queues by default. Production deployments should run an `astrocyte-worker-py` process that:
+The gateway starts only in-process queues by default. Production deployments should run an `astrocyte-worker-py` process backed by PgQueuer that:
 
 1. Claims tasks from the configured backend.
 2. Resolves `AstrocyteConfig` the same way as the gateway.
 3. Dispatches by `task_type` to compile, consolidate, entity, audit, or export handlers.
 4. Emits OpenTelemetry spans and task metrics.
 
+Benchmark integration tests should exercise the PgQueuer path against Postgres when `ASTROCYTE_PGQUEUER_TEST_DSN` is set. This proves that benchmark preprocessing tasks can run in the same database envelope as pgvector/AGE before LoCoMo or LongMemEval evaluation starts.
+
+Gateway deployments can enable the worker lifecycle through `astrocyte.yaml`:
+
+```yaml
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  dsn: ${ASTROCYTE_TASKS_DSN}
+  install_on_start: true
+  auto_start_worker: true
+  batch_size: 10
+```
+
+Tests and local demos may use `backend: pgqueuer_in_memory`; production should use `backend: pgqueuer` with Postgres.
+
 ## First Milestone
 
-The first concrete backend should support `compile_bank` only. Once that path is stable, add `consolidate_observations`, `resolve_entities`, `audit_bank`, and `export_memory_event`.
+The first concrete backend should support the benchmark-improvement task set below. These jobs are deliberately off the `retain()` and `recall()` hot paths; workers materialize better memory structures before benchmarks ask questions.
+
+| Task type | Main benchmark target | What it does |
+|---|---|---|
+| `compile_bank` | LongMemEval multi-session / knowledge-update | Runs `CompileEngine` over a bank or scope to create durable wiki pages from raw memories. |
+| `compile_persona_page` | LoCoMo open-domain | Builds `person:{name}` pages from speaker/person metadata and raw dialogue evidence. |
+| `index_wiki_page_vector` | LoCoMo + LongMemEval precision | Embeds the current wiki page revision into pgvector with `memory_layer="compiled"` and `fact_type="wiki"`. |
+| `project_entity_edges` | LoCoMo multi-hop | Projects person/session/turn co-occurrence into the graph store with memory provenance. |
+| `normalize_temporal_facts` | LoCoMo temporal | Resolves relative temporal phrases against `occurred_at` and writes `temporal_phrase`, `resolved_date`, and `date_granularity` metadata. |
+| `lint_wiki_page` | LongMemEval knowledge-update | Runs wiki lint to find stale, orphaned, or contradictory compiled pages; stale pages can enqueue recompile tasks. |
+| `analyze_benchmark_failures` | LoCoMo + LongMemEval regression loop | Reads serialized per-question benchmark output, groups failures, and emits a stable regression slice. |
+
+Once these are stable, add `consolidate_observations`, `resolve_entities`, `audit_bank`, and `export_memory_event`.
 
 The existing in-process `CompileQueue` remains the library/default development path. The Postgres backend is the production path for multi-process deployments.

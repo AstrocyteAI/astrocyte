@@ -96,6 +96,24 @@ Do not start every recall with AGE traversal or SQL page scans. Start with top-K
 - Compiled-page vectors should represent the current revision by default. SQL keeps full revision history; old revisions should not stay indexed unless time-travel wiki recall explicitly needs them.
 - Concurrent compiles need per-bank/page locking, unique `(bank_id, slug)`, and monotonic revision numbers.
 
+## Postgres Task Plan
+
+The reference stack should run an `astrocyte-worker-py` process using [PgQueuer](https://janbjorge.github.io/pgqueuer/) on PostgreSQL. PgQueuer supplies transactional enqueue, `FOR UPDATE SKIP LOCKED` claiming, `LISTEN/NOTIFY` wakeups, retry/heartbeat mechanics, scheduling, and in-memory testing. The current framework implementation lives in `astrocyte.pipeline.tasks`; `astrocyte.pipeline.pgqueuer_tasks` adapts those `MemoryTask` handlers to PgQueuer entrypoints.
+
+Benchmark-improvement task types:
+
+- `compile_bank`: create or refresh wiki pages for LongMemEval multi-session and knowledge-update questions.
+- `compile_persona_page`: create `person:{name}` pages for LoCoMo open-domain and inference questions.
+- `index_wiki_page_vector`: index the current compiled page revision into pgvector so recall can find mental-model pages before raw fragments.
+- `project_entity_edges`: write person/session/turn co-occurrence edges into the graph store so multi-hop recall can expand along evidence paths.
+- `normalize_temporal_facts`: attach deterministic temporal metadata to retained chunks so temporal questions do not rely only on prompt instructions.
+- `lint_wiki_page`: detect stale/orphan/contradictory compiled pages and feed recompile decisions for LongMemEval knowledge updates.
+- `analyze_benchmark_failures`: turn per-question LoCoMo/LME output into ranked failure buckets and stable short-slice gates.
+
+For LoCoMo, run `normalize_temporal_facts`, `compile_persona_page`, `project_entity_edges`, and `index_wiki_page_vector` after retain and before evaluation. For LME, run `compile_bank`, `lint_wiki_page`, and `index_wiki_page_vector`, then rerun gates against category deltas.
+
+The benchmark integration test surface should include a Postgres-backed PgQueuer run gated by `ASTROCYTE_PGQUEUER_TEST_DSN`, so local/CI environments with Postgres can verify the real worker path before comparing LoCoMo or LongMemEval scores.
+
 ## Release Gate
 
 Do not claim Hindsight-level parity from architecture alone. Parity requires benchmark output from `astrocyte-py/scripts/run_benchmarks.py` and threshold checks from `astrocyte-py/scripts/check_benchmark_gates.py` under documented configs.

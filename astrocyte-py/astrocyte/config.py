@@ -395,6 +395,18 @@ class EntityResolutionConfig:
 
 
 @dataclass
+class AsyncTasksConfig:
+    """Configuration for durable background memory tasks."""
+
+    enabled: bool = False
+    backend: str = "pgqueuer"  # "pgqueuer" | "pgqueuer_in_memory"
+    dsn: str | None = None
+    install_on_start: bool = False
+    auto_start_worker: bool = False
+    batch_size: int = 10
+
+
+@dataclass
 class BankConfig:
     """Per-bank override settings."""
 
@@ -470,6 +482,7 @@ class AstrocyteConfig:
     # M8 / M11 intelligence features
     wiki_compile: WikiCompileConfig = field(default_factory=WikiCompileConfig)
     entity_resolution: EntityResolutionConfig = field(default_factory=EntityResolutionConfig)
+    async_tasks: AsyncTasksConfig = field(default_factory=AsyncTasksConfig)
 
     # MIP (Memory Intent Protocol)
     mip_config_path: str | None = None  # Path to mip.yaml
@@ -796,6 +809,7 @@ _SIMPLE_SECTION_MAP: dict[str, type] = {
     "curated_recall": CuratedRecallConfig,
     "wiki_compile": WikiCompileConfig,
     "entity_resolution": EntityResolutionConfig,
+    "async_tasks": AsyncTasksConfig,
     "dlp": DlpConfig,
 }
 
