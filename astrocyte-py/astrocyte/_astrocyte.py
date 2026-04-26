@@ -130,10 +130,28 @@ class Astrocyte:
         return self._config
 
     async def __aenter__(self) -> "Astrocyte":
+        await self.start_background_tasks()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        pass  # Future: close provider connections
+        await self.stop_background_tasks()
+
+    async def start_background_tasks(self) -> None:
+        """Start optional background services configured on this instance.
+
+        Today this covers the M8 compile queue. Keeping the lifecycle on
+        ``Astrocyte`` lets library users and the REST gateway start the same
+        services without reaching into private attributes.
+        """
+        queue = self._compile_queue
+        if queue is not None and hasattr(queue, "start"):
+            await queue.start()  # type: ignore[union-attr]
+
+    async def stop_background_tasks(self) -> None:
+        """Stop optional background services configured on this instance."""
+        queue = self._compile_queue
+        if queue is not None and hasattr(queue, "stop"):
+            await queue.stop()  # type: ignore[union-attr]
 
     @classmethod
     def from_config(cls, path: str | Path) -> "Astrocyte":

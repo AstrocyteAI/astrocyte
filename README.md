@@ -37,7 +37,7 @@ For how this maps to vendor-neutral **applied AI / agentic-stack** teaching (mem
 | [`astrocyte-services-py/`](astrocyte-services-py/README.md) | Optional reference **REST** server (**[`astrocyte-gateway-py/`](astrocyte-services-py/astrocyte-gateway-py/README.md)**). Compose for API + DB: [`astrocyte-services-py/docker-compose.yml`](astrocyte-services-py/docker-compose.yml). |
 | [`adapters-storage-py/`](adapters-storage-py/README.md) | Optional **Tier 1** **storage** adapters (`VectorStore` / `GraphStore` / `DocumentStore`): **PostgreSQL + pgvector** (**[`astrocyte-pgvector/`](adapters-storage-py/astrocyte-pgvector/README.md)**), Qdrant, Neo4j, Elasticsearch. |
 | [`adapters-ingestion-py/`](adapters-ingestion-py/README.md) | Optional **ingest transport** packages split from core (**`astrocyte-ingestion-kafka`**, **`astrocyte-ingestion-redis`**, …). |
-| [`adapters-integration-py/`](adapters-integration-py/README.md) | Reserved for **vendor / product** integrations (outbound and bidirectional); empty until packages land. |
+| [`adapters-integration-py/`](adapters-integration-py/README.md) | Optional **vendor / product** integrations, including the Hindsight-style OpenAI-compatible LLM memory wrapper and Tavus CVI client. |
 | [`astrocyte-rs/`](astrocyte-rs/README.md) | Rust implementation of the Astrocyte service (same contract). |
 
 For scope, vocabulary, and a full reading order, start with [`docs/README.md`](docs/README.md).

@@ -57,7 +57,7 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench-db-start bench-db-stop bench bench-full bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
+.PHONY: bench-db-start bench-db-stop bench bench-full bench-gate bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
 
 # Start the benchmark Postgres container (postgres-age-pgvector).
 # Pulls from GHCR first; falls back to building locally from the Dockerfile.
@@ -192,6 +192,13 @@ bench-full: fetch-datasets bench-db-start
 		--locomo-path $(LOCOMO_DIR)/data \
 		--canonical-judge \
 		$(if $(RESUME),--resume,)
+
+# Release gate for Hindsight-informed capability claims.
+# Expects benchmark-results/latest.json from run_benchmarks.py.
+bench-gate:
+	uv run python scripts/check_benchmark_gates.py \
+		--gates benchmarks/gates-hindsight-informed.json \
+		--results $(RESULTS_DIR)/latest.json
 
 # Smoke test — in-memory providers, no API key needed.
 # Uses the real LoCoMo dataset (all 200q) so the regression gate in CI

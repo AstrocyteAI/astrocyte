@@ -1,0 +1,26 @@
+{
+  "locomo": {
+    "minimums": {
+      "overall_accuracy": 0.75,
+      "metrics.recall_hit_rate": 0.80,
+      "metrics.recall_mrr": 0.50
+    },
+    "maximums": {
+      "metrics.retain_latency_p95_ms": 5000,
+      "metrics.recall_latency_p95_ms": 2500,
+      "metrics.total_tokens_used": 2000000
+    }
+  },
+  "longmemeval": {
+    "minimums": {
+      "overall_accuracy": 0.70,
+      "metrics.recall_hit_rate": 0.80,
+      "metrics.recall_mrr": 0.45
+    },
+    "maximums": {
+      "metrics.retain_latency_p95_ms": 5000,
+      "metrics.recall_latency_p95_ms": 2500,
+      "metrics.total_tokens_used": 10000000
+    }
+  }
+}

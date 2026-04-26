@@ -1,4 +1,4 @@
-# Gateway + PostgreSQL (pgvector). Run from this directory:
+# Gateway + PostgreSQL (pgvector + Apache AGE). Run from this directory:
 #   cp .env.example .env   # optional: override secrets and ports
 #   docker compose up --build
 # Or from repo root:
@@ -7,7 +7,10 @@
 # Postgres is reachable on host port POSTGRES_PUBLISH_PORT (default 5433). The API is on ASTROCYTE_HTTP_PUBLISH_PORT (default 8080).
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: ${ASTROCYTE_POSTGRES_IMAGE:-astrocyte/postgres-age-pgvector:local}
+    build:
+      context: ..
+      dockerfile: docker/postgres-age-pgvector/Dockerfile
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-astrocyte}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-astrocyte}
@@ -28,6 +31,8 @@ services:
       - "${ASTROCYTE_HTTP_PUBLISH_PORT:-8080}:${ASTROCYTE_PORT:-8080}"
     environment:
       ASTROCYTE_VECTOR_STORE: ${ASTROCYTE_VECTOR_STORE:-pgvector}
+      ASTROCYTE_GRAPH_STORE: ${ASTROCYTE_GRAPH_STORE:-age}
+      ASTROCYTE_WIKI_STORE: ${ASTROCYTE_WIKI_STORE:-in_memory}
       # In-cluster DSN only: hostname must be `postgres`. Do not reuse host-side DATABASE_URL
       # (e.g. 127.0.0.1:5433) here — Compose would pass it into this container and health checks hang.
       # Prefer ASTROCYTE_GATEWAY_DATABASE_URL; ASTROCYTE_REST_DATABASE_URL kept for existing .env files.

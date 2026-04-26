@@ -373,6 +373,28 @@ class LifecycleConfig:
 
 
 @dataclass
+class WikiCompileConfig:
+    """Configuration for M8 wiki compile and its background trigger."""
+
+    enabled: bool = False
+    auto_start: bool = False
+    size_threshold: int = 50
+    staleness_days: float = 7.0
+    staleness_min_memories: int = 10
+    max_queue_size: int = 100
+
+
+@dataclass
+class EntityResolutionConfig:
+    """Configuration for M11 retain-time entity resolution."""
+
+    enabled: bool = False
+    similarity_threshold: float = 0.8
+    confirmation_threshold: float = 0.75
+    max_candidates_per_entity: int = 3
+
+
+@dataclass
 class BankConfig:
     """Per-bank override settings."""
 
@@ -404,6 +426,8 @@ class AstrocyteConfig:
     graph_store_config: dict[str, str | int | float | bool | None] | None = None
     document_store: str | None = None
     document_store_config: dict[str, str | int | float | bool | None] | None = None
+    wiki_store: str | None = None
+    wiki_store_config: dict[str, str | int | float | bool | None] | None = None
 
     # LLM
     llm_provider: str | None = None
@@ -442,6 +466,10 @@ class AstrocyteConfig:
 
     # Lifecycle
     lifecycle: LifecycleConfig = field(default_factory=LifecycleConfig)
+
+    # M8 / M11 intelligence features
+    wiki_compile: WikiCompileConfig = field(default_factory=WikiCompileConfig)
+    entity_resolution: EntityResolutionConfig = field(default_factory=EntityResolutionConfig)
 
     # MIP (Memory Intent Protocol)
     mip_config_path: str | None = None  # Path to mip.yaml
@@ -746,6 +774,8 @@ _SCALAR_CONFIG_FIELDS = (
     "graph_store_config",
     "document_store",
     "document_store_config",
+    "wiki_store",
+    "wiki_store_config",
     "llm_provider",
     "llm_provider_config",
     "embedding_provider",
@@ -764,6 +794,8 @@ _SIMPLE_SECTION_MAP: dict[str, type] = {
     "tiered_retrieval": TieredRetrievalConfig,
     "curated_retain": CuratedRetainConfig,
     "curated_recall": CuratedRecallConfig,
+    "wiki_compile": WikiCompileConfig,
+    "entity_resolution": EntityResolutionConfig,
     "dlp": DlpConfig,
 }
 

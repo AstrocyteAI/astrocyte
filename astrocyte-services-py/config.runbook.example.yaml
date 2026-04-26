@@ -1,11 +1,25 @@
-# Example Astrocyte config for the runbook (Postgres + pgvector, no runtime DDL).
+# Example Astrocyte config for the runbook
+# (Postgres + pgvector + Apache AGE, no runtime DDL for vectors).
 # Use with docker-compose.runbook.yml so the container sees this file at ASTROCYTE_CONFIG_PATH.
 # Copy and edit if you need different providers or dimensions.
 
 provider_tier: storage
 vector_store: pgvector
+graph_store: age
+wiki_store: in_memory
 llm_provider: mock
 
 vector_store_config:
   bootstrap_schema: false
   embedding_dimensions: 128
+
+graph_store_config:
+  bootstrap_schema: true
+
+wiki_compile:
+  enabled: true
+  auto_start: true
+  size_threshold: 50
+
+entity_resolution:
+  enabled: true

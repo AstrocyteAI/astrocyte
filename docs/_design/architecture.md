@@ -134,6 +134,8 @@ This frame contrasts **both** agent-time tiers (Tier 1 and Tier 2) with the **ex
 
 When the **built-in pipeline** is active (`provider_tier: storage`), warehouse- or lake-backed **online** `recall` is implemented via **Tier 1** Retrieval adapters—see **Lakehouse and warehouse-backed recall (serving layers)** above and `storage-and-data-planes.md` §1. A **Tier 2** memory engine may still use a warehouse or lake **internally**; that storage choice is **opaque** to the Retrieval SPI (the engine replaces Tier 1 from Astrocyte’ perspective).
 
+**Reference Postgres stack:** For self-hosted Tier 1, PostgreSQL is the preferred operational substrate: SQL tables hold bank-scoped memory records, durable wiki pages/revisions/provenance, and async task rows; pgvector provides semantic search; Apache AGE provides the graph traversal projection. SQL remains the source of truth, while pgvector and AGE are rebuildable recall projections. This keeps Astrocyte close to Hindsight's PostgreSQL-centered operating model without collapsing the `VectorStore`, `GraphStore`, `DocumentStore`, `WikiStore`, and task-backend responsibilities into one public SPI.
+
 ### How the tiers interact
 
 ```mermaid

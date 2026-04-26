@@ -186,6 +186,7 @@ def _serialize_result(
             "recall_latency_p50_ms": result.eval_result.metrics.recall_latency_p50_ms,
             "recall_latency_p95_ms": result.eval_result.metrics.recall_latency_p95_ms,
             "reflect_accuracy": result.eval_result.metrics.reflect_accuracy,
+            "total_tokens_used": result.eval_result.metrics.total_tokens_used,
             "total_duration_seconds": result.eval_result.metrics.total_duration_seconds,
         },
         "provider": result.eval_result.provider,
@@ -228,6 +229,9 @@ def _print_result(result, benchmark_name: str) -> None:
     print(f"    Retain p95:      {m.retain_latency_p95_ms:.1f} ms")
     print(f"    Recall p50:      {m.recall_latency_p50_ms:.1f} ms")
     print(f"    Recall p95:      {m.recall_latency_p95_ms:.1f} ms")
+    print()
+    print("  Cost:")
+    print(f"    Tokens used:     {m.total_tokens_used}")
     print()
     print(f"  Total duration:    {m.total_duration_seconds:.1f}s")
     print(f"{'=' * 60}")

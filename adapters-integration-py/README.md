@@ -12,3 +12,4 @@ It is **distinct** from:
 | Directory | PyPI | Role |
 |-----------|------|------|
 | [`astrocyte-integration-tavus/`](./astrocyte-integration-tavus/) | `astrocyte-integration-tavus` | [Tavus](https://www.tavus.io/) CVI REST client (`x-api-key`, v2 API). |
+| [`astrocyte-integration-llm-wrapper/`](./astrocyte-integration-llm-wrapper/) | `astrocyte-integration-llm-wrapper` | OpenAI-compatible memory wrapper: recall before chat completion, retain after completion. |

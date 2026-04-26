@@ -83,9 +83,9 @@ On GitHub: **Actions → Benchmark gateway overhead → Run workflow** (manual d
 
 **Concurrent HTTP smoke (optional):** with uvicorn running (local or CI), **`scripts/smoke_gateway_load.py`** sends many parallel **`POST /v1/recall`** requests and exits **non-zero** if any response is not **200**. GitHub Actions: **Actions → Smoke test gateway HTTP → Run workflow** (starts the gateway in the job, then runs the script; checks success rate only, not latency SLOs).
 
-**PostgreSQL (pgvector):** Install the optional adapter (`uv sync --extra pgvector`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts **Postgres + this service** together. For Postgres only on the host, see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md).
+**PostgreSQL reference stack (pgvector + Apache AGE):** Install the optional adapters (`uv sync --extra pgvector --extra age`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts the combined Postgres image + this service together. For Postgres only on the host, see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md) and `adapters-storage-py/astrocyte-age/`.
 
-Then set `vector_store: pgvector` in YAML or `ASTROCYTE_VECTOR_STORE=pgvector`, and pass a DSN via `vector_store_config.dsn` or `DATABASE_URL` / `ASTROCYTE_PG_DSN`.
+Then set `vector_store: pgvector` and optionally `graph_store: age` in YAML, or use `ASTROCYTE_VECTOR_STORE=pgvector` / `ASTROCYTE_GRAPH_STORE=age`, and pass a DSN via provider config or `DATABASE_URL` / `ASTROCYTE_PG_DSN` / `ASTROCYTE_AGE_DSN`.
 
 ## Configuration
 
@@ -104,6 +104,7 @@ Then set `vector_store: pgvector` in YAML or `ASTROCYTE_VECTOR_STORE=pgvector`, 
 | `ASTROCYTE_LLM_PROVIDER` | Override `llm_provider` when no YAML file is used (default `mock`). |
 | `ASTROCYTE_GRAPH_STORE` | Optional graph store name. |
 | `ASTROCYTE_DOCUMENT_STORE` | Optional document store name. |
+| `ASTROCYTE_WIKI_STORE` | Optional wiki store name. Use `in_memory` for local M8 compile demos; production adapters should persist pages durably. |
 | `DATABASE_URL` / `ASTROCYTE_PG_DSN` | When using **`pgvector`**, connection URI for PostgreSQL (see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md)); can be omitted if `dsn` is set in YAML `vector_store_config`. |
 | `ASTROCYTE_MAX_REQUEST_BODY_BYTES` | If set to a positive integer, reject requests whose **`Content-Length`** exceeds it (**413**). Unset = no limit (dev default). |
 | `ASTROCYTE_CORS_ORIGINS` | Comma-separated allowed origins for **browser** `fetch` (e.g. `https://app.example.com`). Unset = CORS middleware not added (same-origin / server-to-server only). |
@@ -142,6 +143,11 @@ In **`dev`** mode, send optional header **`X-Astrocyte-Principal`** (for example
 | `POST` | `/v1/recall` | `query`; `bank_id` or `banks`; optional `max_results`, `max_tokens`, `tags` |
 | `POST` | `/v1/reflect` | `query`, `bank_id`; optional `max_tokens`, `include_sources` |
 | `POST` | `/v1/forget` | `bank_id`; optional `memory_ids`, `tags` |
+| `POST` | `/v1/compile` | `bank_id`; optional `scope` (requires `wiki_store`) |
+| `POST` | `/v1/audit` | `scope`, `bank_id`; optional `max_memories`, `max_tokens`, `tags` |
+| `POST` | `/v1/history` | `query`, `bank_id`, `as_of`; optional `max_results`, `max_tokens`, `tags` |
+| `POST` | `/v1/graph/search` | `query`, `bank_id`; optional `limit` (requires `graph_store`) |
+| `POST` | `/v1/graph/neighbors` | `entity_ids`, `bank_id`; optional `max_depth`, `limit` |
 | `POST` | `/v1/ingest/webhook/{source_id}` | Raw body + `Content-Type` — must match a **`sources:`** entry in config (HMAC or `auth: none` for demos) |
 | `GET` | `/v1/admin/sources` | Lists configured ingest sources and best-effort health |
 | `GET` | `/v1/admin/banks` | Bank ids from **`banks:`** in config |
@@ -158,7 +164,7 @@ OpenAPI docs: `/docs` when the HTTP service is running.
 
 ## Docker
 
-### Gateway + Postgres (pgvector)
+### Gateway + Postgres (pgvector + Apache AGE)
 
 From **`astrocyte-services-py/`** (or pass `-f` from the repo root):
 

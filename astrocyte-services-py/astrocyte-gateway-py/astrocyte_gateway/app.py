@@ -28,7 +28,6 @@ from astrocyte.ingest.runtime import retain_callable_for_astrocyte
 from astrocyte.ingest.supervisor import IngestSupervisor, merge_source_health
 from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.types import AstrocyteContext
-
 from astrocyte_gateway.auth import get_astrocyte_context
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
@@ -116,11 +115,13 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        await brain.start_background_tasks()
         await ingest_supervisor.start()
         try:
             yield
         finally:
             await ingest_supervisor.stop()
+            await brain.stop_background_tasks()
 
     app = FastAPI(
         title="Astrocyte gateway",

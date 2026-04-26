@@ -135,9 +135,129 @@ Key differences from raw memory:
 
 ### 4.1 Storage
 
-- Live revision: hot storage alongside raw memories (vector + document)
-- Past revisions: cold / audit log (for lint and debugging; not indexed for recall)
-- Forget semantics: forgetting a raw source triggers **recompile** of the pages that cited it — not tombstone-then-drift
+- **SQL wiki tables are the source of truth.** They store logical pages, immutable revisions, source provenance, wiki links, lint state, and compile metadata.
+- **pgvector is the search projection.** The current page revision is indexed as a compiled memory (`memory_layer="compiled"`, `fact_type="wiki"`) so standard recall can retrieve it semantically.
+- **Apache AGE is the traversal projection.** Page-to-page, page-to-entity, entity-to-memory, and page-to-memory edges are mirrored into AGE for bounded graph expansion.
+- Past revisions remain in SQL for audit, lint, and debugging; they are not indexed for normal recall unless time-travel wiki recall is explicitly enabled.
+- Forget semantics: forgetting a raw source triggers **recompile** of the pages that cited it — not tombstone-then-drift.
+
+#### 4.1.1 Postgres schema sketch
+
+```sql
+CREATE TABLE astrocyte_wiki_pages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bank_id text NOT NULL,
+  slug text NOT NULL,
+  title text NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('topic', 'entity', 'concept')),
+  current_revision_id uuid,
+  confidence double precision NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (bank_id, slug)
+);
+
+CREATE TABLE astrocyte_wiki_revisions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  page_id uuid NOT NULL REFERENCES astrocyte_wiki_pages(id) ON DELETE CASCADE,
+  revision_number integer NOT NULL,
+  markdown text NOT NULL,
+  summary text,
+  compiled_by text,
+  source_count integer NOT NULL DEFAULT 0,
+  tokens_used integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (page_id, revision_number)
+);
+
+ALTER TABLE astrocyte_wiki_pages
+  ADD CONSTRAINT astrocyte_wiki_pages_current_revision_fk
+  FOREIGN KEY (current_revision_id)
+  REFERENCES astrocyte_wiki_revisions(id);
+
+CREATE TABLE astrocyte_wiki_revision_sources (
+  revision_id uuid NOT NULL REFERENCES astrocyte_wiki_revisions(id) ON DELETE CASCADE,
+  memory_id text NOT NULL,
+  bank_id text NOT NULL,
+  quote text,
+  relevance double precision,
+  PRIMARY KEY (revision_id, memory_id)
+);
+
+CREATE TABLE astrocyte_wiki_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_page_id uuid NOT NULL REFERENCES astrocyte_wiki_pages(id) ON DELETE CASCADE,
+  to_page_id uuid REFERENCES astrocyte_wiki_pages(id) ON DELETE SET NULL,
+  target_slug text NOT NULL,
+  link_type text NOT NULL DEFAULT 'related',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (from_page_id, target_slug, link_type)
+);
+```
+
+Lint state is stored separately so compile can stay focused on page materialization:
+
+```sql
+CREATE TABLE astrocyte_wiki_lint_issues (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  page_id uuid NOT NULL REFERENCES astrocyte_wiki_pages(id) ON DELETE CASCADE,
+  revision_id uuid REFERENCES astrocyte_wiki_revisions(id) ON DELETE SET NULL,
+  issue_type text NOT NULL,
+  severity text NOT NULL CHECK (severity IN ('low', 'medium', 'high')),
+  message text NOT NULL,
+  evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status text NOT NULL DEFAULT 'open',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
+```
+
+Recommended indexes:
+
+```sql
+CREATE INDEX astrocyte_wiki_pages_bank_kind_idx
+  ON astrocyte_wiki_pages (bank_id, kind);
+
+CREATE INDEX astrocyte_wiki_revisions_page_created_idx
+  ON astrocyte_wiki_revisions (page_id, created_at DESC);
+
+CREATE INDEX astrocyte_wiki_sources_memory_idx
+  ON astrocyte_wiki_revision_sources (bank_id, memory_id);
+
+CREATE INDEX astrocyte_wiki_lint_open_idx
+  ON astrocyte_wiki_lint_issues (page_id, status)
+  WHERE status = 'open';
+```
+
+#### 4.1.2 Projection model
+
+The current SQL revision is projected into pgvector as:
+
+```text
+id = "wiki:{page_id}:{revision_id}"
+bank_id = same bank
+text = current revision markdown
+memory_layer = "compiled"
+fact_type = "wiki"
+metadata.page_id = page id
+metadata.revision_id = revision id
+metadata.slug = page slug
+```
+
+AGE receives only the traversal projection:
+
+```text
+(:WikiPage {page_id, bank_id, slug, title, kind, current_revision_id, confidence})
+(:Memory {memory_id, bank_id})
+(:Entity {entity_id, bank_id, name, entity_type})
+
+(:WikiPage)-[:CITES {revision_id, quote, relevance}]->(:Memory)
+(:WikiPage)-[:MENTIONS]->(:Entity)
+(:WikiPage)-[:RELATED_TO {link_type}]->(:WikiPage)
+(:Entity)-[:ALIAS_OF {evidence, confidence}]->(:Entity)
+```
+
+SQL owns truth; pgvector owns similarity; AGE owns traversal.
 
 ---
 
@@ -160,14 +280,18 @@ Today: `recall()` returns ranked raw hits.
 With wiki: recall runs a **two-tier search**:
 
 ```
-hits = search_wiki_pages(query)
-if hits and hits.top_score >= WIKI_CONFIDENCE_THRESHOLD:
-    return hits + citations_to_raw(hits)
-else:
-    return search_raw(query)        # fall back to today's RAG path
+query_vector = embed(query)
+compiled_hits = pgvector.search(memory_layer="compiled")
+raw_hits = pgvector.search(raw memories)
+lexical_hits = document_store.search_fulltext(query)
+hydrated_pages = sql.fetch_pages(compiled_hits.page_ids)
+graph_expansion = age.expand(top hydrated pages/entities, bounded)
+return rrf(compiled_hits, raw_hits, lexical_hits, graph_expansion)
 ```
 
 **Always return provenance.** A wiki page hit carries its `source_ids`, so callers can trace a claim back to the raw memory — and `reflect()` can still stitch raw detail when needed.
+
+Normal `recall()` should not start with AGE traversal or SQL page scans. Start with indexed retrieval, then batch-hydrate SQL and run bounded AGE expansion only for the top candidates. `reflect()` may request deeper expansion because it is already a higher-latency operation.
 
 ---
 

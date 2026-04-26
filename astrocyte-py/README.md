@@ -152,6 +152,7 @@ make bench-locomo             # LoCoMo, full dataset (~30-60 min)
 make bench-longmemeval        # LongMemEval
 make bench-builtin            # Built-in suites only
 make bench                    # All benchmarks
+make bench-gate               # Check latest results against release gates
 ```
 
 ### LLM adapter comparison
@@ -164,6 +165,10 @@ make bench-compare                  # Runs 50 LoCoMo questions through each
 ```
 
 Results are written to `benchmark-results/openai/latest.json` and `benchmark-results/litellm/latest.json`.
+
+### Release gates
+
+Use `make bench-gate` after a benchmark run to enforce the Hindsight-informed release thresholds in `benchmarks/gates-hindsight-informed.json`. These gates check minimum quality plus p95 retain/recall latency before making external parity claims.
 
 ### Dataset management
 
