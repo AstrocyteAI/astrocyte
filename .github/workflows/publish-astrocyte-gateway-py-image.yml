@@ -1,4 +1,4 @@
-# Build + test gate, then push the astrocyte-gateway-py image to GHCR (version tag).
+# Build + test gate, then push the multi-arch astrocyte-gateway-py image to GHCR (version tag).
 # Gateway test gate lives in `gateway-publish-test-gate.yml` (shared with `ci.yml`).
 #
 # Invoked by `release.yml` after PyPI publishes (`publish.yml` → `publish-astrocyte-pgvector.yml`).
@@ -103,10 +103,17 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          # OCI image names must be lowercase; bash 4+ (ubuntu-latest)
-          echo "repository_lc=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=${TAG}"
+            echo "version=${VERSION}"
+            # OCI image names must be lowercase; bash 4+ (ubuntu-latest)
+            echo "repository_lc=${GITHUB_REPOSITORY,,}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -125,6 +132,7 @@ jobs:
           context: .
           file: astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py:${{ steps.meta.outputs.tag }}
             ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py:latest
