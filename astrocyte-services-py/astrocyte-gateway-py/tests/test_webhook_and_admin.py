@@ -8,6 +8,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from astrocyte.config import AstrocyteConfig, SourceConfig
+from astrocyte.errors import IngestError
+from astrocyte.ingest.registry import SourceRegistry
+from astrocyte.types import HealthStatus, RetainResult
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "webhook-ingest" / "astrocyte.yaml"
 
@@ -80,3 +84,52 @@ def test_webhook_demo_source_stores(monkeypatch: pytest.MonkeyPatch) -> None:
     assert src.status_code == 200
     ids = {s["id"] for s in src.json().get("sources", [])}
     assert "demo" in ids
+
+
+def test_custom_webhook_ingest_error_is_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
+    import astrocyte_gateway.app as app_mod
+
+    class FakeBrain:
+        config = AstrocyteConfig(
+            sources={"custom": SourceConfig(type="webhook")},
+        )
+
+        async def start_background_tasks(self) -> None:
+            return None
+
+        async def stop_background_tasks(self) -> None:
+            return None
+
+        async def retain(self, *args: object, **kwargs: object) -> RetainResult:
+            return RetainResult(stored=True)
+
+    class FailingWebhookSource:
+        source_id = "custom"
+        source_type = "webhook"
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+        async def health_check(self) -> HealthStatus:
+            return HealthStatus(healthy=True)
+
+        async def handle_webhook(self, raw: bytes, headers: dict[str, str]) -> dict[str, object]:
+            raise IngestError("Traceback: secret database path /internal/stack.py")
+
+    registry = SourceRegistry()
+    registry.register(FailingWebhookSource())
+
+    monkeypatch.setattr(
+        app_mod.SourceRegistry,
+        "from_sources_config",
+        classmethod(lambda cls, sources, retain=None: registry),
+    )
+
+    client = TestClient(app_mod.create_app(FakeBrain()))
+    response = client.post("/v1/ingest/webhook/custom", content=b"{}")
+
+    assert response.status_code == 400
+    assert response.json() == {"ok": False, "error": "webhook ingest rejected"}

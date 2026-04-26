@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from astrocyte.errors import (
     AccessDenied,
     CapabilityNotSupported,
     ConfigError,
+    IngestError,
     PiiRejected,
     ProviderUnavailable,
     RateLimited,
@@ -36,6 +38,7 @@ from astrocyte_gateway.serialization import to_jsonable
 
 # Bounds /health latency when the vector store (e.g. pgvector) cannot connect.
 _HEALTH_TIMEOUT_S = 8.0
+_logger = logging.getLogger("astrocyte.gateway")
 
 
 class _MaxBodySizeMiddleware(BaseHTTPMiddleware):
@@ -428,12 +431,12 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         if source_instance is not None and hasattr(source_instance, "handle_webhook"):
             try:
                 summary = await source_instance.handle_webhook(raw, headers)
-            except Exception as exc:
-                if "IngestError" in type(exc).__name__:
-                    return JSONResponse(
-                        content={"ok": False, "error": str(exc)}, status_code=400
-                    )
-                raise
+            except IngestError:
+                _logger.warning("Custom webhook ingest rejected source_id=%s", source_id, exc_info=True)
+                return JSONResponse(
+                    content={"ok": False, "error": "webhook ingest rejected"},
+                    status_code=400,
+                )
             return JSONResponse(content={"ok": True, **summary}, status_code=200)
 
         result = await handle_webhook_ingest(
