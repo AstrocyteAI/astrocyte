@@ -176,6 +176,7 @@ class PipelineOrchestrator:
         entity_resolver: EntityResolver | None = None,
         enable_observation_consolidation: bool = True,
         observation_weight: float = 0.0,
+        observation_injection_weight: float = 1.5,
         multi_query_confidence_threshold: float = 0.72,
     ) -> None:
         self.vector_store = vector_store
@@ -237,6 +238,11 @@ class PipelineOrchestrator:
         # the main RRF pipeline with a configurable weight boost.
         self.enable_observation_consolidation: bool = enable_observation_consolidation
         self.observation_weight: float = observation_weight
+        # Weight applied to the ::obs bank when intent-gated injection fires
+        # (EXPLORATORY / RELATIONAL queries). Kept separate from observation_weight
+        # so callers can disable global injection (observation_weight=0.0) while
+        # still enabling the intent-gated path.
+        self.observation_injection_weight: float = observation_injection_weight
         if enable_observation_consolidation:
             from astrocyte.pipeline.observation import ObservationConsolidator
 
@@ -558,15 +564,35 @@ class PipelineOrchestrator:
             hyde_vector=hyde_vec,
         )
 
-        # 3b. Observation strategy — search the observations layer separately.
-        # Observations are distilled, multi-evidence facts that should rank
-        # above raw memories in most recall scenarios.  We inject them into
-        # strategy_results here so weighted_rrf_fusion can apply the
-        # ``observation_weight`` boost before the main fusion pass.  Only
-        # runs when observation consolidation is enabled AND the caller has
-        # not restricted fact_types (if they asked for fact_types=["world"]
-        # we respect that and skip observation injection).
-        if self._observation_consolidator is not None and not request.fact_types:
+        # 3b. Intent classification — hoisted here so both observation injection
+        # (step 3b) and RRF weighting (step 4) share the same result without
+        # computing it twice. UNKNOWN → neutral 1.0 weights everywhere.
+        query_intent = QueryIntent.UNKNOWN
+        if self.enable_intent_aware_recall:
+            query_intent = classify_query_intent(request.query).intent
+        intent_weights = weights_for_intent(query_intent)
+
+        # 3c. Observation strategy — intent-gated injection.
+        # The ::obs bank holds distilled, multi-evidence facts synthesised from
+        # raw memories.  Injecting it for *every* recall degrades factual
+        # precision (abstract summaries displace verbatim answers).  Instead,
+        # inject only for EXPLORATORY and RELATIONAL queries — the two intents
+        # where synthesised behavioural patterns add value over raw memories:
+        #   EXPLORATORY: "What are Alice's hobbies?" / "Describe Bob's personality"
+        #   RELATIONAL:  "How does Alice's role relate to her projects?"
+        # For all other intents, effective_obs_weight falls back to the
+        # configured observation_weight (default 0.0 = disabled).
+        _OBS_INJECTION_INTENTS = {QueryIntent.EXPLORATORY, QueryIntent.RELATIONAL}
+        effective_obs_weight = (
+            self.observation_injection_weight
+            if query_intent in _OBS_INJECTION_INTENTS
+            else self.observation_weight
+        )
+        if (
+            self._observation_consolidator is not None
+            and not request.fact_types
+            and effective_obs_weight > 0.0
+        ):
             obs_results = await self._retrieve_observations(
                 query_vector, request.bank_id, overfetch_limit, request.as_of
             )
@@ -574,24 +600,14 @@ class PipelineOrchestrator:
                 strategy_results["observation"] = obs_results
 
         # 4. RRF fusion (local strategies + optional federated / manual external_context)
-        # When intent-aware recall is enabled, weight each strategy's RRF
-        # contribution by a bias derived from the query's classified
-        # intent. UNKNOWN intents pass through with neutral 1.0 weights,
-        # so enabling the feature never *hurts* baseline behavior — it
-        # either kicks in on a confident classification or no-ops.
-        query_intent = QueryIntent.UNKNOWN
-        if self.enable_intent_aware_recall:
-            query_intent = classify_query_intent(request.query).intent
-        intent_weights = weights_for_intent(query_intent)
-
         weighted_inputs: list[tuple[list[Any], float]] = []
         for strategy, results in strategy_results.items():
             if not results:
                 continue
-            # Observation strategy always uses the configured observation_weight;
+            # Observation strategy uses the effective intent-gated weight;
             # other strategies use intent-derived weights.
             if strategy == "observation":
-                weight = self.observation_weight
+                weight = effective_obs_weight
             else:
                 # Map strategy name → weight. External/proxy results use
                 # semantic weight (they're typically semantic fusions upstream).
