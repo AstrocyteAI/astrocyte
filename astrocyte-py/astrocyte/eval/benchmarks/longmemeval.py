@@ -37,6 +37,7 @@ from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
 
+logger = logging.getLogger("astrocyte.eval.longmemeval")
 
 ANSWER_MATCH_THRESHOLD = 0.3
 
@@ -132,6 +133,9 @@ class LongMemEvalBenchmark:
         max_sessions: int | None = None,
         use_canonical_judge: bool = False,
         checkpoint: BenchmarkCheckpoint | None = None,
+        retain_concurrency: int = 10,
+        retain_rpm: int = 500,
+        retain_tpm: int = 200_000,
         eval_concurrency: int = 5,
         eval_rpm: int = 500,
         eval_tpm: int = 200_000,
@@ -163,6 +167,11 @@ class LongMemEvalBenchmark:
                 from a previous interrupted run. Already-retained sessions are
                 skipped and already-evaluated questions use their cached score
                 without making fresh LLM calls.
+            retain_concurrency: Maximum number of sessions retained in parallel.
+                Set to 1 for fully serial behaviour. Higher values trade API
+                rate-limit headroom for wall-clock speed (default 10).
+            retain_rpm: Requests-per-minute budget for the retain rate limiter.
+            retain_tpm: Tokens-per-minute budget for the retain rate limiter.
             eval_concurrency: Maximum number of questions evaluated in parallel.
                 Set to 1 for fully serial behaviour identical to the original loop.
             eval_rpm: Requests-per-minute budget for the eval rate limiter.
@@ -205,58 +214,108 @@ class LongMemEvalBenchmark:
                     _all_session_keys.add(sk)
         total_sessions = len(_all_session_keys)
 
-        print(f"  [LongMemEval] Retaining {total_sessions} unique sessions from {total_questions} questions...")
-        sessions_retained: set[str] = set()
-        retain_count = 0
-        retain_phase_start = time.monotonic()
+        print(
+            f"  [LongMemEval] Retaining {total_sessions} unique sessions from {total_questions} questions"
+            f" (concurrency={retain_concurrency})..."
+        )
+
+        # Collect unique sessions to retain, preserving first-seen tags/metadata
+        # per session_id (dedup). Already-checkpointed sessions are skipped.
+        sessions_to_retain: list[dict] = []
+        seen_keys: set[str] = set()
         for q in questions:
             for msg in q.conversation_context:
                 session_key = msg.get("session_id", "")
-                if session_key in sessions_retained:
+                if session_key in seen_keys:
                     continue
-                if max_sessions is not None and len(sessions_retained) >= max_sessions:
+                if max_sessions is not None and len(seen_keys) >= max_sessions:
                     continue
-                # Skip sessions already retained in a previous interrupted run.
+                seen_keys.add(session_key)
                 if checkpoint is not None and checkpoint.is_session_retained(session_key):
-                    sessions_retained.add(session_key)
-                    continue
-                sessions_retained.add(session_key)
-
+                    continue  # already done in a previous run
                 content = msg.get("content", "")
                 if not content.strip():
                     continue
-
-                # Parse the session timestamp so the temporal retrieval
-                # strategy has a real signal. Without this, every memory
-                # gets the same retain-time timestamp and recency decay
-                # is meaningless.
-                occurred_at = _parse_longmemeval_date(msg.get("session_date"))
-
-                t0 = time.monotonic()
-                await self.brain.retain(
-                    content,
-                    bank_id=bank_id,
-                    tags=[msg.get("role", "user"), q.category],
-                    metadata={
-                        "session_id": msg.get("session_id", ""),
+                sessions_to_retain.append({
+                    "session_key": session_key,
+                    "content": content,
+                    "tags": [msg.get("role", "user"), q.category],
+                    "metadata": {
+                        "session_id": session_key,
                         "source": "longmemeval",
                         "session_date": msg.get("session_date", ""),
                     },
-                    occurred_at=occurred_at,
-                )
-                retain_latencies.append((time.monotonic() - t0) * 1000)
-                retain_count += 1
-                if checkpoint is not None:
-                    checkpoint.record_session(session_key)
-                if retain_count % 20 == 0:
+                    "occurred_at": _parse_longmemeval_date(msg.get("session_date")),
+                })
+
+        retain_phase_start = time.monotonic()
+        retain_count = 0
+        completed_retain = 0
+
+        retain_limiter = EvalRateLimiter(
+            max_concurrency=retain_concurrency,
+            rpm=retain_rpm,
+            tpm=retain_tpm,
+            tokens_per_question=2_000,  # rough per-session token budget
+        )
+
+        async def _retain_one(item: dict) -> None:
+            nonlocal retain_count, completed_retain
+            async with retain_limiter:
+                t0 = time.monotonic()
+                # Retry loop: AGE (Apache AGE) creates graph label types lazily on
+                # the first MERGE for each label. Under concurrency, multiple
+                # transactions race to create the backing PostgreSQL sequence
+                # (e.g. Entity_id_seq), resulting in a UniqueViolation for all
+                # but one. Retrying is safe — the label exists after the first
+                # winner commits, so the retry succeeds immediately.
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        await self.brain.retain(
+                            item["content"],
+                            bank_id=bank_id,
+                            tags=item["tags"],
+                            metadata=item["metadata"],
+                            occurred_at=item["occurred_at"],
+                        )
+                        retain_latencies.append((time.monotonic() - t0) * 1000)
+                        retain_count += 1
+                        if checkpoint is not None:
+                            checkpoint.record_session(item["session_key"])
+                        break  # success
+                    except Exception as exc:
+                        is_unique_violation = "UniqueViolation" in type(exc).__name__ or (
+                            hasattr(exc, "__cause__") and "UniqueViolation" in type(exc.__cause__).__name__
+                        ) or "duplicate key value" in str(exc)
+                        if is_unique_violation and attempt < max_retries - 1:
+                            wait = 0.1 * (2 ** attempt)  # 0.1s, 0.2s
+                            logger.debug(
+                                "LongMemEval: retain UniqueViolation for session_id=%s (attempt %d/%d), "
+                                "retrying in %.1fs",
+                                item["session_key"], attempt + 1, max_retries, wait,
+                            )
+                            await asyncio.sleep(wait)
+                        else:
+                            logger.warning(
+                                "LongMemEval: retain failed for session_id=%s (attempt %d/%d)",
+                                item["session_key"], attempt + 1, max_retries,
+                                exc_info=True,
+                            )
+                            break
+
+                completed_retain += 1
+                if completed_retain == 1 or completed_retain % 20 == 0:
                     elapsed_r = time.monotonic() - retain_phase_start
-                    rate = retain_count / elapsed_r
-                    remaining = (total_sessions - retain_count) / rate if rate > 0 else 0
+                    rate = completed_retain / elapsed_r if elapsed_r > 0 else 1
+                    remaining = (len(sessions_to_retain) - completed_retain) / rate
                     print(
-                        f"  [LongMemEval] Retained {retain_count}/{total_sessions} sessions "
+                        f"  [LongMemEval] Retained {completed_retain}/{len(sessions_to_retain)} sessions "
                         f"({elapsed_r:.0f}s elapsed, ~{remaining:.0f}s remaining)",
                         flush=True,
                     )
+
+        await asyncio.gather(*[_retain_one(item) for item in sessions_to_retain])
 
         print(f"  [LongMemEval] Retain complete: {retain_count} sessions stored.")
 

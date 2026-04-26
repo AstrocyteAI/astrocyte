@@ -239,6 +239,9 @@ async def run_longmemeval(
     max_sessions: int | None = None,
     checkpoint_dir: Path | None = None,
     resume: bool = False,
+    retain_concurrency: int = 10,
+    retain_rpm: int = 500,
+    retain_tpm: int = 200_000,
     eval_concurrency: int = 5,
     eval_rpm: int = 500,
     eval_tpm: int = 200_000,
@@ -279,6 +282,9 @@ async def run_longmemeval(
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
             checkpoint=cp,
+            retain_concurrency=retain_concurrency,
+            retain_rpm=retain_rpm,
+            retain_tpm=retain_tpm,
             eval_concurrency=eval_concurrency,
             eval_rpm=eval_rpm,
             eval_tpm=eval_tpm,
@@ -330,6 +336,9 @@ async def run_longmemeval(
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
             checkpoint=cp,
+            retain_concurrency=retain_concurrency,
+            retain_rpm=retain_rpm,
+            retain_tpm=retain_tpm,
             eval_concurrency=eval_concurrency,
             eval_rpm=eval_rpm,
             eval_tpm=eval_tpm,
@@ -724,6 +733,24 @@ async def main() -> None:
         default=200_000,
         help="Tokens-per-minute budget for the eval rate limiter (default: 200000).",
     )
+    parser.add_argument(
+        "--retain-concurrency",
+        type=int,
+        default=10,
+        help="Max concurrent retain calls during LME retain phase (default: 10).",
+    )
+    parser.add_argument(
+        "--retain-rpm",
+        type=int,
+        default=500,
+        help="Requests-per-minute budget for the retain rate limiter (default: 500).",
+    )
+    parser.add_argument(
+        "--retain-tpm",
+        type=int,
+        default=200_000,
+        help="Tokens-per-minute budget for the retain rate limiter (default: 200000).",
+    )
     args = parser.parse_args()
 
     # Build brain
@@ -758,6 +785,9 @@ async def main() -> None:
                 max_sessions=args.max_sessions,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                retain_concurrency=args.retain_concurrency,
+                retain_rpm=args.retain_rpm,
+                retain_tpm=args.retain_tpm,
                 eval_concurrency=args.eval_concurrency,
                 eval_rpm=args.eval_rpm,
                 eval_tpm=args.eval_tpm,
@@ -786,6 +816,9 @@ async def main() -> None:
                 max_sessions=args.max_sessions,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                retain_concurrency=args.retain_concurrency,
+                retain_rpm=args.retain_rpm,
+                retain_tpm=args.retain_tpm,
                 eval_concurrency=args.eval_concurrency,
                 eval_rpm=args.eval_rpm,
                 eval_tpm=args.eval_tpm,
