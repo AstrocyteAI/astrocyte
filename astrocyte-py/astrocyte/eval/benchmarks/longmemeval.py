@@ -19,6 +19,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -30,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from astrocyte.eval.checkpoint import BenchmarkCheckpoint
 from astrocyte.eval.metrics import ndcg_at_k, text_overlap_score
+from astrocyte.eval.rate_limiter import EvalRateLimiter
 from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 
 if TYPE_CHECKING:
@@ -130,6 +132,9 @@ class LongMemEvalBenchmark:
         max_sessions: int | None = None,
         use_canonical_judge: bool = False,
         checkpoint: BenchmarkCheckpoint | None = None,
+        eval_concurrency: int = 5,
+        eval_rpm: int = 500,
+        eval_tpm: int = 200_000,
     ) -> LongMemEvalResult:
         """Run the LongMemEval benchmark.
 
@@ -158,6 +163,10 @@ class LongMemEvalBenchmark:
                 from a previous interrupted run. Already-retained sessions are
                 skipped and already-evaluated questions use their cached score
                 without making fresh LLM calls.
+            eval_concurrency: Maximum number of questions evaluated in parallel.
+                Set to 1 for fully serial behaviour identical to the original loop.
+            eval_rpm: Requests-per-minute budget for the eval rate limiter.
+            eval_tpm: Tokens-per-minute budget for the eval rate limiter.
 
         Returns:
             LongMemEvalResult with accuracy breakdown by category.
@@ -274,138 +283,169 @@ class LongMemEvalBenchmark:
             canonical_judge = LongMemEvalJudge(self.brain._pipeline.llm_provider)
 
         ndcg_sum = 0.0
-        print(f"  [LongMemEval] Evaluating {total_questions} questions...")
+        completed_count = 0
+        # Pre-allocate per-index slots so concurrent workers can write
+        # results in any order without coordination.
+        per_question_arr: list[dict[str, Any] | None] = [None] * total_questions
+        query_results_arr: list[QueryResult | None] = [None] * total_questions
+
+        rate_limiter = EvalRateLimiter(
+            max_concurrency=eval_concurrency,
+            rpm=eval_rpm,
+            tpm=eval_tpm,
+        )
+
+        print(f"  [LongMemEval] Evaluating {total_questions} questions (concurrency={eval_concurrency})...")
         eval_phase_start = time.monotonic()
-        for qi, q in enumerate(questions, 1):
+
+        def _progress_print() -> None:
+            """Print progress line. Must be called after incrementing completed_count."""
+            n = completed_count
+            if n == 1 or n % 10 == 0 or n == total_questions:
+                acc_so_far = correct / n if n > 0 else 0.0
+                elapsed_e = time.monotonic() - eval_phase_start
+                rate_e = n / elapsed_e if elapsed_e > 0 else 0
+                remaining_e = (total_questions - n) / rate_e if rate_e > 0 else 0
+                print(
+                    f"  [LongMemEval] Question {n}/{total_questions} — "
+                    f"accuracy: {acc_so_far:.1%} ({correct}/{n}) — "
+                    f"~{remaining_e:.0f}s remaining",
+                    flush=True,
+                )
+
+        async def _eval_one(idx: int, q: LongMemEvalQuestion) -> None:
+            nonlocal correct, ndcg_sum, completed_count
+
             category_total[q.category] = category_total.get(q.category, 0) + 1
 
-            # Restore cached result from a previous interrupted run.
+            # Restore cached result from a previous interrupted run
+            # (no rate limiter needed — no LLM calls).
             if checkpoint is not None and checkpoint.is_question_evaluated(q.question_id):
                 cached = checkpoint.get_question_result(q.question_id)
                 is_correct = cached.get("correct", False)
                 if is_correct:
                     correct += 1
                     category_correct[q.category] = category_correct.get(q.category, 0) + 1
-                per_question.append(cached)
-                # Restore placeholder QueryResult so aggregate metrics stay aligned.
-                query_results.append(
-                    QueryResult(
-                        query=q.question,
-                        expected=[q.answer],
-                        actual=[],
-                        relevant_found=0,
-                        precision=cached.get("_precision", 0.0),
-                        reciprocal_rank=cached.get("_reciprocal_rank", 0.0),
-                        latency_ms=cached.get("_latency_ms", 0.0),
-                    )
-                )
-                ndcg_sum += cached.get("_ndcg", 0.0)
-                if qi == 1 or qi % 10 == 0 or qi == total_questions:
-                    acc_so_far = correct / qi
-                    print(
-                        f"  [LongMemEval] Question {qi}/{total_questions} — "
-                        f"accuracy: {acc_so_far:.1%} ({correct}/{qi}) [resumed]",
-                        flush=True,
-                    )
-                continue
-
-            t0 = time.monotonic()
-            result = await self.brain.recall(q.question, bank_id=bank_id, max_results=10)
-            elapsed = (time.monotonic() - t0) * 1000
-            recall_latencies.append(elapsed)
-
-            # Always run reflect so canonical-judge path has an answer.
-            reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
-
-            if canonical_judge is not None:
-                # Canonical LLM-judge against reflect answer. Uses the
-                # raw upstream question_type (not the Astrocyte-side
-                # lossy category) so the prompt template matches the
-                # paper's per-task rubric.
-                try:
-                    score = await canonical_judge.score(
-                        question_type=q.question_type or q.category,
-                        question=q.question,
-                        answer=q.answer,
-                        response=reflect_result.answer,
-                    )
-                    is_correct = score >= 1.0
-                except Exception as exc:
-                    logging.getLogger("astrocyte.eval.longmemeval").warning(
-                        "canonical judge failed for q=%s: %s (counted as incorrect)",
-                        q.question_id, exc,
-                    )
-                    is_correct = False
-            else:
-                # Legacy scorer — loose but historically comparable.
-                answer_found = any(
-                    text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD
-                    for h in result.hits
-                )
-                answer_in_reflect = (
-                    text_overlap_score([q.answer], reflect_result.answer)
-                    > ANSWER_MATCH_THRESHOLD
-                )
-                is_correct = answer_found or answer_in_reflect
-            if is_correct:
-                correct += 1
-                category_correct[q.category] = category_correct.get(q.category, 0) + 1
-
-            if qi == 1 or qi % 10 == 0 or qi == total_questions:
-                acc_so_far = correct / qi
-                elapsed_e = time.monotonic() - eval_phase_start
-                rate_e = qi / elapsed_e if elapsed_e > 0 else 0
-                remaining_e = (total_questions - qi) / rate_e if rate_e > 0 else 0
-                print(
-                    f"  [LongMemEval] Question {qi}/{total_questions} — "
-                    f"accuracy: {acc_so_far:.1%} ({correct}/{qi}) — "
-                    f"~{remaining_e:.0f}s remaining",
-                    flush=True,
-                )
-
-            # Build QueryResult for standard metrics
-            relevant_ids: set[str] = set()
-            for h in result.hits:
-                if h.memory_id and text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD:
-                    relevant_ids.add(h.memory_id)
-            retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
-            q_precision = len(relevant_ids) / max(len(retrieved_ids), 1)
-            q_rr = next(
-                (1.0 / (i + 1) for i, rid in enumerate(retrieved_ids) if rid in relevant_ids),
-                0.0,
-            )
-            q_ndcg = ndcg_at_k(relevant_ids, retrieved_ids)
-            ndcg_sum += q_ndcg
-
-            q_record: dict[str, Any] = {
-                "question_id": q.question_id,
-                "category": q.category,
-                "question": q.question,
-                "expected_answer": q.answer,
-                "correct": is_correct,
-                "recall_hits": len(result.hits),
-                "reflect_answer_preview": reflect_result.answer[:200],
-                # Hidden fields used when restoring from checkpoint
-                "_precision": q_precision,
-                "_reciprocal_rank": q_rr,
-                "_latency_ms": elapsed,
-                "_ndcg": q_ndcg,
-            }
-            per_question.append(q_record)
-            if checkpoint is not None:
-                checkpoint.record_question(q.question_id, q_record)
-
-            query_results.append(
-                QueryResult(
+                per_question_arr[idx] = cached
+                query_results_arr[idx] = QueryResult(
                     query=q.question,
                     expected=[q.answer],
-                    actual=result.hits,
-                    relevant_found=len(relevant_ids),
-                    precision=q_precision,
-                    reciprocal_rank=q_rr,
-                    latency_ms=elapsed,
+                    actual=[],
+                    relevant_found=0,
+                    precision=cached.get("_precision", 0.0),
+                    reciprocal_rank=cached.get("_reciprocal_rank", 0.0),
+                    latency_ms=cached.get("_latency_ms", 0.0),
                 )
-            )
+                ndcg_sum += cached.get("_ndcg", 0.0)
+                completed_count += 1
+                n = completed_count
+                if n == 1 or n % 10 == 0 or n == total_questions:
+                    acc_so_far = correct / n if n > 0 else 0.0
+                    print(
+                        f"  [LongMemEval] Question {n}/{total_questions} — "
+                        f"accuracy: {acc_so_far:.1%} ({correct}/{n}) [resumed]",
+                        flush=True,
+                    )
+                return
+
+            # Live evaluation — acquire rate-limit slot before making LLM calls.
+            async with rate_limiter:
+                try:
+                    t0 = time.monotonic()
+                    result = await self.brain.recall(q.question, bank_id=bank_id, max_results=10)
+                    elapsed = (time.monotonic() - t0) * 1000
+                    recall_latencies.append(elapsed)
+
+                    # Always run reflect so canonical-judge path has an answer.
+                    reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
+
+                    if canonical_judge is not None:
+                        try:
+                            score = await canonical_judge.score(
+                                question_type=q.question_type or q.category,
+                                question=q.question,
+                                answer=q.answer,
+                                response=reflect_result.answer,
+                            )
+                            is_correct = score >= 1.0
+                        except Exception as exc:
+                            logging.getLogger("astrocyte.eval.longmemeval").warning(
+                                "canonical judge failed for q=%s: %s (counted as incorrect)",
+                                q.question_id, exc,
+                            )
+                            is_correct = False
+                    else:
+                        answer_found = any(
+                            text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD
+                            for h in result.hits
+                        )
+                        answer_in_reflect = (
+                            text_overlap_score([q.answer], reflect_result.answer)
+                            > ANSWER_MATCH_THRESHOLD
+                        )
+                        is_correct = answer_found or answer_in_reflect
+
+                    if is_correct:
+                        correct += 1
+                        category_correct[q.category] = category_correct.get(q.category, 0) + 1
+
+                    # Build QueryResult for standard metrics
+                    relevant_ids: set[str] = set()
+                    for h in result.hits:
+                        if h.memory_id and text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD:
+                            relevant_ids.add(h.memory_id)
+                    retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
+                    q_precision = len(relevant_ids) / max(len(retrieved_ids), 1)
+                    q_rr = next(
+                        (1.0 / (i + 1) for i, rid in enumerate(retrieved_ids) if rid in relevant_ids),
+                        0.0,
+                    )
+                    q_ndcg = ndcg_at_k(relevant_ids, retrieved_ids)
+                    ndcg_sum += q_ndcg
+
+                    q_record: dict[str, Any] = {
+                        "question_id": q.question_id,
+                        "category": q.category,
+                        "question": q.question,
+                        "expected_answer": q.answer,
+                        "correct": is_correct,
+                        "recall_hits": len(result.hits),
+                        "reflect_answer_preview": reflect_result.answer[:200],
+                        "_precision": q_precision,
+                        "_reciprocal_rank": q_rr,
+                        "_latency_ms": elapsed,
+                        "_ndcg": q_ndcg,
+                    }
+                    per_question_arr[idx] = q_record
+                    if checkpoint is not None:
+                        checkpoint.record_question(q.question_id, q_record)
+
+                    query_results_arr[idx] = QueryResult(
+                        query=q.question,
+                        expected=[q.answer],
+                        actual=result.hits,
+                        relevant_found=len(relevant_ids),
+                        precision=q_precision,
+                        reciprocal_rank=q_rr,
+                        latency_ms=elapsed,
+                    )
+
+                except Exception as exc:
+                    logging.getLogger("astrocyte.eval.longmemeval").warning(
+                        "eval failed for q=%s: %s (counted as incorrect)",
+                        q.question_id, exc,
+                    )
+                    # Leave per_question_arr[idx] as None; filter later.
+
+            completed_count += 1
+            _progress_print()
+
+        await asyncio.gather(*[_eval_one(i, q) for i, q in enumerate(questions)])
+
+        # Rebuild ordered lists from pre-allocated arrays, dropping any None
+        # entries that resulted from exceptions.
+        per_question = [r for r in per_question_arr if r is not None]
+        query_results = [r for r in query_results_arr if r is not None]
 
         # ── Phase 3: Compute results ──
         total_duration = time.monotonic() - start_time

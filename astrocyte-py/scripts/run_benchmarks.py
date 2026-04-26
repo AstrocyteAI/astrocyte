@@ -233,6 +233,9 @@ async def run_longmemeval(
     max_sessions: int | None = None,
     checkpoint_dir: Path | None = None,
     resume: bool = False,
+    eval_concurrency: int = 5,
+    eval_rpm: int = 500,
+    eval_tpm: int = 200_000,
 ) -> BenchmarkRunOutcome:
     """Run LongMemEval benchmark."""
     from astrocyte.eval.benchmarks.longmemeval import (
@@ -270,6 +273,9 @@ async def run_longmemeval(
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
             checkpoint=cp,
+            eval_concurrency=eval_concurrency,
+            eval_rpm=eval_rpm,
+            eval_tpm=eval_tpm,
         )
     else:
         if data_path:
@@ -318,6 +324,9 @@ async def run_longmemeval(
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
             checkpoint=cp,
+            eval_concurrency=eval_concurrency,
+            eval_rpm=eval_rpm,
+            eval_tpm=eval_tpm,
         )
 
     _print_result(result, "LongMemEval")
@@ -387,6 +396,9 @@ async def run_locomo(
     *, use_canonical_judge: bool = False, system: str = "astrocyte",
     checkpoint_dir: Path | None = None,
     resume: bool = False,
+    eval_concurrency: int = 5,
+    eval_rpm: int = 500,
+    eval_tpm: int = 200_000,
 ) -> BenchmarkRunOutcome:
     """Run LoCoMo benchmark."""
     from astrocyte.eval.benchmarks.locomo import (
@@ -427,6 +439,9 @@ async def run_locomo(
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
             checkpoint=cp,
+            eval_concurrency=eval_concurrency,
+            eval_rpm=eval_rpm,
+            eval_tpm=eval_tpm,
         )
     else:
         if data_path:
@@ -536,6 +551,9 @@ async def run_locomo(
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
             checkpoint=cp,
+            eval_concurrency=eval_concurrency,
+            eval_rpm=eval_rpm,
+            eval_tpm=eval_tpm,
         )
 
     if llm_judge is not None:
@@ -682,6 +700,24 @@ async def main() -> None:
             "No-op if no checkpoint exists (starts fresh)."
         ),
     )
+    parser.add_argument(
+        "--eval-concurrency",
+        type=int,
+        default=5,
+        help="Max concurrent eval questions (default: 5). Tune down if hitting 429s.",
+    )
+    parser.add_argument(
+        "--eval-rpm",
+        type=int,
+        default=500,
+        help="Requests-per-minute budget for the eval rate limiter (default: 500).",
+    )
+    parser.add_argument(
+        "--eval-tpm",
+        type=int,
+        default=200_000,
+        help="Tokens-per-minute budget for the eval rate limiter (default: 200000).",
+    )
     args = parser.parse_args()
 
     # Build brain
@@ -716,12 +752,18 @@ async def main() -> None:
                 max_sessions=args.max_sessions,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                eval_concurrency=args.eval_concurrency,
+                eval_rpm=args.eval_rpm,
+                eval_tpm=args.eval_tpm,
             ),
             run_locomo(
                 brain, args.locomo_path, args.max_questions,
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                eval_concurrency=args.eval_concurrency,
+                eval_rpm=args.eval_rpm,
+                eval_tpm=args.eval_tpm,
             ),
         )
         if lme_outcome.result:
@@ -738,6 +780,9 @@ async def main() -> None:
                 max_sessions=args.max_sessions,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                eval_concurrency=args.eval_concurrency,
+                eval_rpm=args.eval_rpm,
+                eval_tpm=args.eval_tpm,
             )
             if outcome.result:
                 all_results["longmemeval"] = outcome.result
@@ -749,6 +794,9 @@ async def main() -> None:
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                eval_concurrency=args.eval_concurrency,
+                eval_rpm=args.eval_rpm,
+                eval_tpm=args.eval_tpm,
             )
             if outcome.result:
                 all_results["locomo"] = outcome.result
