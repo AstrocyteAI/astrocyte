@@ -49,12 +49,14 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 .PHONY: bench bench-full bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
 
 # Full LoCoMo benchmark (requires OPENAI_API_KEY, ~30-60 min)
+# Pass RESUME=1 to continue an interrupted run: make bench-locomo RESUME=1
 bench-locomo: fetch-locomo
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
-		--canonical-judge
+		--canonical-judge \
+		$(if $(RESUME),--resume,)
 
 # Quick LoCoMo subset (50 questions, ~2-3 min)
 bench-locomo-quick: fetch-locomo
@@ -66,12 +68,14 @@ bench-locomo-quick: fetch-locomo
 		--canonical-judge
 
 # Full LongMemEval benchmark (requires OPENAI_API_KEY, ~2-4 hrs for all 500 questions)
+# Pass RESUME=1 to continue an interrupted run: make bench-longmemeval RESUME=1
 bench-longmemeval: fetch-longmemeval
 	uv run python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
-		--canonical-judge
+		--canonical-judge \
+		$(if $(RESUME),--resume,)
 
 # Quick LongMemEval subset (100 questions, stratified across all categories, ~30-60 min)
 bench-longmemeval-quick: fetch-longmemeval
