@@ -1,5 +1,6 @@
 """Tests for LoCoMo benchmark adapter."""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -101,6 +102,57 @@ class TestLoComoBenchmark:
         persona = next(mem for mem in stored if mem.metadata and mem.metadata.get("source") == "locomo_persona_compile")
         assert persona.metadata["person"] in {"Alice", "Bob"}
         assert "_wiki_source_ids" in persona.metadata
+
+    async def test_retain_phase_uses_configured_concurrency(self):
+        class SlowEngine(InMemoryEngineProvider):
+            def __init__(self) -> None:
+                super().__init__()
+                self.active = 0
+                self.max_active = 0
+
+            async def retain(self, request):
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                try:
+                    await asyncio.sleep(0.01)
+                    return await super().retain(request)
+                finally:
+                    self.active -= 1
+
+        config = AstrocyteConfig()
+        config.provider = "test"
+        config.barriers.pii.mode = "disabled"
+        brain = Astrocyte(config)
+        engine = SlowEngine()
+        brain.set_engine_provider(engine)
+        bench = LoComoBenchmark(brain)
+        conversations = [
+            LoCoMoConversation(
+                conversation_id="c1",
+                sessions=[
+                    LoCoMoSession(session_id=f"s{i}", turns=[{"speaker": "A", "text": f"memory {i}"}])
+                    for i in range(6)
+                ],
+                questions=[
+                    LoCoMoQuestion(
+                        question="What was said?",
+                        answer="memory",
+                        category="single-hop",
+                        evidence_ids=[],
+                        conversation_id="c1",
+                    ),
+                ],
+            ),
+        ]
+
+        await bench.run(
+            conversations=conversations,
+            bank_id="bench-locomo-concurrent",
+            clean_after=True,
+            retain_concurrency=3,
+        )
+
+        assert engine.max_active > 1
 
     async def test_cleanup(self):
         brain, engine = _make_brain()

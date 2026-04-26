@@ -73,6 +73,7 @@ bench-db-start:
 		echo "  [bench-db] Restarting stopped container $(BENCH_PG_CONTAINER)"; \
 		docker start $(BENCH_PG_CONTAINER); \
 		until docker exec $(BENCH_PG_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
 		echo "  [bench-db] Postgres ready"; \
 	else \
 		echo "  [bench-db] Pulling $(BENCH_PG_IMAGE)..."; \
@@ -91,6 +92,7 @@ bench-db-start:
 			$$BENCH_IMG; \
 		echo "  [bench-db] Waiting for Postgres to be ready..."; \
 		until docker exec $(BENCH_PG_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
 		echo "  [bench-db] Postgres ready at localhost:$(BENCH_PG_PORT)"; \
 	fi; \
 	echo "  [bench-db] Applying pgvector HNSW migrations (vector($(BENCH_EMBEDDING_DIMENSIONS)))"; \

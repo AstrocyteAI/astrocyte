@@ -237,6 +237,9 @@ class LoComoBenchmark:
         use_canonical_judge: bool = False,
         llm_judge: object | None = None,
         checkpoint: BenchmarkCheckpoint | None = None,
+        retain_concurrency: int = 10,
+        retain_rpm: int = 500,
+        retain_tpm: int = 200_000,
         eval_concurrency: int = 5,
         eval_rpm: int = 500,
         eval_tpm: int = 200_000,
@@ -262,6 +265,9 @@ class LoComoBenchmark:
             checkpoint: Optional :class:`~astrocyte.eval.checkpoint.BenchmarkCheckpoint`
                 from a previous interrupted run. Already-retained sessions are
                 skipped and already-evaluated questions use their cached score.
+            retain_concurrency: Maximum number of retain calls in flight.
+            retain_rpm: Requests-per-minute budget for the retain rate limiter.
+            retain_tpm: Tokens-per-minute budget for the retain rate limiter.
             eval_concurrency: Maximum number of questions evaluated in parallel.
                 Set to 1 for fully serial behaviour identical to the original loop.
             eval_rpm: Requests-per-minute budget for the eval rate limiter.
@@ -288,87 +294,117 @@ class LoComoBenchmark:
 
         # ── Phase 1: Retain all conversation sessions ──
         total_sessions = sum(len(c.sessions) for c in conversations)
-        print(f"  [LoCoMo] Retaining {total_sessions} sessions from {len(conversations)} conversations...")
+        session_work: list[tuple[LoCoMoConversation, LoCoMoSession, str]] = []
+        for convo in conversations:
+            for session in convo.sessions:
+                session_key = f"{convo.conversation_id}:{session.session_id}"
+                if checkpoint is not None and checkpoint.is_session_retained(session_key):
+                    continue
+                session_work.append((convo, session, session_key))
+
+        skipped_sessions = total_sessions - len(session_work)
+        skip_suffix = f" ({skipped_sessions} skipped by checkpoint)" if skipped_sessions else ""
+        print(
+            f"  [LoCoMo] Retaining {len(session_work)}/{total_sessions} sessions "
+            f"from {len(conversations)} conversations with concurrency={retain_concurrency}{skip_suffix}...",
+            flush=True,
+        )
         retain_count = 0
         date_parse_attempts = 0
         unparseable_date_count = 0
         retain_phase_start = time.monotonic()
-        for convo in conversations:
-            for session in convo.sessions:
-                # Combine all turns in the session into one memory
-                session_text_parts = []
-                speaker_counts: Counter[str] = Counter()
-                turn_ids: list[str] = []
-                turn_speakers: list[str] = []
-                for turn in session.turns:
-                    speaker = turn.get("speaker", "unknown")
-                    text = turn.get("text", "")
-                    if text.strip():
-                        turn_id = turn.get("dia_id") or turn.get("turn_id") or ""
-                        speaker_counts[speaker] += 1
-                        if turn_id:
-                            turn_ids.append(str(turn_id))
-                            turn_speakers.append(f"{turn_id}:{speaker}")
-                            session_text_parts.append(f"[{turn_id}] {speaker}: {text}")
-                        else:
-                            session_text_parts.append(f"{speaker}: {text}")
+        retain_rate_limiter = EvalRateLimiter(
+            max_concurrency=max(1, retain_concurrency),
+            rpm=retain_rpm,
+            tpm=retain_tpm,
+        )
 
-                if not session_text_parts:
-                    continue
+        def _session_text_and_metadata(
+            convo: LoCoMoConversation,
+            session: LoCoMoSession,
+        ) -> tuple[str | None, dict[str, Any], datetime | None, int, int]:
+            session_text_parts = []
+            speaker_counts: Counter[str] = Counter()
+            turn_ids: list[str] = []
+            turn_speakers: list[str] = []
+            for turn in session.turns:
+                speaker = turn.get("speaker", "unknown")
+                text = turn.get("text", "")
+                if text.strip():
+                    turn_id = turn.get("dia_id") or turn.get("turn_id") or ""
+                    speaker_counts[speaker] += 1
+                    if turn_id:
+                        turn_ids.append(str(turn_id))
+                        turn_speakers.append(f"{turn_id}:{speaker}")
+                        session_text_parts.append(f"[{turn_id}] {speaker}: {text}")
+                    else:
+                        session_text_parts.append(f"{speaker}: {text}")
 
-                session_key = f"{convo.conversation_id}:{session.session_id}"
-                if checkpoint is not None and checkpoint.is_session_retained(session_key):
-                    continue
+            if not session_text_parts:
+                return None, {}, None, 0, 0
 
-                session_text = "\n".join(session_text_parts)
-
-                # Parse session date for temporal retrieval
-                occurred_at = None
-                if session.date_time:
-                    date_parse_attempts += 1
-                    date_formats = (
-                        "%I:%M %p on %d %B, %Y",  # "10:04 am on 19 December, 2023" (LoCoMo native)
-                        "%B %d, %Y",               # "January 15, 2026"
-                        "%Y-%m-%d",                # "2026-01-15"
-                        "%m/%d/%Y",                # "01/15/2026"
-                        "%d %B %Y",                # "15 January 2026"
+            session_text = "\n".join(session_text_parts)
+            occurred_at = None
+            parse_attempts = 0
+            unparseable_count = 0
+            if session.date_time:
+                parse_attempts = 1
+                date_formats = (
+                    "%I:%M %p on %d %B, %Y",  # "10:04 am on 19 December, 2023" (LoCoMo native)
+                    "%B %d, %Y",               # "January 15, 2026"
+                    "%Y-%m-%d",                # "2026-01-15"
+                    "%m/%d/%Y",                # "01/15/2026"
+                    "%d %B %Y",                # "15 January 2026"
+                )
+                for fmt in date_formats:
+                    try:
+                        occurred_at = datetime.strptime(session.date_time, fmt).replace(tzinfo=timezone.utc)
+                        break
+                    except ValueError:
+                        continue
+                if occurred_at is None:
+                    unparseable_count = 1
+                    logging.getLogger("astrocyte.eval").debug(
+                        "LoCoMo: failed to parse session date_time '%s' for "
+                        "conversation_id=%s session_id=%s; supported formats=%s",
+                        session.date_time,
+                        convo.conversation_id,
+                        session.session_id,
+                        date_formats,
                     )
-                    parsed = False
-                    for fmt in date_formats:
-                        try:
-                            occurred_at = datetime.strptime(session.date_time, fmt).replace(tzinfo=timezone.utc)
-                            parsed = True
-                            break
-                        except ValueError:
-                            continue
-                    if not parsed:
-                        unparseable_date_count += 1
-                        logging.getLogger("astrocyte.eval").debug(
-                            "LoCoMo: failed to parse session date_time '%s' for "
-                            "conversation_id=%s session_id=%s; supported formats=%s",
-                            session.date_time,
-                            convo.conversation_id,
-                            session.session_id,
-                            date_formats,
-                        )
 
-                t0 = time.monotonic()
-                metadata = {
-                    "source": "locomo",
-                    "extraction_profile": "locomo_conversation",
-                    "conversation_id": convo.conversation_id,
-                    "session_id": session.session_id,
-                    "date_time": session.date_time or "",
-                    "locomo_speakers": ",".join(sorted(speaker_counts)),
-                    "locomo_persons": ",".join(_session_person_names(session.turns)),
-                    "locomo_turn_ids": ",".join(turn_ids),
-                    "locomo_turn_speakers": "|".join(turn_speakers),
-                    "locomo_turn_count": len(session.turns),
-                    "locomo_speaker_counts": ",".join(
-                        f"{speaker}:{count}" for speaker, count in sorted(speaker_counts.items())
-                    ),
-                }
-                metadata.update(temporal_metadata(session_text, occurred_at))
+            metadata = {
+                "source": "locomo",
+                "extraction_profile": "locomo_conversation",
+                "conversation_id": convo.conversation_id,
+                "session_id": session.session_id,
+                "date_time": session.date_time or "",
+                "locomo_speakers": ",".join(sorted(speaker_counts)),
+                "locomo_persons": ",".join(_session_person_names(session.turns)),
+                "locomo_turn_ids": ",".join(turn_ids),
+                "locomo_turn_speakers": "|".join(turn_speakers),
+                "locomo_turn_count": len(session.turns),
+                "locomo_speaker_counts": ",".join(
+                    f"{speaker}:{count}" for speaker, count in sorted(speaker_counts.items())
+                ),
+            }
+            metadata.update(temporal_metadata(session_text, occurred_at))
+            return session_text, metadata, occurred_at, parse_attempts, unparseable_count
+
+        async def _retain_session(
+            convo: LoCoMoConversation,
+            session: LoCoMoSession,
+            session_key: str,
+        ) -> tuple[str, float, int, int] | None:
+            session_text, metadata, occurred_at, parse_attempts, unparseable_count = _session_text_and_metadata(
+                convo,
+                session,
+            )
+            if session_text is None:
+                return None
+
+            t0 = time.monotonic()
+            async with retain_rate_limiter:
                 raw_result = await self.brain.retain(
                     session_text,
                     bank_id=bank_id,
@@ -378,12 +414,13 @@ class LoComoBenchmark:
                     content_type="conversation",
                     extraction_profile="locomo_conversation",
                 )
-                source_ids = [raw_result.memory_id] if raw_result.memory_id else []
-                for speaker, page_text in _persona_pages_for_session(
-                    convo.conversation_id,
-                    session.session_id,
-                    session.turns,
-                ).items():
+            source_ids = [raw_result.memory_id] if raw_result.memory_id else []
+            for speaker, page_text in _persona_pages_for_session(
+                convo.conversation_id,
+                session.session_id,
+                session.turns,
+            ).items():
+                async with retain_rate_limiter:
                     await self.brain.retain(
                         page_text,
                         bank_id=bank_id,
@@ -405,19 +442,32 @@ class LoComoBenchmark:
                         content_type="document",
                         extraction_profile="locomo_persona",
                     )
-                retain_latencies.append((time.monotonic() - t0) * 1000)
-                retain_count += 1
-                if checkpoint is not None:
-                    checkpoint.record_session(session_key)
-                if retain_count % 20 == 0:
-                    elapsed_r = time.monotonic() - retain_phase_start
-                    rate = retain_count / elapsed_r
-                    remaining = (total_sessions - retain_count) / rate if rate > 0 else 0
-                    print(
-                        f"  [LoCoMo] Retained {retain_count}/{total_sessions} sessions "
-                        f"({elapsed_r:.0f}s elapsed, ~{remaining:.0f}s remaining)",
-                        flush=True,
-                    )
+            return session_key, (time.monotonic() - t0) * 1000, parse_attempts, unparseable_count
+
+        tasks = [
+            asyncio.create_task(_retain_session(convo, session, session_key))
+            for convo, session, session_key in session_work
+        ]
+        for task in asyncio.as_completed(tasks):
+            retained = await task
+            if retained is None:
+                continue
+            session_key, latency_ms, parse_attempts, unparseable_count = retained
+            retain_latencies.append(latency_ms)
+            date_parse_attempts += parse_attempts
+            unparseable_date_count += unparseable_count
+            retain_count += 1
+            if checkpoint is not None:
+                checkpoint.record_session(session_key)
+            if retain_count % 20 == 0 or retain_count == len(session_work):
+                elapsed_r = time.monotonic() - retain_phase_start
+                rate = retain_count / elapsed_r
+                remaining = (len(session_work) - retain_count) / rate if rate > 0 else 0
+                print(
+                    f"  [LoCoMo] Retained {retain_count}/{len(session_work)} sessions "
+                    f"({elapsed_r:.0f}s elapsed, ~{remaining:.0f}s remaining)",
+                    flush=True,
+                )
 
         print(f"  [LoCoMo] Retain complete: {retain_count} sessions stored.")
         if unparseable_date_count > 0:
