@@ -11,8 +11,8 @@ Contract pinned by these tests:
 
 1. Strategy no-ops gracefully when no timestamps are present (returns
    empty list, fuses harmlessly).
-2. ``_created_at`` metadata (written by retain) is the primary signal;
-   ``occurred_at`` is a fallback when metadata is absent.
+2. ``occurred_at`` event/session time is the primary ranking signal;
+   ``_created_at`` metadata is a fallback when event time is absent.
 3. Exponential decay over ``half_life_days`` — a memory exactly one
    half-life old scores 0.5, fresh scores approach 1.0.
 4. Scan cap bounds cost on large banks — the strategy walks paginated
@@ -34,6 +34,7 @@ from astrocyte.pipeline.retrieval import (
     _temporal_search,
     parallel_retrieve,
 )
+from astrocyte.pipeline.temporal import normalize_relative_temporal_facts, temporal_metadata
 from astrocyte.testing.in_memory import InMemoryVectorStore
 from astrocyte.types import VectorItem
 
@@ -66,6 +67,27 @@ class TestTemporalRanking:
         )
         assert out == []
 
+    def test_normalizes_relative_phrase_against_session_date(self) -> None:
+        anchor = datetime(2026, 2, 10, tzinfo=timezone.utc)
+
+        facts = normalize_relative_temporal_facts("Max learned to sit last week.", anchor)
+
+        assert facts[0].phrase == "last week"
+        assert facts[0].resolved_date == "2026-02-03"
+        assert facts[0].granularity == "week"
+
+    def test_temporal_metadata_is_metadata_safe(self) -> None:
+        anchor = datetime(2026, 2, 10, tzinfo=timezone.utc)
+
+        metadata = temporal_metadata("Alice went yesterday.", anchor)
+
+        assert metadata == {
+            "temporal_anchor": "2026-02-10",
+            "temporal_phrase": "yesterday",
+            "resolved_date": "2026-02-09",
+            "date_granularity": "day",
+        }
+
     async def test_bank_with_no_timestamps_returns_empty(self) -> None:
         """If no vector has a usable timestamp, the strategy must no-op
         (not rank them all as 'infinitely old'). RRF will ignore the
@@ -95,7 +117,7 @@ class TestTemporalRanking:
         assert [item.id for item in out] == ["fresh", "mid", "old"]
 
     async def test_occurred_at_fallback_when_created_at_missing(self) -> None:
-        """``occurred_at`` is the fallback timestamp — a VectorItem
+        """``occurred_at`` is a usable timestamp — a VectorItem
         without ``_created_at`` metadata but with ``occurred_at`` still
         gets ranked."""
         now = datetime.now(timezone.utc)
@@ -109,6 +131,16 @@ class TestTemporalRanking:
         )
         # Only the item with a usable timestamp contributes.
         assert [item.id for item in out] == ["with-occurred"]
+
+    def test_occurred_at_preferred_over_created_at(self) -> None:
+        now = datetime.now(timezone.utc)
+        item = _vec(
+            "event-time",
+            "x",
+            created_at=now,
+            occurred_at=now - timedelta(days=10),
+        )
+        assert _extract_timestamp(item) == item.occurred_at
 
     async def test_exponential_decay_half_life(self) -> None:
         """A memory exactly one half-life old must score ~0.5; two

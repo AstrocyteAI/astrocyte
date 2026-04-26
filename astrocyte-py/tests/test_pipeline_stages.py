@@ -6,7 +6,12 @@ from astrocyte.pipeline.embedding import _pseudo_embedding, generate_embeddings
 from astrocyte.pipeline.entity_extraction import _parse_entities, extract_entities
 from astrocyte.pipeline.fusion import ScoredItem
 from astrocyte.pipeline.reflect import _auto_prompt_variant, _build_system_prompt, _format_memories, synthesize
-from astrocyte.pipeline.reranking import basic_rerank, cross_encoder_like_rerank
+from astrocyte.pipeline.reranking import (
+    apply_context_diversity,
+    basic_rerank,
+    cross_encoder_like_rerank,
+    llm_pairwise_rerank,
+)
 from astrocyte.pipeline.retrieval import parallel_retrieve
 from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
 from astrocyte.types import Dispositions, MemoryHit, VectorItem
@@ -149,6 +154,14 @@ class TestSynthesize:
         result = await synthesize("anything", [], llm)
         assert "don't have" in result.answer.lower()
 
+    async def test_synthesize_includes_query_guidance(self):
+        llm = MockLLMProvider(default_response="answer")
+        hits = [MemoryHit(text="Melanie went camping and painted sunsets", score=0.9)]
+        await synthesize("What activities has Melanie done?", hits, llm)
+        assert llm.last_user_message is not None
+        assert "<query_guidance>" in llm.last_user_message
+        assert "Aggregate/list question" in llm.last_user_message
+
 
 class TestPromptRegistry:
     """ReflectSpec.prompt selects from PROMPT_REGISTRY (Phase 2, Step 9)."""
@@ -177,6 +190,12 @@ class TestPromptRegistry:
         assert "likely no" in prompt.lower()
         assert "provided memories" in prompt.lower()
 
+    def test_grounded_synthesis_variant_scans_all_memories(self):
+        prompt = _build_system_prompt(None, prompt_variant="grounded_synthesis")
+        assert "scan all provided memories" in prompt.lower()
+        assert "list questions" in prompt.lower()
+        assert "multi-hop" in prompt.lower()
+
     def test_unknown_variant_falls_back_to_default(self):
         default = _build_system_prompt(None)
         unknown = _build_system_prompt(None, prompt_variant="not_a_real_variant")
@@ -200,6 +219,9 @@ class TestAutoPromptVariant:
 
     def test_unknown_query_has_no_prompt_override(self):
         assert _auto_prompt_variant("Tell me something useful") is None
+
+    def test_aggregate_query_uses_grounded_synthesis_prompt(self):
+        assert _auto_prompt_variant("What activities has Melanie done with her family?") == "grounded_synthesis"
 
 
 class TestFormatMemoriesPromote:
@@ -322,6 +344,28 @@ class TestCrossEncoderLikeRerank:
         reranked = cross_encoder_like_rerank(items, "What does Alice prefer?")
 
         assert {item.id for item in reranked[:2]} == {"wiki", "obs"}
+
+    async def test_llm_pairwise_uses_json_ranked_ids(self):
+        items = [
+            ScoredItem(id="a", text="Alice likes running.", score=0.9),
+            ScoredItem(id="b", text="Caroline wants counseling.", score=0.4),
+        ]
+        llm = MockLLMProvider(default_response='{"ranked_ids": ["b", "a"]}')
+
+        reranked = await llm_pairwise_rerank(items, "Would Caroline pursue counseling?", llm)
+
+        assert [item.id for item in reranked[:2]] == ["b", "a"]
+
+    def test_context_diversity_penalizes_duplicate_sessions(self):
+        items = [
+            ScoredItem(id="a", text="Alice likes running.", score=0.9, metadata={"session_id": "s1"}),
+            ScoredItem(id="b", text="Alice likes races.", score=0.88, metadata={"session_id": "s1"}),
+            ScoredItem(id="c", text="Alice likes trails.", score=0.82, metadata={"session_id": "s2"}),
+        ]
+
+        reranked = apply_context_diversity(items, "What does Alice like?")
+
+        assert reranked[1].id == "c"
 
 
 class TestBasicRerankMipOverride:

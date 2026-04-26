@@ -78,7 +78,11 @@ class QueryIntentResult:
 # enough to avoid cross-intent overlap.
 
 _TEMPORAL_PATTERNS: tuple[tuple[str, float], ...] = (
-    (r"\b(when|recently|lately|yesterday|today|last\s+(week|month|year|night))\b", 0.7),
+    (r"\b(when|recently|lately|yesterday|today|last\s+(week|month|year|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b", 0.7),
+    (r"\b(previous|last)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", 0.6),
+    (r"\b(two|three|four|\d+)\s+weekends?\s+(before|ago|earlier)\b", 0.6),
+    (r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(days?|weeks?|months?|years?)\s+(before|ago|earlier)\b", 0.5),
+    (r"\bthe\s+week\s+before\b", 0.5),
     (r"\b(before|after|since|until|during)\b", 0.4),
     (r"\b\d{4}\b", 0.2),  # bare year like "2023"
     (r"\b(earlier|later|latest|oldest|newest|first|last)\b", 0.3),

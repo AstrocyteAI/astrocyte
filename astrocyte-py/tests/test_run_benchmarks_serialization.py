@@ -41,13 +41,22 @@ def test_serialize_result_persists_per_question_and_failure_report() -> None:
                 "question": "What did Alice do after moving?",
                 "expected_answer": "She joined a startup",
                 "category": "multi-hop",
+                "evidence_ids": ["session_1"],
                 "correct": False,
                 "recall_hits": 10,
+                "recall_top_hits": [
+                    {"memory_id": "m1", "metadata": {"session_id": "session_1"}},
+                ],
+                "reflect_sources": [
+                    {"memory_id": "m1", "metadata": {"session_id": "session_1"}},
+                ],
                 "reflect_answer_preview": "Alice moved to Boston.",
                 "_precision": 0.0,
                 "_reciprocal_rank": 0.0,
                 "_latency_ms": 123.0,
                 "_ndcg": 0.0,
+                "_relevant_found": 0,
+                "_evidence_id_hit": True,
             },
             {
                 "question": "When did Bob visit?",
@@ -81,11 +90,20 @@ def test_serialize_result_persists_per_question_and_failure_report() -> None:
             "question": "What did Alice do after moving?",
             "expected_answer": "She joined a startup",
             "category": "multi-hop",
+            "evidence_ids": ["session_1"],
             "recall_hits": 10,
+            "recall_top_hits": [
+                {"memory_id": "m1", "metadata": {"session_id": "session_1"}},
+            ],
+            "reflect_sources": [
+                {"memory_id": "m1", "metadata": {"session_id": "session_1"}},
+            ],
             "reflect_answer_preview": "Alice moved to Boston.",
             "_precision": 0.0,
             "_reciprocal_rank": 0.0,
             "_latency_ms": 123.0,
             "_ndcg": 0.0,
+            "_relevant_found": 0,
+            "_evidence_id_hit": True,
         }
     ]

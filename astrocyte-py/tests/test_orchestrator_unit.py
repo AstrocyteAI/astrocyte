@@ -220,6 +220,35 @@ class TestReflectHierarchy:
 
         assert [hit.memory_id for hit in expanded] == ["obs-1", "raw-1"]
 
+    @pytest.mark.asyncio
+    async def test_entity_path_fallback_reads_person_metadata(self):
+        vs = InMemoryVectorStore()
+        orch = PipelineOrchestrator(vs, MockLLMProvider())
+        await vs.store_vectors([
+            VectorItem(
+                id="alice-1",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Alice joined the pottery workshop.",
+                metadata={"locomo_persons": "Alice", "session_id": "s1"},
+            )
+        ])
+
+        hits = await orch._retrieve_entity_path_fallback("What activities did Alice join?", "b1", limit=5)
+
+        assert hits[0].id == "alice-1"
+        assert hits[0].metadata["_entity_path"] == "alice"
+
+    def test_entity_path_authority_context_labels_sections(self):
+        orch = PipelineOrchestrator(InMemoryVectorStore(), MockLLMProvider())
+
+        context = orch._entity_path_authority_context([
+            MemoryHit(text="Alice joined pottery.", score=0.8, metadata={"_entity_path": "alice"}),
+        ])
+
+        assert context is not None
+        assert "entity_path_evidence" in context
+
 
 class TestPipelineShutdown:
     @pytest.mark.asyncio

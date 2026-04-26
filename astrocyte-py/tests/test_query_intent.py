@@ -21,6 +21,8 @@ from astrocyte.pipeline.query_intent import (
     classify_query_intent,
     weights_for_intent,
 )
+from astrocyte.pipeline.query_plan import build_query_plan
+from astrocyte.pipeline.temporal import extract_temporal_hints
 
 # ---------------------------------------------------------------------------
 # Intent classification — one assertion per intent category
@@ -35,6 +37,14 @@ class TestDominantIntent:
 
     def test_temporal_recency_phrasing(self) -> None:
         r = classify_query_intent("Show me recently retained memories")
+        assert r.intent == QueryIntent.TEMPORAL
+
+    def test_temporal_weekend_offset(self) -> None:
+        r = classify_query_intent("When did Melanie go camping two weekends before July 17?")
+        assert r.intent == QueryIntent.TEMPORAL
+
+    def test_temporal_previous_weekday(self) -> None:
+        r = classify_query_intent("What happened previous Friday?")
         assert r.intent == QueryIntent.TEMPORAL
 
     def test_relational_connection_between(self) -> None:
@@ -214,3 +224,26 @@ class TestWeightedRrfFusion:
     def test_empty_input_returns_empty(self) -> None:
         assert weighted_rrf_fusion([]) == []
         assert weighted_rrf_fusion([([], 1.0)]) == []
+
+
+class TestTemporalHints:
+    def test_extracts_relative_weekend_hint(self) -> None:
+        hints = extract_temporal_hints("two weekends before 17 July 2023")
+        assert hints
+        assert hints[0].kind == "relative_weekend"
+
+
+class TestQueryPlan:
+    def test_aggregate_question_broadens_context(self) -> None:
+        plan = build_query_plan("What activities has Melanie done with her family?")
+        assert plan.needs_aggregate_answer
+        assert plan.needs_multi_hop_synthesis
+        assert plan.prompt_variant == "grounded_synthesis"
+        assert plan.recall_max_results > 30
+
+    def test_temporal_question_includes_guidance(self) -> None:
+        plan = build_query_plan("When did Melanie go camping two weekends before 17 July 2023?")
+        assert plan.needs_temporal_reasoning
+        assert plan.prompt_variant == "temporal_aware"
+        assert plan.guidance is not None
+        assert "two weekends" in plan.guidance

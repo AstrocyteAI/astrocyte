@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -74,6 +75,8 @@ def _build_test_brain(*, enable_multi_query_expansion: bool = False):
         document_store=InMemoryDocumentStore(),
         llm_provider=MockLLMProvider(),
         enable_multi_query_expansion=enable_multi_query_expansion,
+        final_rerank_mode=os.environ.get("ASTROCYTE_BENCHMARK_RERANK_MODE", "heuristic"),
+        final_rerank_keep_n=8,
     )
     brain.set_pipeline(pipeline)
     return brain
@@ -135,6 +138,8 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
         graph_store=graph_store,
         document_store=document_store,
         enable_multi_query_expansion=enable_multi_query_expansion,
+        final_rerank_mode=os.environ.get("ASTROCYTE_BENCHMARK_RERANK_MODE", "llm_pairwise"),
+        final_rerank_keep_n=8,
     )
     brain.set_pipeline(pipeline)
     return brain
@@ -182,17 +187,24 @@ def _serialize_result(
                     "question",
                     "expected_answer",
                     "category",
+                    "evidence_ids",
                     "recall_hits",
+                    "recall_top_hits",
+                    "reflect_sources",
                     "reflect_answer_preview",
                     "canonical_f1",
                     "_precision",
                     "_reciprocal_rank",
                     "_latency_ms",
                     "_ndcg",
+                    "_relevant_found",
+                    "_evidence_id_hit",
                 )
                 if key in record
             }
         )
+
+    from astrocyte.eval.failure_analysis import analyze_failures, stable_question_slice
 
     data = {
         "benchmark": benchmark_name,
@@ -225,6 +237,8 @@ def _serialize_result(
             "failed_questions": failed_questions,
         },
     }
+    data["failure_insights"] = analyze_failures(data)
+    data["stable_question_slice"] = stable_question_slice(data, size=200)
     # Canonical F1 means — only populated on LoCoMo canonical-judge runs
     # (attribute exists on LoCoMoResult; None under legacy scorer).
     # Exposed as the primary cross-competitor metric, since the paper

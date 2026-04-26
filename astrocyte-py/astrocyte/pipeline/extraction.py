@@ -37,6 +37,17 @@ BUILTIN_EXTRACTION_PROFILES: dict[str, ExtractionProfileConfig] = {
         content_type="conversation",
         chunking_strategy="dialogue",
     ),
+    "locomo_conversation": ExtractionProfileConfig(
+        content_type="conversation",
+        chunking_strategy="dialogue",
+        entity_extraction="metadata",
+        fact_type="experience",
+    ),
+    "locomo_persona": ExtractionProfileConfig(
+        content_type="document",
+        chunking_strategy="paragraph",
+        fact_type="wiki",
+    ),
 }
 
 
@@ -300,6 +311,8 @@ def apply_tag_rules(content: str, profile: ExtractionProfileConfig | None) -> li
 
 def should_extract_entities(profile: ExtractionProfileConfig | None, *, graph_store_configured: bool) -> bool:
     """Whether to run LLM entity extraction (requires graph store to persist)."""
+    if profile is not None and profile.entity_extraction == "metadata":
+        return True
     if not graph_store_configured:
         return False
     if profile is None:

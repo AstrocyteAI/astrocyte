@@ -9,6 +9,7 @@ import re
 from typing import TYPE_CHECKING
 
 from astrocyte.mip.schema import ReflectSpec
+from astrocyte.pipeline.query_plan import build_query_plan
 from astrocyte.types import Dispositions, MemoryHit, Message, ReflectResult
 
 if TYPE_CHECKING:
@@ -25,15 +26,17 @@ _DEFAULT_PROMPT = (
     "You are a memory synthesis agent. "
     "You have been given a set of memories relevant to a query. "
     "Synthesize a clear, concise answer based ONLY on what is explicitly stated in the provided memories. "
-    "If the exact information requested is not explicitly present — even if related or nearby facts are — "
-    "respond with: 'This information is not available in my memories.' "
-    "Do NOT construct an answer by inferring, combining tangential memories, or drawing on outside knowledge. "
-    "Proximity to the topic is not sufficient; the answer must be directly stated.\n\n"
+    "Before saying information is unavailable, inspect every provided memory for directly supporting facts. "
+    "Do not draw on outside knowledge or stereotypes. "
+    "You may combine directly related memories when they share the same person, event, object, or timeframe, "
+    "but do not connect merely tangential memories.\n\n"
     "Guidelines:\n"
     "- When the query asks about a specific person, prioritize memories that explicitly mention that person by name.\n"
     "- Consider connections between different memories. If one memory mentions a person and another mentions an event involving that person, combine those facts.\n"
     "- Pay attention to dates and temporal ordering when memories include timestamps.\n"
     "- If multiple memories provide different details about the same topic, synthesize them into a coherent answer.\n"
+    "- If directly supporting memories exist, answer from them rather than saying the information is unavailable.\n"
+    "- If no provided memory directly supports the answer, respond with: 'This information is not available in my memories.'\n"
     "- If the question contains a false or unverifiable premise, say so explicitly rather than answering as if the premise were true."
 )
 
@@ -77,11 +80,25 @@ _EVIDENCE_INFERENCE_PROMPT = (
     "- Never invent facts; every inference must be traceable to the provided memories."
 )
 
+_GROUNDED_SYNTHESIS_PROMPT = (
+    "You are a memory synthesis agent for aggregate and multi-hop questions. "
+    "Use ONLY the provided memories, but actively combine directly related memories when needed.\n\n"
+    "Guidelines:\n"
+    "- Scan all provided memories before answering; do not stop at the first matching memory.\n"
+    "- For list questions, collect distinct answer items and omit unsupported distractors.\n"
+    "- For count questions, count only evidence-backed occurrences and explain uncertainty briefly when needed.\n"
+    "- For multi-hop questions, connect facts only when they share the same person, event, object, or timestamp context.\n"
+    "- If relevant memories are present but incomplete, answer the supported part instead of saying everything is unavailable.\n"
+    "- If no provided memory directly supports the answer, respond with: 'This information is not available in my memories.'\n"
+    "- If the question contains a false or wrong-person premise, reject that premise rather than answering from a similar memory."
+)
+
 PROMPT_REGISTRY: dict[str, str] = {
     "default": _DEFAULT_PROMPT,
     "temporal_aware": _TEMPORAL_AWARE_PROMPT,
     "evidence_strict": _EVIDENCE_STRICT_PROMPT,
     "evidence_inference": _EVIDENCE_INFERENCE_PROMPT,
+    "grounded_synthesis": _GROUNDED_SYNTHESIS_PROMPT,
 }
 
 _INFERENCE_QUERY_RE = re.compile(
@@ -99,6 +116,9 @@ def _auto_prompt_variant(query: str) -> str | None:
     """
     from astrocyte.pipeline.query_intent import QueryIntent, classify_query_intent
 
+    query_plan = build_query_plan(query)
+    if query_plan.prompt_variant is not None:
+        return query_plan.prompt_variant
     intent = classify_query_intent(query).intent
     if intent == QueryIntent.TEMPORAL:
         return "temporal_aware"
@@ -162,6 +182,12 @@ def _format_memories(
             prefix += f" [{hit.occurred_at.isoformat()}]"
         elif hit.metadata and hit.metadata.get("date_time"):
             prefix += f" [{hit.metadata['date_time']}]"
+        if hit.metadata and hit.metadata.get("resolved_date"):
+            prefix += (
+                f" {{temporal_phrase={hit.metadata.get('temporal_phrase')}, "
+                f"resolved_date={hit.metadata.get('resolved_date')}, "
+                f"granularity={hit.metadata.get('date_granularity')}}}"
+            )
         # Promoted metadata fields appended in declared order
         if promoted and hit.metadata:
             extras = [f"{key}={hit.metadata[key]}" for key in promoted if key in hit.metadata]
@@ -201,7 +227,13 @@ async def synthesize(
     promote_metadata = mip_reflect.promote_metadata if mip_reflect is not None else None
     system_prompt = _build_system_prompt(dispositions, prompt_variant=prompt_variant)
     memories_text = _format_memories(hits, promote_metadata=promote_metadata)
+    query_plan = build_query_plan(query)
     user_prompt = f"<memories>\n{memories_text}\n</memories>\n\n<query>\n{query}\n</query>"
+    if query_plan.guidance:
+        user_prompt = (
+            f"<query_guidance>\n{query_plan.guidance}\n</query_guidance>\n\n"
+            + user_prompt
+        )
     if authority_context and str(authority_context).strip():
         user_prompt = f"<authority_context>\n{authority_context.strip()}\n</authority_context>\n\n" + user_prompt
 

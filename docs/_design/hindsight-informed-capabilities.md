@@ -27,6 +27,18 @@ The Hindsight-equivalent path is:
 
 This sequence preserves the existing roadmap while making the Hindsight comparison concrete: observations/mental models map to M8, temporal recall maps to M9, entity/path reasoning maps to M11, and "what don't we know?" maps to M10.
 
+## LoCoMo Benchmark Roadmap
+
+The current Hindsight-learned LoCoMo work is benchmark-driven rather than architecture-only:
+
+- Phase 0: serialize per-question records, group failed LoCoMo questions into actionable buckets, and keep a stable 200-question slice for quick regression runs.
+- Phase 1: improve precision before broadening recall through configurable `llm_pairwise` reranking, wrong-person penalties, and context diversity.
+- Phase 2: retain LoCoMo sessions with speaker, turn, session, conversation, person, and temporal metadata instead of relying only on raw dialogue text.
+- Phase 3: normalize relative temporal facts such as "last week", "yesterday", and "previous Friday" against session timestamps and surface resolved dates in reflect context.
+- Phase 4: compile per-person persona pages with source provenance so open-domain and inference questions see stable preference/identity evidence before raw fragments.
+- Phase 5: add entity-path recall, including a metadata-backed fallback when no graph store is configured, then pass path-labeled sections into reflect.
+- Phase 6: gate claims on category deltas, not only overall accuracy: short-slice LoCoMo after every phase, full LoCoMo after rerank, temporal, and entity-path milestones.
+
 ## Reference Stack
 
 The reference self-hosted stack is:

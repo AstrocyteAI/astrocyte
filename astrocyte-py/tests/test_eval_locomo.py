@@ -29,7 +29,7 @@ def _make_brain() -> tuple[Astrocyte, InMemoryEngineProvider]:
 
 class TestLoComoBenchmark:
     async def test_run_with_synthetic_conversations(self):
-        brain, _ = _make_brain()
+        brain, engine = _make_brain()
         bench = LoComoBenchmark(brain)
 
         conversations = [
@@ -81,12 +81,26 @@ class TestLoComoBenchmark:
             ),
         ]
 
-        result = await bench.run(conversations=conversations, bank_id="bench-locomo-test")
+        result = await bench.run(conversations=conversations, bank_id="bench-locomo-test", clean_after=False)
 
         assert result.total_questions == 3
         assert result.overall_accuracy >= 0.0
         assert len(result.per_question) == 3
         assert "single-hop" in result.category_accuracy
+        first = result.per_question[0]
+        assert first["evidence_ids"] == ["dia_1"]
+        assert "recall_top_hits" in first
+        assert "reflect_sources" in first
+        assert "_relevant_found" in first
+        assert "_evidence_id_hit" in first
+        stored = engine._memories["bench-locomo-test"]
+        raw = next(mem for mem in stored if mem.metadata and mem.metadata.get("source") == "locomo")
+        assert raw.metadata["extraction_profile"] == "locomo_conversation"
+        assert raw.metadata["locomo_speakers"] == "Alice,Bob"
+        assert raw.metadata["locomo_turn_count"] == 3
+        persona = next(mem for mem in stored if mem.metadata and mem.metadata.get("source") == "locomo_persona_compile")
+        assert persona.metadata["person"] in {"Alice", "Bob"}
+        assert "_wiki_source_ids" in persona.metadata
 
     async def test_cleanup(self):
         brain, engine = _make_brain()

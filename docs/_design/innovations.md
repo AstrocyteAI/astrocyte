@@ -33,6 +33,21 @@ Users on the free tier get **every capability**. Users on Mystique get **the sam
 
 ---
 
+## Benchmark-Exercised Hindsight Patterns
+
+The framework now contains Hindsight-style primitives that are specifically exercised by LoCoMo benchmark config:
+
+- Measurement: per-question result serialization, failure buckets, and a deterministic 200-question slice.
+- Precision: deterministic cross-encoder-like rerank plus optional `llm_pairwise` rerank for top candidates.
+- Structured retain: LoCoMo sessions persist speaker, turn, conversation, session, person, and temporal metadata.
+- Mental models: per-person persona pages are retained as `wiki` facts with `_wiki_source_ids` provenance.
+- Temporal facts: relative phrases are normalized at retain time and rendered beside source memories in reflect prompts.
+- Multi-hop: entity-path fallback recall provides path-labeled context even when no graph backend is configured.
+
+These are implemented in the open framework. Production-grade tuning, learned weighting, and higher-quality model selection remain execution-quality differentiators rather than gated capabilities.
+
+---
+
 ## Phase 1: Foundation (implemented)
 
 ### 1.1 Recall Cache

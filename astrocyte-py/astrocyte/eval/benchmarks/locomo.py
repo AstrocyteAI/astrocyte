@@ -22,7 +22,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,12 +33,135 @@ from typing import TYPE_CHECKING, Any
 from astrocyte.eval.checkpoint import BenchmarkCheckpoint
 from astrocyte.eval.metrics import ndcg_at_k, word_overlap_score
 from astrocyte.eval.rate_limiter import EvalRateLimiter
+from astrocyte.pipeline.temporal import temporal_metadata
 from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
 
 # Minimum text overlap score to consider an answer correct.
 # Tuned empirically: 0.3 balances recall (catching paraphrases) against
 # precision (rejecting unrelated text). See eval/metrics.py for scoring details.
 ANSWER_OVERLAP_THRESHOLD = 0.3
+
+
+def _iso_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    return str(value)
+
+
+def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep benchmark hit diagnostics compact and JSON-serializable."""
+
+    if not metadata:
+        return {}
+    keys = (
+        "source",
+        "conversation_id",
+        "session_id",
+        "date_time",
+        "session_date",
+        "_created_at",
+        "_obs_source_ids",
+        "_wiki_source_ids",
+    )
+    return {key: _json_safe(metadata[key]) for key in keys if key in metadata}
+
+
+def _hit_debug(hit: Any) -> dict[str, Any]:
+    return {
+        "memory_id": getattr(hit, "memory_id", None),
+        "score": getattr(hit, "score", None),
+        "fact_type": getattr(hit, "fact_type", None),
+        "memory_layer": getattr(hit, "memory_layer", None),
+        "tags": list(getattr(hit, "tags", None) or []),
+        "metadata": _safe_metadata(getattr(hit, "metadata", None)),
+        "occurred_at": _iso_or_none(getattr(hit, "occurred_at", None)),
+        "retained_at": _iso_or_none(getattr(hit, "retained_at", None)),
+        "text_preview": str(getattr(hit, "text", ""))[:240],
+    }
+
+
+def _evidence_id_hit(evidence_ids: list[str], hits: list[Any]) -> bool:
+    """Best-effort match against LoCoMo evidence ids and retained metadata."""
+
+    expected = {str(eid).lower() for eid in evidence_ids if eid}
+    if not expected:
+        return False
+    for hit in hits:
+        metadata = getattr(hit, "metadata", None) or {}
+        tags = {str(tag).lower() for tag in (getattr(hit, "tags", None) or [])}
+        candidates = set(tags)
+        for key in ("session_id", "conversation_id", "locomo_turn_ids"):
+            if metadata.get(key):
+                value = str(metadata[key]).lower()
+                candidates.add(value)
+                candidates.add(f"{key.split('_')[0]}:{metadata[key]}".lower())
+                candidates.update(part.strip() for part in value.replace("|", ",").split(",") if part.strip())
+        if expected & candidates:
+            return True
+    return False
+
+
+def _session_person_names(turns: list[dict[str, str]]) -> list[str]:
+    """Extract deterministic person/name metadata for LoCoMo rerank support."""
+
+    names: set[str] = set()
+    for turn in turns:
+        speaker = turn.get("speaker")
+        if speaker and speaker != "unknown":
+            names.add(speaker)
+        text = turn.get("text", "")
+        for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b", text):
+            name = match.group(0)
+            if name.lower() not in {"i", "the", "a"}:
+                names.add(name)
+    return sorted(names)
+
+
+def _persona_pages_for_session(
+    conversation_id: str,
+    session_id: str,
+    turns: list[dict[str, str]],
+) -> dict[str, str]:
+    """Compile per-person LoCoMo page snippets with source provenance."""
+
+    by_speaker: dict[str, list[str]] = {}
+    for turn in turns:
+        speaker = turn.get("speaker", "unknown")
+        text = turn.get("text", "").strip()
+        if not text or speaker == "unknown":
+            continue
+        turn_id = turn.get("dia_id") or turn.get("turn_id") or session_id
+        by_speaker.setdefault(speaker, []).append(f"- [{turn_id}] {text}")
+
+    pages: dict[str, str] = {}
+    for speaker, statements in by_speaker.items():
+        pages[speaker] = "\n".join(
+            [
+                f"# Person page: {speaker}",
+                f"Conversation: {conversation_id}",
+                f"Session: {session_id}",
+                "",
+                "Stable persona/preference evidence:",
+                *statements,
+            ]
+        )
+    return pages
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
@@ -172,11 +297,21 @@ class LoComoBenchmark:
             for session in convo.sessions:
                 # Combine all turns in the session into one memory
                 session_text_parts = []
+                speaker_counts: Counter[str] = Counter()
+                turn_ids: list[str] = []
+                turn_speakers: list[str] = []
                 for turn in session.turns:
                     speaker = turn.get("speaker", "unknown")
                     text = turn.get("text", "")
                     if text.strip():
-                        session_text_parts.append(f"{speaker}: {text}")
+                        turn_id = turn.get("dia_id") or turn.get("turn_id") or ""
+                        speaker_counts[speaker] += 1
+                        if turn_id:
+                            turn_ids.append(str(turn_id))
+                            turn_speakers.append(f"{turn_id}:{speaker}")
+                            session_text_parts.append(f"[{turn_id}] {speaker}: {text}")
+                        else:
+                            session_text_parts.append(f"{speaker}: {text}")
 
                 if not session_text_parts:
                     continue
@@ -218,19 +353,58 @@ class LoComoBenchmark:
                         )
 
                 t0 = time.monotonic()
-                await self.brain.retain(
+                metadata = {
+                    "source": "locomo",
+                    "extraction_profile": "locomo_conversation",
+                    "conversation_id": convo.conversation_id,
+                    "session_id": session.session_id,
+                    "date_time": session.date_time or "",
+                    "locomo_speakers": ",".join(sorted(speaker_counts)),
+                    "locomo_persons": ",".join(_session_person_names(session.turns)),
+                    "locomo_turn_ids": ",".join(turn_ids),
+                    "locomo_turn_speakers": "|".join(turn_speakers),
+                    "locomo_turn_count": len(session.turns),
+                    "locomo_speaker_counts": ",".join(
+                        f"{speaker}:{count}" for speaker, count in sorted(speaker_counts.items())
+                    ),
+                }
+                metadata.update(temporal_metadata(session_text, occurred_at))
+                raw_result = await self.brain.retain(
                     session_text,
                     bank_id=bank_id,
                     tags=["locomo", f"convo:{convo.conversation_id}", f"session:{session.session_id}"],
-                    metadata={
-                        "source": "locomo",
-                        "conversation_id": convo.conversation_id,
-                        "session_id": session.session_id,
-                        "date_time": session.date_time or "",
-                    },
+                    metadata=metadata,
                     occurred_at=occurred_at,
                     content_type="conversation",
+                    extraction_profile="locomo_conversation",
                 )
+                source_ids = [raw_result.memory_id] if raw_result.memory_id else []
+                for speaker, page_text in _persona_pages_for_session(
+                    convo.conversation_id,
+                    session.session_id,
+                    session.turns,
+                ).items():
+                    await self.brain.retain(
+                        page_text,
+                        bank_id=bank_id,
+                        tags=[
+                            "locomo",
+                            "persona",
+                            f"person:{speaker.lower()}",
+                            f"convo:{convo.conversation_id}",
+                        ],
+                        metadata={
+                            "source": "locomo_persona_compile",
+                            "person": speaker,
+                            "conversation_id": convo.conversation_id,
+                            "session_id": session.session_id,
+                            "_wiki_source_ids": json.dumps(source_ids),
+                            "locomo_persona_page": f"person:{speaker}",
+                        },
+                        occurred_at=occurred_at,
+                        content_type="document",
+                        extraction_profile="locomo_persona",
+                    )
                 retain_latencies.append((time.monotonic() - t0) * 1000)
                 retain_count += 1
                 if checkpoint is not None:
@@ -329,7 +503,7 @@ class LoComoBenchmark:
                     query=q.question,
                     expected=[q.answer],
                     actual=[],
-                    relevant_found=0,
+                    relevant_found=cached.get("_relevant_found", 0),
                     precision=cached.get("_precision", 0.0),
                     reciprocal_rank=cached.get("_reciprocal_rank", 0.0),
                     latency_ms=cached.get("_latency_ms", 0.0),
@@ -408,19 +582,30 @@ class LoComoBenchmark:
                     )
                     q_ndcg = ndcg_at_k(relevant_ids, retrieved_ids)
                     ndcg_sum += q_ndcg
+                    recall_debug = [_hit_debug(h) for h in result.hits[:10]]
+                    reflect_sources = [_hit_debug(h) for h in (reflect_result.sources or [])[:18]]
+                    evidence_hit = _evidence_id_hit(
+                        q.evidence_ids,
+                        list(result.hits) + list(reflect_result.sources or []),
+                    )
 
                     q_record: dict[str, Any] = {
                         "question": q.question,
                         "expected_answer": q.answer,
                         "category": q.category,
+                        "evidence_ids": list(q.evidence_ids),
                         "correct": is_correct,
                         "recall_hits": len(result.hits),
+                        "recall_top_hits": recall_debug,
+                        "reflect_sources": reflect_sources,
                         "reflect_answer_preview": reflect_result.answer[:200],
                         "canonical_f1": canonical_f1,
                         "_precision": q_precision,
                         "_reciprocal_rank": q_rr,
                         "_latency_ms": elapsed,
                         "_ndcg": q_ndcg,
+                        "_relevant_found": len(relevant_ids),
+                        "_evidence_id_hit": evidence_hit,
                     }
                     per_question_arr[idx] = q_record
                     if checkpoint is not None:
@@ -606,6 +791,7 @@ def load_locomo_dataset(
                                 {
                                     "speaker": turn.get("speaker", turn.get("name", "unknown")),
                                     "text": turn.get("text", turn.get("content", "")),
+                                    "dia_id": str(turn.get("dia_id", turn.get("id", ""))),
                                 }
                             )
 

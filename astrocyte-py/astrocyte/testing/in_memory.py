@@ -92,6 +92,10 @@ class InMemoryVectorStore:
                 if filters.as_of is not None and item.retained_at is not None:
                     if item.retained_at > filters.as_of:
                         continue
+                if filters.time_range is not None and item.occurred_at is not None:
+                    start, end = filters.time_range
+                    if item.occurred_at < start or item.occurred_at > end:
+                        continue
             sim = _cosine_sim(query_vector, item.vector)
             results.append((sim, item))
 

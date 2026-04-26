@@ -9,6 +9,7 @@ import asyncio
 import inspect
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -35,8 +36,14 @@ from astrocyte.pipeline.query_intent import (
     classify_query_intent,
     weights_for_intent,
 )
+from astrocyte.pipeline.query_plan import build_query_plan
 from astrocyte.pipeline.reflect import synthesize
-from astrocyte.pipeline.reranking import basic_rerank, cross_encoder_like_rerank
+from astrocyte.pipeline.reranking import (
+    apply_context_diversity,
+    basic_rerank,
+    cross_encoder_like_rerank,
+    llm_pairwise_rerank,
+)
 from astrocyte.pipeline.retrieval import parallel_retrieve
 from astrocyte.policy.homeostasis import enforce_token_budget
 from astrocyte.policy.signal_quality import DedupDetector
@@ -181,6 +188,9 @@ class PipelineOrchestrator:
         observation_weight: float = 0.0,
         observation_injection_weight: float = 1.5,
         multi_query_confidence_threshold: float = 0.72,
+        final_rerank_mode: str = "heuristic",
+        final_rerank_top_n: int = 30,
+        final_rerank_keep_n: int | None = None,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -246,6 +256,9 @@ class PipelineOrchestrator:
         # so callers can disable global injection (observation_weight=0.0) while
         # still enabling the intent-gated path.
         self.observation_injection_weight: float = observation_injection_weight
+        self.final_rerank_mode = final_rerank_mode
+        self.final_rerank_top_n = final_rerank_top_n
+        self.final_rerank_keep_n = final_rerank_keep_n
         if enable_observation_consolidation:
             from astrocyte.pipeline.observation import ObservationConsolidator
 
@@ -569,6 +582,18 @@ class PipelineOrchestrator:
             temporal_half_life_days=effective_half_life,
             hyde_vector=hyde_vec,
         )
+        query_plan = build_query_plan(request.query)
+        if (
+            not request.fact_types
+            and query_plan.needs_multi_hop_synthesis
+        ):
+            entity_path_hits = await self._retrieve_entity_path_fallback(
+                request.query,
+                request.bank_id,
+                limit=overfetch_limit,
+            )
+            if entity_path_hits:
+                strategy_results["entity_path"] = entity_path_hits
 
         # 3b. Intent classification — hoisted here so both observation injection
         # (step 3b) and RRF weighting (step 4) share the same result without
@@ -708,6 +733,16 @@ class PipelineOrchestrator:
         # (bank_pipeline already resolved above for temporal half-life override)
         mip_rerank = bank_pipeline.rerank if bank_pipeline is not None else None
         reranked = basic_rerank(fused, request.query, mip_rerank=mip_rerank)
+        if self.final_rerank_mode == "llm_pairwise":
+            reranked = await llm_pairwise_rerank(
+                reranked,
+                request.query,
+                self.llm_provider,
+                top_n=self.final_rerank_top_n,
+                keep_n=self.final_rerank_keep_n or len(reranked),
+            )
+        else:
+            reranked = apply_context_diversity(reranked, request.query)
 
         # 6. Trim to max_results
         trimmed = reranked[: request.max_results]
@@ -722,6 +757,7 @@ class PipelineOrchestrator:
                 tags=item.tags,
                 memory_id=item.id,
                 bank_id=request.bank_id,
+                occurred_at=getattr(item, "occurred_at", None),
                 retained_at=getattr(item, "retained_at", None),  # M9
             )
             for item in trimmed
@@ -800,6 +836,53 @@ class PipelineOrchestrator:
             )
             for h in hits
         ]
+
+    async def _retrieve_entity_path_fallback(
+        self,
+        query: str,
+        bank_id: str,
+        *,
+        limit: int,
+    ) -> list[ScoredItem]:
+        """In-memory entity-path recall when no graph backend is configured."""
+
+        query_names = _deterministic_names(query)
+        if not query_names:
+            return []
+        try:
+            items = await self.vector_store.list_vectors(bank_id, offset=0, limit=max(limit * 10, 200))
+        except Exception:
+            return []
+
+        hits: list[ScoredItem] = []
+        for item in items:
+            metadata = dict(item.metadata or {})
+            text_names = _deterministic_names(item.text)
+            metadata_names = {
+                part.strip().lower()
+                for key in ("locomo_persons", "locomo_speakers", "person")
+                for part in str(metadata.get(key) or "").replace("|", ",").split(",")
+                if part.strip()
+            }
+            matched = query_names & (text_names | metadata_names)
+            if not matched:
+                continue
+            metadata["_entity_path"] = " -> ".join(sorted(matched))
+            metadata["_entity_path_kind"] = "metadata_fallback"
+            hits.append(
+                ScoredItem(
+                    id=item.id,
+                    text=item.text,
+                    score=0.65 + min(len(matched), 3) * 0.05,
+                    fact_type=item.fact_type,
+                    metadata=metadata,
+                    tags=item.tags,
+                    memory_layer=item.memory_layer,
+                    occurred_at=item.occurred_at,
+                    retained_at=item.retained_at,
+                )
+            )
+        return sorted(hits, key=lambda hit: hit.score, reverse=True)[:limit]
 
     async def _try_wiki_tier(
         self,
@@ -916,18 +999,26 @@ class PipelineOrchestrator:
 
     async def reflect(self, request: ReflectRequest) -> ReflectResult:
         """Reflect pipeline: recall → LLM synthesis."""
-        # 1. Run recall with larger result set
+        query_plan = build_query_plan(request.query)
+
+        # 1. Run recall with larger result set. Aggregate/multi-hop queries need
+        # more candidate memories so synthesis can combine facts instead of
+        # answering from the first plausible hit.
         recall_request = RecallRequest(
             query=request.query,
             bank_id=request.bank_id,
-            max_results=30,  # Larger set for synthesis context
+            max_results=query_plan.recall_max_results,
             max_tokens=request.max_tokens,
         )
         recall_result = await self.recall(recall_request)
         expanded_hits = await self._expand_reflect_sources(
             request.bank_id,
-            self._rank_reflect_context(request.query, recall_result.hits, limit=12),
-            limit=18,
+            self._rank_reflect_context(
+                request.query,
+                recall_result.hits,
+                limit=query_plan.reflect_rank_limit,
+            ),
+            limit=query_plan.reflect_expand_limit,
         )
         recall_result.hits = expanded_hits
         if request.max_tokens:
@@ -937,11 +1028,12 @@ class PipelineOrchestrator:
             )
             recall_result.truncated = recall_result.truncated or expanded_truncated
 
-        auth_ctx: str | None = None
+        path_ctx = self._entity_path_authority_context(recall_result.hits)
+        auth_ctx: str | None = path_ctx
         ra = self.recall_authority
         if ra and ra.enabled and ra.apply_to_reflect:
             recall_result = apply_recall_authority(recall_result, ra)
-            auth_ctx = recall_result.authority_context
+            auth_ctx = "\n\n".join(part for part in (path_ctx, recall_result.authority_context) if part)
 
         # 2. Resolve per-bank ReflectSpec from MIP (Phase 2, Step 9)
         mip_reflect = None
@@ -957,7 +1049,7 @@ class PipelineOrchestrator:
             from astrocyte.mip.schema import ReflectSpec
             from astrocyte.pipeline.reflect import _auto_prompt_variant
 
-            prompt_variant = _auto_prompt_variant(request.query)
+            prompt_variant = query_plan.prompt_variant or _auto_prompt_variant(request.query)
             if prompt_variant is not None:
                 if mip_reflect is None:
                     mip_reflect = ReflectSpec(prompt=prompt_variant)
@@ -1020,6 +1112,7 @@ class PipelineOrchestrator:
                     metadata=h.metadata,
                     tags=h.tags,
                     memory_layer=h.memory_layer,
+                    occurred_at=h.occurred_at,
                     retained_at=h.retained_at,
                 )
                 for idx, h in enumerate(hits)
@@ -1028,6 +1121,23 @@ class PipelineOrchestrator:
         )
         hit_by_id = {h.memory_id or f"hit-{idx}": h for idx, h in enumerate(hits)}
         return [hit_by_id[item.id] for item in scored[:limit] if item.id in hit_by_id]
+
+    def _entity_path_authority_context(self, hits: list[MemoryHit]) -> str | None:
+        path_lines: list[str] = []
+        direct_lines: list[str] = []
+        for idx, hit in enumerate(hits, 1):
+            path = (hit.metadata or {}).get("_entity_path") if hit.metadata else None
+            if path:
+                path_lines.append(f"- Memory {idx}: entity_path={path}")
+            elif hit.score >= 0.5:
+                direct_lines.append(f"- Memory {idx}: direct_facts")
+        if not path_lines:
+            return None
+        sections = ["entity_path_evidence:", *path_lines]
+        if direct_lines:
+            sections.extend(["direct_facts:", *direct_lines[:8]])
+        sections.append("supporting_context: use entity-path evidence before unrelated semantic matches.")
+        return "\n".join(sections)
 
     async def _expand_reflect_sources(
         self,
@@ -1093,6 +1203,7 @@ class PipelineOrchestrator:
                 memory_id=item.id,
                 bank_id=bank_id,
                 memory_layer=item.memory_layer or "raw",
+                occurred_at=item.occurred_at,
                 retained_at=item.retained_at,
             )
             for sid in ids
@@ -1121,3 +1232,10 @@ def _source_ids_from_metadata(metadata: dict[str, Any] | None) -> list[str]:
     if isinstance(raw, list):
         return [str(x) for x in raw if x]
     return []
+
+
+def _deterministic_names(text: str) -> set[str]:
+    return {
+        match.group(0).strip().lower()
+        for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b", text or "")
+    }
