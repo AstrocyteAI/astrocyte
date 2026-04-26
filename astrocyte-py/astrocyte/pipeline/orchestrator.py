@@ -50,6 +50,7 @@ from astrocyte.policy.signal_quality import DedupDetector
 from astrocyte.recall.authority import apply_recall_authority, merge_retain_metadata_authority_tier
 from astrocyte.types import (
     Completion,
+    Entity,
     EntityLink,
     MemoryEntityAssociation,
     MemoryHit,
@@ -341,8 +342,13 @@ class PipelineOrchestrator:
         chunks = [chunks[i] for i in keep_indices]
         embeddings = [embeddings[i] for i in keep_indices]
 
-        # 3. Extract entities (profile can disable; requires graph store)
-        entities = await extract_entities(prepared.text, self.llm_provider) if prepared.extract_entities else []
+        # 3. Extract entities (profile can disable; metadata profiles avoid LLM calls)
+        if profile is not None and profile.entity_extraction == "metadata":
+            entities = _entities_from_metadata(prepared.metadata)
+        elif prepared.extract_entities:
+            entities = await extract_entities(prepared.text, self.llm_provider)
+        else:
+            entities = []
 
         profile_tier = profile.authority_tier if profile else None
         chunk_metadata = merge_retain_metadata_authority_tier(
@@ -1239,3 +1245,35 @@ def _deterministic_names(text: str) -> set[str]:
         match.group(0).strip().lower()
         for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b", text or "")
     }
+
+
+def _entities_from_metadata(metadata: dict[str, Any] | None) -> list[Entity]:
+    """Build stable entities from structured retain metadata without an LLM call."""
+
+    if not metadata:
+        return []
+    names: set[str] = set()
+    for key in ("locomo_persons", "locomo_speakers", "person"):
+        value = metadata.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            names.update(part.strip() for part in value.replace("|", ",").split(",") if part.strip())
+        elif isinstance(value, list):
+            names.update(str(part).strip() for part in value if str(part).strip())
+
+    entities: list[Entity] = []
+    for name in sorted(names):
+        entity_id = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+        if not entity_id:
+            continue
+        entities.append(
+            Entity(
+                id=f"person:{entity_id}",
+                name=name,
+                entity_type="PERSON",
+                aliases=[],
+                metadata={"source": "retain_metadata"},
+            )
+        )
+    return entities

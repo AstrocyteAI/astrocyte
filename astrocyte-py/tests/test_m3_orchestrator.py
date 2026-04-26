@@ -122,6 +122,32 @@ class TestSetPipelineWiresExtractionProfiles:
         await pipeline.retain(req)
         assert llm._call_count == 0
 
+    async def test_metadata_entity_extraction_skips_llm_and_stores_metadata_entities(self):
+        vs = InMemoryVectorStore()
+        gs = InMemoryGraphStore()
+        llm = MockLLMProvider()
+        profiles = {"metadata_ent": ExtractionProfileConfig(entity_extraction="metadata")}
+        pipeline = PipelineOrchestrator(
+            vector_store=vs,
+            llm_provider=llm,
+            graph_store=gs,
+            chunk_strategy="sentence",
+            max_chunk_size=256,
+            extraction_profiles=profiles,
+        )
+        req = RetainRequest(
+            content="Alice discussed planets with Bob.",
+            bank_id="b1",
+            metadata={"locomo_persons": "Alice,Bob"},
+            content_type="conversation",
+            extraction_profile="metadata_ent",
+        )
+
+        await pipeline.retain(req)
+
+        assert llm._call_count == 0
+        assert {entity.name for entity in gs._entities["b1"].values()} == {"Alice", "Bob"}
+
     async def test_extraction_profile_metadata_mapping_on_stored_vectors(self):
         vs = InMemoryVectorStore()
         profiles = {
