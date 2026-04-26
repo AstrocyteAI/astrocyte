@@ -6,6 +6,7 @@ Async (coordinates I/O stages). See docs/_design/built-in-pipeline.md.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import uuid
@@ -251,6 +252,7 @@ class PipelineOrchestrator:
             self._observation_consolidator: ObservationConsolidator | None = ObservationConsolidator()
         else:
             self._observation_consolidator = None
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def tokens_used(self) -> int:
@@ -480,7 +482,9 @@ class PipelineOrchestrator:
                         "Observation consolidation task failed for bank %s: %s", bank_id, exc
                     )
 
-            asyncio.create_task(_run_consolidation())
+            task = asyncio.create_task(_run_consolidation())
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
         return RetainResult(
             stored=True,
@@ -974,6 +978,26 @@ class PipelineOrchestrator:
             authority_context=auth_ctx,
             mip_reflect=mip_reflect,
         )
+
+    async def shutdown(self) -> None:
+        """Drain background work and close provider resources owned by the pipeline."""
+        if self._background_tasks:
+            _, pending = await asyncio.wait(self._background_tasks, timeout=2.0)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        for provider in (self.vector_store, self.graph_store, self.document_store):
+            close = getattr(provider, "close", None)
+            if close is None:
+                continue
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                _logger.warning("provider close failed during pipeline shutdown: %s", exc)
 
     def _rank_reflect_context(
         self,

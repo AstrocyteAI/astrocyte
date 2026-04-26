@@ -6,6 +6,7 @@ multi-bank orchestration, and hook dispatch.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,6 +153,11 @@ class Astrocyte:
         queue = self._compile_queue
         if queue is not None and hasattr(queue, "stop"):
             await queue.stop()  # type: ignore[union-attr]
+        shutdown = getattr(self._pipeline, "shutdown", None)
+        if shutdown is not None:
+            result = shutdown()
+            if inspect.isawaitable(result):
+                await result
 
     @classmethod
     def from_config(cls, path: str | Path) -> "Astrocyte":

@@ -221,6 +221,25 @@ class TestReflectHierarchy:
         assert [hit.memory_id for hit in expanded] == ["obs-1", "raw-1"]
 
 
+class TestPipelineShutdown:
+    @pytest.mark.asyncio
+    async def test_shutdown_closes_vector_store(self):
+        class CloseableVectorStore(InMemoryVectorStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        vs = CloseableVectorStore()
+        orch = PipelineOrchestrator(vs, MockLLMProvider())
+
+        await orch.shutdown()
+
+        assert vs.closed is True
+
+
 # ---------------------------------------------------------------------------
 # PipelineOrchestrator — retain: content_type routing
 # ---------------------------------------------------------------------------
