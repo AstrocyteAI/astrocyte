@@ -191,7 +191,13 @@ class LoComoBenchmark:
                 occurred_at = None
                 if session.date_time:
                     date_parse_attempts += 1
-                    date_formats = ("%B %d, %Y", "%Y-%m-%d", "%m/%d/%Y", "%d %B %Y")
+                    date_formats = (
+                        "%I:%M %p on %d %B, %Y",  # "10:04 am on 19 December, 2023" (LoCoMo native)
+                        "%B %d, %Y",               # "January 15, 2026"
+                        "%Y-%m-%d",                # "2026-01-15"
+                        "%m/%d/%Y",                # "01/15/2026"
+                        "%d %B %Y",                # "15 January 2026"
+                    )
                     parsed = False
                     for fmt in date_formats:
                         try:

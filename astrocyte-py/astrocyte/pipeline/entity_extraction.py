@@ -73,7 +73,23 @@ def _parse_entities(response: str) -> list[Entity]:
                 return []
             text = text[start:close].strip()
 
-        entities_data = json.loads(text)
+        # Seek to the first JSON value (array or object) and parse only
+        # that — raw_decode stops after the first complete JSON token,
+        # so trailing text or a second array the LLM appended won't
+        # cause "Extra data" errors.
+        bracket = text.find("[")
+        brace = text.find("{")
+        if bracket < 0 and brace < 0:
+            logger.warning("Entity extraction: no JSON found in LLM response")
+            return []
+        if bracket < 0:
+            json_start = brace
+        elif brace < 0:
+            json_start = bracket
+        else:
+            json_start = min(bracket, brace)
+        decoder = json.JSONDecoder()
+        entities_data, _ = decoder.raw_decode(text, json_start)
         # Handle common LLM wrapper formats: {"entities": [...]}, {"results": [...]}
         if isinstance(entities_data, dict):
             for key in ("entities", "results", "items", "data"):
