@@ -306,6 +306,103 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         )
         return to_jsonable(result)
 
+    @app.post("/v1/compile")
+    async def compile(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Compile raw memories into wiki pages for a bank (M8).
+
+        Synthesises a structured wiki page for each detected topic scope using
+        the LLM. Requires a WikiStore and Tier 1 pipeline to be configured.
+
+        Body:
+            bank_id (str, required): Bank to compile.
+            scope (str, optional): Compile only memories tagged with this scope.
+                                   Omit for full scope discovery (tag grouping +
+                                   embedding cluster labelling).
+        """
+        bank_id = body.get("bank_id")
+        if not isinstance(bank_id, str):
+            raise HTTPException(status_code=400, detail="bank_id (str) is required")
+        scope = body.get("scope")
+        if scope is not None and not isinstance(scope, str):
+            raise HTTPException(status_code=400, detail="scope must be a string")
+        try:
+            result = await brain.compile(bank_id, scope=scope)
+        except Exception as exc:
+            # Translate ConfigError (no WikiStore / no pipeline) to 422
+            if "ConfigError" in type(exc).__name__ or "ProviderUnavailable" in type(exc).__name__:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
+        return to_jsonable(result)
+
+    @app.post("/v1/graph/search")
+    async def graph_search(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Search the knowledge graph for entities matching a name query.
+
+        Returns matching Entity objects. Use the returned entity IDs with
+        POST /v1/graph/neighbors to traverse connected memories.
+
+        Body:
+            query (str, required): Name or partial name to search.
+            bank_id (str, required): Bank whose graph to search.
+            limit (int, optional): Max entities to return (default 10).
+        """
+        query = body.get("query")
+        bank_id = body.get("bank_id")
+        if not isinstance(query, str) or not isinstance(bank_id, str):
+            raise HTTPException(status_code=400, detail="query and bank_id (str) are required")
+        try:
+            limit = int(body.get("limit", 10))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="limit must be an integer")
+        try:
+            entities = await brain.graph_search(query, bank_id, limit=limit)
+        except Exception as exc:
+            if "ConfigError" in type(exc).__name__:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
+        return {"entities": to_jsonable(entities)}
+
+    @app.post("/v1/graph/neighbors")
+    async def graph_neighbors(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Traverse the knowledge graph from seed entity IDs.
+
+        Walks up to max_depth hops from each seed entity and returns the
+        memories connected to discovered entities, scored by proximity.
+
+        Body:
+            entity_ids (list[str], required): Seed entity IDs to start from.
+            bank_id (str, required): Bank whose graph to traverse.
+            max_depth (int, optional): Traversal depth (default 2).
+            limit (int, optional): Max memory hits to return (default 20).
+        """
+        entity_ids = body.get("entity_ids")
+        bank_id = body.get("bank_id")
+        if not isinstance(entity_ids, list) or not isinstance(bank_id, str):
+            raise HTTPException(status_code=400, detail="entity_ids (list) and bank_id (str) are required")
+        try:
+            max_depth = int(body.get("max_depth", 2))
+            limit = int(body.get("limit", 20))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="max_depth and limit must be integers")
+        try:
+            hits = await brain.graph_neighbors(
+                [str(e) for e in entity_ids], bank_id, max_depth=max_depth, limit=limit
+            )
+        except Exception as exc:
+            if "ConfigError" in type(exc).__name__:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
+        return {"hits": to_jsonable(hits)}
+
     @app.post("/v1/ingest/webhook/{source_id}")
     async def ingest_webhook(
         source_id: str,
