@@ -169,13 +169,14 @@ class PipelineOrchestrator:
         temporal_scan_cap: int = 500,
         temporal_half_life_days: float = 7.0,
         enable_intent_aware_recall: bool = True,
-        enable_multi_query_expansion: bool = False,
+        enable_multi_query_expansion: bool = True,
         enable_hyde: bool = False,
         wiki_store: WikiStore | None = None,
         wiki_confidence_threshold: float = 0.7,
         entity_resolver: EntityResolver | None = None,
         enable_observation_consolidation: bool = True,
         observation_weight: float = 0.0,
+        multi_query_confidence_threshold: float = 0.72,
     ) -> None:
         self.vector_store = vector_store
         self._tracker = _TrackingLLMProvider(llm_provider)
@@ -201,8 +202,15 @@ class PipelineOrchestrator:
         # Multi-query expansion: decompose complex questions into sub-questions,
         # recall for each independently, and merge via RRF. Improves multi-hop
         # coverage at the cost of N-1 extra embedding + retrieval passes per query.
-        # Disabled by default; enable in config for multi-hop-heavy workloads.
+        # Disabled by default; enable for multi-hop-heavy workloads.
+        # When enabled, the confidence gate (multi_query_confidence_threshold)
+        # suppresses expansion when the top raw semantic score already exceeds the
+        # threshold — avoiding costly sub-query decomposition when a direct answer
+        # is already retrieved with high confidence. Cosine similarity is used as
+        # the gate signal (not RRF scores, which are rank-based and not comparable
+        # across query runs). Default threshold 0.72 passes ~20-30% of queries.
         self.enable_multi_query_expansion = enable_multi_query_expansion
+        self.multi_query_confidence_threshold: float = multi_query_confidence_threshold
         # HyDE (R1): generate a hypothetical answer, embed it, and run a second
         # semantic search pass with that vector.  Disabled by default — adds one
         # LLM call per recall.  Enable for multi-hop / paraphrase-heavy workloads.
@@ -607,10 +615,25 @@ class PipelineOrchestrator:
         # via a final RRF pass. Only runs when enabled and the LLM judges the
         # question as multi-hop (len > 1). The original query's fused result is
         # always included so the expansion never discards the baseline recall.
-        # Guard on `fused` being non-empty: if initial retrieval returned nothing
-        # (empty bank or no relevant memories), decomposition cannot help and we
-        # avoid a wasted LLM call.
-        if self.enable_multi_query_expansion and fused:
+        #
+        # Two guards:
+        # (a) Empty-bank guard — if initial retrieval returned nothing,
+        #     decomposition cannot help and we avoid a wasted LLM call.
+        # (b) Confidence gate — peek at the top raw semantic score *before*
+        #     fusion.  Cosine similarity is the cleanest signal for "did we
+        #     already find the answer?": if the top hit already exceeds
+        #     multi_query_confidence_threshold we skip decomposition entirely,
+        #     preventing broad sub-queries from displacing the precise answer.
+        #     RRF scores are rank-based and not used here.
+        _top_semantic_score: float = 0.0
+        if "semantic" in strategy_results and strategy_results["semantic"]:
+            _top_semantic_score = strategy_results["semantic"][0].score
+
+        if (
+            self.enable_multi_query_expansion
+            and fused
+            and _top_semantic_score < self.multi_query_confidence_threshold
+        ):
             from astrocyte.pipeline.multi_query import decompose_query
 
             sub_queries = await decompose_query(request.query, self.llm_provider)
