@@ -13,35 +13,32 @@ import pytest
 
 from astrocyte.pipeline.hyde import _generate_hypothetical, generate_hyde_vector
 from astrocyte.pipeline.retrieval import parallel_retrieve
-from astrocyte.testing.in_memory import InMemoryVectorStore
+from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
+from astrocyte.types import Message
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — conform to the real LLMProvider protocol
 # ---------------------------------------------------------------------------
 
-class _MockLLM:
-    """Minimal LLM stub that returns a fixed response."""
+class _TrackingLLM(MockLLMProvider):
+    """MockLLMProvider that records every complete() call's message list."""
 
-    def __init__(self, response: str = "Alice works at Acme Corp as a software engineer."):
-        self.response = response
-        self.calls: list[list[dict]] = []
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.calls: list[list[Message]] = []
 
-    async def complete(self, messages, **kwargs) -> str:
-        self.calls.append(messages)
-        return self.response
-
-    async def embed(self, texts, **kwargs) -> list[list[float]]:
-        # Return a simple deterministic embedding per text.
-        return [[float(ord(c)) / 1000 for c in text[:8].ljust(8)] for text in texts]
+    async def complete(self, messages, **kwargs):
+        self.calls.append(list(messages))
+        return await super().complete(messages, **kwargs)
 
 
-class _FailingLLM(_MockLLM):
-    async def complete(self, messages, **kwargs) -> str:
+class _FailingCompleteLLM(MockLLMProvider):
+    async def complete(self, messages, **kwargs):
         raise RuntimeError("LLM unavailable")
 
 
-class _FailingEmbedLLM(_MockLLM):
-    async def embed(self, texts, **kwargs) -> list[list[float]]:
+class _FailingEmbedLLM(MockLLMProvider):
+    async def embed(self, texts, **kwargs):
         raise RuntimeError("Embed service down")
 
 
@@ -52,7 +49,7 @@ class _FailingEmbedLLM(_MockLLM):
 class TestGenerateHydeVector:
     @pytest.mark.asyncio
     async def test_success_returns_vector(self):
-        llm = _MockLLM("Alice works at Acme Corp.")
+        llm = MockLLMProvider("Alice works at Acme Corp.")
         vec = await generate_hyde_vector("Where does Alice work?", llm)
         assert vec is not None
         assert isinstance(vec, list)
@@ -60,7 +57,7 @@ class TestGenerateHydeVector:
 
     @pytest.mark.asyncio
     async def test_llm_failure_returns_none(self):
-        llm = _FailingLLM()
+        llm = _FailingCompleteLLM()
         vec = await generate_hyde_vector("Where does Alice work?", llm)
         assert vec is None
 
@@ -72,32 +69,32 @@ class TestGenerateHydeVector:
 
     @pytest.mark.asyncio
     async def test_empty_response_returns_none(self):
-        llm = _MockLLM("")
+        llm = MockLLMProvider("")
         vec = await generate_hyde_vector("Where does Alice work?", llm)
         assert vec is None
 
     @pytest.mark.asyncio
     async def test_whitespace_only_response_returns_none(self):
-        llm = _MockLLM("   \n  ")
+        llm = MockLLMProvider("   \n  ")
         vec = await generate_hyde_vector("Where does Alice work?", llm)
         assert vec is None
 
     @pytest.mark.asyncio
     async def test_llm_receives_correct_prompt_structure(self):
-        llm = _MockLLM("hypothetical answer")
+        llm = _TrackingLLM("hypothetical answer")
         await generate_hyde_vector("test query", llm)
         assert len(llm.calls) == 1
         messages = llm.calls[0]
-        roles = [m["role"] for m in messages]
+        roles = [m.role for m in messages]
         assert roles == ["system", "user"]
-        assert "test query" in messages[-1]["content"]
+        assert "test query" in messages[-1].content
 
     @pytest.mark.asyncio
     async def test_generate_hypothetical_passes_query_to_llm(self):
-        llm = _MockLLM("some fact")
+        llm = _TrackingLLM("some fact")
         result = await _generate_hypothetical("my query", llm)
         assert result == "some fact"
-        assert llm.calls[0][-1]["content"] == "my query"
+        assert llm.calls[0][-1].content == "my query"
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +154,7 @@ class TestOrchestratorHyde:
         """enable_hyde=False: orchestrator stores the flag correctly."""
         from astrocyte.pipeline.orchestrator import PipelineOrchestrator as Orchestrator
         vs = InMemoryVectorStore()
-        llm = _MockLLM("hypothetical")
+        llm = MockLLMProvider("hypothetical")
         orch = Orchestrator(vector_store=vs, llm_provider=llm, enable_hyde=False)
         assert orch.enable_hyde is False
 
@@ -165,7 +162,7 @@ class TestOrchestratorHyde:
     async def test_hyde_enabled_flag_stored(self):
         from astrocyte.pipeline.orchestrator import PipelineOrchestrator as Orchestrator
         vs = InMemoryVectorStore()
-        llm = _MockLLM("hypothetical")
+        llm = MockLLMProvider("hypothetical")
         orch = Orchestrator(vector_store=vs, llm_provider=llm, enable_hyde=True)
         assert orch.enable_hyde is True
 
@@ -176,12 +173,12 @@ class TestOrchestratorHyde:
         from astrocyte.types import RecallRequest
 
         vs = InMemoryVectorStore()
-        llm = _MockLLM("hypothetical")
+        llm = _TrackingLLM("hypothetical")
         orch = Orchestrator(vector_store=vs, llm_provider=llm, enable_hyde=False)
 
         await orch.recall(RecallRequest(query="Where does Alice work?", bank_id="bank1"))
         # No system-prompt calls (HyDE uses a system prompt; embed does not)
-        complete_calls = [c for c in llm.calls if c and c[0]["role"] == "system"]
+        complete_calls = [c for c in llm.calls if c and c[0].role == "system"]
         assert len(complete_calls) == 0
 
     @pytest.mark.asyncio
@@ -191,11 +188,11 @@ class TestOrchestratorHyde:
         from astrocyte.types import RecallRequest
 
         vs = InMemoryVectorStore()
-        llm = _MockLLM("Alice works at Acme Corp.")
+        llm = _TrackingLLM("Alice works at Acme Corp.")
         orch = Orchestrator(vector_store=vs, llm_provider=llm, enable_hyde=True)
 
         await orch.recall(RecallRequest(query="Where does Alice work?", bank_id="bank1"))
-        complete_calls = [c for c in llm.calls if c and c[0]["role"] == "system"]
+        complete_calls = [c for c in llm.calls if c and c[0].role == "system"]
         assert len(complete_calls) >= 1
 
     @pytest.mark.asyncio
@@ -205,7 +202,7 @@ class TestOrchestratorHyde:
         from astrocyte.types import RecallRequest
 
         vs = InMemoryVectorStore()
-        llm = _FailingLLM()  # complete() always raises
+        llm = _FailingCompleteLLM()  # complete() always raises; embed() still works
         orch = Orchestrator(vector_store=vs, llm_provider=llm, enable_hyde=True)
 
         result = await orch.recall(RecallRequest(query="Where does Alice work?", bank_id="bank1"))
