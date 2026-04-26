@@ -1,10 +1,11 @@
 # Benchmark configuration for Astrocyte eval runs.
 #
-# Uses Tier 1 pipeline with real LLM/embedding providers.
-# All secrets are read from environment variables.
+# Uses Tier 1 pipeline with the production postgres-age-pgvector stack and
+# real LLM/embedding providers. All secrets are read from environment variables.
 #
 # Usage:
 #   export OPENAI_API_KEY=sk-...
+#   export DATABASE_URL=postgresql://user:pass@localhost:5432/astrocyte_bench
 #   python scripts/run_benchmarks.py --config benchmarks/config.yaml
 
 profile: research
@@ -12,12 +13,14 @@ profile: research
 provider_tier: storage
 
 # -- Storage backends --
-# In-memory stores are used by default.
-# Uncomment pgvector for production-grade results:
-#
-# vector_store: pgvector
-# vector_store_config:
-#   connection_string: ${DATABASE_URL}
+# Uses the production postgres-age-pgvector stack so benchmark scores reflect
+# real-world HNSW retrieval, not in-memory exact NN.
+# Both providers read DATABASE_URL from the environment automatically.
+# Requires: export DATABASE_URL=postgresql://user:pass@localhost:5432/astrocyte_bench
+
+vector_store: pgvector
+
+graph_store: age
 
 # -- LLM & Embedding --
 # The OpenAI provider handles both completions and embeddings.
