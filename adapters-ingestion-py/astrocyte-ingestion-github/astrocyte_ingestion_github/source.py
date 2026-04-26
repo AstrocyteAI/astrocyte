@@ -121,7 +121,7 @@ class GithubPollIngestSource:
         if self._task:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+                _ = await self._task
             self._task = None
         if self._client is not None:
             await self._client.aclose()

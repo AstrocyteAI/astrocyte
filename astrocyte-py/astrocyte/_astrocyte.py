@@ -157,7 +157,7 @@ class Astrocyte:
         if shutdown is not None:
             result = shutdown()
             if inspect.isawaitable(result):
-                await result
+                _ = await result
 
     @classmethod
     def from_config(cls, path: str | Path) -> "Astrocyte":

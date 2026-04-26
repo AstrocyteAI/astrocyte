@@ -995,7 +995,7 @@ class PipelineOrchestrator:
             try:
                 result = close()
                 if inspect.isawaitable(result):
-                    await result
+                    _ = await result
             except Exception as exc:
                 _logger.warning("provider close failed during pipeline shutdown: %s", exc)
 
