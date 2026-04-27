@@ -145,6 +145,7 @@ async def _semantic_search(
             fact_type=h.fact_type,
             metadata=h.metadata,
             tags=h.tags,
+            occurred_at=h.occurred_at,
             retained_at=getattr(h, "retained_at", None),
         )
         for h in hits
@@ -257,6 +258,7 @@ async def _temporal_search(
             metadata=item.metadata,
             tags=item.tags,
             memory_layer=item.memory_layer,
+            occurred_at=item.occurred_at,
             retained_at=getattr(item, "retained_at", None),
         )
         for score, item in top
@@ -266,25 +268,22 @@ async def _temporal_search(
 def _extract_timestamp(item: VectorItem) -> datetime | None:
     """Best-effort timestamp extraction for temporal ranking.
 
-    Precedence: ``metadata["_created_at"]`` (written by the retain path
-    for MIP min_age_days enforcement) → ``occurred_at`` (when the caller
-    set it explicitly). ISO strings and datetime instances both accepted;
-    naive datetimes are interpreted as UTC.
+    Precedence: ``occurred_at`` (event/session time when the caller set it)
+    → ``metadata["_created_at"]`` (retain time used for lifecycle/TTL).
+    ISO strings and datetime instances are both accepted; naive datetimes are
+    interpreted as UTC.
     """
     metadata = item.metadata or {}
-    raw = metadata.get("_created_at")
-    if isinstance(raw, str):
-        try:
-            dt = datetime.fromisoformat(raw)
-        except ValueError:
-            dt = None
-    elif isinstance(raw, datetime):
-        dt = raw
-    else:
-        dt = None
-
-    if dt is None and item.occurred_at is not None:
-        dt = item.occurred_at
+    dt = item.occurred_at
+    if dt is None:
+        raw = metadata.get("_created_at")
+        if isinstance(raw, str):
+            try:
+                dt = datetime.fromisoformat(raw)
+            except ValueError:
+                dt = None
+        elif isinstance(raw, datetime):
+            dt = raw
 
     if dt is None:
         return None

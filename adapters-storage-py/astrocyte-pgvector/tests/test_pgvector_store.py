@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import psycopg
 import pytest
 from astrocyte.types import VectorFilters
 
@@ -261,6 +262,48 @@ class TestMetadataAndTags:
 
         items = await store.list_vectors("bank-1")
         assert items[0].occurred_at == ts
+
+    async def test_retained_at_roundtrip(self, store: PgVectorStore):
+        ts = datetime(2026, 4, 26, 12, 0, 0, tzinfo=timezone.utc)
+        await store.store_vectors([make_item("v1", vector=[1.0, 0.0, 0.0], retained_at=ts)])
+
+        items = await store.list_vectors("bank-1")
+        assert items[0].retained_at == ts
+
+    async def test_delete_soft_forgets_current_rows(self, store: PgVectorStore):
+        await store.store_vectors([make_item("v1", vector=[1.0, 0.0, 0.0])])
+
+        deleted = await store.delete(["v1"], "bank-1")
+
+        assert deleted == 1
+        assert await store.list_vectors("bank-1") == []
+
+    async def test_temporal_metadata_projects_to_temporal_facts(self, store: PgVectorStore, dsn: str):
+        await store.store_vectors([
+            make_item(
+                "v-temporal",
+                vector=[1.0, 0.0, 0.0],
+                metadata={
+                    "temporal_anchor": "2026-02-10",
+                    "temporal_phrase": "yesterday",
+                    "resolved_date": "2026-02-09",
+                    "date_granularity": "day",
+                },
+            )
+        ])
+
+        async with await psycopg.AsyncConnection.connect(dsn) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT temporal_phrase, resolved_date::text, date_granularity
+                    FROM astrocyte_temporal_facts
+                    WHERE bank_id = 'bank-1' AND memory_id = 'v-temporal'
+                    """
+                )
+                row = await cur.fetchone()
+
+        assert row == ("yesterday", "2026-02-09", "day")
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -138,6 +139,14 @@ class TestPgVectorStoreStructure:
     def test_search_similar_includes_memory_layer(self):
         source = inspect.getsource(PgVectorStore.search_similar)
         assert "memory_layer" in source
+
+    def test_sql_migration_uses_configurable_vector_width(self):
+        repo_root = Path(__file__).resolve().parents[3]
+        migration = repo_root / "adapters-storage-py/astrocyte-pgvector/migrations/002_astrocytes_vectors.sql"
+        migrate_script = repo_root / "adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh"
+
+        assert "embedding vector(:embedding_dimensions) NOT NULL" in migration.read_text()
+        assert "ASTROCYTE_EMBEDDING_DIMENSIONS" in migrate_script.read_text()
 
     def test_spi_version_is_1(self):
         assert PgVectorStore.SPI_VERSION == 1

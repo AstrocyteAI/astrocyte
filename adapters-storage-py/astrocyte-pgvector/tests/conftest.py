@@ -47,6 +47,7 @@ def make_item(
     fact_type: str | None = None,
     occurred_at: datetime | None = None,
     memory_layer: str | None = None,
+    retained_at: datetime | None = None,
 ) -> VectorItem:
     """Create a VectorItem with sensible defaults."""
     if vector is None:
@@ -63,4 +64,5 @@ def make_item(
         fact_type=fact_type,
         occurred_at=occurred_at,
         memory_layer=memory_layer,
+        retained_at=retained_at,
     )

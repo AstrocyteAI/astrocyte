@@ -1,5 +1,6 @@
 """Tests for LoCoMo benchmark adapter."""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from astrocyte.eval.benchmarks.locomo import (
     LoCoMoSession,
     load_locomo_dataset,
 )
+from astrocyte.pipeline.tasks import COMPILE_PERSONA_PAGE, MemoryTask
 from astrocyte.testing.in_memory import InMemoryEngineProvider
 
 
@@ -29,7 +31,7 @@ def _make_brain() -> tuple[Astrocyte, InMemoryEngineProvider]:
 
 class TestLoComoBenchmark:
     async def test_run_with_synthetic_conversations(self):
-        brain, _ = _make_brain()
+        brain, engine = _make_brain()
         bench = LoComoBenchmark(brain)
 
         conversations = [
@@ -81,12 +83,121 @@ class TestLoComoBenchmark:
             ),
         ]
 
-        result = await bench.run(conversations=conversations, bank_id="bench-locomo-test")
+        result = await bench.run(conversations=conversations, bank_id="bench-locomo-test", clean_after=False)
 
         assert result.total_questions == 3
         assert result.overall_accuracy >= 0.0
         assert len(result.per_question) == 3
         assert "single-hop" in result.category_accuracy
+        first = result.per_question[0]
+        assert first["evidence_ids"] == ["dia_1"]
+        assert "recall_top_hits" in first
+        assert "reflect_sources" in first
+        assert "_relevant_found" in first
+        assert "_evidence_id_hit" in first
+        stored = engine._memories["bench-locomo-test"]
+        raw = next(mem for mem in stored if mem.metadata and mem.metadata.get("source") == "locomo")
+        assert raw.metadata["extraction_profile"] == "locomo_conversation"
+        assert raw.metadata["locomo_speakers"] == "Alice,Bob"
+        assert raw.metadata["locomo_turn_count"] == 3
+        persona = next(mem for mem in stored if mem.metadata and mem.metadata.get("source") == "locomo_persona_compile")
+        assert persona.metadata["person"] == "Alice,Bob"
+        assert "_wiki_source_ids" in persona.metadata
+
+    async def test_persona_compile_is_enqueued_when_task_queue_is_configured(self):
+        class RecordingQueue:
+            def __init__(self) -> None:
+                self.tasks: list[MemoryTask] = []
+
+            async def enqueue(self, task: MemoryTask) -> str:
+                self.tasks.append(task)
+                return task.id
+
+        brain, engine = _make_brain()
+        queue = RecordingQueue()
+        setattr(brain, "_benchmark_task_queue", queue)
+        bench = LoComoBenchmark(brain)
+        conversations = [
+            LoCoMoConversation(
+                conversation_id="c1",
+                sessions=[
+                    LoCoMoSession(
+                        session_id="session_1",
+                        turns=[
+                            {"speaker": "Alice", "text": "I just got a new puppy named Max"},
+                            {"speaker": "Bob", "text": "That's great! What breed is Max?"},
+                        ],
+                    ),
+                ],
+                questions=[
+                    LoCoMoQuestion(
+                        question="What is the name of Alice's dog?",
+                        answer="Max",
+                        category="single-hop",
+                        evidence_ids=[],
+                        conversation_id="c1",
+                    ),
+                ],
+            ),
+        ]
+
+        await bench.run(conversations=conversations, bank_id="bench-locomo-queue", clean_after=False)
+
+        assert {task.task_type for task in queue.tasks} == {COMPILE_PERSONA_PAGE}
+        assert all(task.payload["index_vector"] is True for task in queue.tasks)
+        stored = engine._memories["bench-locomo-queue"]
+        assert not any(mem.metadata and mem.metadata.get("source") == "locomo_persona_compile" for mem in stored)
+
+    async def test_retain_phase_uses_configured_concurrency(self):
+        class SlowEngine(InMemoryEngineProvider):
+            def __init__(self) -> None:
+                super().__init__()
+                self.active = 0
+                self.max_active = 0
+
+            async def retain(self, request):
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                try:
+                    await asyncio.sleep(0.01)
+                    return await super().retain(request)
+                finally:
+                    self.active -= 1
+
+        config = AstrocyteConfig()
+        config.provider = "test"
+        config.barriers.pii.mode = "disabled"
+        brain = Astrocyte(config)
+        engine = SlowEngine()
+        brain.set_engine_provider(engine)
+        bench = LoComoBenchmark(brain)
+        conversations = [
+            LoCoMoConversation(
+                conversation_id="c1",
+                sessions=[
+                    LoCoMoSession(session_id=f"s{i}", turns=[{"speaker": "A", "text": f"memory {i}"}])
+                    for i in range(6)
+                ],
+                questions=[
+                    LoCoMoQuestion(
+                        question="What was said?",
+                        answer="memory",
+                        category="single-hop",
+                        evidence_ids=[],
+                        conversation_id="c1",
+                    ),
+                ],
+            ),
+        ]
+
+        await bench.run(
+            conversations=conversations,
+            bank_id="bench-locomo-concurrent",
+            clean_after=True,
+            retain_concurrency=3,
+        )
+
+        assert engine.max_active > 1
 
     async def test_cleanup(self):
         brain, engine = _make_brain()

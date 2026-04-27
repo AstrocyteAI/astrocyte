@@ -26,6 +26,9 @@ dev = [
 [project.entry-points."astrocyte.vector_stores"]
 pgvector = "astrocyte_pgvector.store:PgVectorStore"
 
+[project.entry-points."astrocyte.wiki_stores"]
+pgvector = "astrocyte_pgvector.wiki_store:PgWikiStore"
+
 [tool.hatch.version]
 source = "vcs"
 raw-options = { root = "../.." }  # Git root is two levels up

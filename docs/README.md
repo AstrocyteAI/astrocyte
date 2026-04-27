@@ -72,6 +72,8 @@ Release notes: [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main
 
 - **[Agent framework middleware](/plugins/agent-framework-middleware/)** — integration guides for 18 frameworks (LangGraph, CrewAI, MCP, and more)
 - **[Architecture](/design/architecture/)** — layered design, two-tier providers, context vs harness engineering
+- **[Hindsight-informed capabilities](/design/hindsight-informed-capabilities/)** — what Astrocyte copies from Hindsight, what stays outside core, and the capability parity sequence
+- **[Async task backend](/design/async-task-backend/)** — Postgres-backed worker plan for compile, consolidation, entity, audit, and export jobs
 - **[Design principles](/design/design-principles/)** — engineering principles mapped from neuroscience
 - **[Provider SPI](/plugins/provider-spi/)** — build your own storage or LLM adapter
 

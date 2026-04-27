@@ -17,6 +17,7 @@ name: Publish postgres-age-pgvector image to GHCR
 on:
   push:
     paths:
+      - ".github/workflows/publish-postgres-age-pgvector-image.yml"
       - "docker/postgres-age-pgvector/Dockerfile"
     branches:
       - main
@@ -46,6 +47,11 @@ jobs:
             echo "version_tag=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -63,6 +69,7 @@ jobs:
           context: .
           file: docker/postgres-age-pgvector/Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/${{ steps.meta.outputs.repository_lc }}/postgres-age-pgvector:latest
             ${{ steps.meta.outputs.version_tag && format('ghcr.io/{0}/postgres-age-pgvector:{1}', steps.meta.outputs.repository_lc, steps.meta.outputs.version_tag) || '' }}

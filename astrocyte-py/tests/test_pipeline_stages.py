@@ -5,8 +5,13 @@ import pytest
 from astrocyte.pipeline.embedding import _pseudo_embedding, generate_embeddings
 from astrocyte.pipeline.entity_extraction import _parse_entities, extract_entities
 from astrocyte.pipeline.fusion import ScoredItem
-from astrocyte.pipeline.reflect import _build_system_prompt, _format_memories, synthesize
-from astrocyte.pipeline.reranking import basic_rerank
+from astrocyte.pipeline.reflect import _auto_prompt_variant, _build_system_prompt, _format_memories, synthesize
+from astrocyte.pipeline.reranking import (
+    apply_context_diversity,
+    basic_rerank,
+    cross_encoder_like_rerank,
+    llm_pairwise_rerank,
+)
 from astrocyte.pipeline.retrieval import parallel_retrieve
 from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
 from astrocyte.types import Dispositions, MemoryHit, VectorItem
@@ -149,6 +154,14 @@ class TestSynthesize:
         result = await synthesize("anything", [], llm)
         assert "don't have" in result.answer.lower()
 
+    async def test_synthesize_includes_query_guidance(self):
+        llm = MockLLMProvider(default_response="answer")
+        hits = [MemoryHit(text="Melanie went camping and painted sunsets", score=0.9)]
+        await synthesize("What activities has Melanie done?", hits, llm)
+        assert llm.last_user_message is not None
+        assert "<query_guidance>" in llm.last_user_message
+        assert "Aggregate/list question" in llm.last_user_message
+
 
 class TestPromptRegistry:
     """ReflectSpec.prompt selects from PROMPT_REGISTRY (Phase 2, Step 9)."""
@@ -162,11 +175,26 @@ class TestPromptRegistry:
         prompt = _build_system_prompt(None, prompt_variant="temporal_aware")
         assert "chronolog" in prompt.lower() or "ordering" in prompt.lower()
         assert "timestamp" in prompt.lower() or "date" in prompt.lower()
+        assert "relative" in prompt.lower()
+        assert "last week" in prompt.lower()
 
     def test_evidence_strict_variant_emphasizes_citation(self):
         prompt = _build_system_prompt(None, prompt_variant="evidence_strict")
         assert "memory" in prompt.lower()
         assert "cite" in prompt.lower() or "insufficient evidence" in prompt.lower()
+
+    def test_evidence_inference_variant_allows_grounded_likely_answers(self):
+        prompt = _build_system_prompt(None, prompt_variant="evidence_inference")
+        assert "inference" in prompt.lower()
+        assert "likely yes" in prompt.lower()
+        assert "likely no" in prompt.lower()
+        assert "provided memories" in prompt.lower()
+
+    def test_grounded_synthesis_variant_scans_all_memories(self):
+        prompt = _build_system_prompt(None, prompt_variant="grounded_synthesis")
+        assert "scan all provided memories" in prompt.lower()
+        assert "list questions" in prompt.lower()
+        assert "multi-hop" in prompt.lower()
 
     def test_unknown_variant_falls_back_to_default(self):
         default = _build_system_prompt(None)
@@ -180,6 +208,20 @@ class TestPromptRegistry:
         )
         assert "cite" in prompt.lower() or "insufficient" in prompt.lower()
         assert "skeptical" in prompt.lower()
+
+
+class TestAutoPromptVariant:
+    def test_would_likely_query_uses_inference_prompt(self):
+        assert _auto_prompt_variant("Would Caroline likely enjoy a national park?") == "evidence_inference"
+
+    def test_temporal_query_uses_temporal_prompt(self):
+        assert _auto_prompt_variant("When did Melanie run a charity race?") == "temporal_aware"
+
+    def test_unknown_query_has_no_prompt_override(self):
+        assert _auto_prompt_variant("Tell me something useful") is None
+
+    def test_aggregate_query_uses_grounded_synthesis_prompt(self):
+        assert _auto_prompt_variant("What activities has Melanie done with her family?") == "grounded_synthesis"
 
 
 class TestFormatMemoriesPromote:
@@ -273,6 +315,57 @@ class TestBasicRerank:
         items = [ScoredItem(id="a", text="hello", score=0.5)]
         result = basic_rerank(items, "")
         assert len(result) == 1
+
+
+class TestCrossEncoderLikeRerank:
+    def test_prefers_joint_query_match_over_raw_score_noise(self):
+        items = [
+            ScoredItem(id="wrong", text="Melanie enjoys art museums.", score=0.62),
+            ScoredItem(id="right", text="Caroline wants to become a counselor.", score=0.50),
+        ]
+
+        reranked = cross_encoder_like_rerank(items, "Would Caroline likely pursue counseling?")
+
+        assert reranked[0].id == "right"
+
+    def test_boosts_observations_and_compiled_wiki_for_reflect_context(self):
+        items = [
+            ScoredItem(id="raw", text="Alice mentioned hiking once.", score=0.50),
+            ScoredItem(
+                id="obs",
+                text="Alice repeatedly enjoys hiking.",
+                score=0.45,
+                fact_type="observation",
+                metadata={"_obs_proof_count": 3},
+            ),
+            ScoredItem(id="wiki", text="Alice prefers outdoor activities.", score=0.40, fact_type="wiki"),
+        ]
+
+        reranked = cross_encoder_like_rerank(items, "What does Alice prefer?")
+
+        assert {item.id for item in reranked[:2]} == {"wiki", "obs"}
+
+    async def test_llm_pairwise_uses_json_ranked_ids(self):
+        items = [
+            ScoredItem(id="a", text="Alice likes running.", score=0.9),
+            ScoredItem(id="b", text="Caroline wants counseling.", score=0.4),
+        ]
+        llm = MockLLMProvider(default_response='{"ranked_ids": ["b", "a"]}')
+
+        reranked = await llm_pairwise_rerank(items, "Would Caroline pursue counseling?", llm)
+
+        assert [item.id for item in reranked[:2]] == ["b", "a"]
+
+    def test_context_diversity_penalizes_duplicate_sessions(self):
+        items = [
+            ScoredItem(id="a", text="Alice likes running.", score=0.9, metadata={"session_id": "s1"}),
+            ScoredItem(id="b", text="Alice likes races.", score=0.88, metadata={"session_id": "s1"}),
+            ScoredItem(id="c", text="Alice likes trails.", score=0.82, metadata={"session_id": "s2"}),
+        ]
+
+        reranked = apply_context_diversity(items, "What does Alice like?")
+
+        assert reranked[1].id == "c"
 
 
 class TestBasicRerankMipOverride:

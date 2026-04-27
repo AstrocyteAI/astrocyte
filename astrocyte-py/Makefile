@@ -9,6 +9,20 @@ LONGMEMEVAL_DIR := $(DATASETS_DIR)/longmemeval
 RESULTS_DIR   := benchmark-results
 
 # ---------------------------------------------------------------------------
+# Benchmark database (postgres-age-pgvector)
+# ---------------------------------------------------------------------------
+BENCH_PG_CONTAINER := astrocyte-bench-pg
+BENCH_PG_PORT      := 5433
+BENCH_PG_IMAGE     := ghcr.io/astrocyteai/astrocyte/postgres-age-pgvector:latest
+BENCH_PG_LOCAL_IMG := astrocyte/postgres-age-pgvector:local
+BENCH_PG_USER      := astrocyte
+BENCH_PG_PASSWORD  := astrocyte
+BENCH_PG_DB        := astrocyte_bench
+BENCH_EMBEDDING_DIMENSIONS := 1536
+BENCH_DATABASE_URL := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0.1:$(BENCH_PG_PORT)/$(BENCH_PG_DB)
+BENCH_UV_RUN := uv run --extra dev
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -46,19 +60,72 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench bench-full bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
+.PHONY: bench-db-start bench-db-stop bench-db-reset bench bench-full bench-gate bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
+
+# Start the benchmark Postgres container (postgres-age-pgvector).
+# Pulls from GHCR first; falls back to building locally from the Dockerfile.
+# No-ops if the container is already running. Restarts if stopped.
+bench-db-start:
+	@set -e; \
+	if docker ps --format '{{.Names}}' | grep -q '^$(BENCH_PG_CONTAINER)$$'; then \
+		echo "  [bench-db] $(BENCH_PG_CONTAINER) already running"; \
+	elif docker ps -a --format '{{.Names}}' | grep -q '^$(BENCH_PG_CONTAINER)$$'; then \
+		echo "  [bench-db] Restarting stopped container $(BENCH_PG_CONTAINER)"; \
+		docker start $(BENCH_PG_CONTAINER); \
+		until docker exec $(BENCH_PG_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
+		echo "  [bench-db] Postgres ready"; \
+	else \
+		echo "  [bench-db] Pulling $(BENCH_PG_IMAGE)..."; \
+		if docker pull $(BENCH_PG_IMAGE); then \
+			BENCH_IMG=$(BENCH_PG_IMAGE); \
+		else \
+			echo "  [bench-db] Pull failed — building from ../docker/postgres-age-pgvector/Dockerfile"; \
+			docker build -t $(BENCH_PG_LOCAL_IMG) -f ../docker/postgres-age-pgvector/Dockerfile ..; \
+			BENCH_IMG=$(BENCH_PG_LOCAL_IMG); \
+		fi; \
+		docker run -d --name $(BENCH_PG_CONTAINER) \
+			-e POSTGRES_USER=$(BENCH_PG_USER) \
+			-e POSTGRES_PASSWORD=$(BENCH_PG_PASSWORD) \
+			-e POSTGRES_DB=$(BENCH_PG_DB) \
+			-p $(BENCH_PG_PORT):5432 \
+			$$BENCH_IMG; \
+		echo "  [bench-db] Waiting for Postgres to be ready..."; \
+		until docker exec $(BENCH_PG_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
+		echo "  [bench-db] Postgres ready at localhost:$(BENCH_PG_PORT)"; \
+	fi; \
+	echo "  [bench-db] Applying pgvector HNSW migrations (vector($(BENCH_EMBEDDING_DIMENSIONS)))"; \
+	ASTROCYTE_EMBEDDING_DIMENSIONS=$(BENCH_EMBEDDING_DIMENSIONS) \
+		DATABASE_URL="$(BENCH_DATABASE_URL)" \
+		../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh; \
+	actual=$$(PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL)" -Atc "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'astrocyte_vectors'::regclass AND a.attname = 'embedding'"); \
+	if [ "$$actual" != "vector($(BENCH_EMBEDDING_DIMENSIONS))" ]; then \
+		echo "  [bench-db] ERROR: astrocyte_vectors.embedding is $$actual, expected vector($(BENCH_EMBEDDING_DIMENSIONS))."; \
+		echo "  [bench-db] Run 'make bench-db-reset' once to recreate the disposable benchmark database."; \
+		exit 1; \
+	fi
+
+# Stop and remove the benchmark Postgres container.
+bench-db-stop:
+	@docker stop $(BENCH_PG_CONTAINER) 2>/dev/null && docker rm $(BENCH_PG_CONTAINER) 2>/dev/null && echo "  [bench-db] $(BENCH_PG_CONTAINER) stopped" || echo "  [bench-db] $(BENCH_PG_CONTAINER) not running"
+
+# Recreate the disposable benchmark database, useful after embedding dimension changes.
+bench-db-reset: bench-db-stop bench-db-start
 
 # Full LoCoMo benchmark (requires OPENAI_API_KEY, ~30-60 min)
-bench-locomo: fetch-locomo
-	uv run python scripts/run_benchmarks.py \
+# Pass RESUME=1 to continue an interrupted run: make bench-locomo RESUME=1
+bench-locomo: fetch-locomo bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
-		--canonical-judge
+		--canonical-judge \
+		$(if $(RESUME),--resume,)
 
 # Quick LoCoMo subset (50 questions, ~2-3 min)
-bench-locomo-quick: fetch-locomo
-	uv run python scripts/run_benchmarks.py \
+bench-locomo-quick: fetch-locomo bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
@@ -66,16 +133,18 @@ bench-locomo-quick: fetch-locomo
 		--canonical-judge
 
 # Full LongMemEval benchmark (requires OPENAI_API_KEY, ~2-4 hrs for all 500 questions)
-bench-longmemeval: fetch-longmemeval
-	uv run python scripts/run_benchmarks.py \
+# Pass RESUME=1 to continue an interrupted run: make bench-longmemeval RESUME=1
+bench-longmemeval: fetch-longmemeval bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
-		--canonical-judge
+		--canonical-judge \
+		$(if $(RESUME),--resume,)
 
 # Quick LongMemEval subset (100 questions, stratified across all categories, ~30-60 min)
-bench-longmemeval-quick: fetch-longmemeval
-	uv run python scripts/run_benchmarks.py \
+bench-longmemeval-quick: fetch-longmemeval bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
@@ -83,24 +152,24 @@ bench-longmemeval-quick: fetch-longmemeval
 		--canonical-judge
 
 # LoCoMo via LiteLLM adapter (requires OPENAI_API_KEY + astrocyte-llm-litellm installed)
-bench-locomo-litellm: fetch-locomo
-	uv run python scripts/run_benchmarks.py \
+bench-locomo-litellm: fetch-locomo bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config-litellm.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data
 
 # Quick LoCoMo via LiteLLM (50 questions)
-bench-locomo-litellm-quick: fetch-locomo
-	uv run python scripts/run_benchmarks.py \
+bench-locomo-litellm-quick: fetch-locomo bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config-litellm.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
 		--max-questions 50
 
 # Side-by-side: built-in OpenAI vs LiteLLM adapter (50 questions each)
-bench-compare: fetch-locomo
+bench-compare: fetch-locomo bench-db-start
 	@echo "=== Built-in OpenAI provider ==="
-	uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
@@ -108,7 +177,7 @@ bench-compare: fetch-locomo
 		--output-dir $(RESULTS_DIR)/openai
 	@echo ""
 	@echo "=== LiteLLM adapter ==="
-	uv run python scripts/run_benchmarks.py \
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config-litellm.yaml \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
@@ -118,14 +187,14 @@ bench-compare: fetch-locomo
 	@echo "Results: $(RESULTS_DIR)/openai/latest.json vs $(RESULTS_DIR)/litellm/latest.json"
 
 # Built-in eval suites (basic + accuracy)
-bench-builtin:
-	uv run python scripts/run_benchmarks.py \
+bench-builtin: bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks builtin
 
 # All benchmarks
-bench: fetch-datasets
-	uv run python scripts/run_benchmarks.py \
+bench: fetch-datasets bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks builtin longmemeval locomo \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
@@ -134,14 +203,21 @@ bench: fetch-datasets
 # Full canonical run — LME + LoCoMo in parallel, LLM-judge, competitor-comparable numbers.
 # Requires API key (use: doppler run -- make bench-full)
 # Pass RESUME=1 to continue an interrupted run: doppler run -- make bench-full RESUME=1
-bench-full: fetch-datasets
-	uv run python scripts/run_benchmarks.py \
+bench-full: fetch-datasets bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
 		--config benchmarks/config.yaml \
 		--benchmarks longmemeval locomo \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--locomo-path $(LOCOMO_DIR)/data \
 		--canonical-judge \
 		$(if $(RESUME),--resume,)
+
+# Release gate for Hindsight-informed capability claims.
+# Expects benchmark-results/latest.json from run_benchmarks.py.
+bench-gate:
+	uv run python scripts/check_benchmark_gates.py \
+		--gates benchmarks/gates-hindsight-informed.json \
+		--results $(RESULTS_DIR)/latest.json
 
 # Smoke test — in-memory providers, no API key needed.
 # Uses the real LoCoMo dataset (all 200q) so the regression gate in CI

@@ -26,11 +26,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
+import os
 import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+# psycopg pool emits WARNING-level "rolling back returned connection" messages
+# when the pgvector adapter returns connections without explicitly ending their
+# read transactions. The pool cleans up correctly; these messages are noise.
+logging.getLogger("psycopg.pool").setLevel(logging.ERROR)
 
 
 @dataclass
@@ -68,6 +75,8 @@ def _build_test_brain(*, enable_multi_query_expansion: bool = False):
         document_store=InMemoryDocumentStore(),
         llm_provider=MockLLMProvider(),
         enable_multi_query_expansion=enable_multi_query_expansion,
+        final_rerank_mode=os.environ.get("ASTROCYTE_BENCHMARK_RERANK_MODE", "heuristic"),
+        final_rerank_keep_n=8,
     )
     brain.set_pipeline(pipeline)
     return brain
@@ -82,6 +91,7 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
     from astrocyte._astrocyte import Astrocyte
     from astrocyte._discovery import resolve_provider
     from astrocyte.config import load_config
+    from astrocyte.pipeline.entity_resolution import EntityResolver
     from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 
     config = load_config(config_path)
@@ -100,6 +110,11 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
     if config.graph_store:
         gs_cls = resolve_provider(config.graph_store, "graph_stores")
         graph_store = gs_cls(**(config.graph_store_config or {}))
+
+    wiki_store = None
+    if config.wiki_store:
+        ws_cls = resolve_provider(config.wiki_store, "wiki_stores")
+        wiki_store = ws_cls(**(config.wiki_store_config or {}))
 
     document_store = None
     if config.document_store:
@@ -123,15 +138,120 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
 
         llm_provider = MockLLMProvider()
 
+    entity_resolver = None
+    if config.entity_resolution.enabled:
+        if graph_store is None:
+            raise ValueError("entity_resolution.enabled requires graph_store in benchmark config")
+        entity_resolver = EntityResolver(
+            similarity_threshold=config.entity_resolution.similarity_threshold,
+            confirmation_threshold=config.entity_resolution.confirmation_threshold,
+            max_candidates_per_entity=config.entity_resolution.max_candidates_per_entity,
+        )
+
     pipeline = PipelineOrchestrator(
         vector_store=vector_store,
         llm_provider=llm_provider,
         graph_store=graph_store,
         document_store=document_store,
+        wiki_store=wiki_store,
+        entity_resolver=entity_resolver,
         enable_multi_query_expansion=enable_multi_query_expansion,
+        final_rerank_mode=os.environ.get("ASTROCYTE_BENCHMARK_RERANK_MODE", "llm_pairwise"),
+        final_rerank_keep_n=8,
     )
     brain.set_pipeline(pipeline)
+    if wiki_store is not None:
+        brain.set_wiki_store(wiki_store)
+        if config.wiki_compile.auto_start:
+            from astrocyte.pipeline.compile import CompileEngine
+            from astrocyte.pipeline.compile_trigger import CompileQueue, CompileTriggerConfig
+
+            brain.set_compile_queue(
+                CompileQueue(
+                    CompileEngine(vector_store, llm_provider, wiki_store),
+                    CompileTriggerConfig(
+                        size_threshold=config.wiki_compile.size_threshold,
+                        staleness_days=config.wiki_compile.staleness_days,
+                        staleness_min_memories=config.wiki_compile.staleness_min_memories,
+                    ),
+                    max_queue_size=config.wiki_compile.max_queue_size,
+                )
+            )
     return brain
+
+
+async def _start_benchmark_task_worker(brain):
+    """Start the configured PgQueuer worker for benchmark preprocessing tasks."""
+
+    config = brain.config.async_tasks
+    if not config.enabled:
+        return None
+    from astrocyte.pipeline.pgqueuer_tasks import PgQueuerMemoryTaskQueue
+
+    if config.backend == "pgqueuer_in_memory":
+        connection = None
+
+        queue = PgQueuerMemoryTaskQueue.in_memory()
+    elif config.backend == "pgqueuer":
+        import psycopg
+
+        dsn = config.dsn or os.environ.get("ASTROCYTE_TASKS_DSN") or os.environ.get("DATABASE_URL")
+        if not dsn:
+            raise ValueError("async_tasks.backend=pgqueuer requires async_tasks.dsn, ASTROCYTE_TASKS_DSN, or DATABASE_URL")
+        connection = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
+        queue = PgQueuerMemoryTaskQueue.from_psycopg_connection(connection)
+    else:
+        raise ValueError(f"Unsupported benchmark async_tasks backend: {config.backend}")
+
+    if config.install_on_start:
+        await queue.install()
+
+    from astrocyte.pipeline.compile import CompileEngine
+    from astrocyte.pipeline.lint import LintEngine
+    from astrocyte.pipeline.tasks import MemoryTaskDispatcher, TaskHandlerContext
+
+    pipeline = getattr(brain, "_pipeline", None)
+    wiki_store = getattr(brain, "_wiki_store", None)
+    dispatcher = MemoryTaskDispatcher(
+        TaskHandlerContext(
+            vector_store=pipeline.vector_store,
+            llm_provider=pipeline.llm_provider,
+            wiki_store=wiki_store,
+            graph_store=getattr(pipeline, "graph_store", None),
+            compile_engine=CompileEngine(pipeline.vector_store, pipeline.llm_provider, wiki_store) if wiki_store else None,
+            lint_engine=LintEngine(pipeline.vector_store, wiki_store, pipeline.llm_provider) if wiki_store else None,
+        )
+    )
+    queue.register_dispatcher(dispatcher)
+
+    worker_task = None
+    if config.auto_start_worker:
+        worker_task = asyncio.create_task(
+            queue.run_continuous(batch_size=config.batch_size),
+            name="astrocyte.benchmark_pgqueuer_worker",
+        )
+    setattr(brain, "_benchmark_task_queue", queue)
+    return {"queue": queue, "connection": connection, "worker_task": worker_task, "brain": brain}
+
+
+async def _stop_benchmark_task_worker(runtime: dict | None) -> None:
+    if runtime is None:
+        return
+    brain = runtime.get("brain")
+    if brain is not None:
+        setattr(brain, "_benchmark_task_queue", None)
+    queue = runtime["queue"]
+    await queue.shutdown()
+    worker_task = runtime.get("worker_task")
+    if worker_task is not None:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+    connection = runtime.get("connection")
+    if connection is not None:
+        await connection.close()
 
 
 def _serialize_result(
@@ -161,6 +281,40 @@ def _serialize_result(
     ``"mem0"`` / ``"zep"`` / etc. so a head-to-head matrix can filter
     and group cleanly without re-parsing filenames.
     """
+    per_question = list(getattr(result, "per_question", []) or [])
+    failed_questions: list[dict] = []
+    failed_by_category: dict[str, int] = {}
+    for record in per_question:
+        if record.get("correct") is not False:
+            continue
+        category = str(record.get("category", "unknown"))
+        failed_by_category[category] = failed_by_category.get(category, 0) + 1
+        failed_questions.append(
+            {
+                key: record[key]
+                for key in (
+                    "question",
+                    "expected_answer",
+                    "category",
+                    "evidence_ids",
+                    "recall_hits",
+                    "recall_top_hits",
+                    "reflect_sources",
+                    "reflect_answer_preview",
+                    "canonical_f1",
+                    "_precision",
+                    "_reciprocal_rank",
+                    "_latency_ms",
+                    "_ndcg",
+                    "_relevant_found",
+                    "_evidence_id_hit",
+                )
+                if key in record
+            }
+        )
+
+    from astrocyte.eval.failure_analysis import analyze_failures, stable_question_slice
+
     data = {
         "benchmark": benchmark_name,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -180,11 +334,20 @@ def _serialize_result(
             "recall_latency_p50_ms": result.eval_result.metrics.recall_latency_p50_ms,
             "recall_latency_p95_ms": result.eval_result.metrics.recall_latency_p95_ms,
             "reflect_accuracy": result.eval_result.metrics.reflect_accuracy,
+            "total_tokens_used": result.eval_result.metrics.total_tokens_used,
             "total_duration_seconds": result.eval_result.metrics.total_duration_seconds,
         },
         "provider": result.eval_result.provider,
         "provider_tier": result.eval_result.provider_tier,
+        "per_question": per_question,
+        "failure_report": {
+            "total_failed": len(failed_questions),
+            "by_category": dict(sorted(failed_by_category.items())),
+            "failed_questions": failed_questions,
+        },
     }
+    data["failure_insights"] = analyze_failures(data)
+    data["stable_question_slice"] = stable_question_slice(data, size=200)
     # Canonical F1 means — only populated on LoCoMo canonical-judge runs
     # (attribute exists on LoCoMoResult; None under legacy scorer).
     # Exposed as the primary cross-competitor metric, since the paper
@@ -223,6 +386,9 @@ def _print_result(result, benchmark_name: str) -> None:
     print(f"    Recall p50:      {m.recall_latency_p50_ms:.1f} ms")
     print(f"    Recall p95:      {m.recall_latency_p95_ms:.1f} ms")
     print()
+    print("  Cost:")
+    print(f"    Tokens used:     {m.total_tokens_used}")
+    print()
     print(f"  Total duration:    {m.total_duration_seconds:.1f}s")
     print(f"{'=' * 60}")
 
@@ -233,6 +399,12 @@ async def run_longmemeval(
     max_sessions: int | None = None,
     checkpoint_dir: Path | None = None,
     resume: bool = False,
+    retain_concurrency: int = 10,
+    retain_rpm: int = 500,
+    retain_tpm: int = 200_000,
+    eval_concurrency: int = 5,
+    eval_rpm: int = 500,
+    eval_tpm: int = 200_000,
 ) -> BenchmarkRunOutcome:
     """Run LongMemEval benchmark."""
     from astrocyte.eval.benchmarks.longmemeval import (
@@ -270,6 +442,12 @@ async def run_longmemeval(
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
             checkpoint=cp,
+            retain_concurrency=retain_concurrency,
+            retain_rpm=retain_rpm,
+            retain_tpm=retain_tpm,
+            eval_concurrency=eval_concurrency,
+            eval_rpm=eval_rpm,
+            eval_tpm=eval_tpm,
         )
     else:
         if data_path:
@@ -318,6 +496,12 @@ async def run_longmemeval(
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
             checkpoint=cp,
+            retain_concurrency=retain_concurrency,
+            retain_rpm=retain_rpm,
+            retain_tpm=retain_tpm,
+            eval_concurrency=eval_concurrency,
+            eval_rpm=eval_rpm,
+            eval_tpm=eval_tpm,
         )
 
     _print_result(result, "LongMemEval")
@@ -387,6 +571,12 @@ async def run_locomo(
     *, use_canonical_judge: bool = False, system: str = "astrocyte",
     checkpoint_dir: Path | None = None,
     resume: bool = False,
+    retain_concurrency: int = 10,
+    retain_rpm: int = 500,
+    retain_tpm: int = 200_000,
+    eval_concurrency: int = 5,
+    eval_rpm: int = 500,
+    eval_tpm: int = 200_000,
 ) -> BenchmarkRunOutcome:
     """Run LoCoMo benchmark."""
     from astrocyte.eval.benchmarks.locomo import (
@@ -427,6 +617,12 @@ async def run_locomo(
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
             checkpoint=cp,
+            retain_concurrency=retain_concurrency,
+            retain_rpm=retain_rpm,
+            retain_tpm=retain_tpm,
+            eval_concurrency=eval_concurrency,
+            eval_rpm=eval_rpm,
+            eval_tpm=eval_tpm,
         )
     else:
         if data_path:
@@ -536,6 +732,12 @@ async def run_locomo(
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
             checkpoint=cp,
+            retain_concurrency=retain_concurrency,
+            retain_rpm=retain_rpm,
+            retain_tpm=retain_tpm,
+            eval_concurrency=eval_concurrency,
+            eval_rpm=eval_rpm,
+            eval_tpm=eval_tpm,
         )
 
     if llm_judge is not None:
@@ -682,6 +884,42 @@ async def main() -> None:
             "No-op if no checkpoint exists (starts fresh)."
         ),
     )
+    parser.add_argument(
+        "--eval-concurrency",
+        type=int,
+        default=5,
+        help="Max concurrent eval questions (default: 5). Tune down if hitting 429s.",
+    )
+    parser.add_argument(
+        "--eval-rpm",
+        type=int,
+        default=500,
+        help="Requests-per-minute budget for the eval rate limiter (default: 500).",
+    )
+    parser.add_argument(
+        "--eval-tpm",
+        type=int,
+        default=200_000,
+        help="Tokens-per-minute budget for the eval rate limiter (default: 200000).",
+    )
+    parser.add_argument(
+        "--retain-concurrency",
+        type=int,
+        default=10,
+        help="Max concurrent retain calls during LME retain phase (default: 10).",
+    )
+    parser.add_argument(
+        "--retain-rpm",
+        type=int,
+        default=500,
+        help="Requests-per-minute budget for the retain rate limiter (default: 500).",
+    )
+    parser.add_argument(
+        "--retain-tpm",
+        type=int,
+        default=200_000,
+        help="Tokens-per-minute budget for the retain rate limiter (default: 200000).",
+    )
     args = parser.parse_args()
 
     # Build brain
@@ -691,6 +929,9 @@ async def main() -> None:
         brain = _build_test_brain(enable_multi_query_expansion=args.multi_query)
     else:
         brain = _build_pipeline_brain(args.config, enable_multi_query_expansion=args.multi_query)
+
+    benchmark_task_worker = await _start_benchmark_task_worker(brain)
+    await brain.start_background_tasks()
 
     # Run benchmarks
     all_results: dict = {}
@@ -716,12 +957,24 @@ async def main() -> None:
                 max_sessions=args.max_sessions,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                retain_concurrency=args.retain_concurrency,
+                retain_rpm=args.retain_rpm,
+                retain_tpm=args.retain_tpm,
+                eval_concurrency=args.eval_concurrency,
+                eval_rpm=args.eval_rpm,
+                eval_tpm=args.eval_tpm,
             ),
             run_locomo(
                 brain, args.locomo_path, args.max_questions,
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                retain_concurrency=args.retain_concurrency,
+                retain_rpm=args.retain_rpm,
+                retain_tpm=args.retain_tpm,
+                eval_concurrency=args.eval_concurrency,
+                eval_rpm=args.eval_rpm,
+                eval_tpm=args.eval_tpm,
             ),
         )
         if lme_outcome.result:
@@ -738,6 +991,12 @@ async def main() -> None:
                 max_sessions=args.max_sessions,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                retain_concurrency=args.retain_concurrency,
+                retain_rpm=args.retain_rpm,
+                retain_tpm=args.retain_tpm,
+                eval_concurrency=args.eval_concurrency,
+                eval_rpm=args.eval_rpm,
+                eval_tpm=args.eval_tpm,
             )
             if outcome.result:
                 all_results["longmemeval"] = outcome.result
@@ -749,6 +1008,12 @@ async def main() -> None:
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
+                retain_concurrency=args.retain_concurrency,
+                retain_rpm=args.retain_rpm,
+                retain_tpm=args.retain_tpm,
+                eval_concurrency=args.eval_concurrency,
+                eval_rpm=args.eval_rpm,
+                eval_tpm=args.eval_tpm,
             )
             if outcome.result:
                 all_results["locomo"] = outcome.result
@@ -786,6 +1051,9 @@ async def main() -> None:
     latest = output_dir / "latest.json"
     with open(latest, "w") as f:
         json.dump(all_results, f, indent=2, default=str)
+
+    await brain.stop_background_tasks()
+    await _stop_benchmark_task_worker(benchmark_task_worker)
 
     # Exit non-zero if a real dataset benchmark had 0% accuracy (likely broken).
     # Only check benchmarks that actually loaded real data (synthetic tests may

@@ -1,6 +1,6 @@
 # astrocyte-pgvector
 
-**PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)** implementation of the Astrocyte **`VectorStore`** SPI ([`provider-spi.md`](../../docs/_plugins/provider-spi.md)).
+**PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)** implementation of the Astrocyte **`VectorStore`** and **`WikiStore`** SPIs ([`provider-spi.md`](../../docs/_plugins/provider-spi.md)).
 
 ## Install
 
@@ -12,7 +12,10 @@ uv sync
 # or: pip install -e ../../astrocyte-py && pip install -e .
 ```
 
-Entry point name: **`pgvector`** (group `astrocyte.vector_stores`).
+Entry point names:
+
+- **`pgvector`** (group `astrocyte.vector_stores`) for raw/compiled memory vectors.
+- **`pgvector`** (group `astrocyte.wiki_stores`) for durable wiki pages/revisions/provenance.
 
 ## PostgreSQL with Docker
 
@@ -50,9 +53,11 @@ Requirements: **PostgreSQL 15+** (for `CREATE INDEX CONCURRENTLY IF NOT EXISTS`)
 
 After migrations are applied, set **`bootstrap_schema: false`** in `vector_store_config` so the app does not run `CREATE TABLE` / indexes at runtime (see configuration table below). For a **single command** that starts Postgres, runs migrations, then starts the stack with runbook config, use **[`runbook-up.sh`](../../astrocyte-services-py/scripts/runbook-up.sh)** (see **[Runbook](../../astrocyte-services-py/README.md#runbook)**).
 
-**Embedding width:** [`migrations/002_astrocyte_vectors.sql`](migrations/002_astrocyte_vectors.sql) defines `vector(128)`. That must match **`embedding_dimensions`** in config. For another width, add a new migration (or edit before first deploy) and keep the Python config aligned.
+**Embedding width:** [`migrations/002_astrocyte_vectors.sql`](migrations/002_astrocyte_vectors.sql) creates `vector(${ASTROCYTE_EMBEDDING_DIMENSIONS:-128})`. That must match **`embedding_dimensions`** in config. For OpenAI `text-embedding-3-small`, run migrations with `ASTROCYTE_EMBEDDING_DIMENSIONS=1536`.
 
 **Custom `table_name`:** The shipped SQL targets **`astrocyte_vectors`**. If you use another table name, copy and adjust the migration files accordingly.
+
+The later migrations add the Hindsight-comparable Postgres substrate around vectors: bank metadata and access grants, lifecycle columns (`retained_at`, `forgotten_at`), durable wiki pages/revisions/provenance, canonical entity/link tables, and normalized temporal facts.
 
 ## Configuration
 
@@ -79,6 +84,10 @@ llm_provider: mock
 vector_store_config:
   dsn: postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte
   embedding_dimensions: 128
+  bootstrap_schema: false
+wiki_store: pgvector
+wiki_store_config:
+  dsn: postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte
   bootstrap_schema: false
 ```
 

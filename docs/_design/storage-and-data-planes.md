@@ -22,6 +22,22 @@ This page is a **routing hub**: it explains how Astrocyte splits **operational r
 
 **Read next:** [Provider SPI](/plugins/provider-spi/) §1, [Built-in pipeline](./built-in-pipeline.md).
 
+### 1.1 Reference Postgres memory substrate
+
+The default self-hosted Astrocyte stack uses one PostgreSQL deployment for several related but distinct roles:
+
+| Role | Storage surface | Why |
+|---|---|---|
+| Durable memory records | SQL tables behind `astrocyte-pgvector` | Bank-scoped retained text, metadata, tags, timestamps, and lifecycle state. |
+| Dense retrieval | pgvector indexes | Fast semantic search over raw memories and compiled wiki pages. |
+| Durable wiki pages | SQL wiki tables | Source of truth for page identity, current revision, revision history, provenance, links, and lint state. |
+| Graph traversal | Apache AGE projection | Bounded page/entity/memory expansion for graph-enhanced recall. |
+| Async work | SQL task table | Durable background jobs for compile, projection repair, lint, audit, and export retries. |
+
+These are not interchangeable. SQL wiki tables own the canonical page; pgvector stores a searchable projection of the current page revision; AGE stores a traversable projection of page/entity/memory relationships. If a projection lags, workers can rebuild it from SQL truth.
+
+This intentionally resembles Hindsight's PostgreSQL-centered operating model. The main difference is that Hindsight appears to implement graph behavior through relational link tables and bounded SQL expansion, while Astrocyte's reference stack uses AGE to satisfy the `GraphStore` SPI inside the same Postgres operational envelope.
+
 ---
 
 ## 2. Durable export (warehouse / lakehouse / open tables)

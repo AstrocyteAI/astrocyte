@@ -4,16 +4,16 @@ Optional Python packages beside the core [`astrocyte-py`](../astrocyte-py/) libr
 
 | Package | Role |
 |---------|------|
-| [`astrocyte-gateway-py/`](astrocyte-gateway-py/README.md) | Standalone **HTTP gateway** (`astrocyte.yaml` + optional `mip.yaml`). **CLI:** `astrocyte-gateway-py`. **Python module:** `astrocyte_gateway`. Optional **`[pgvector]`** extra installs [`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md) for durable vectors. |
+| [`astrocyte-gateway-py/`](astrocyte-gateway-py/README.md) | Standalone **HTTP gateway** (`astrocyte.yaml` + optional `mip.yaml`). **CLI:** `astrocyte-gateway-py`. **Python module:** `astrocyte_gateway`. Optional **`[pgvector]`** and **`[age]`** extras install [`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md) and `astrocyte-age` for the reference Postgres memory stack. |
 | [`adapters-storage-py/astrocyte-pgvector/`](../adapters-storage-py/astrocyte-pgvector/README.md) | **`pgvector`** [`VectorStore`](../docs/_plugins/provider-spi.md) for PostgreSQL + [pgvector](https://github.com/pgvector/pgvector). **Schema:** SQL under [`migrations/`](../adapters-storage-py/astrocyte-pgvector/migrations/) + [`migrate.sh`](../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh) (`psql`, no Python migrator). |
 
-**Docker:** [`docker-compose.yml`](docker-compose.yml) in this directory runs **Postgres (pgvector) + `astrocyte-gateway-py`**. Copy **[`.env.example`](.env.example)** to `.env` to override Postgres credentials, ports, and REST settings. Run from here: `docker compose up --build`, or from the repo root: `docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build`. Details: [`astrocyte-gateway-py/README.md`](astrocyte-gateway-py/README.md).
+**Docker:** [`docker-compose.yml`](docker-compose.yml) in this directory runs **Postgres with pgvector + Apache AGE + `astrocyte-gateway-py`**. Copy **[`.env.example`](.env.example)** to `.env` to override Postgres credentials, ports, and REST settings. Run from here: `docker compose up --build`, or from the repo root: `docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build`. Details: [`astrocyte-gateway-py/README.md`](astrocyte-gateway-py/README.md).
 
 ---
 
 ## Runbook
 
-Use this for a **production-shaped** local or demo deploy: SQL migrations (including **HNSW**), then **`astrocyte-gateway-py`** with **`bootstrap_schema: false`** ([`config.runbook.example.yaml`](config.runbook.example.yaml)).
+Use this for a **production-shaped** local or demo deploy: SQL migrations (including **HNSW**), then **`astrocyte-gateway-py`** with **`bootstrap_schema: false`** ([`config.runbook.example.yaml`](config.runbook.example.yaml)). This is the default Hindsight-informed reference stack: one PostgreSQL instance provides dense vectors (pgvector), durable wiki pages/revisions/provenance, entity graph traversal (Apache AGE with SQL-owned entity/link truth), normalized temporal facts, bank/access metadata, and PgQueuer-backed async memory tasks.
 
 ### One command
 

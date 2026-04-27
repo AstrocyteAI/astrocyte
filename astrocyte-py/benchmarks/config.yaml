@@ -1,10 +1,11 @@
 # Benchmark configuration for Astrocyte eval runs.
 #
-# Uses Tier 1 pipeline with real LLM/embedding providers.
-# All secrets are read from environment variables.
+# Uses Tier 1 pipeline with the production postgres-age-pgvector stack and
+# real LLM/embedding providers. All secrets are read from environment variables.
 #
 # Usage:
 #   export OPENAI_API_KEY=sk-...
+#   export DATABASE_URL=postgresql://user:pass@localhost:5432/astrocyte_bench
 #   python scripts/run_benchmarks.py --config benchmarks/config.yaml
 
 profile: research
@@ -12,12 +13,40 @@ profile: research
 provider_tier: storage
 
 # -- Storage backends --
-# In-memory stores are used by default.
-# Uncomment pgvector for production-grade results:
-#
-# vector_store: pgvector
-# vector_store_config:
-#   connection_string: ${DATABASE_URL}
+# Uses the production postgres-age-pgvector stack so benchmark scores reflect
+# real-world HNSW retrieval, not in-memory exact NN.
+# Both providers read DATABASE_URL from the environment automatically.
+# `make bench-*` starts the benchmark database and runs HNSW migrations with
+# ASTROCYTE_EMBEDDING_DIMENSIONS=1536 before invoking this config.
+# Manual runs require:
+#   export DATABASE_URL=postgresql://user:pass@localhost:5432/astrocyte_bench
+#   export ASTROCYTE_EMBEDDING_DIMENSIONS=1536
+#   ../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh
+
+vector_store: pgvector
+vector_store_config:
+  embedding_dimensions: 1536  # text-embedding-3-small
+  bootstrap_schema: false
+
+graph_store: age
+
+wiki_store: pgvector
+wiki_store_config:
+  bootstrap_schema: false
+
+wiki_compile:
+  enabled: true
+  auto_start: true
+  size_threshold: 50
+
+entity_resolution:
+  enabled: true
+
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  install_on_start: true
+  auto_start_worker: true
 
 # -- LLM & Embedding --
 # The OpenAI provider handles both completions and embeddings.

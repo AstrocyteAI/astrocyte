@@ -36,12 +36,13 @@ flowchart TD
   S5 --> S6[6. Link creation - if graph store]
 ```
 
-Details: chunking uses sentence, paragraph, dialogue, or fixed-size strategies; entity extraction uses the LLM provider when a graph store is configured and the active **extraction profile** does not set `entity_extraction: false` / `disabled`; **fact type** defaults to `world` and can be set per profile via `ExtractionProfileConfig.fact_type` (not LLM-classified in the baseline path); storage calls `VectorStore`, optional `GraphStore` and `DocumentStore`; link creation adds co-occurrence links when configured.
+Details: chunking uses sentence, paragraph, dialogue, or fixed-size strategies; entity extraction uses the LLM provider when a graph store is configured and the active **extraction profile** does not set `entity_extraction: false` / `disabled`; profiles may also set `entity_extraction: metadata` for benchmark/import paths that need entity metadata even without a graph store; **fact type** defaults to `world` and can be set per profile via `ExtractionProfileConfig.fact_type` (not LLM-classified in the baseline path); storage calls `VectorStore`, optional `GraphStore` and `DocumentStore`; link creation adds co-occurrence links when configured.
 
 ### M3 — `content_type`, `extraction_profile`, and normalization scope
 
 - **`RetainRequest.content_type`** (string, default `text`) participates in routing after optional **profile** resolution. Supported built-in values used for chunking and normalization: **`text`**, **`conversation`**, **`transcript`**, **`document`**, **`email`**, **`event`**. Unknown values fall back to the orchestrator default chunking strategy (same as `text`).
 - **`RetainRequest.extraction_profile`** names an entry under config `extraction_profiles:` **or** a **built-in** profile (`builtin_text`, `builtin_conversation` — merged at runtime with user profiles; user definitions override the same name). Use **`astrocyte.pipeline.extraction.extraction_profile_for_source(source_id, config.sources)`** to resolve a profile from `sources.*.extraction_profile` before calling `retain` (full webhook ingest wiring is M4).
+- **Benchmark built-ins**: `locomo_conversation` retains dialogue as `experience` with structured speaker/session metadata, while `locomo_persona` stores compiled person pages as `wiki` facts with source provenance. These profiles exercise the same public retain path as user workloads.
 - **`ExtractionProfileConfig`** fields applied on retain: `content_type` (override for routing/normalization), `chunking_strategy`, `chunk_size`, `entity_extraction`, `fact_type`, `metadata_mapping` (JSON `$.path` values plus literal strings), `tag_rules` (`contains` / `match` substring → `tags`). Profile-derived metadata is merged with request metadata; **request metadata wins** on key conflicts.
 - **Packaged defaults**: `astrocyte.pipeline.extraction_builtin.yaml` is merged over code constants (`builtin_text`, `builtin_conversation`) and under user `extraction_profiles:` (same merge order as elsewhere: **user wins**). Shipped in the wheel via Hatch `force-include` so integrators can patch the file in a venv if needed.
 - **Stable imports**: `from astrocyte import prepare_retain_input, merged_extraction_profiles, extraction_profile_for_source, PreparedRetainInput` (also exposed on `astrocyte.pipeline`).
@@ -179,6 +180,11 @@ pipeline:
 
 ## 5. Consolidation pipeline
 
+Two complementary consolidation mechanisms: scheduled Tier 1 dedup, and opt-in
+post-retain observation consolidation.
+
+### 5a. Tier 1 consolidation (scheduled)
+
 Basic memory maintenance that runs on a schedule or on-demand.
 
 ```mermaid
@@ -188,11 +194,43 @@ flowchart TD
   D2 --> D3[3. Entity cleanup - if graph store]
 ```
 
-### Dedup scan implementation
-
 The dedup scan paginates through all vectors in a bank via `VectorStore.list_vectors()`, compares embeddings pairwise using cosine similarity, and deletes near-duplicates (keeping the first occurrence). The scan is safety-capped at 100k vectors to prevent runaway operations.
 
 If the VectorStore does not implement `list_vectors()`, consolidation is skipped with a warning.
+
+### 5b. Observation consolidation (opt-in, post-retain)
+
+Inspired by Hindsight (vectorize-io/hindsight). When enabled via
+`enable_observation_consolidation=True` on `PipelineOrchestrator`, a
+fire-and-forget async LLM pass runs after each `retain()` call:
+
+```mermaid
+flowchart LR
+  R[retain - stores raw chunks] -->|async task| C[ObservationConsolidator]
+  C --> F[Fetch top-K semantically-related existing observations]
+  F --> L[LLM: produce create/update/delete actions]
+  L --> A[Apply actions to vector store]
+```
+
+Each observation is stored as a `VectorItem` with `fact_type="observation"` and
+additional bookkeeping metadata:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `_obs_proof_count` | int | # raw memories supporting this observation |
+| `_obs_source_ids` | str (JSON) | IDs of contributing raw memories |
+| `_obs_confidence` | str (float) | LLM-assigned confidence 0–1 |
+| `_obs_updated_at` | str (ISO) | Last mutation timestamp |
+
+**Recall integration**: when enabled, the orchestrator runs an additional
+`observation` retrieval strategy (`search_similar` with `fact_types=["observation"]`)
+and injects results into the RRF fusion at `observation_weight=1.5` (configurable).
+The `basic_rerank` step adds a further `+0.025 × (proof_count - 1)` bonus per
+additional corroborating memory, capped at `+0.10`.
+
+**Cost**: one embedding + one LLM call per retain call, fire-and-forget (no
+latency added to retain response). At 500 tokens input / 50 tokens output,
+this is ~$0.003 per retain at gpt-4o-mini pricing.
 
 ### Configuration
 
@@ -203,6 +241,16 @@ pipeline:
     archive_unretrieved_after_days: 90  # null to disable
     entity_dedup_enabled: true
     schedule: "0 3 * * *"               # Cron: 3am daily (or null for manual only)
+```
+
+```python
+# Observation consolidation — constructor flag
+orchestrator = PipelineOrchestrator(
+    vector_store=vs,
+    llm_provider=llm,
+    enable_observation_consolidation=True,  # default: False
+    observation_weight=1.5,                 # RRF weight for observation strategy
+)
 ```
 
 ---
@@ -224,13 +272,13 @@ This table captures what users get at each tier, helping them make informed upgr
 | **Reranking** | Optional flashrank or LLM | Native cross-encoder, always-on |
 | **Reflect** | Single-pass LLM synthesis | Agentic multi-turn with tool use (lookup, recall, learn, expand) |
 | **Dispositions** | Basic prompt guidance (limited) | Native personality modulation (skepticism, literalism, empathy) |
-| **Consolidation** | Dedup + archive by age | Quality-based loss functions, observation formation, mental models |
+| **Consolidation** | Dedup + archive by age; **opt-in: observation consolidation** (post-retain LLM pass, create/update/delete) | Quality-based loss functions, full observation formation, mental models |
 | **Entity resolution** | LLM-extracted entities + exact-match dedup | Canonical resolution with co-occurrence tracking, alias management |
 | **Scale** | Single process | Multi-tenant, distributed, production-grade |
 | **Temporal links** | Not supported | Temporal proximity links between memories |
-| **Observations** | Not supported | Synthesized knowledge consolidated from raw facts |
+| **Observations** | **Opt-in**: `enable_observation_consolidation=True` — fire-and-forget LLM pass synthesizes deduplicated observations with `proof_count` tracking; boosted in recall via weighted RRF (weight=1.5) and reranking | Synthesized knowledge consolidated from raw facts |
 
-The built-in pipeline is **good enough** to build real products. Mystique is **materially better** in every dimension - particularly reflect (agentic vs single-pass), fusion (tuned vs standard), and consolidation (observation formation vs simple dedup).
+The built-in pipeline is **good enough** to build real products. Mystique is **materially better** in every dimension - particularly reflect (agentic vs single-pass), fusion (tuned vs standard), and consolidation (full observation layer vs opt-in post-retain pass).
 
 ---
 

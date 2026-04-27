@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -19,6 +21,7 @@ from astrocyte.errors import (
     AccessDenied,
     CapabilityNotSupported,
     ConfigError,
+    IngestError,
     PiiRejected,
     ProviderUnavailable,
     RateLimited,
@@ -28,15 +31,16 @@ from astrocyte.ingest.runtime import retain_callable_for_astrocyte
 from astrocyte.ingest.supervisor import IngestSupervisor, merge_source_health
 from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.types import AstrocyteContext
-
 from astrocyte_gateway.auth import get_astrocyte_context
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
 from astrocyte_gateway.rate_limit import SlidingWindowRateLimitMiddleware, rate_limit_max_from_env
 from astrocyte_gateway.serialization import to_jsonable
+from astrocyte_gateway.tasks import start_gateway_task_worker
 
 # Bounds /health latency when the vector store (e.g. pgvector) cannot connect.
 _HEALTH_TIMEOUT_S = 8.0
+_logger = logging.getLogger("astrocyte.gateway")
 
 
 class _MaxBodySizeMiddleware(BaseHTTPMiddleware):
@@ -104,6 +108,50 @@ def require_admin_if_configured(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token")
 
 
+async def _warm_reference_stack_providers(brain: Astrocyte) -> None:
+    """Warm optional Tier 1 providers so bootstrap DDL runs during startup."""
+
+    pipeline = getattr(brain, "_pipeline", None)
+    graph_store = getattr(pipeline, "graph_store", None) if pipeline is not None else None
+    for provider in (graph_store, getattr(brain, "_wiki_store", None)):
+        await _warm_reference_stack_provider(provider)
+
+
+async def _warm_reference_stack_provider(provider: object | None) -> None:
+    if provider is None:
+        return
+
+    # AGE-compatible providers expose schema bootstrap separately from health.
+    # Call it directly so startup creates reference-stack tables even with
+    # adapter versions whose health check only verifies connectivity.
+    ensure_schema = getattr(provider, "_ensure_schema", None)
+    if ensure_schema is not None and _callable_without_required_args(ensure_schema):
+        await ensure_schema()
+
+    health = getattr(provider, "health", None)
+    if health is None:
+        return
+    status = await health()
+    if getattr(status, "healthy", True) is False:
+        message = getattr(status, "message", "provider health check failed")
+        raise ConfigError(f"Reference stack provider failed startup warm-up: {message}")
+
+
+def _callable_without_required_args(func: object) -> bool:
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return False
+    return all(
+        parameter.default is not inspect.Parameter.empty
+        or parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }
+        for parameter in signature.parameters.values()
+    )
+
+
 def create_app(brain: Astrocyte | None = None) -> FastAPI:
     """Build the FastAPI app. Pass a pre-built ``brain`` for tests and overhead benchmarks."""
     if brain is None:
@@ -116,11 +164,17 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        task_worker = await start_gateway_task_worker(brain)
+        await brain.start_background_tasks()
+        await _warm_reference_stack_providers(brain)
         await ingest_supervisor.start()
         try:
             yield
         finally:
             await ingest_supervisor.stop()
+            await brain.stop_background_tasks()
+            if task_worker is not None:
+                await task_worker.stop()
 
     app = FastAPI(
         title="Astrocyte gateway",
@@ -306,6 +360,103 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         )
         return to_jsonable(result)
 
+    @app.post("/v1/compile")
+    async def compile(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Compile raw memories into wiki pages for a bank (M8).
+
+        Synthesises a structured wiki page for each detected topic scope using
+        the LLM. Requires a WikiStore and Tier 1 pipeline to be configured.
+
+        Body:
+            bank_id (str, required): Bank to compile.
+            scope (str, optional): Compile only memories tagged with this scope.
+                                   Omit for full scope discovery (tag grouping +
+                                   embedding cluster labelling).
+        """
+        bank_id = body.get("bank_id")
+        if not isinstance(bank_id, str):
+            raise HTTPException(status_code=400, detail="bank_id (str) is required")
+        scope = body.get("scope")
+        if scope is not None and not isinstance(scope, str):
+            raise HTTPException(status_code=400, detail="scope must be a string")
+        try:
+            result = await brain.compile(bank_id, scope=scope)
+        except Exception as exc:
+            # Translate ConfigError (no WikiStore / no pipeline) to 422
+            if "ConfigError" in type(exc).__name__ or "ProviderUnavailable" in type(exc).__name__:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
+        return to_jsonable(result)
+
+    @app.post("/v1/graph/search")
+    async def graph_search(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Search the knowledge graph for entities matching a name query.
+
+        Returns matching Entity objects. Use the returned entity IDs with
+        POST /v1/graph/neighbors to traverse connected memories.
+
+        Body:
+            query (str, required): Name or partial name to search.
+            bank_id (str, required): Bank whose graph to search.
+            limit (int, optional): Max entities to return (default 10).
+        """
+        query = body.get("query")
+        bank_id = body.get("bank_id")
+        if not isinstance(query, str) or not isinstance(bank_id, str):
+            raise HTTPException(status_code=400, detail="query and bank_id (str) are required")
+        try:
+            limit = int(body.get("limit", 10))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="limit must be an integer")
+        try:
+            entities = await brain.graph_search(query, bank_id, limit=limit)
+        except Exception as exc:
+            if "ConfigError" in type(exc).__name__:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
+        return {"entities": to_jsonable(entities)}
+
+    @app.post("/v1/graph/neighbors")
+    async def graph_neighbors(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Traverse the knowledge graph from seed entity IDs.
+
+        Walks up to max_depth hops from each seed entity and returns the
+        memories connected to discovered entities, scored by proximity.
+
+        Body:
+            entity_ids (list[str], required): Seed entity IDs to start from.
+            bank_id (str, required): Bank whose graph to traverse.
+            max_depth (int, optional): Traversal depth (default 2).
+            limit (int, optional): Max memory hits to return (default 20).
+        """
+        entity_ids = body.get("entity_ids")
+        bank_id = body.get("bank_id")
+        if not isinstance(entity_ids, list) or not isinstance(bank_id, str):
+            raise HTTPException(status_code=400, detail="entity_ids (list) and bank_id (str) are required")
+        try:
+            max_depth = int(body.get("max_depth", 2))
+            limit = int(body.get("limit", 20))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="max_depth and limit must be integers")
+        try:
+            hits = await brain.graph_neighbors(
+                [str(e) for e in entity_ids], bank_id, max_depth=max_depth, limit=limit
+            )
+        except Exception as exc:
+            if "ConfigError" in type(exc).__name__:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
+        return {"hits": to_jsonable(hits)}
+
     @app.post("/v1/ingest/webhook/{source_id}")
     async def ingest_webhook(
         source_id: str,
@@ -323,6 +474,20 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         raw = await request.body()
         headers = {k: v for k, v in request.headers.items()}
         principal: str | None = ctx.principal if ctx is not None else None
+
+        # Check whether the running source exposes a custom handle_webhook method
+        # (e.g. S3WebhookIngestSource which parses Garage/AWS S3 event notifications).
+        source_instance = ingest_supervisor.registry.get(source_id)
+        if source_instance is not None and hasattr(source_instance, "handle_webhook"):
+            try:
+                summary = await source_instance.handle_webhook(raw, headers)
+            except IngestError:
+                _logger.warning("Custom webhook ingest rejected source_id=%s", source_id, exc_info=True)
+                return JSONResponse(
+                    content={"ok": False, "error": "webhook ingest rejected"},
+                    status_code=400,
+                )
+            return JSONResponse(content={"ok": True, **summary}, status_code=200)
 
         result = await handle_webhook_ingest(
             source_id=source_id,

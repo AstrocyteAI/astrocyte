@@ -24,6 +24,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from astrocyte.types import Message
+
 if TYPE_CHECKING:
     from astrocyte.provider import LLMProvider
 
@@ -81,8 +83,8 @@ async def generate_hyde_vector(
 async def _generate_hypothetical(query: str, llm_provider: LLMProvider) -> str:
     """Call the LLM to produce a hypothetical memory for *query*."""
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": query},
+        Message(role="system", content=_SYSTEM_PROMPT),
+        Message(role="user", content=query),
     ]
     response = await llm_provider.complete(messages, max_tokens=150)
-    return (response or "").strip()
+    return (response.text or "").strip()

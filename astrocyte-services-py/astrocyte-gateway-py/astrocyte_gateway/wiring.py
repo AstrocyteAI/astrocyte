@@ -8,8 +8,9 @@ from typing import Any, TypeVar
 from astrocyte._discovery import resolve_provider
 from astrocyte.config import AstrocyteConfig
 from astrocyte.errors import ConfigError
+from astrocyte.pipeline.entity_resolution import EntityResolver
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator
-from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore
+from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore, WikiStore
 
 T = TypeVar("T")
 
@@ -79,7 +80,18 @@ def resolve_document_store(config: AstrocyteConfig) -> DocumentStore | None:
     return _instantiate(cls, _cfg_dict(config.document_store_config), f"document_store {name!r}")
 
 
-def build_tier1_pipeline(config: AstrocyteConfig) -> PipelineOrchestrator:
+def resolve_wiki_store(config: AstrocyteConfig) -> WikiStore | None:
+    name = config.wiki_store or os.environ.get("ASTROCYTE_WIKI_STORE")
+    if not name:
+        return None
+    try:
+        cls = resolve_provider(name, "wiki_stores")
+    except LookupError as e:
+        raise ConfigError(f"Wiki store {name!r} not found. ({e})") from e
+    return _instantiate(cls, _cfg_dict(config.wiki_store_config), f"wiki_store {name!r}")
+
+
+def build_tier1_pipeline(config: AstrocyteConfig, *, wiki_store: WikiStore | None = None) -> PipelineOrchestrator:
     """Construct `PipelineOrchestrator` from config using registered entry points or import paths."""
     if config.provider_tier != "storage":
         raise ConfigError("build_tier1_pipeline requires provider_tier == 'storage'")
@@ -88,10 +100,21 @@ def build_tier1_pipeline(config: AstrocyteConfig) -> PipelineOrchestrator:
     llm = resolve_llm_provider(config)
     graph_store = resolve_graph_store(config)
     document_store = resolve_document_store(config)
+    entity_resolver = None
+    if config.entity_resolution.enabled:
+        if graph_store is None:
+            raise ConfigError("entity_resolution.enabled requires a graph_store provider")
+        entity_resolver = EntityResolver(
+            similarity_threshold=config.entity_resolution.similarity_threshold,
+            confirmation_threshold=config.entity_resolution.confirmation_threshold,
+            max_candidates_per_entity=config.entity_resolution.max_candidates_per_entity,
+        )
 
     return PipelineOrchestrator(
         vector_store=vector_store,
         llm_provider=llm,
         graph_store=graph_store,
         document_store=document_store,
+        wiki_store=wiki_store,
+        entity_resolver=entity_resolver,
     )

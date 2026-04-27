@@ -122,6 +122,80 @@ class TestSetPipelineWiresExtractionProfiles:
         await pipeline.retain(req)
         assert llm._call_count == 0
 
+    async def test_metadata_entity_extraction_skips_llm_and_stores_metadata_entities(self):
+        vs = InMemoryVectorStore()
+        gs = InMemoryGraphStore()
+        llm = MockLLMProvider()
+        profiles = {"metadata_ent": ExtractionProfileConfig(entity_extraction="metadata")}
+        pipeline = PipelineOrchestrator(
+            vector_store=vs,
+            llm_provider=llm,
+            graph_store=gs,
+            chunk_strategy="sentence",
+            max_chunk_size=256,
+            extraction_profiles=profiles,
+        )
+        req = RetainRequest(
+            content="Alice discussed planets with Bob.",
+            bank_id="b1",
+            metadata={"locomo_persons": "Alice,Bob"},
+            content_type="conversation",
+            extraction_profile="metadata_ent",
+        )
+
+        await pipeline.retain(req)
+
+        assert llm._call_count == 0
+        assert {entity.name for entity in gs._entities["b1"].values()} == {"Alice", "Bob"}
+
+    async def test_retain_many_batches_embeddings_and_uses_metadata_entities(self):
+        class CountingEmbedLLM(MockLLMProvider):
+            def __init__(self) -> None:
+                super().__init__()
+                self.embed_calls = 0
+                self.embed_batch_sizes: list[int] = []
+
+            async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
+                self.embed_calls += 1
+                self.embed_batch_sizes.append(len(texts))
+                return await super().embed(texts, model=model)
+
+        vs = InMemoryVectorStore()
+        gs = InMemoryGraphStore()
+        llm = CountingEmbedLLM()
+        profiles = {"metadata_ent": ExtractionProfileConfig(entity_extraction="metadata")}
+        pipeline = PipelineOrchestrator(
+            vector_store=vs,
+            llm_provider=llm,
+            graph_store=gs,
+            chunk_strategy="sentence",
+            max_chunk_size=256,
+            extraction_profiles=profiles,
+        )
+        requests = [
+            RetainRequest(
+                content="Alice discussed planets with Bob.",
+                bank_id="b1",
+                metadata={"locomo_persons": "Alice,Bob"},
+                content_type="conversation",
+                extraction_profile="metadata_ent",
+            ),
+            RetainRequest(
+                content="Carol discussed rockets with Dana.",
+                bank_id="b1",
+                metadata={"locomo_persons": "Carol,Dana"},
+                content_type="conversation",
+                extraction_profile="metadata_ent",
+            ),
+        ]
+
+        results = await pipeline.retain_many(requests)
+
+        assert [result.stored for result in results] == [True, True]
+        assert llm.embed_calls == 1
+        assert llm.embed_batch_sizes == [2]
+        assert {entity.name for entity in gs._entities["b1"].values()} == {"Alice", "Bob", "Carol", "Dana"}
+
     async def test_extraction_profile_metadata_mapping_on_stored_vectors(self):
         vs = InMemoryVectorStore()
         profiles = {

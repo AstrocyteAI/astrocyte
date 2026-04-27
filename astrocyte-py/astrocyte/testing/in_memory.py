@@ -92,6 +92,10 @@ class InMemoryVectorStore:
                 if filters.as_of is not None and item.retained_at is not None:
                     if item.retained_at > filters.as_of:
                         continue
+                if filters.time_range is not None and item.occurred_at is not None:
+                    start, end = filters.time_range
+                    if item.occurred_at < start or item.occurred_at > end:
+                        continue
             sim = _cosine_sim(query_vector, item.vector)
             results.append((sim, item))
 
@@ -549,8 +553,14 @@ class MockLLMProvider:
 
     _embed_dim: ClassVar[int] = 128
 
-    def __init__(self, default_response: str = "Mock LLM response") -> None:
+    def __init__(
+        self,
+        default_response: str = "Mock LLM response",
+        embedding_dimensions: int | None = None,
+    ) -> None:
         self._default_response = default_response
+        if embedding_dimensions is not None:
+            self._embed_dim = int(embedding_dimensions)
         self._call_count = 0
         #: Last ``complete()`` user message content (for tests asserting prompt structure).
         self.last_user_message: str | None = None
