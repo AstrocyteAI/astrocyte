@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from astrocyte.eval.checkpoint import BenchmarkCheckpoint
 from astrocyte.eval.metrics import ndcg_at_k, word_overlap_score
+from astrocyte.eval.metrics_collector import BenchmarkMetricsCollector
 from astrocyte.eval.rate_limiter import EvalRateLimiter
 from astrocyte.pipeline.tasks import COMPILE_PERSONA_PAGE, MemoryTask
 from astrocyte.pipeline.temporal import temporal_metadata
@@ -225,6 +226,15 @@ def _persona_compile_tasks_for_session(
     turns: list[dict[str, str]],
     source_ids: list[str],
 ) -> list[MemoryTask]:
+    """Generate one ``compile_persona_page`` task per (conversation, speaker).
+
+    Each LoCoMo conversation is an independent storyline — "Caroline" in
+    conversation_0 is a different person from "Caroline" in conversation_3.
+    Scoping persona pages by ``conversation_id`` keeps their personas
+    distinct (otherwise the upsert-by-name collapses all 10 conversations'
+    Carolines into one diluted page, which observably regresses multi-hop
+    and adversarial scores on LoCoMo).
+    """
     pages = _persona_pages_for_session(conversation_id, session_id, turns)
     tasks: list[MemoryTask] = []
     for speaker in sorted(pages):
@@ -235,6 +245,7 @@ def _persona_compile_tasks_for_session(
                 bank_id=bank_id,
                 payload={
                     "person": speaker,
+                    "scope": f"convo:{conversation_id}",
                     "source_ids": source_ids,
                     "index_vector": True,
                 },
@@ -316,6 +327,7 @@ class LoComoBenchmark:
         *,
         clean_after: bool = True,
         max_questions: int | None = None,
+        max_questions_per_conversation: int | None = None,
         use_canonical_judge: bool = False,
         llm_judge: object | None = None,
         checkpoint: BenchmarkCheckpoint | None = None,
@@ -333,7 +345,20 @@ class LoComoBenchmark:
             conversations: Pre-loaded conversations (alternative to data_path).
             bank_id: Dedicated bank for the benchmark.
             clean_after: Delete the bank after running.
-            max_questions: Limit number of questions.
+            max_questions: Hard cap on total questions evaluated. Applied
+                AFTER ``max_questions_per_conversation``. Uses a
+                deterministic head-slice — questions retain their original
+                order, so per-category counts can be skewed when the cap
+                is small (early conversations dominate). Use
+                ``max_questions_per_conversation`` for fair coverage.
+            max_questions_per_conversation: Per-conversation cap. Takes
+                the first N questions from EACH conversation, preserving
+                category balance and giving every conversation equal
+                weight in the resulting sample. Recommended for fast
+                iteration benches — at 20 per conversation × 10
+                conversations = 200 questions with uniform coverage.
+                Combine with ``max_questions`` to also cap total size
+                if needed.
             use_canonical_judge: When True without ``llm_judge``, score with
                 the canonical stemmed-token-F1 judge — the original paper's
                 metric. When True with ``llm_judge``, the LLM judge drives
@@ -369,10 +394,27 @@ class LoComoBenchmark:
         start_time = time.monotonic()
         retain_latencies: list[float] = []
         recall_latencies: list[float] = []
+        reflect_latencies: list[float] = []
 
         # Reset token counter for this benchmark run
         if self.brain._pipeline:
             self.brain._pipeline.reset_token_counter()
+
+        # ── Tier-3 metrics collector ──
+        # Captures cost, robustness, cascade decisions, and per-question
+        # signal across the bench. Installed on the brain + pipeline +
+        # entity_resolver so all hot paths can record. Pipelines that don't
+        # see the attribute simply no-op — production code stays untouched.
+        metrics_collector = BenchmarkMetricsCollector()
+        if self.brain._pipeline is not None:
+            setattr(self.brain._pipeline, "_metrics_collector", metrics_collector)
+            tracker = getattr(self.brain._pipeline, "_tracker", None)
+            if tracker is not None:
+                setattr(tracker, "_metrics_collector", metrics_collector)
+            resolver = getattr(self.brain._pipeline, "entity_resolver", None)
+            if resolver is not None:
+                resolver.metrics_collector = metrics_collector
+        metrics_collector.set_phase("retain")
 
         # ── Phase 1: Retain all conversation sessions ──
         total_sessions = sum(len(c.sessions) for c in conversations)
@@ -621,6 +663,7 @@ class LoComoBenchmark:
             session_key, latency_ms, parse_attempts, unparseable_count = retained
             async with progress_lock:
                 retain_latencies.append(latency_ms)
+                metrics_collector.record_retain_latency(latency_ms)
                 date_parse_attempts += parse_attempts
                 unparseable_date_count += unparseable_count
                 retain_count += 1
@@ -669,6 +712,9 @@ class LoComoBenchmark:
                 date_parse_attempts,
             )
 
+        # Phase boundary: retain finished, persona-compile begins.
+        metrics_collector.set_phase("persona_compile")
+
         if persona_task_queue is not None and deferred_persona_tasks:
             print(
                 f"  [LoCoMo] Enqueuing {len(deferred_persona_tasks)} persona compile tasks via PgQueuer...",
@@ -701,9 +747,16 @@ class LoComoBenchmark:
                         )
 
         # ── Phase 2: Collect all questions ──
+        # Per-conversation sampling FIRST (preserves category/conversation
+        # balance), then the optional total cap. With both unset, all
+        # questions are evaluated.
         all_questions: list[LoCoMoQuestion] = []
-        for convo in conversations:
-            all_questions.extend(convo.questions)
+        if max_questions_per_conversation is not None:
+            for convo in conversations:
+                all_questions.extend(convo.questions[:max_questions_per_conversation])
+        else:
+            for convo in conversations:
+                all_questions.extend(convo.questions)
 
         if max_questions and len(all_questions) > max_questions:
             all_questions = all_questions[:max_questions]
@@ -733,6 +786,9 @@ class LoComoBenchmark:
             rpm=eval_rpm,
             tpm=eval_tpm,
         )
+
+        # Phase boundary: persona-compile finished, eval begins.
+        metrics_collector.set_phase("eval")
 
         print(f"  [LoCoMo] Evaluating {total_q} questions (concurrency={eval_concurrency})...")
         eval_phase_start = time.monotonic()
@@ -795,14 +851,34 @@ class LoComoBenchmark:
             # Live evaluation — acquire rate-limit slot before making LLM calls.
             async with rate_limiter:
                 try:
+                    # Scope retrieval to the question's conversation. All 10
+                    # LoCoMo conversations share a single bank_id, so without
+                    # this tag filter recall pulls cross-talk from unrelated
+                    # storylines (e.g. Caroline-in-conv-0 returning hits from
+                    # Caroline-in-conv-7). Persona pages carry the same
+                    # ``convo:<id>`` tag so they remain visible to scoped
+                    # recall.
+                    convo_tags = [f"convo:{q.conversation_id}"]
                     t0 = time.monotonic()
-                    result = await self.brain.recall(q.question, bank_id=bank_id, max_results=10)
+                    result = await self.brain.recall(
+                        q.question,
+                        bank_id=bank_id,
+                        max_results=10,
+                        tags=convo_tags,
+                    )
                     elapsed = (time.monotonic() - t0) * 1000
                     recall_latencies.append(elapsed)
+                    metrics_collector.record_recall_latency(elapsed)
 
                     # Synthesis path — always run reflect so we have the model's
-                    # answer to score.
-                    reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
+                    # answer to score. Same tag scope as recall above.
+                    reflect_t0 = time.monotonic()
+                    reflect_result = await self.brain.reflect(
+                        q.question, bank_id=bank_id, tags=convo_tags
+                    )
+                    reflect_elapsed = (time.monotonic() - reflect_t0) * 1000
+                    reflect_latencies.append(reflect_elapsed)
+                    metrics_collector.record_reflect_latency(reflect_elapsed)
 
                     canonical_f1: float | None = None
                     if llm_judge is not None:
@@ -840,6 +916,37 @@ class LoComoBenchmark:
                     if is_correct:
                         correct += 1
                         category_correct[q.category] = category_correct.get(q.category, 0) + 1
+
+                    # Tier-3: per-question record for recall-vs-reflect gap
+                    # analysis + abstention detection.
+                    answer_in_recall_for_metrics = any(
+                        word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD
+                        for h in result.hits[:10]
+                    )
+                    answer_in_reflect_for_metrics = (
+                        word_overlap_score(q.answer, reflect_result.answer)
+                        > ANSWER_OVERLAP_THRESHOLD
+                    )
+                    abstain_markers = (
+                        "insufficient evidence",
+                        "i don't have",
+                        "i do not have",
+                        "not available in my memories",
+                    )
+                    abstained = any(
+                        marker in (reflect_result.answer or "").lower()
+                        for marker in abstain_markers
+                    )
+                    metrics_collector.record_question(
+                        idx=idx,
+                        category=q.category,
+                        correct=is_correct,
+                        recall_hit=answer_in_recall_for_metrics,
+                        reflect_hit=answer_in_reflect_for_metrics,
+                        abstained=abstained,
+                        recall_latency_ms=elapsed,
+                        reflect_latency_ms=reflect_elapsed,
+                    )
 
                     # Build QueryResult for standard metrics
                     relevant_ids: set[str] = set()
@@ -898,6 +1005,7 @@ class LoComoBenchmark:
                         "eval failed for q=%s: %s (counted as incorrect)",
                         q_key, exc,
                     )
+                    metrics_collector.record_error(_classify_error(exc))
                     # Leave per_question_arr[idx] as None; filter later.
 
             completed_count += 1
@@ -933,7 +1041,7 @@ class LoComoBenchmark:
 
         from astrocyte.eval.metrics import percentile
 
-        metrics = EvalMetrics(
+        base_metrics = EvalMetrics(
             recall_precision=sum(qr.precision for qr in query_results) / max(len(query_results), 1),
             recall_hit_rate=sum(1.0 for qr in query_results if qr.relevant_found > 0) / max(len(query_results), 1),
             recall_mrr=sum(qr.reciprocal_rank for qr in query_results) / max(len(query_results), 1),
@@ -946,6 +1054,32 @@ class LoComoBenchmark:
             total_duration_seconds=total_duration,
             reflect_accuracy=overall_accuracy,
         )
+        # Tier-3 finalize: snapshot wiki-page state then decorate metrics.
+        try:
+            wiki_pages_count, unique_personas = await _wiki_page_stats(
+                self.brain, bank_id,
+            )
+            metrics_collector.set_wiki_page_stats(
+                total=wiki_pages_count,
+                unique_personas=unique_personas,
+            )
+        except Exception as exc:
+            logging.getLogger("astrocyte.eval.locomo").debug(
+                "wiki page stats unavailable: %s", exc,
+            )
+        metrics = metrics_collector.finalize(base_metrics)
+        # Detach the collector from the pipeline so subsequent runs / live
+        # traffic don't accumulate into this run's bucket.
+        if self.brain._pipeline is not None:
+            for attr in ("_metrics_collector",):
+                if hasattr(self.brain._pipeline, attr):
+                    delattr(self.brain._pipeline, attr)
+            tracker = getattr(self.brain._pipeline, "_tracker", None)
+            if tracker is not None and hasattr(tracker, "_metrics_collector"):
+                delattr(tracker, "_metrics_collector")
+            resolver = getattr(self.brain._pipeline, "entity_resolver", None)
+            if resolver is not None:
+                resolver.metrics_collector = None
 
         eval_result = EvalResult(
             suite="locomo",
@@ -999,6 +1133,60 @@ _LOCOMO_CATEGORY_MAP: dict[int, str] = {
     4: "single-hop",
     5: "adversarial",
 }
+
+
+def _classify_error(exc: BaseException) -> str:
+    """Bucket an exception into a metrics category.
+
+    Common buckets: ``"pool_timeout"``, ``"deadlock"``, ``"openai_429"``,
+    ``"openai_5xx"``, ``"timeout"``, ``"other"``. Looks at exception type
+    name and message — defensive on import (no hard dependency on psycopg
+    / openai exception classes).
+    """
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    if "pooltimeout" in name or "couldn't get a connection" in msg:
+        return "pool_timeout"
+    if "deadlock" in name or "deadlock detected" in msg:
+        return "deadlock"
+    if "ratelimit" in name or "429" in msg or "rate limit" in msg:
+        return "openai_429"
+    if "internal server error" in msg or "service unavailable" in msg or "502" in msg or "503" in msg or "504" in msg:
+        return "openai_5xx"
+    if "timeout" in name or "timeout" in msg:
+        return "timeout"
+    return "other"
+
+
+async def _wiki_page_stats(brain: Astrocyte, bank_id: str) -> tuple[int, int]:
+    """Return (total wiki pages, unique persona names) for the bank.
+
+    Used by the metrics collector to compute pages-per-persona density —
+    a higher ratio indicates per-conversation scoping is active. Falls
+    back to (0, 0) when no wiki store is configured. Probes via
+    ``list_pages`` rather than direct SQL so the helper works against any
+    wiki-store SPI implementation.
+    """
+    pipeline = getattr(brain, "_pipeline", None)
+    wiki_store = getattr(pipeline, "wiki_store", None) if pipeline else None
+    if wiki_store is None or not hasattr(wiki_store, "list_pages"):
+        return 0, 0
+    try:
+        pages = await wiki_store.list_pages(bank_id, kind="entity")
+    except Exception:
+        return 0, 0
+    total = len(pages or [])
+    if total == 0:
+        return 0, 0
+    unique_personas: set[str] = set()
+    for page in pages:
+        # Page IDs look like "person:{slug}" or "person:{scope-slug}:{slug}".
+        # Strip the trailing slug after the last ":" — that's the persona.
+        page_id = getattr(page, "page_id", "") or ""
+        if ":" in page_id:
+            persona = page_id.rsplit(":", 1)[1]
+            unique_personas.add(persona)
+    return total, len(unique_personas)
 
 
 def load_locomo_dataset(

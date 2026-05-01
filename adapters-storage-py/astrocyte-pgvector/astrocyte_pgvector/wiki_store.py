@@ -41,11 +41,24 @@ class PgWikiStore:
     async def _ensure_pool(self) -> AsyncConnectionPool:
         async with self._pool_lock:
             if self._pool is None:
+                async def configure(conn: psycopg.AsyncConnection) -> None:
+                    # Pin search_path to ``public`` first so wiki tables are
+                    # routed to the canonical migrated schema. Without this,
+                    # Postgres' default ``"$user", public`` order silently
+                    # creates a duplicate set of wiki tables in the user-named
+                    # schema (``astrocyte`` for the bench DB) and writes land
+                    # there, breaking recall queries that read from ``public``.
+                    await conn.execute('SET search_path = public, "$user"')
+                    await conn.commit()
+
                 self._pool = AsyncConnectionPool(
                     conninfo=self._dsn,
+                    configure=configure,
                     open=False,
-                    min_size=1,
-                    max_size=10,
+                    min_size=2,
+                    # Sized for parallel persona-compile tasks (each writes
+                    # one wiki page + revision) running alongside retain.
+                    max_size=40,
                     kwargs={"connect_timeout": 10},
                 )
                 await self._pool.open()

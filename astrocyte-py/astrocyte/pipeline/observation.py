@@ -121,14 +121,21 @@ Output a JSON array of actions.  Each action is one of:
 "confidence": <0.0–1.0>}
   {"action": "delete", "obs_id": "<id>"}
 
-Rules:
-1. CREATE if the new memory introduces a fact not already covered.
-2. UPDATE if the new memory revises or confirms an existing observation \
-(keep the most precise version; raise confidence if confirmed).
-3. DELETE only if the new memory directly contradicts and supersedes an \
-existing observation.
-4. If the new memory is fully redundant, respond with [].
-5. Preserve stable persona and preference facts: identities, goals, hobbies, \
+Rules (Hindsight-style three-strategy reconciliation):
+1. REDUNDANT — same fact in different words: UPDATE the existing observation \
+to the cleaner phrasing and raise confidence. Don't create a near-duplicate.
+2. STATE UPDATE — new info supersedes old state: UPDATE the observation to \
+preserve the *journey*. Use phrases like "used to X, now Y" or "changed from \
+X to Y" so the temporal evolution is captured. Never silently overwrite — \
+the agent must be able to answer questions about the prior state.
+3. DIRECT CONTRADICTION (rare) — irreconcilable claim with no temporal frame: \
+DELETE the old observation only when the new memory definitively supersedes \
+it AND no journey can be expressed (e.g. an outright correction of a wrong \
+fact). When in doubt, prefer UPDATE-with-journey over DELETE.
+4. CREATE if the new memory introduces a fact not already covered.
+5. If the new memory is fully redundant *and* the existing observation \
+already captures it precisely, respond with [].
+6. Preserve stable persona and preference facts: identities, goals, hobbies, \
 relationships, repeated activities, values, career plans, and stated likes/dislikes.
 
 Constraints:

@@ -299,6 +299,73 @@ class TestLoComoBenchmark:
         result = await bench.run(conversations=conversations, bank_id="bench-limit", max_questions=3)
         assert result.total_questions == 3
 
+    async def test_max_questions_per_conversation_takes_first_n_per_convo(self):
+        """Per-conversation cap gives uniform coverage across conversations,
+        unlike ``max_questions`` which head-slices and over-weights early
+        conversations. 2 questions × 3 conversations = 6 questions total
+        with one from each conversation represented."""
+        brain, _ = _make_brain()
+        bench = LoComoBenchmark(brain)
+
+        def _convo(cid: str, n: int) -> LoCoMoConversation:
+            return LoCoMoConversation(
+                conversation_id=cid,
+                sessions=[LoCoMoSession(session_id=f"s-{cid}", turns=[{"speaker": "A", "text": "ctx"}])],
+                questions=[
+                    LoCoMoQuestion(
+                        question=f"{cid}-Q{i}", answer=f"A{i}",
+                        category="single-hop", evidence_ids=[], conversation_id=cid,
+                    )
+                    for i in range(n)
+                ],
+            )
+        conversations = [_convo("c-A", 5), _convo("c-B", 5), _convo("c-C", 5)]
+
+        result = await bench.run(
+            conversations=conversations, bank_id="bench-fair",
+            max_questions_per_conversation=2,
+        )
+
+        # Total = 2 * 3 = 6, with each conversation contributing 2 questions.
+        assert result.total_questions == 6
+        # Question text is "{cid}-Q{i}" so we can recover which conversations
+        # were sampled. All three must appear (no head-slicing into c-A only).
+        convos_seen = {q["question"].split("-Q")[0] for q in result.per_question}
+        assert convos_seen == {"c-A", "c-B", "c-C"}, (
+            f"Fair sampling must include every conversation, got convos="
+            f"{convos_seen} from questions={[q['question'] for q in result.per_question]}"
+        )
+
+    async def test_max_questions_per_conversation_combines_with_total_cap(self):
+        """When both flags are set, per-conversation runs first, then the
+        total cap is applied as a head-slice. 3 per-convo × 4 convos = 12,
+        capped at 5 → 5 total."""
+        brain, _ = _make_brain()
+        bench = LoComoBenchmark(brain)
+
+        conversations = [
+            LoCoMoConversation(
+                conversation_id=f"c{i}",
+                sessions=[LoCoMoSession(session_id=f"s{i}", turns=[{"speaker": "A", "text": "ctx"}])],
+                questions=[
+                    LoCoMoQuestion(
+                        question=f"c{i}-Q{j}", answer=f"A{j}",
+                        category="single-hop", evidence_ids=[], conversation_id=f"c{i}",
+                    )
+                    for j in range(5)
+                ],
+            )
+            for i in range(4)
+        ]
+
+        result = await bench.run(
+            conversations=conversations, bank_id="bench-both",
+            max_questions_per_conversation=3,
+            max_questions=5,
+        )
+
+        assert result.total_questions == 5
+
     async def test_multiple_categories(self):
         brain, _ = _make_brain()
         bench = LoComoBenchmark(brain)

@@ -237,7 +237,9 @@ class MemoryTaskDispatcher:
             else f"person:{_slug(person)}"
         )
         existing = await self._ctx.wiki_store.get_page(page_id, task.bank_id)
-        page = await self._build_persona_page(task.bank_id, person, relevant, existing)
+        page = await self._build_persona_page(
+            task.bank_id, person, relevant, existing, page_id=page_id, scope=scope
+        )
         await self._ctx.wiki_store.upsert_page(page, task.bank_id)
         result = {
             "pages_created": 1 if existing is None else 0,
@@ -420,6 +422,9 @@ class MemoryTaskDispatcher:
         person: str,
         items: list[VectorItem],
         existing: WikiPage | None,
+        *,
+        page_id: str | None = None,
+        scope: str | None = None,
     ) -> WikiPage:
         source_ids = [item.id for item in items]
         evidence = "\n".join(f"- {item.text[:500]}" for item in items[:50])
@@ -438,7 +443,15 @@ class MemoryTaskDispatcher:
             temperature=0.0,
         )
         content = completion.text.strip() or f"## {person}\n\nNo stable persona facts compiled."
-        page_id = f"person:{_slug(person)}"
+        if page_id is None:
+            page_id = f"person:{_slug(person)}"
+        # Tag the page with its scope (e.g. ``"convo:convo-3"``) when set,
+        # so scoped recall queries — which filter by the same tag — still
+        # surface the persona page. Without this tag a question scoped to
+        # ``convo:convo-3`` cannot retrieve its own conversation's persona.
+        tags = ["persona", f"person:{_slug(person)}"]
+        if scope:
+            tags.append(scope)
         return WikiPage(
             page_id=page_id,
             bank_id=bank_id,
@@ -450,7 +463,7 @@ class MemoryTaskDispatcher:
             cross_links=[],
             revision=(existing.revision + 1) if existing else 1,
             revised_at=datetime.now(UTC),
-            tags=["persona", f"person:{_slug(person)}"],
+            tags=tags,
             metadata={"task_type": COMPILE_PERSONA_PAGE},
         )
 

@@ -66,6 +66,15 @@ class PgVectorStore:
 
                 async def configure(conn: psycopg.AsyncConnection) -> None:
                     await conn.execute("SELECT 1")
+                    # Pin search_path to ``public`` first so unqualified table
+                    # writes/reads (``astrocyte_vectors``, ``astrocyte_banks``,
+                    # etc.) always target the canonical migrated tables.
+                    # Postgres defaults search_path to ``"$user", public`` which
+                    # routes writes to ``<user>.<table>`` if the user-named
+                    # schema exists — silently splitting data across schemas
+                    # and breaking the entire benchmark when migrations only
+                    # ran against ``public``.
+                    await conn.execute('SET search_path = public, "$user"')
                     # register_vector_async needs the `vector` type. Skip until pgvector exists (quick path:
                     # /health can run before in-app DDL; runbook path: migrations already created the extension).
                     async with conn.cursor() as cur:
@@ -79,8 +88,16 @@ class PgVectorStore:
                     conninfo=self._dsn,
                     configure=configure,
                     open=False,
-                    min_size=1,
-                    max_size=10,
+                    min_size=2,
+                    # Sized for parallel retain + concurrent PgQueuer workers
+                    # (e.g. persona-compile tasks each call ``list_vectors``,
+                    # ``store_vectors``, etc.). With 10 retain records in
+                    # flight and PgQueuer running unbounded persona-compile
+                    # jobs in the background, the previous max_size=10
+                    # exhausted the pool and triggered cascading
+                    # ``PoolTimeout`` errors. 40 leaves ~3 connections of
+                    # headroom per concurrent unit.
+                    max_size=40,
                     kwargs={"connect_timeout": 10},
                 )
                 await self._pool.open()

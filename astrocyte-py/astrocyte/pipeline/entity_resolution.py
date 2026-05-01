@@ -146,6 +146,8 @@ class EntityResolver:
         composite_cooccurrence_weight: float = 0.3,
         composite_temporal_weight: float = 0.2,
         composite_temporal_window_days: float = 7.0,
+        mention_count_bonus_cap: float = 0.05,
+        mention_count_saturation: int = 50,
         enable_llm_disambiguation: bool = True,
         canonical_resolution: bool = False,
     ) -> None:
@@ -192,6 +194,18 @@ class EntityResolver:
                 Default ``0.2``.
             composite_temporal_window_days: Days over which the temporal
                 decay falls from 1.0 to 0.0. Default ``7.0``.
+            mention_count_bonus_cap: Maximum additive bonus the
+                ``mention_count`` popularity signal contributes to the
+                composite score. Hindsight-parity tiebreaker — capped at
+                ``0.05`` so a popular candidate breaks ties between
+                near-identical composite scores without ever overriding
+                the primary name/cooccurrence/temporal signals on its
+                own. Set to ``0.0`` to disable.
+            mention_count_saturation: Mention count at which the bonus
+                reaches its cap. Bonus scales as
+                ``cap * log1p(count) / log1p(saturation)``. Default
+                ``50`` — popular entities saturate quickly so the signal
+                stops growing once an entity is well-established.
             enable_llm_disambiguation: When ``True`` (default for backward
                 compat), ambiguous middle-band pairs (composite below
                 threshold, name/embedding combined above ``skip_threshold``)
@@ -228,6 +242,16 @@ class EntityResolver:
                 "composite_temporal_window_days must be > 0, "
                 f"got {composite_temporal_window_days}"
             )
+        if mention_count_bonus_cap < 0.0:
+            raise ValueError(
+                "mention_count_bonus_cap must be >= 0, "
+                f"got {mention_count_bonus_cap}"
+            )
+        if mention_count_saturation <= 0:
+            raise ValueError(
+                "mention_count_saturation must be > 0, "
+                f"got {mention_count_saturation}"
+            )
         self.similarity_threshold = similarity_threshold
         self.confirmation_threshold = confirmation_threshold
         self.max_candidates_per_entity = max_candidates_per_entity
@@ -241,6 +265,8 @@ class EntityResolver:
         self.composite_cooccurrence_weight = composite_cooccurrence_weight
         self.composite_temporal_weight = composite_temporal_weight
         self.composite_temporal_window_days = composite_temporal_window_days
+        self.mention_count_bonus_cap = mention_count_bonus_cap
+        self.mention_count_saturation = mention_count_saturation
         self.enable_llm_disambiguation = enable_llm_disambiguation
         self.canonical_resolution = canonical_resolution
         # Optional benchmark collector — installed by the eval harness via
@@ -376,6 +402,22 @@ class EntityResolver:
             if canonical_id != tentative_id:
                 entity.id = canonical_id
                 id_remapping[tentative_id] = canonical_id
+
+        # Hindsight-parity: bump mention_count on every canonical we
+        # resolved-to so the popularity signal stays current. Best-effort
+        # (older adapters lacking the method are skipped). Run AFTER the
+        # remap so we count the resolution event, not the lookup.
+        if id_remapping:
+            increment = getattr(graph_store, "increment_mention_counts", None)
+            if increment is not None:
+                try:
+                    await increment(list(set(id_remapping.values())), bank_id)
+                except Exception as exc:  # pragma: no cover — best-effort
+                    _logger.warning(
+                        "increment_mention_counts failed (%s) — composite "
+                        "scoring will use stale popularity signal until next "
+                        "successful resolve.", exc,
+                    )
         return id_remapping
 
     async def _best_canonical_id(
@@ -645,11 +687,28 @@ class EntityResolver:
             if days_diff < self.composite_temporal_window_days:
                 temporal_score = 1.0 - (days_diff / self.composite_temporal_window_days)
 
-        return (
+        base = (
             self.composite_name_weight * name_sim
             + self.composite_cooccurrence_weight * cooc_score
             + self.composite_temporal_weight * temporal_score
         )
+
+        # Hindsight-parity popularity bonus — log-scaled so a 10-mention
+        # entity scores roughly half as much as a 50-mention one, and a
+        # 100-mention entity is fully saturated. Hard-capped at
+        # ``mention_count_bonus_cap`` so this signal can never on its own
+        # promote a candidate past the composite threshold; it only
+        # breaks ties between near-equal name/cooccurrence/temporal blends.
+        if self.mention_count_bonus_cap > 0.0 and match.mention_count > 1:
+            import math
+            saturation = max(1, self.mention_count_saturation)
+            bonus = self.mention_count_bonus_cap * min(
+                1.0,
+                math.log1p(match.mention_count) / math.log1p(saturation),
+            )
+            base += bonus
+
+        return base
 
     async def _score_candidates(
         self,

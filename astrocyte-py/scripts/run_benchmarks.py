@@ -577,7 +577,8 @@ def _locomo_llm_judge(brain, *, use_canonical_judge: bool):
 
 async def run_locomo(
     brain, data_path: str | None, max_questions: int | None,
-    *, use_canonical_judge: bool = False, system: str = "astrocyte",
+    *, max_questions_per_conversation: int | None = None,
+    use_canonical_judge: bool = False, system: str = "astrocyte",
     checkpoint_dir: Path | None = None,
     resume: bool = False,
     retain_concurrency: int = 10,
@@ -623,6 +624,7 @@ async def run_locomo(
             data_path=data_path,
             bank_id="bench-locomo",
             max_questions=max_questions,
+            max_questions_per_conversation=max_questions_per_conversation,
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
             checkpoint=cp,
@@ -738,6 +740,7 @@ async def run_locomo(
             conversations=conversations,
             bank_id="bench-locomo",
             max_questions=max_questions,
+            max_questions_per_conversation=max_questions_per_conversation,
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
             checkpoint=cp,
@@ -839,7 +842,17 @@ async def main() -> None:
         "--max-questions",
         type=int,
         default=None,
-        help="Limit number of questions per benchmark (for quick testing)",
+        help="Hard cap on total questions (deterministic head-slice; biased toward "
+             "early conversations when small). For fair-coverage fast benches, "
+             "prefer --max-questions-per-conversation.",
+    )
+    parser.add_argument(
+        "--max-questions-per-conversation",
+        type=int,
+        default=None,
+        help="LoCoMo only: take the first N questions from EACH conversation. "
+             "20 × 10 conversations = 200 questions with uniform per-conversation "
+             "coverage — better fast-iteration sample than --max-questions 200.",
     )
     parser.add_argument(
         "--output-dir",
@@ -975,6 +988,7 @@ async def main() -> None:
             ),
             run_locomo(
                 brain, args.locomo_path, args.max_questions,
+                max_questions_per_conversation=args.max_questions_per_conversation,
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
@@ -1014,6 +1028,7 @@ async def main() -> None:
         if run_loc:
             outcome = await run_locomo(
                 brain, args.locomo_path, args.max_questions,
+                max_questions_per_conversation=args.max_questions_per_conversation,
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
