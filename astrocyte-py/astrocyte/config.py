@@ -112,6 +112,113 @@ class RecallCacheConfig:
 
 
 @dataclass
+class AgenticReflectConfig:
+    """Agentic reflect loop (Hindsight parity).
+
+    When enabled, ``reflect()`` runs an LLM-driven loop that selects
+    between two tools — ``recall`` (refine and re-retrieve) and ``done``
+    (commit the final answer with citations) — for up to
+    ``max_iterations`` turns. Targets multi-hop and open-domain queries
+    where a single retrieval often misses the bridge memory.
+
+    Cost: each turn is one LLM call. Default cap of 3 means worst-case
+    3× the LLM cost of single-shot reflect; typical case is 1-2 turns
+    when initial evidence is sufficient.
+
+    See ``astrocyte/pipeline/agentic_reflect.py`` for protocol details.
+    """
+
+    enabled: bool = False
+    max_iterations: int = 3
+    recall_step_max_results: int = 10
+    max_evidence_pool_size: int = 30
+
+
+@dataclass
+class SemanticLinkGraphConfig:
+    """Precomputed semantic-kNN graph at retain time (Hindsight parity, C3a).
+
+    Each new memory is linked to its top-``k`` most-similar existing
+    memories with cosine similarity ≥ ``similarity_threshold``. The
+    edges feed the link-expansion retrieval CTE as a parallel signal
+    alongside entity-overlap and causal links.
+
+    Costs one extra ``search_similar`` per chunk during retain (cheap
+    against the HNSW index). Disabled by default; opt-in for
+    benchmarks / production where multi-hop synthesis matters.
+    """
+
+    enabled: bool = False
+    top_k: int = 5
+    similarity_threshold: float = 0.7
+
+
+@dataclass
+class CausalLinksConfig:
+    """Cause→effect link extraction at retain time (Hindsight parity).
+
+    When enabled, retain runs an additional LLM pass that identifies
+    causal relationships between extracted entities and persists them
+    as ``EntityLink(link_type="causes", ...)`` rows. These edges feed
+    temporal spreading activation's "trace reasoning chains" path.
+
+    Costs one extra LLM call per record. Disabled by default — opt in
+    for benchmarks / production where causal walks add value.
+    """
+
+    enabled: bool = False
+    max_pairs_per_memory: int = 4
+    min_confidence: float = 0.7
+
+
+@dataclass
+class SpreadingActivationConfig:
+    """Spreading activation through entity links (Hindsight parity).
+
+    When enabled, recall expands the seed RRF result set by walking
+    entity-link edges (default: ``co_occurs``) out to ``max_hops``,
+    decaying activation per hop. Spread hits join the candidate pool
+    before final cross-encoder rerank, with metadata tags
+    (``_spread_hop``, ``_spread_via_entity``) so synthesis can tell
+    them apart from direct evidence.
+
+    Defaults are conservative — leave disabled until the workload is
+    verified to benefit (multi-hop / open-domain QA categories) and
+    monitor single-hop precision for regressions caused by spread noise.
+    """
+
+    enabled: bool = False
+    max_hops: int = 2
+    decay_per_hop: float = 0.6
+    expansion_limit: int = 30
+    activation_threshold: float = 0.2
+    link_types: list[str] = field(default_factory=lambda: ["co_occurs", "causes"])
+    #: Hindsight blog 2026-03-12 — temporal proximity bonus on top of
+    #: the entity-link spread. ``0.0`` disables (entity-link only).
+    temporal_proximity_weight: float = 0.3
+    temporal_half_life_days: float = 7.0
+
+
+@dataclass
+class CrossEncoderRerankConfig:
+    """Final-stage cross-encoder reranker (Hindsight parity).
+
+    When ``enabled=True``, :meth:`PipelineOrchestrator._rank_reflect_context`
+    uses a real cross-encoder (sentence-transformers backend) to rerank the
+    top-``top_k`` recall hits before synthesis. When disabled (default),
+    the existing ``cross_encoder_like_rerank`` heuristic runs instead.
+
+    The default model — ``cross-encoder/ms-marco-MiniLM-L-6-v2`` — matches
+    Hindsight's default and is the standard MS MARCO baseline.
+    """
+
+    enabled: bool = False
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    top_k: int = 30
+    force_cpu: bool = False
+
+
+@dataclass
 class TieredRetrievalConfig:
     enabled: bool = False
     min_results: int = 3
@@ -394,6 +501,8 @@ class EntityResolutionConfig:
     similarity_threshold: float = 0.8
     confirmation_threshold: float = 0.75
     max_candidates_per_entity: int = 3
+    enable_llm_disambiguation: bool = True
+    canonical_resolution: bool = False
 
 
 @dataclass
@@ -468,6 +577,11 @@ class AstrocyteConfig:
     # Phase 2 innovations
     recall_cache: RecallCacheConfig = field(default_factory=RecallCacheConfig)
     tiered_retrieval: TieredRetrievalConfig = field(default_factory=TieredRetrievalConfig)
+    cross_encoder_rerank: CrossEncoderRerankConfig = field(default_factory=CrossEncoderRerankConfig)
+    spreading_activation: SpreadingActivationConfig = field(default_factory=SpreadingActivationConfig)
+    causal_links: CausalLinksConfig = field(default_factory=CausalLinksConfig)
+    semantic_link_graph: SemanticLinkGraphConfig = field(default_factory=SemanticLinkGraphConfig)
+    agentic_reflect: AgenticReflectConfig = field(default_factory=AgenticReflectConfig)
     recall_authority: RecallAuthorityConfig = field(default_factory=RecallAuthorityConfig)
     curated_retain: CuratedRetainConfig = field(default_factory=CuratedRetainConfig)
     curated_recall: CuratedRecallConfig = field(default_factory=CuratedRecallConfig)
@@ -807,6 +921,11 @@ _SIMPLE_SECTION_MAP: dict[str, type] = {
     "mcp": McpConfig,
     "recall_cache": RecallCacheConfig,
     "tiered_retrieval": TieredRetrievalConfig,
+    "cross_encoder_rerank": CrossEncoderRerankConfig,
+    "spreading_activation": SpreadingActivationConfig,
+    "causal_links": CausalLinksConfig,
+    "semantic_link_graph": SemanticLinkGraphConfig,
+    "agentic_reflect": AgenticReflectConfig,
     "curated_retain": CuratedRetainConfig,
     "curated_recall": CuratedRecallConfig,
     "wiki_compile": WikiCompileConfig,
