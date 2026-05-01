@@ -341,6 +341,50 @@ class TestAgenticLoop:
         assert synth_called["hit_ids"] == ["m1", "m2", "m3", "m4"]
 
     @pytest.mark.asyncio
+    async def test_adversarial_defense_appends_rules_to_system_prompt(self):
+        """When ``adversarial_defense=True``, the system prompt seen by the
+        provider includes the explicit premise-check / negative-existence /
+        time-shift / "insufficient evidence is always valid" rules."""
+        llm = _ScriptedToolLLM([
+            [("done", {"answer": "x", "cited_ids": []})],
+        ])
+
+        await agentic_reflect(
+            "q",
+            initial_hits=[],
+            recall_fn=_RecallTracker([]),
+            llm_provider=llm,
+            params=AgenticReflectParams(adversarial_defense=True),
+        )
+
+        sys_msg = next(
+            m for m in llm.calls[0]["messages"] if m.role == "system"
+        )
+        assert "ADVERSARIAL DEFENSE" in sys_msg.content
+        assert "presupposes" in sys_msg.content.lower()
+        assert "insufficient evidence" in sys_msg.content.lower()
+
+    @pytest.mark.asyncio
+    async def test_adversarial_defense_off_keeps_base_prompt(self):
+        """Default (``adversarial_defense=False``) does NOT inject the
+        defense rules — keeps the prompt lean for non-adversarial workloads."""
+        llm = _ScriptedToolLLM([
+            [("done", {"answer": "x", "cited_ids": []})],
+        ])
+
+        await agentic_reflect(
+            "q",
+            initial_hits=[],
+            recall_fn=_RecallTracker([]),
+            llm_provider=llm,
+        )
+
+        sys_msg = next(
+            m for m in llm.calls[0]["messages"] if m.role == "system"
+        )
+        assert "ADVERSARIAL DEFENSE" not in sys_msg.content
+
+    @pytest.mark.asyncio
     async def test_unknown_tool_returns_error_to_model(self):
         """An unknown tool name is fed back as a structured error, then
         the model gets another turn to recover (call done in this case)."""

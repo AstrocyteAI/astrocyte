@@ -263,6 +263,16 @@ class Astrocyte:
         pipeline.semantic_link_graph_top_k = slg_cfg.top_k
         pipeline.semantic_link_graph_threshold = slg_cfg.similarity_threshold
 
+        # Structured fact extraction at retain time.
+        sfe_cfg = self._config.structured_fact_extraction
+        pipeline.structured_fact_extraction_enabled = sfe_cfg.enabled
+        pipeline.structured_fact_extraction_max_facts = sfe_cfg.max_facts_per_call
+
+        # Query analyzer (temporal constraint extraction at recall time).
+        qa_cfg = self._config.query_analyzer
+        pipeline.query_analyzer_enabled = qa_cfg.enabled
+        pipeline.query_analyzer_allow_llm_fallback = qa_cfg.allow_llm_fallback
+
         # Link expansion (Hindsight parity, C3) — replaces the previous
         # spreading-activation BFS with the 3-parallel-signal path.
         # Reuses the legacy ``spreading_activation:`` config block so
@@ -278,7 +288,15 @@ class Astrocyte:
         else:
             pipeline.link_expansion_params = None
 
-        # Agentic reflect loop (Hindsight parity).
+        # Adversarial-defense layer.
+        ad_cfg = self._config.adversarial_defense
+        pipeline.adversarial_abstention_enabled = ad_cfg.abstention_enabled
+        pipeline.adversarial_abstention_floor = ad_cfg.abstention_floor
+        pipeline.adversarial_premise_verification_enabled = ad_cfg.premise_verification_enabled
+        pipeline.adversarial_premise_min_confidence = ad_cfg.premise_verification_min_confidence
+        pipeline.adversarial_prompt_enabled = ad_cfg.adversarial_prompt_enabled
+
+        # Agentic reflect loop.
         ar_cfg = self._config.agentic_reflect
         if ar_cfg.enabled:
             from astrocyte.pipeline.agentic_reflect import AgenticReflectParams
@@ -286,6 +304,13 @@ class Astrocyte:
                 max_iterations=ar_cfg.max_iterations,
                 recall_step_max_results=ar_cfg.recall_step_max_results,
                 max_evidence_pool_size=ar_cfg.max_evidence_pool_size,
+                # Adversarial-defense rules in the system prompt are
+                # opt-in via the separate adversarial_defense block —
+                # the agentic loop's own ``adversarial_defense`` param
+                # mirrors that flag so a user enabling adversarial
+                # defense automatically gets the loop-level prompt
+                # tightening too.
+                adversarial_defense=ad_cfg.adversarial_prompt_enabled,
             )
         else:
             pipeline.agentic_reflect_params = None

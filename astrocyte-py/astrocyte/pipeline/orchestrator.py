@@ -60,6 +60,7 @@ from astrocyte.types import (
     EntityLink,
     MemoryEntityAssociation,
     MemoryHit,
+    MemoryLink,
     Message,
     RecallRequest,
     RecallResult,
@@ -300,6 +301,22 @@ class PipelineOrchestrator:
         #: post-fusion 3-signal expansion. Replaced the old BFS-hop
         #: ``spreading_activation_params`` per Hindsight C3 rewrite.
         self.link_expansion_params: LinkExpansionParams | None = None
+        #: Adversarial-defense score-floor abstention. When the top
+        #: recall hit's score is below this floor, reflect short-circuits
+        #: to "insufficient evidence" without invoking the LLM. Targets
+        #: adversarial questions where the LLM left to its own devices
+        #: would hallucinate an answer from weak hits. Wired by
+        #: ``Astrocyte.set_pipeline`` from ``adversarial_defense`` config.
+        self.adversarial_abstention_enabled: bool = False
+        self.adversarial_abstention_floor: float = 0.2
+        #: Pre-loop premise verification — decompose question into atomic
+        #: claims, verify each. Wired below in the reflect path.
+        self.adversarial_premise_verification_enabled: bool = False
+        self.adversarial_premise_min_confidence: float = 0.6
+        #: Tighten the agentic-reflect system prompt with explicit
+        #: adversarial-defense rules ("insufficient evidence is always
+        #: a valid answer", premise-check, etc.).
+        self.adversarial_prompt_enabled: bool = False
         #: Hindsight-parity causal-link extraction at retain time. When
         #: enabled, one extra LLM call per record produces directional
         #: ``causes`` edges. Wired by ``Astrocyte.set_pipeline``.
@@ -313,6 +330,21 @@ class PipelineOrchestrator:
         self.semantic_link_graph_enabled: bool = False
         self.semantic_link_graph_top_k: int = 5
         self.semantic_link_graph_threshold: float = 0.7
+        #: Structured fact extraction at retain time (5-dim
+        #: what/when/where/who/why with embedded entities + caused_by
+        #: relations). When enabled, replaces chunk_text +
+        #: extract_entities + fact_causal_extraction with a single
+        #: LLM call producing structured facts. Each fact becomes one
+        #: memory.
+        self.structured_fact_extraction_enabled: bool = False
+        self.structured_fact_extraction_max_facts: int = 30
+        #: Query-level temporal constraint extraction. When enabled,
+        #: recall parses temporal expressions in the query into a
+        #: time_range filter applied to retrieval. Regex pre-pass is
+        #: free; ``allow_llm_fallback`` opt-in adds 1 LLM call per
+        #: temporal-marker query.
+        self.query_analyzer_enabled: bool = False
+        self.query_analyzer_allow_llm_fallback: bool = False
         #: Hindsight-parity agentic reflect loop. ``None`` = single-shot
         #: synthesis (legacy path). Set by ``Astrocyte.set_pipeline``
         #: when ``agentic_reflect.enabled`` is true.
@@ -396,6 +428,88 @@ class PipelineOrchestrator:
             return
         for entity, vec in zip(targets, vectors, strict=False):
             entity.embedding = vec
+
+    async def _structured_fact_extraction_for_text(
+        self,
+        prepared,
+        request: RetainRequest,
+    ) -> tuple[
+        list[str] | None,
+        list[Entity] | None,
+        list[tuple[int, str]] | None,  # (entity_idx_in_full_list, memory_idx) associations
+        list[tuple[int, int, float]] | None,  # (source_memory_idx, target_memory_idx, confidence) caused_by
+    ]:
+        """Run the structured 5-dim fact extraction path.
+
+        Returns ``(fact_texts, entities, associations, caused_by)`` when
+        the path is enabled and produces facts; ``(None, None, None, None)``
+        otherwise. Caller falls through to the legacy chunk_text +
+        extract_entities path when None is returned.
+
+        Indices in ``associations`` and ``caused_by`` reference positions
+        in the returned ``fact_texts``/``entities`` lists. Callers
+        resolve them to memory IDs after store_vectors.
+        """
+        if (
+            not self.structured_fact_extraction_enabled
+            or self.llm_provider is None
+            or not prepared.extract_entities
+        ):
+            return None, None, None, None
+        try:
+            from astrocyte.pipeline.fact_extraction import (
+                extract_facts,
+                materialize_facts,
+            )
+            facts = await extract_facts(
+                prepared.text,
+                self.llm_provider,
+                event_date=request.occurred_at,
+                max_facts=self.structured_fact_extraction_max_facts,
+            )
+        except Exception as exc:
+            _logger.warning(
+                "structured fact extraction failed (%s); falling back "
+                "to legacy chunk + entity-extraction path.", exc,
+            )
+            return None, None, None, None
+        if not facts:
+            return None, None, None, None
+
+        # Materialize without embeddings here — embeddings are batched
+        # later for cost. We only need the list of fact texts and the
+        # pre-extracted entities + association index map.
+        materialized = materialize_facts(
+            facts, bank_id=request.bank_id,
+            occurred_at=request.occurred_at,
+        )
+        fact_texts = [item.text for item in materialized.vector_items]
+        entities = list(materialized.entities)
+
+        # Build (memory_idx, entity_idx) pairs from the materialized
+        # association tuples (which reference items by ID). We need
+        # indices because the caller hasn't assigned final memory IDs
+        # yet — those come after dedup + store_vectors.
+        item_id_to_idx = {item.id: i for i, item in enumerate(materialized.vector_items)}
+        ent_id_to_idx = {e.id: i for i, e in enumerate(entities)}
+        associations: list[tuple[int, str]] = []
+        for item_id, ent_id in materialized.memory_entity_associations:
+            mem_idx = item_id_to_idx.get(item_id)
+            ent_idx = ent_id_to_idx.get(ent_id)
+            if mem_idx is None or ent_idx is None:
+                continue
+            associations.append((ent_idx, mem_idx))
+
+        # caused_by edges: indices both into fact list (= memory list).
+        caused_by: list[tuple[int, int, float]] = []
+        for link in materialized.memory_links:
+            src_idx = item_id_to_idx.get(link.source_memory_id)
+            tgt_idx = item_id_to_idx.get(link.target_memory_id)
+            if src_idx is None or tgt_idx is None:
+                continue
+            caused_by.append((src_idx, tgt_idx, float(link.confidence)))
+
+        return fact_texts, entities, associations, caused_by
 
     async def _persist_semantic_links(
         self,
@@ -482,11 +596,26 @@ class PipelineOrchestrator:
                     )
 
         entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
-        associations = [
-            MemoryEntityAssociation(memory_id=mid, entity_id=eid)
-            for mid in memory_ids
-            for eid in entity_ids
-        ]
+
+        # Per-fact entity associations when SFE supplied them
+        # (each memory linked only to entities IT mentions); legacy path
+        # uses the Cartesian product.
+        sfe_associations = record.get("sfe_associations")
+        if sfe_associations is not None:
+            associations = [
+                MemoryEntityAssociation(
+                    memory_id=memory_ids[mem_idx],
+                    entity_id=entity_ids[ent_idx],
+                )
+                for ent_idx, mem_idx in sfe_associations
+                if 0 <= ent_idx < len(entity_ids) and 0 <= mem_idx < len(memory_ids)
+            ]
+        else:
+            associations = [
+                MemoryEntityAssociation(memory_id=mid, entity_id=eid)
+                for mid in memory_ids
+                for eid in entity_ids
+            ]
         await self.graph_store.link_memories_to_entities(associations, request.bank_id)
         if len(entity_ids) > 1:
             links = [
@@ -500,14 +629,35 @@ class PipelineOrchestrator:
             ]
             await self.graph_store.store_links(links, request.bank_id)
 
-        # Fact-level causal-link extraction (Hindsight parity, C2). One
-        # extra LLM call per record identifies cause→effect pairs among
-        # the chunks (facts) of THIS retain. Persisted as
-        # ``MemoryLink(link_type="caused_by", ...)`` edges — fact-to-
-        # fact, NOT entity-to-entity. The link-expansion retrieval
-        # walks these for "trace reasoning chains."
+        # MemoryLinks (caused_by). Two paths:
+        # - SFE supplied them inline → resolve indices, store.
+        # - Legacy fact_causal_extraction LLM call per record.
+        sfe_caused_by = record.get("sfe_caused_by")
         chunks: list[str] = record.get("chunks") or []
-        if (
+        if sfe_caused_by:
+            memory_links = [
+                MemoryLink(
+                    source_memory_id=memory_ids[src_idx],
+                    target_memory_id=memory_ids[tgt_idx],
+                    link_type="caused_by",
+                    confidence=conf,
+                    weight=1.0,
+                    created_at=datetime.now(timezone.utc),
+                    metadata={"bank_id": request.bank_id, "source": "fact_extraction"},
+                )
+                for src_idx, tgt_idx, conf in sfe_caused_by
+                if 0 <= src_idx < len(memory_ids)
+                and 0 <= tgt_idx < len(memory_ids)
+                and src_idx != tgt_idx
+            ]
+            if memory_links:
+                try:
+                    await self.graph_store.store_memory_links(
+                        memory_links, request.bank_id,
+                    )
+                except Exception as exc:
+                    _logger.warning("storing memory_links failed: %s", exc)
+        elif (
             self.causal_links_enabled
             and len(memory_ids) > 1
             and len(chunks) == len(memory_ids)
@@ -589,7 +739,21 @@ class PipelineOrchestrator:
         chunk_kwargs: dict[str, int] = {"max_chunk_size": chunking.max_size}
         if chunking.overlap is not None:
             chunk_kwargs["overlap"] = chunking.overlap
-        chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
+
+        # Structured 5-dim fact extraction (opt-in). Replaces chunking +
+        # entity extraction with a single LLM call producing facts.
+        # Falls back to legacy chunk_text + extract_entities when
+        # disabled or when extraction returns no facts.
+        (
+            sfe_fact_texts,
+            sfe_entities,
+            sfe_associations,
+            sfe_caused_by,
+        ) = await self._structured_fact_extraction_for_text(prepared, request)
+        if sfe_fact_texts is not None:
+            chunks = list(sfe_fact_texts)
+        else:
+            chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
         if not chunks:
             return RetainResult(stored=False, error="No content after chunking")
 
@@ -621,8 +785,31 @@ class PipelineOrchestrator:
         chunks = [chunks[i] for i in keep_indices]
         embeddings = [embeddings[i] for i in keep_indices]
 
-        # 3. Extract entities (profile can disable; metadata profiles avoid LLM calls)
-        if profile is not None and profile.entity_extraction == "metadata":
+        # Remap structured-fact-extraction indices through dedup. The
+        # association and caused_by lists referenced positions in the
+        # ORIGINAL chunks; after dedup, indices need remapping to the
+        # surviving positions (or the records dropped entirely).
+        if sfe_associations is not None or sfe_caused_by is not None:
+            old_to_new = {old: new for new, old in enumerate(keep_indices)}
+            if sfe_associations is not None:
+                sfe_associations = [
+                    (ent_idx, old_to_new[mem_idx])
+                    for ent_idx, mem_idx in sfe_associations
+                    if mem_idx in old_to_new
+                ]
+            if sfe_caused_by is not None:
+                sfe_caused_by = [
+                    (old_to_new[src], old_to_new[tgt], conf)
+                    for src, tgt, conf in sfe_caused_by
+                    if src in old_to_new and tgt in old_to_new
+                ]
+
+        # 3. Extract entities (profile can disable; metadata profiles avoid LLM calls).
+        # Structured fact extraction provides entities pre-extracted —
+        # skip the second LLM call when it ran successfully.
+        if sfe_entities is not None:
+            entities = list(sfe_entities)
+        elif profile is not None and profile.entity_extraction == "metadata":
             entities = _entities_from_metadata(prepared.metadata)
         elif prepared.extract_entities:
             entities = await extract_entities(prepared.text, self.llm_provider)
@@ -746,10 +933,27 @@ class PipelineOrchestrator:
 
             entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
 
-            # Link memories to entities
-            associations = [
-                MemoryEntityAssociation(memory_id=mid, entity_id=eid) for mid in memory_ids for eid in entity_ids
-            ]
+            # Link memories to entities. Two paths:
+            # - Structured fact extraction provides per-fact-per-entity
+            #   associations (each memory linked only to entities IT mentions),
+            #   matching Hindsight's fact-grained granularity.
+            # - Legacy path uses the Cartesian product (every memory linked
+            #   to every entity in the batch), which works when extraction
+            #   was over the whole text rather than per fact.
+            if sfe_associations is not None:
+                associations = [
+                    MemoryEntityAssociation(
+                        memory_id=memory_ids[mem_idx],
+                        entity_id=entity_ids[ent_idx],
+                    )
+                    for ent_idx, mem_idx in sfe_associations
+                    if 0 <= ent_idx < len(entity_ids) and 0 <= mem_idx < len(memory_ids)
+                ]
+            else:
+                associations = [
+                    MemoryEntityAssociation(memory_id=mid, entity_id=eid)
+                    for mid in memory_ids for eid in entity_ids
+                ]
             await self.graph_store.link_memories_to_entities(associations, request.bank_id)
 
             # Create co-occurrence links between entities
@@ -765,14 +969,40 @@ class PipelineOrchestrator:
                 ]
                 await self.graph_store.store_links(links, request.bank_id)
 
-            # Fact-level causal-link extraction (Hindsight parity, C2).
-            # Identical to the retain_many path — see ``_process_record_entities``.
-            if (
+            # Causal MemoryLinks. Two paths:
+            # - Structured fact extraction supplies them inline (no
+            #   extra LLM call); resolve indices to memory IDs and store.
+            # - Legacy path runs a separate fact_causal_extraction LLM call.
+            if sfe_caused_by is not None and sfe_caused_by:
+                memory_links = [
+                    MemoryLink(
+                        source_memory_id=memory_ids[src_idx],
+                        target_memory_id=memory_ids[tgt_idx],
+                        link_type="caused_by",
+                        confidence=conf,
+                        weight=1.0,
+                        created_at=datetime.now(timezone.utc),
+                        metadata={"bank_id": request.bank_id, "source": "fact_extraction"},
+                    )
+                    for src_idx, tgt_idx, conf in sfe_caused_by
+                    if 0 <= src_idx < len(memory_ids)
+                    and 0 <= tgt_idx < len(memory_ids)
+                    and src_idx != tgt_idx
+                ]
+                if memory_links:
+                    try:
+                        await self.graph_store.store_memory_links(
+                            memory_links, request.bank_id,
+                        )
+                    except Exception as exc:
+                        _logger.warning("storing memory_links failed: %s", exc)
+            elif (
                 self.causal_links_enabled
                 and len(memory_ids) > 1
                 and len(chunks) == len(memory_ids)
                 and self.llm_provider is not None
             ):
+                # Legacy fact-causal-extraction LLM pass (separate call).
                 try:
                     from astrocyte.pipeline.fact_causal_extraction import (
                         build_memory_links_from_relations,
@@ -893,7 +1123,20 @@ class PipelineOrchestrator:
             chunk_kwargs: dict[str, int] = {"max_chunk_size": chunking.max_size}
             if chunking.overlap is not None:
                 chunk_kwargs["overlap"] = chunking.overlap
-            chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
+
+            # Structured 5-dim fact extraction (opt-in) — same branch as
+            # retain(); produces fact texts + pre-extracted entities +
+            # caused_by index pairs for this record.
+            (
+                sfe_fact_texts,
+                sfe_entities,
+                sfe_associations,
+                sfe_caused_by,
+            ) = await self._structured_fact_extraction_for_text(prepared, request)
+            if sfe_fact_texts is not None:
+                chunks = list(sfe_fact_texts)
+            else:
+                chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
             if not chunks:
                 results[index] = RetainResult(stored=False, error="No content after chunking")
                 continue
@@ -908,6 +1151,12 @@ class PipelineOrchestrator:
                 "chunks": chunks,
                 "start": start,
                 "end": len(all_chunks),
+                # Carry the SFE artefacts through to the second loop and
+                # _process_record_entities. None entries mean the record
+                # took the legacy chunk_text + extract_entities path.
+                "sfe_entities": sfe_entities,
+                "sfe_associations": sfe_associations,
+                "sfe_caused_by": sfe_caused_by,
             })
 
         if not records:
@@ -959,7 +1208,32 @@ class PipelineOrchestrator:
 
             chunks = [chunks[i] for i in keep_indices]
             embeddings = [embeddings[i] for i in keep_indices]
-            if profile is not None and profile.entity_extraction == "metadata":
+
+            # Remap SFE indices through dedup (mirrors retain() path).
+            sfe_associations = record["sfe_associations"]
+            sfe_caused_by = record["sfe_caused_by"]
+            sfe_entities = record["sfe_entities"]
+            if sfe_associations is not None or sfe_caused_by is not None:
+                old_to_new = {old: new for new, old in enumerate(keep_indices)}
+                if sfe_associations is not None:
+                    sfe_associations = [
+                        (ent_idx, old_to_new[mem_idx])
+                        for ent_idx, mem_idx in sfe_associations
+                        if mem_idx in old_to_new
+                    ]
+                if sfe_caused_by is not None:
+                    sfe_caused_by = [
+                        (old_to_new[src], old_to_new[tgt], conf)
+                        for src, tgt, conf in sfe_caused_by
+                        if src in old_to_new and tgt in old_to_new
+                    ]
+                # Persist remapped versions for _process_record_entities.
+                record["sfe_associations"] = sfe_associations
+                record["sfe_caused_by"] = sfe_caused_by
+
+            if sfe_entities is not None:
+                entities = list(sfe_entities)
+            elif profile is not None and profile.entity_extraction == "metadata":
                 entities = _entities_from_metadata(prepared.metadata)
             elif prepared.extract_entities:
                 entities = await extract_entities(prepared.text, self.llm_provider)
@@ -1133,6 +1407,54 @@ class PipelineOrchestrator:
             time_range=request.time_range,
             as_of=request.as_of,  # M9: time-travel filter
         )
+
+        # 2a. Query-level temporal constraint extraction. The analyzer
+        # parses expressions like "what happened in March 2024?" or
+        # "last week's events" into a (start, end) range that becomes
+        # an extra time_range filter on top of any caller-supplied one.
+        # When the request already supplies a time_range, the
+        # analyzer's hit is the more restrictive of the two — the
+        # caller's filter remains the floor.
+        if (
+            self.query_analyzer_enabled
+            and request.time_range is None  # caller-supplied range wins
+        ):
+            try:
+                from astrocyte.pipeline.query_analyzer import analyze_query
+
+                analysis = await analyze_query(
+                    request.query,
+                    reference_date=request.as_of,
+                    llm_provider=self.llm_provider,
+                    allow_llm_fallback=self.query_analyzer_allow_llm_fallback,
+                )
+                if analysis.temporal_constraint and analysis.temporal_constraint.is_bounded():
+                    c = analysis.temporal_constraint
+                    # VectorFilters.time_range is (start, end) tuple,
+                    # both required for the SQL/in-memory adapters.
+                    # Use bench-bank min/max as defaults for open
+                    # ranges so the adapter contract is satisfied.
+                    far_past = datetime(1900, 1, 1, tzinfo=timezone.utc)
+                    far_future = datetime(2200, 1, 1, tzinfo=timezone.utc)
+                    filters = VectorFilters(
+                        bank_id=filters.bank_id,
+                        tags=filters.tags,
+                        fact_types=filters.fact_types,
+                        time_range=(
+                            c.start_date or far_past,
+                            c.end_date or far_future,
+                        ),
+                        as_of=filters.as_of,
+                    )
+                    _logger.info(
+                        "query_analyzer extracted temporal range %s",
+                        analysis.temporal_constraint,
+                    )
+            except Exception as exc:  # pragma: no cover — defensive
+                _logger.warning(
+                    "query_analyzer failed (%s); continuing without "
+                    "temporal filter.", exc,
+                )
 
         # 2b. Extract entities from query for graph search
         entity_ids: list[str] | None = None
@@ -1718,6 +2040,81 @@ class PipelineOrchestrator:
                         prompt=prompt_variant,
                         promote_metadata=mip_reflect.promote_metadata,
                     )
+
+        # 2b1. Adversarial-defense gate: premise verification.
+        # Decompose the question into atomic claims, verify each
+        # against memory. Short-circuit to "insufficient evidence"
+        # when ANY presupposition fails. Targets false-premise and
+        # negative-existence adversarial questions.
+        if (
+            self.adversarial_premise_verification_enabled
+            and self.llm_provider is not None
+        ):
+            try:
+                from astrocyte.pipeline.premise_verification import verify_question
+
+                async def _premise_recall(claim: str, max_results: int) -> list[MemoryHit]:
+                    sub_request = RecallRequest(
+                        query=claim,
+                        bank_id=request.bank_id,
+                        max_results=max_results,
+                        max_tokens=request.max_tokens,
+                        tags=request.tags,
+                    )
+                    sub_result = await self.recall(sub_request)
+                    return sub_result.hits
+
+                verification = await verify_question(
+                    request.query,
+                    recall_fn=_premise_recall,
+                    llm_provider=self.llm_provider,
+                    min_confidence=self.adversarial_premise_min_confidence,
+                )
+                short_circuit = verification.short_circuit_message()
+                if short_circuit is not None:
+                    _logger.info(
+                        "reflect: premise verification short-circuit — %s",
+                        short_circuit,
+                    )
+                    return ReflectResult(answer=short_circuit, sources=[])
+            except Exception as exc:
+                _logger.warning(
+                    "premise verification failed (%s); continuing without "
+                    "the guard.", exc,
+                )
+
+        # 2c. Adversarial-defense gate: score-floor abstention.
+        # Distinct from the evidence-strict prompt switch above.
+        # ``evidence_strict`` keeps invoking the LLM with a tighter
+        # prompt; the abstention floor short-circuits BEFORE any LLM
+        # call when retrieval is so weak that the question almost
+        # certainly has no answer in memory. Targets adversarial
+        # questions (negative existence, false premise, time-shift)
+        # where the LLM left to its own devices invents an answer.
+        #
+        # ``abstention_floor`` is more aggressive than
+        # ``evidence_strict_threshold``: by default 0.2 vs 0.5 — it
+        # must be low enough that legitimate weak-retrieval questions
+        # still go through. Tunable via
+        # ``adversarial_defense.abstention_floor`` config.
+        if (
+            self.adversarial_abstention_enabled
+            and recall_result.top_semantic_score < self.adversarial_abstention_floor
+            and (not recall_result.hits or all(
+                (h.score or 0.0) < self.adversarial_abstention_floor
+                for h in recall_result.hits[:5]
+            ))
+        ):
+            _logger.info(
+                "reflect: abstention floor triggered (top_semantic=%.3f < %.3f); "
+                "returning 'insufficient evidence' without LLM call.",
+                recall_result.top_semantic_score,
+                self.adversarial_abstention_floor,
+            )
+            return ReflectResult(
+                answer="insufficient evidence: no memory supports this question.",
+                sources=[],
+            )
 
         # 3. Synthesize. Two paths:
         #

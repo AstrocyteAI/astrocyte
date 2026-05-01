@@ -112,6 +112,39 @@ class RecallCacheConfig:
 
 
 @dataclass
+class AdversarialDefenseConfig:
+    """Adversarial-question defense layer.
+
+    Targets the LoCoMo adversarial category (negative-existence,
+    false-premise, time-shift, cross-entity-confusion) where the LLM
+    left to its own devices invents an answer from weak retrieval hits.
+
+    Three layered guards (each independently configurable):
+
+    1. ``abstention_enabled`` + ``abstention_floor`` — score-floor
+       short-circuit. When all top-K recall hits score below the floor,
+       skip the LLM and return "insufficient evidence." Default floor
+       ``0.2`` is conservative — only fires when retrieval is genuinely
+       disconnected from the question.
+
+    2. ``premise_verification_enabled`` — pre-loop premise extraction +
+       per-claim verification. The question is decomposed into atomic
+       claims; each is verified against memory before answering. Adds
+       1 LLM call per question; targets false-premise failures.
+
+    3. ``adversarial_prompt_enabled`` — tightens the agentic-reflect
+       system prompt with explicit "insufficient evidence is always a
+       valid answer" + premise-check rules. Free, defense-in-depth.
+    """
+
+    abstention_enabled: bool = False
+    abstention_floor: float = 0.2
+    premise_verification_enabled: bool = False
+    premise_verification_min_confidence: float = 0.6
+    adversarial_prompt_enabled: bool = False
+
+
+@dataclass
 class AgenticReflectConfig:
     """Agentic reflect loop (Hindsight parity).
 
@@ -151,6 +184,51 @@ class SemanticLinkGraphConfig:
     enabled: bool = False
     top_k: int = 5
     similarity_threshold: float = 0.7
+
+
+@dataclass
+class QueryAnalyzerConfig:
+    """Query-level temporal constraint extraction.
+
+    When ``enabled``, recall runs the regex pre-pass to extract
+    temporal expressions ("last week", "in March 2024", "yesterday")
+    into a time_range filter. Free of LLM cost.
+
+    ``allow_llm_fallback`` opts in to a structured-JSON LLM extraction
+    for queries that contain a temporal marker but no regex match
+    (e.g. "last spring", "around the launch"). Adds 1 LLM call per
+    such query; gated to keep cost predictable.
+
+    A caller-supplied ``RecallRequest.time_range`` always wins over
+    the analyzer's extraction.
+    """
+
+    enabled: bool = False
+    allow_llm_fallback: bool = False
+
+
+@dataclass
+class StructuredFactExtractionConfig:
+    """Single-pass structured fact extraction at retain time.
+
+    When enabled, replaces the legacy chunk + entity-extraction +
+    fact-causal-extraction three-pass pipeline with a single LLM call
+    that produces structured facts (what/when/where/who/why) with
+    embedded entities and intra-batch caused_by relations.
+
+    Each extracted fact becomes ONE memory (replaces chunk-based
+    memories). The structured fields populate ``metadata['_fact_*']``
+    so downstream rerank / synthesis can filter/promote on them.
+
+    Cost approximately equal to the legacy two-pass (one LLM call
+    replaces two); output substantially richer, especially for
+    multi-hop and temporal questions.
+
+    Net: opt-in, defaults conservative.
+    """
+
+    enabled: bool = False
+    max_facts_per_call: int = 30
 
 
 @dataclass
@@ -580,8 +658,11 @@ class AstrocyteConfig:
     cross_encoder_rerank: CrossEncoderRerankConfig = field(default_factory=CrossEncoderRerankConfig)
     spreading_activation: SpreadingActivationConfig = field(default_factory=SpreadingActivationConfig)
     causal_links: CausalLinksConfig = field(default_factory=CausalLinksConfig)
+    structured_fact_extraction: StructuredFactExtractionConfig = field(default_factory=StructuredFactExtractionConfig)
+    query_analyzer: QueryAnalyzerConfig = field(default_factory=QueryAnalyzerConfig)
     semantic_link_graph: SemanticLinkGraphConfig = field(default_factory=SemanticLinkGraphConfig)
     agentic_reflect: AgenticReflectConfig = field(default_factory=AgenticReflectConfig)
+    adversarial_defense: AdversarialDefenseConfig = field(default_factory=AdversarialDefenseConfig)
     recall_authority: RecallAuthorityConfig = field(default_factory=RecallAuthorityConfig)
     curated_retain: CuratedRetainConfig = field(default_factory=CuratedRetainConfig)
     curated_recall: CuratedRecallConfig = field(default_factory=CuratedRecallConfig)
@@ -924,8 +1005,11 @@ _SIMPLE_SECTION_MAP: dict[str, type] = {
     "cross_encoder_rerank": CrossEncoderRerankConfig,
     "spreading_activation": SpreadingActivationConfig,
     "causal_links": CausalLinksConfig,
+    "structured_fact_extraction": StructuredFactExtractionConfig,
+    "query_analyzer": QueryAnalyzerConfig,
     "semantic_link_graph": SemanticLinkGraphConfig,
     "agentic_reflect": AgenticReflectConfig,
+    "adversarial_defense": AdversarialDefenseConfig,
     "curated_retain": CuratedRetainConfig,
     "curated_recall": CuratedRecallConfig,
     "wiki_compile": WikiCompileConfig,

@@ -74,6 +74,11 @@ class AgenticReflectParams:
     #: tool call on a turn, the loop falls through to forced synthesis
     #: rather than thrashing. Set ``False`` only for diagnostic runs.
     fallback_on_no_tool_call: bool = True
+    #: Append adversarial-defense rules to the system prompt
+    #: (premise check, negative-existence handling, time-shift trap,
+    #: explicit "insufficient evidence is always a valid answer").
+    #: Targets the LoCoMo adversarial category.
+    adversarial_defense: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +238,48 @@ recall doesn't surface the answer.
 """
 
 
+_ADVERSARIAL_DEFENSE_RULES = """\
+
+ADVERSARIAL DEFENSE (read this carefully):
+
+A. Premise check before answering. If the question PRESUPPOSES a fact \
+("Why did Alice quit Google?" presupposes Alice worked at Google AND quit), \
+your evidence must directly support each presupposition. If ANY \
+presupposition lacks supporting evidence in the tool results, return:
+   "insufficient evidence — '<the unsupported presupposition>' is not \
+attested in memory."
+
+B. Entity / date / location verification. If the question names a specific \
+entity, date, or place, verify that token actually appears in the retrieved \
+evidence with the right context before incorporating it into your answer.
+
+C. Negative-existence questions. If asked "Did X ever do Y?" and recall \
+returns no memory in which X is associated with Y, the correct answer is \
+"No" or "no evidence in memory" — NOT a fabricated yes-answer from \
+loosely-related hits.
+
+D. Time-shift traps. Dates and time periods in the question must match \
+dates in the retrieved evidence. If the question asks about year N but \
+all evidence is year M, abstain — do not silently shift the date.
+
+E. "I don't know" is ALWAYS a valid answer. Speculation is never valid. \
+A confident "insufficient evidence" beats a plausible-but-unsupported answer.
+"""
+
+
+def _build_system_prompt(*, adversarial_defense: bool = False) -> str:
+    """Compose the agentic-loop system prompt.
+
+    The base prompt is always included; adversarial-defense rules are
+    appended only when the orchestrator has the feature enabled. Keeping
+    them off by default avoids the small overhead of the extra prompt
+    text on workloads that don't have adversarial questions.
+    """
+    if adversarial_defense:
+        return _SYSTEM_PROMPT + _ADVERSARIAL_DEFENSE_RULES
+    return _SYSTEM_PROMPT
+
+
 # ---------------------------------------------------------------------------
 # Loop entry point
 # ---------------------------------------------------------------------------
@@ -328,7 +375,9 @@ async def agentic_reflect(
         evidence=list(initial_hits[: p.max_evidence_pool_size]),
         seen_ids={h.memory_id for h in initial_hits if h.memory_id},
         conversation=[
-            Message(role="system", content=_SYSTEM_PROMPT),
+            Message(role="system", content=_build_system_prompt(
+                adversarial_defense=p.adversarial_defense,
+            )),
             Message(
                 role="user",
                 content=(
