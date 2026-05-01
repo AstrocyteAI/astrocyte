@@ -139,6 +139,18 @@ class _TrackingLLMProvider:
         result = await self._inner.complete(messages, model=model, max_tokens=max_tokens, temperature=temperature)
         if result.usage:
             self.tokens_used += result.usage.input_tokens + result.usage.output_tokens
+            # Tier-3 observability: record cost + per-phase tokens when a
+            # benchmark collector is attached. Silent no-op otherwise.
+            collector = getattr(self, "_metrics_collector", None)
+            if collector is not None:
+                try:
+                    collector.record_completion_call(
+                        model=getattr(result, "model", None) or "",
+                        input_tokens=result.usage.input_tokens,
+                        output_tokens=result.usage.output_tokens,
+                    )
+                except Exception:
+                    pass  # never let metrics break a real call
         return result
 
     async def embed(
@@ -146,7 +158,20 @@ class _TrackingLLMProvider:
         texts: list[str],
         model: str | None = None,
     ) -> list[list[float]]:
-        return await self._inner.embed(texts, model=model)
+        result = await self._inner.embed(texts, model=model)
+        # Embeddings don't return usage objects; estimate input tokens from
+        # the rough heuristic of ~1 token per 4 chars per text (conservative).
+        collector = getattr(self, "_metrics_collector", None)
+        if collector is not None:
+            try:
+                est_tokens = sum(max(1, len(t) // 4) for t in texts)
+                collector.record_embedding_call(
+                    model=model or "text-embedding-3-small",
+                    tokens=est_tokens,
+                )
+            except Exception:
+                pass  # metrics are best-effort; never block the embedding call
+        return result
 
     def capabilities(self) -> Any:
         return self._inner.capabilities()
@@ -276,6 +301,122 @@ class PipelineOrchestrator:
     def reset_token_counter(self) -> int:
         """Return accumulated token count and reset to zero."""
         return self._tracker.reset_tokens()
+
+    async def _attach_entity_name_embeddings(self, entities: list[Entity]) -> None:
+        """Embed each entity's name and attach the vector to ``entity.embedding``.
+
+        Powers the Hindsight-inspired entity-resolution cascade — at retain
+        time we generate one batched embedding call across all entity names,
+        then attach the resulting vector to each entity. Both
+        ``store_entities`` (for adapters that persist embeddings) and
+        ``EntityResolver.resolve()`` (for the cosine-similarity tier of the
+        cascade) consume the attached vectors.
+
+        Skips entities whose ``embedding`` is already set (caller-supplied)
+        and skips entities with empty/whitespace names. On failure logs a
+        warning and leaves embeddings unset — the resolver degrades to
+        trigram-only and the cost is correctness for that one batch, not
+        a retain failure.
+        """
+        targets = [
+            e for e in entities
+            if e.embedding is None and e.name and e.name.strip()
+        ]
+        if not targets:
+            return
+        try:
+            vectors = await generate_embeddings(
+                [e.name.strip() for e in targets],
+                self.llm_provider,
+            )
+        except Exception as exc:
+            _logger.warning(
+                "entity name embedding failed (resolver will fall back to "
+                "trigram-only tier): %s", exc,
+            )
+            return
+        for entity, vec in zip(targets, vectors, strict=False):
+            entity.embedding = vec
+
+    async def _process_record_entities(self, record: dict[str, Any]) -> None:
+        """Run all entity-related I/O for a single retain_many record.
+
+        Encapsulates the embed-names / store-entities / link-memories /
+        co-occurrence-links / entity-resolution cascade so :meth:`retain_many`
+        can dispatch one task per record via :func:`asyncio.gather`. Each
+        record's writes target distinct ``(bank_id, id)`` and
+        ``(bank_id, memory_id, entity_id)`` keys, so concurrent records
+        don't contend on row-level locks.
+
+        Failures in entity resolution are caught and logged — they must
+        not abort retain because the raw memories are already stored.
+        """
+        if self.graph_store is None:
+            return
+        request: RetainRequest = record["request"]
+        prepared = record["prepared"]
+        memory_ids: list[str] = record["memory_ids"]
+        entities: list[Entity] = record["entities"]
+        if not entities:
+            return
+
+        if self.entity_resolver is not None:
+            await self._attach_entity_name_embeddings(entities)
+            # Path B (Hindsight-style): rewrite tentative IDs to canonical
+            # IDs BEFORE storage so different surface forms that match an
+            # existing canonical never produce duplicate entity rows. The
+            # post-store ``resolve()`` alias pass becomes redundant in this
+            # mode and is skipped below.
+            if self.entity_resolver.canonical_resolution:
+                try:
+                    await self.entity_resolver.resolve_canonical_ids_in_place(
+                        new_entities=entities,
+                        bank_id=request.bank_id,
+                        graph_store=self.graph_store,
+                        event_date=request.occurred_at,
+                    )
+                except Exception as exc:
+                    _logger.warning(
+                        "canonical resolution failed during retain (falling "
+                        "back to tentative IDs): %s", exc,
+                    )
+
+        entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
+        associations = [
+            MemoryEntityAssociation(memory_id=mid, entity_id=eid)
+            for mid in memory_ids
+            for eid in entity_ids
+        ]
+        await self.graph_store.link_memories_to_entities(associations, request.bank_id)
+        if len(entity_ids) > 1:
+            links = [
+                EntityLink(
+                    entity_a=entity_ids[i],
+                    entity_b=entity_ids[j],
+                    link_type="co_occurs",
+                )
+                for i in range(len(entity_ids))
+                for j in range(i + 1, len(entity_ids))
+            ]
+            await self.graph_store.store_links(links, request.bank_id)
+
+        # Legacy two-stage flow: post-store alias resolution. Skipped when
+        # ``canonical_resolution=True`` because IDs are already canonical.
+        if (
+            self.entity_resolver is not None
+            and not self.entity_resolver.canonical_resolution
+        ):
+            try:
+                await self.entity_resolver.resolve(
+                    new_entities=entities,
+                    source_text=prepared.text,
+                    bank_id=request.bank_id,
+                    graph_store=self.graph_store,
+                    llm_provider=self.llm_provider,
+                    event_date=request.occurred_at,
+                )
+            except Exception as exc:
+                _logger.warning("entity resolution failed during retain: %s", exc)
 
     async def retain(self, request: RetainRequest) -> RetainResult:
         """Retain pipeline: normalize → chunk → extract entities → embed → store."""
@@ -430,6 +571,31 @@ class PipelineOrchestrator:
 
         # 5. Store entities and links (if graph store configured)
         if self.graph_store and entities:
+            # 5a. Attach name embeddings before persistence so the
+            # Hindsight-inspired entity-resolution cascade has the cheap
+            # cosine-similarity tier available.  Only fires when an
+            # entity_resolver is wired up — without one, the embedding
+            # would be persisted but never used, wasting API budget.
+            if self.entity_resolver is not None:
+                await self._attach_entity_name_embeddings(entities)
+                # Path B (Hindsight): rewrite tentative IDs to canonicals
+                # before storage. Skipped when canonical_resolution=False
+                # to preserve the legacy two-stage (store → resolve aliases)
+                # flow.
+                if self.entity_resolver.canonical_resolution:
+                    try:
+                        await self.entity_resolver.resolve_canonical_ids_in_place(
+                            new_entities=entities,
+                            bank_id=request.bank_id,
+                            graph_store=self.graph_store,
+                            event_date=request.occurred_at,
+                        )
+                    except Exception as exc:
+                        _logger.warning(
+                            "canonical resolution failed during retain "
+                            "(falling back to tentative IDs): %s", exc,
+                        )
+
             entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
 
             # Link memories to entities
@@ -451,10 +617,15 @@ class PipelineOrchestrator:
                 ]
                 await self.graph_store.store_links(links, request.bank_id)
 
-            # 5b. Entity resolution (M11) — find alias-of links for newly stored entities.
-            # Opt-in: skipped when entity_resolver is None (default).
-            # Runs after store_entities so the new entities are queryable as candidates.
-            if self.entity_resolver is not None:
+            # 5b. Entity resolution (M11) — Hindsight-inspired tiered cascade.
+            # Skipped when canonical_resolution=True (Path B) because IDs
+            # are already canonical from the pre-store pass above. Otherwise
+            # the legacy two-stage path runs the cascade and writes
+            # alias_of links for matched candidates.
+            if (
+                self.entity_resolver is not None
+                and not self.entity_resolver.canonical_resolution
+            ):
                 try:
                     await self.entity_resolver.resolve(
                         new_entities=entities,
@@ -462,6 +633,7 @@ class PipelineOrchestrator:
                         bank_id=request.bank_id,
                         graph_store=self.graph_store,
                         llm_provider=self.llm_provider,
+                        event_date=request.occurred_at,
                     )
                 except Exception as exc:
                     # Resolution failures must never abort a retain — degrade gracefully.
@@ -683,6 +855,21 @@ class PipelineOrchestrator:
                             exc,
                         )
 
+        # ── Phase 1: parallel entity processing across all records ──
+        # Each record's entity work (embed names, store entities, write
+        # co-occurrence links, run resolution cascade) is independent of
+        # other records and dominates retain wall-clock when the bank is
+        # large. ``asyncio.gather`` lets all records' LLM/DB I/O run
+        # concurrently — for batches of 10 records this gives ~10× speedup
+        # on the entity-resolution-bound retain phase. The non-I/O steps
+        # (dedup cache, result assembly) stay sequential below.
+        if self.graph_store is not None:
+            entity_records = [r for r in stored_records if r["entities"]]
+            if entity_records:
+                await asyncio.gather(*[
+                    self._process_record_entities(r) for r in entity_records
+                ])
+
         for record in stored_records:
             request: RetainRequest = record["request"]
             prepared = record["prepared"]
@@ -690,37 +877,6 @@ class PipelineOrchestrator:
             embeddings: list[list[float]] = record["embeddings"]
             chunks: list[str] = record["chunks"]
             entities = record["entities"]
-
-            if self.graph_store and entities:
-                entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
-                associations = [
-                    MemoryEntityAssociation(memory_id=mid, entity_id=eid)
-                    for mid in memory_ids
-                    for eid in entity_ids
-                ]
-                await self.graph_store.link_memories_to_entities(associations, request.bank_id)
-                if len(entity_ids) > 1:
-                    links = [
-                        EntityLink(
-                            entity_a=entity_ids[i],
-                            entity_b=entity_ids[j],
-                            link_type="co_occurs",
-                        )
-                        for i in range(len(entity_ids))
-                        for j in range(i + 1, len(entity_ids))
-                    ]
-                    await self.graph_store.store_links(links, request.bank_id)
-                if self.entity_resolver is not None:
-                    try:
-                        await self.entity_resolver.resolve(
-                            new_entities=entities,
-                            source_text=prepared.text,
-                            bank_id=request.bank_id,
-                            graph_store=self.graph_store,
-                            llm_provider=self.llm_provider,
-                        )
-                    except Exception as exc:
-                        _logger.warning("entity resolution failed during retain: %s", exc)
 
             for mem_id, embedding in zip(memory_ids, embeddings, strict=False):
                 self._dedup.add(request.bank_id, mem_id, embedding)

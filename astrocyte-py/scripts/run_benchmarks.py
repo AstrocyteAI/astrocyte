@@ -146,6 +146,8 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
             similarity_threshold=config.entity_resolution.similarity_threshold,
             confirmation_threshold=config.entity_resolution.confirmation_threshold,
             max_candidates_per_entity=config.entity_resolution.max_candidates_per_entity,
+            enable_llm_disambiguation=config.entity_resolution.enable_llm_disambiguation,
+            canonical_resolution=config.entity_resolution.canonical_resolution,
         )
 
     pipeline = PipelineOrchestrator(
@@ -226,8 +228,15 @@ async def _start_benchmark_task_worker(brain):
 
     worker_task = None
     if config.auto_start_worker:
+        # Bound handler concurrency to keep persona-compile and other
+        # post-retain tasks from saturating the pgvector / AGE connection
+        # pools (default max_size=40 each). Each handler holds a connection
+        # while making LLM calls (~10s), so ~20 in flight is comfortable.
         worker_task = asyncio.create_task(
-            queue.run_continuous(batch_size=config.batch_size),
+            queue.run_continuous(
+                batch_size=config.batch_size,
+                max_concurrent_tasks=max(20, 2 * config.batch_size),
+            ),
             name="astrocyte.benchmark_pgqueuer_worker",
         )
     setattr(brain, "_benchmark_task_queue", queue)
@@ -248,7 +257,7 @@ async def _stop_benchmark_task_worker(runtime: dict | None) -> None:
         try:
             await worker_task
         except asyncio.CancelledError:
-            pass
+            pass  # expected — task was just cancelled above
     connection = runtime.get("connection")
     if connection is not None:
         await connection.close()

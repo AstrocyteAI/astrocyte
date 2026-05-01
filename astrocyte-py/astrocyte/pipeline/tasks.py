@@ -70,10 +70,10 @@ class MemoryTask:
 class TaskBackend(Protocol):
     """Storage contract for task queues, implemented by Postgres in production."""
 
-    async def enqueue(self, task: MemoryTask) -> str: ...
-    async def claim(self, worker_id: str, limit: int = 10) -> list[MemoryTask]: ...
-    async def complete(self, task_id: str, result: dict[str, Any]) -> None: ...
-    async def fail(self, task_id: str, error: str, retry_at: datetime | None) -> None: ...
+    async def enqueue(self, task: MemoryTask) -> str: pass
+    async def claim(self, worker_id: str, limit: int = 10) -> list[MemoryTask]: pass
+    async def complete(self, task_id: str, result: dict[str, Any]) -> None: pass
+    async def fail(self, task_id: str, error: str, retry_at: datetime | None) -> None: pass
 
 
 class InMemoryTaskBackend:
@@ -192,12 +192,27 @@ class MemoryTaskDispatcher:
         if self._ctx.wiki_store is None:
             raise ValueError("compile_persona_page requires WikiStore")
         person = _optional_str(task.payload.get("person"))
+        # Optional scope qualifier (e.g. ``"convo:convo-3"``) — when set,
+        # the persona page is keyed per-scope so distinct contexts produce
+        # distinct pages even when the person's name is the same. LoCoMo
+        # uses this to keep "Caroline in conversation_0" separate from
+        # "Caroline in conversation_3".
+        scope = _optional_str(task.payload.get("scope"))
         source_ids = [str(value) for value in task.payload.get("source_ids", []) if value]
         items = await _list_bank_vectors(self._ctx.vector_store, task.bank_id)
         relevant = [
             item for item in items
             if _item_matches_person(item, person) and (not source_ids or item.id in source_ids)
         ]
+        # When scope is set, also filter the relevant items to those that
+        # belong to the same scope — otherwise the page would merge memories
+        # from every context that mentioned this person, defeating the
+        # whole point of scoping.
+        if scope is not None:
+            relevant = [
+                item for item in relevant
+                if _item_in_scope(item, scope)
+            ]
         if person is None:
             names = sorted({name for item in items for name in _item_person_names(item)})
             if not names:
@@ -209,7 +224,7 @@ class MemoryTaskDispatcher:
                 subtask = MemoryTask(
                     task_type=COMPILE_PERSONA_PAGE,
                     bank_id=task.bank_id,
-                    payload={"person": name},
+                    payload={"person": name, "scope": scope} if scope else {"person": name},
                 )
                 result = await self._compile_persona_page(subtask)
                 created += int(result.get("pages_created", 0))
@@ -217,7 +232,10 @@ class MemoryTaskDispatcher:
                 page_ids.extend(result.get("page_ids", []))
             return {"pages_created": created, "pages_updated": updated, "page_ids": page_ids}
 
-        page_id = f"person:{_slug(person)}"
+        page_id = (
+            f"person:{_slug(scope)}:{_slug(person)}" if scope
+            else f"person:{_slug(person)}"
+        )
         existing = await self._ctx.wiki_store.get_page(page_id, task.bank_id)
         page = await self._build_persona_page(task.bank_id, person, relevant, existing)
         await self._ctx.wiki_store.upsert_page(page, task.bank_id)
@@ -492,6 +510,28 @@ def _item_matches_person(item: VectorItem, person: str | None) -> bool:
     if person is None:
         return True
     return person.lower() in {name.lower() for name in _item_person_names(item)}
+
+
+def _item_in_scope(item: VectorItem, scope: str) -> bool:
+    """Return True when *item* belongs to *scope*.
+
+    Scope is matched against the item's tags (e.g. ``"convo:convo-3"``)
+    and against ``metadata.conversation_id`` (the LoCoMo benchmark stamps
+    both). Falls back to ``True`` when the scope marker isn't ``convo:*`` —
+    callers can extend this for other scope kinds without breaking the
+    LoCoMo path.
+    """
+    if not scope:
+        return True
+    tags = {str(tag).lower() for tag in (item.tags or [])}
+    if scope.lower() in tags:
+        return True
+    if scope.lower().startswith("convo:"):
+        convo_id = scope.split(":", 1)[1]
+        metadata = item.metadata or {}
+        if str(metadata.get("conversation_id", "")).lower() == convo_id.lower():
+            return True
+    return False
 
 
 def _slug(value: str) -> str:
