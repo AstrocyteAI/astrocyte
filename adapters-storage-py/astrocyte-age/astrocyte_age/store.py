@@ -473,30 +473,59 @@ class AgeGraphStore:
                         "[" + ",".join(f"{x:.10g}" for x in entity.embedding) + "]"
                     )
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        INSERT INTO astrocyte_entities
-                            (bank_id, id, name, entity_type, aliases, metadata,
-                             embedding, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s::vector, NOW())
-                        ON CONFLICT (bank_id, id) DO UPDATE SET
-                            name = EXCLUDED.name,
-                            entity_type = EXCLUDED.entity_type,
-                            aliases = EXCLUDED.aliases,
-                            metadata = EXCLUDED.metadata,
-                            embedding = COALESCE(EXCLUDED.embedding, astrocyte_entities.embedding),
-                            updated_at = NOW()
-                        """,
-                        [
-                            bank_id,
-                            entity.id,
-                            entity.name,
-                            entity.entity_type or "OTHER",
-                            entity.aliases,
-                            Json(entity.metadata or {}),
-                            embedding_text,
-                        ],
-                    )
+                    if embedding_text is not None:
+                        # pgvector column present — include embedding in upsert.
+                        await cur.execute(
+                            """
+                            INSERT INTO astrocyte_entities
+                                (bank_id, id, name, entity_type, aliases, metadata,
+                                 embedding, updated_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s::vector, NOW())
+                            ON CONFLICT (bank_id, id) DO UPDATE SET
+                                name = EXCLUDED.name,
+                                entity_type = EXCLUDED.entity_type,
+                                aliases = EXCLUDED.aliases,
+                                metadata = EXCLUDED.metadata,
+                                embedding = COALESCE(EXCLUDED.embedding, astrocyte_entities.embedding),
+                                updated_at = NOW()
+                            """,
+                            [
+                                bank_id,
+                                entity.id,
+                                entity.name,
+                                entity.entity_type or "OTHER",
+                                entity.aliases,
+                                Json(entity.metadata or {}),
+                                embedding_text,
+                            ],
+                        )
+                    else:
+                        # No embedding supplied (AGE-only deployment without pgvector,
+                        # or embedding not yet computed). Skip the embedding column so
+                        # the INSERT works even if the column hasn't been added yet by
+                        # migration 005_entities_trigram_embedding.sql.
+                        await cur.execute(
+                            """
+                            INSERT INTO astrocyte_entities
+                                (bank_id, id, name, entity_type, aliases, metadata,
+                                 updated_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                            ON CONFLICT (bank_id, id) DO UPDATE SET
+                                name = EXCLUDED.name,
+                                entity_type = EXCLUDED.entity_type,
+                                aliases = EXCLUDED.aliases,
+                                metadata = EXCLUDED.metadata,
+                                updated_at = NOW()
+                            """,
+                            [
+                                bank_id,
+                                entity.id,
+                                entity.name,
+                                entity.entity_type or "OTHER",
+                                entity.aliases,
+                                Json(entity.metadata or {}),
+                            ],
+                        )
                 aliases_json = json.dumps(entity.aliases or [])
                 etype = _q(entity.entity_type or "OTHER")
                 cypher = (
