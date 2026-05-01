@@ -18,6 +18,7 @@ from astrocyte.types import (
     MemoryHit,
     Message,
     RecallRequest,
+    RecallResult,
     ReflectRequest,
     ReflectResult,
     RetainRequest,
@@ -56,6 +57,63 @@ class TestTrackingLLMProvider:
         result = await tracker.embed(["hello"])
         assert len(result) == 1
         assert isinstance(result[0], list)
+
+    @pytest.mark.asyncio
+    async def test_forwards_tools_and_tool_choice_to_inner(self):
+        """Regression — Hindsight-parity agentic reflect requires the
+        tracker to forward ``tools`` and ``tool_choice`` to the inner
+        provider. The 2026-05-01 bench failed 1986/1986 questions because
+        the tracker dropped the kwargs on the floor. Lock it down: a
+        ``complete(tools=[...])`` call must reach the inner provider with
+        those kwargs intact, not raise ``unexpected keyword argument``.
+        """
+        from astrocyte.types import TokenUsage, ToolCall, ToolDefinition
+
+        seen_kwargs: dict = {}
+
+        class _CapturingProvider:
+            async def complete(
+                self,
+                messages,
+                model=None,
+                max_tokens=1024,
+                temperature=0.0,
+                tools=None,
+                tool_choice=None,
+            ):
+                seen_kwargs["tools"] = tools
+                seen_kwargs["tool_choice"] = tool_choice
+                from astrocyte.types import Completion
+                return Completion(
+                    text="",
+                    model="mock",
+                    usage=TokenUsage(input_tokens=1, output_tokens=1),
+                    tool_calls=[ToolCall(id="x", name="recall", arguments={})],
+                )
+
+            async def embed(self, texts, model=None):
+                return [[0.0] for _ in texts]
+
+            def capabilities(self):
+                from astrocyte.types import LLMCapabilities
+                return LLMCapabilities()
+
+        tools = [ToolDefinition(name="recall", description="x", parameters={})]
+        tracker = _TrackingLLMProvider(_CapturingProvider())
+
+        result = await tracker.complete(
+            [Message(role="user", content="q")],
+            tools=tools,
+            tool_choice="auto",
+        )
+
+        assert seen_kwargs["tools"] == tools, (
+            "Tracker MUST forward `tools` to the inner provider; "
+            "agentic reflect's native function calling depends on it."
+        )
+        assert seen_kwargs["tool_choice"] == "auto"
+        # Tool calls returned by inner must propagate up unchanged.
+        assert result.tool_calls is not None and result.tool_calls[0].name == "recall"
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +186,14 @@ class TestRetainDedup:
 
 
 class TestReflectAutoPromptRouting:
+    """Test query-plan prompt routing in isolation from retrieval quality.
+
+    These tests monkeypatch ``orch.recall`` to return a high-confidence
+    ``RecallResult`` (``top_semantic_score=0.85``) so the evidence-strict
+    gate does not fire, allowing the query-shape routing to be verified
+    independently.  The gate itself is tested separately.
+    """
+
     @pytest.mark.asyncio
     async def test_reflect_routes_likely_question_to_inference_prompt(self, monkeypatch):
         vs = InMemoryVectorStore()
@@ -136,6 +202,16 @@ class TestReflectAutoPromptRouting:
         await orch.retain(RetainRequest(content="Caroline wants to become a counselor.", bank_id="b1"))
 
         captured: dict[str, str | None] = {}
+
+        # Simulate strong retrieval so the evidence-strict gate does not override
+        # the query-plan routing we're testing.
+        good_recall = RecallResult(
+            hits=[MemoryHit(text="Caroline wants to become a counselor.", score=0.85)],
+            total_available=1,
+            truncated=False,
+            top_semantic_score=0.85,
+        )
+        monkeypatch.setattr(orch, "recall", AsyncMock(return_value=good_recall))
 
         async def fake_synthesize(**kwargs):
             captured["prompt"] = kwargs["mip_reflect"].prompt if kwargs.get("mip_reflect") else None
@@ -156,6 +232,14 @@ class TestReflectAutoPromptRouting:
 
         captured: dict[str, str | None] = {}
 
+        good_recall = RecallResult(
+            hits=[MemoryHit(text="Melanie ran a charity race last week.", score=0.85)],
+            total_available=1,
+            truncated=False,
+            top_semantic_score=0.85,
+        )
+        monkeypatch.setattr(orch, "recall", AsyncMock(return_value=good_recall))
+
         async def fake_synthesize(**kwargs):
             captured["prompt"] = kwargs["mip_reflect"].prompt if kwargs.get("mip_reflect") else None
             return ReflectResult(answer="The week before.", sources=kwargs["hits"])
@@ -165,6 +249,36 @@ class TestReflectAutoPromptRouting:
         await orch.reflect(ReflectRequest(query="When did Melanie run a charity race?", bank_id="b1"))
 
         assert captured["prompt"] == "temporal_aware"
+
+    @pytest.mark.asyncio
+    async def test_evidence_strict_gate_fires_on_weak_retrieval(self, monkeypatch):
+        """evidence_strict overrides query-plan routing when top_semantic_score < 0.5."""
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        orch = PipelineOrchestrator(vs, llm)
+
+        captured: dict[str, str | None] = {}
+
+        # Weak retrieval: top_semantic_score = 0.3 — gate should fire
+        weak_recall = RecallResult(
+            hits=[MemoryHit(text="Some loosely related memory.", score=0.3)],
+            total_available=1,
+            truncated=False,
+            top_semantic_score=0.3,
+        )
+        monkeypatch.setattr(orch, "recall", AsyncMock(return_value=weak_recall))
+
+        async def fake_synthesize(**kwargs):
+            captured["prompt"] = kwargs["mip_reflect"].prompt if kwargs.get("mip_reflect") else None
+            return ReflectResult(answer="I'm not sure.", sources=kwargs["hits"])
+
+        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
+
+        # Use an inference-shaped query so query_plan would normally choose evidence_inference;
+        # the gate must override it to evidence_strict.
+        await orch.reflect(ReflectRequest(query="Would Caroline likely pursue counseling?", bank_id="b1"))
+
+        assert captured["prompt"] == "evidence_strict"
 
 
 class TestReflectHierarchy:
@@ -248,6 +362,190 @@ class TestReflectHierarchy:
 
         assert context is not None
         assert "entity_path_evidence" in context
+
+
+class TestReflectTagScoping:
+    """Lock in that ``ReflectRequest.tags`` actually scopes synthesis.
+
+    Pre-fix bug: ``Astrocyte.reflect(tags=...)`` accepted a tags kwarg, but
+    on the single-bank path it built a ``ReflectRequest`` without tags
+    (the dataclass had no such field), so the dispatcher's internal recall
+    ran unscoped. LoCoMo's "scope by conversation_id" effort silently
+    no-op'd through reflect, leaking cross-conversation memories into
+    synthesis context. Don't let that happen again.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reflect_tags_scope_synthesis_hits(self, monkeypatch):
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        orch = PipelineOrchestrator(vs, llm)
+
+        # Two memories in the same bank, distinguished by conversation tag.
+        await vs.store_vectors([
+            VectorItem(
+                id="m-A",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Caroline joined a hiking club in convo A.",
+                tags=["convo:A"],
+            ),
+            VectorItem(
+                id="m-B",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Caroline joined a chess club in convo B.",
+                tags=["convo:B"],
+            ),
+        ])
+
+        captured_hit_ids: list[str] = []
+
+        async def fake_synthesize(**kwargs):
+            for hit in kwargs.get("hits") or []:
+                if hit.memory_id:
+                    captured_hit_ids.append(hit.memory_id)
+            return ReflectResult(answer="ok", sources=kwargs.get("hits"))
+
+        monkeypatch.setattr(
+            orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize)
+        )
+
+        await orch.reflect(
+            ReflectRequest(
+                query="What club did Caroline join?",
+                bank_id="b1",
+                tags=["convo:A"],
+            )
+        )
+
+        # Convo-A hit may or may not be present (depends on InMemory recall
+        # ranking against a single-vector store), but the contract we care
+        # about is: convo-B MUST NOT leak into synthesis.
+        assert "m-B" not in captured_hit_ids, (
+            "ReflectRequest.tags must scope the dispatcher's internal recall; "
+            "convo:B memory leaked into synthesis context."
+        )
+
+    @pytest.mark.asyncio
+    async def test_reflect_without_tags_sees_all_memories(self, monkeypatch):
+        """Negative control: dropping the tag filter brings back the leak.
+
+        This proves the previous test's pass is causal — reflect *can*
+        reach the convo:B memory; it's the tag filter that prevents it.
+        """
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        orch = PipelineOrchestrator(vs, llm)
+
+        await vs.store_vectors([
+            VectorItem(
+                id="m-A",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Caroline joined a hiking club in convo A.",
+                tags=["convo:A"],
+            ),
+            VectorItem(
+                id="m-B",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Caroline joined a chess club in convo B.",
+                tags=["convo:B"],
+            ),
+        ])
+
+        captured_hit_ids: list[str] = []
+
+        async def fake_synthesize(**kwargs):
+            for hit in kwargs.get("hits") or []:
+                if hit.memory_id:
+                    captured_hit_ids.append(hit.memory_id)
+            return ReflectResult(answer="ok", sources=kwargs.get("hits"))
+
+        monkeypatch.setattr(
+            orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize)
+        )
+
+        await orch.reflect(
+            ReflectRequest(
+                query="What club did Caroline join?",
+                bank_id="b1",
+            )
+        )
+
+        assert {"m-A", "m-B"}.issubset(set(captured_hit_ids)), (
+            "Negative control failed: without tag scoping, both memories "
+            "should be eligible for synthesis context."
+        )
+
+
+class TestReflectExpansionTagScoping:
+    """Lock in that ``_expand_reflect_sources`` honors tag scoping.
+
+    The expansion path (Hindsight-style "compiled hit → cited raw
+    sources" walk) used to scan ``vector_store.list_vectors(bank)``
+    matching only by ID. If a wiki page's ``_wiki_source_ids`` ever
+    cited cross-scope memories, expansion would happily pull them into
+    synthesis context, undoing tag scoping at the boundary.
+
+    With Fix D the expansion drops fetched memories whose tags don't
+    cover the reflect scope. Belt-and-suspenders for scoped reflect.
+    """
+
+    @pytest.mark.asyncio
+    async def test_expansion_drops_cross_scope_sources(self):
+        vs = InMemoryVectorStore()
+        orch = PipelineOrchestrator(vs, MockLLMProvider())
+
+        # raw-A and raw-B live in the same bank, distinct convo tags.
+        await vs.store_vectors([
+            VectorItem(
+                id="raw-A",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Caroline went hiking (convo A).",
+                tags=["convo:A"],
+            ),
+            VectorItem(
+                id="raw-B",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Caroline played chess (convo B).",
+                tags=["convo:B"],
+            ),
+        ])
+
+        # A wiki/observation hit whose source_ids cite BOTH raw memories
+        # (the cross-scope-leak shape we want expansion to defend against).
+        compiled_hit = MemoryHit(
+            text="Caroline activities summary.",
+            score=0.9,
+            memory_id="obs-mixed",
+            fact_type="observation",
+            metadata={"_obs_source_ids": '["raw-A", "raw-B"]'},
+            memory_layer="observation",
+        )
+
+        scoped = await orch._expand_reflect_sources(
+            "b1", [compiled_hit], limit=10, tags=["convo:A"]
+        )
+        unscoped = await orch._expand_reflect_sources(
+            "b1", [compiled_hit], limit=10
+        )
+
+        scoped_ids = {h.memory_id for h in scoped}
+        unscoped_ids = {h.memory_id for h in unscoped}
+
+        # Scoped expansion: only convo-A leaks through.
+        assert "raw-A" in scoped_ids
+        assert "raw-B" not in scoped_ids, (
+            "Expansion must drop cross-scope sources when tags is set; "
+            "raw-B (convo:B) leaked into a convo:A reflect."
+        )
+        # Negative control: without tags, both come through (proves the
+        # filter is what's preventing the leak, not some unrelated bug).
+        assert {"raw-A", "raw-B"}.issubset(unscoped_ids)
 
 
 class TestPipelineShutdown:
