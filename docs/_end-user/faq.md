@@ -64,7 +64,7 @@ Most teams start with pgvector. See [Storage backend setup](/end-user/storage-ba
 
 For **retain**, yes — the pipeline uses an LLM to generate embeddings (and optionally for fact extraction). For **recall**, embeddings are needed for query vectors. For **reflect**, an LLM generates the synthesized answer.
 
-The default config uses a **mock LLM** (returns empty embeddings). For real use, configure a provider like OpenAI, Anthropic, or any LiteLLM-compatible endpoint. See [Configuration reference](/end-user/configuration-reference/).
+The default config uses a **mock LLM** (returns empty embeddings). For real use, configure the built-in OpenAI provider or install `astrocyte-llm-litellm` for Anthropic, Bedrock, Vertex, Ollama, and other LiteLLM-supported endpoints. See [Configuration reference](/end-user/configuration-reference/).
 
 ### What happens if I don't configure anything — what are the defaults?
 
@@ -148,8 +148,8 @@ Only if you configure a persistent storage backend (pgvector, Qdrant, Neo4j, Ela
 
 ```yaml
 vector_store: pgvector
-pgvector:
-  connection_url: postgresql://localhost:5432/astrocyte
+vector_store_config:
+  dsn: postgresql://localhost:5432/astrocyte
 ```
 
 3. Restart. New memories go to PostgreSQL. Existing in-memory data is not migrated (it was ephemeral). For production migrations between persistent backends, see [Memory portability](/design/memory-portability/).

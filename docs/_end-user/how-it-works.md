@@ -4,16 +4,16 @@ A mid-level overview of Astrocyte's architecture — what happens when you call 
 
 ---
 
-## The five operations
+## The core operations
 
-Every interaction with Astrocyte uses one of five operations:
+Most interactions with Astrocyte use the memory operations below. `retain`, `recall`, `reflect`, and `forget` are the basic loop; `history`, `audit`, and `compile` add the current `0.9.x` pre-GA intelligence surface.
 
 ```
 ┌─────────────────────────────────────────────────┐
 │                  Your agent / app                │
 │  (LangGraph, CrewAI, MCP, REST client, …)       │
 └──────────────┬──────────────────────────────────┘
-               │  retain / recall / reflect / forget / audit
+               │  retain / recall / reflect / forget / history / audit / compile
                ▼
 ┌─────────────────────────────────────────────────┐
 │                   Astrocyte                      │
@@ -36,7 +36,9 @@ Every interaction with Astrocyte uses one of five operations:
 | **recall** | Parse query → search vector + keyword + graph stores → rerank → return scored hits; optional `as_of` for point-in-time queries |
 | **reflect** | Run recall, then pass hits to an LLM to synthesize a natural-language answer |
 | **forget** | Soft-delete memories — writes `forgotten_at` timestamp; hard delete available; compliance audit support |
+| **history** | Convenience wrapper around `recall(as_of=...)` for point-in-time snapshots |
 | **audit** | Reason about absence — scan coverage of a scope in a bank, surface missing topics and thin areas, return `AuditResult(gaps, coverage_score)` |
+| **compile** | Optional wiki compile that materializes topic pages from raw memories for higher-quality recall |
 
 The **audit** operation is what separates Astrocyte from a retrieval index. A retrieval system finds what exists; audit surfaces what doesn't.
 
@@ -64,7 +66,7 @@ When you call `retain()`, content flows through several stages:
 1. **Policy check** — access control, rate limits, token budgets
 2. **PII scanning** — regex and optional LLM-based detection; redact, warn, or reject
 3. **Fact extraction** — break content into discrete facts (configurable profiles)
-4. **Entity extraction + resolution** — extract named entities; query the graph store for candidates; LLM confirms matches with evidence quote; write `EntityLink(type="alias_of", evidence=...)` to graph
+4. **Entity extraction + resolution** — when `entity_resolution.enabled` and a graph store are configured, extract named entities; query the graph store for candidates; LLM confirms matches with evidence quote; write `EntityLink(link_type="alias_of", evidence=...)` to graph
 5. **Deduplication** — skip facts that already exist in the bank
 6. **Chunking** — split into embeddable pieces (sentence, dialogue, or fixed-size)
 7. **Embedding** — convert chunks to vectors via the configured LLM provider

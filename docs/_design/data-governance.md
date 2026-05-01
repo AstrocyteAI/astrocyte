@@ -193,7 +193,7 @@ governance:
         llm_provider: litellm
         llm_provider_config:
           model: azure/gpt-4o
-          api_base: https://eu-west.openai.azure.com  # EU endpoint
+          base_url: https://eu-west.openai.azure.com  # EU endpoint
       sg:
         llm_provider: litellm
         llm_provider_config:

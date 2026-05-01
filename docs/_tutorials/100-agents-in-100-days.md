@@ -6,7 +6,7 @@ This page is the **planning catalog** for the series. Daily tutorials are being 
 
 Each day adds **one** focused tutorial or example: runnable demos, integration patterns, and production-minded snippets. The catalog below is the **backlog** — daily tutorials will be chosen from this list and linked here as they ship.
 
-**Stack context:** The **v0.8.x** line (latest shipped tag: **`v0.8.0`**) includes Tier 1 storage adapters, optional **`astrocyte-gateway-py`**, optional **`recall_authority`**, and ingest connectors (Kafka, Redis, GitHub poll). See [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
+**Stack context:** The **v0.9.x** line includes Tier 1 storage adapters, optional **`astrocyte-gateway-py`**, optional **`recall_authority`**, ingest connectors (Kafka, Redis, GitHub poll), and M8–M11 features such as wiki compile, time travel, gap analysis, and entity resolution. See [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
 
 ## What to expect
 

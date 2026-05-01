@@ -101,7 +101,7 @@ asyncio.run(main())
 Use `create_subagent_definition` for multi-agent setups where each sub-agent has isolated memory but can read from the coordinator:
 
 ```python
-from astrocyte.integrations.claude_agent_sdk import (
+from astrocyte.integrations.managed_agents import (
     create_coordinator_server,
     create_subagent_definition,
 )

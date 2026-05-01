@@ -1,6 +1,6 @@
 # Memory API reference
 
-Complete reference for Astrocyte's core memory operations -- retain, recall, reflect, forget, history, audit, and entity graph -- via Python library and REST gateway.
+Complete reference for Astrocyte's core memory operations -- retain, recall, reflect, forget, history, audit, compile, graph, import, and export -- via Python library and REST gateway.
 
 ---
 
@@ -13,7 +13,11 @@ Complete reference for Astrocyte's core memory operations -- retain, recall, ref
 | **reflect** | Synthesize an answer from memory | `astrocyte.reflect()` | `POST /v1/reflect` |
 | **forget** | Remove memories | `astrocyte.forget()` | `POST /v1/forget` |
 | **history** | Recall memories as they existed at a past point in time | `astrocyte.history()` | `POST /v1/history` |
-| **audit** | LLM-judged coverage analysis for a memory bank | `brain.audit()` | `POST /v1/audit` |
+| **audit** | LLM-judged coverage analysis for a memory bank | `astrocyte.audit()` | `POST /v1/audit` |
+| **compile** | Build durable wiki pages from retained memories | `astrocyte.compile()` | `POST /v1/compile` |
+| **graph search** | Search entities in the graph store | `astrocyte.graph_search()` | `POST /v1/graph/search` |
+| **graph neighbors** | Traverse graph-linked memories | `astrocyte.graph_neighbors()` | `POST /v1/graph/neighbors` |
+| **export/import** | Move bank contents via AMA JSONL | `astrocyte.export_bank()` / `astrocyte.import_bank()` | `POST /v1/export`, `POST /v1/import` |
 
 ---
 
@@ -406,7 +410,7 @@ curl -X POST https://gateway.example.com/v1/history \
 
 Scans a memory bank and asks an LLM judge to identify **topical gaps** — subject areas that are missing, thin, or outdated given the purpose of the bank. Use `audit()` to surface coverage blind spots before they affect recall quality.
 
-> **Requires**: `brain` (the `Brain` façade from `astrocyte.brain`). The lower-level `Astrocyte` class does not expose `audit()` directly.
+> **Requires**: a Tier 1 pipeline with an LLM provider. `Astrocyte.audit()` recalls candidate memories, then asks the configured LLM judge to identify gaps.
 
 ### Python signature
 
@@ -456,9 +460,9 @@ async def audit(
 **Quick coverage check:**
 
 ```python
-from astrocyte.brain import Brain
+from astrocyte import Astrocyte
 
-brain = Brain(config_path="astrocyte.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 result = await brain.audit(
     "customer support tickets and resolutions for ACME Corp",
     bank_id="support-acme",
@@ -473,10 +477,10 @@ for gap in result.gaps:
 
 ```python
 import asyncio
-from astrocyte.brain import Brain
+from astrocyte import Astrocyte
 
 async def weekly_audit():
-    brain = Brain(config_path="astrocyte.yaml")
+    brain = Astrocyte.from_config("astrocyte.yaml")
     result = await brain.audit(
         "internal engineering runbooks and incident postmortems",
         bank_id="eng-runbooks",
@@ -754,6 +758,39 @@ curl -X POST https://gateway.example.com/v1/forget \
 
 ---
 
+## compile() -- Build wiki pages from memory
+
+Compiles raw memories in a bank into durable, topic-oriented wiki pages. This is optional and requires a configured `WikiStore` plus Tier 1 pipeline.
+
+### Python signature
+
+```python
+async def compile(
+    self,
+    bank_id: str,
+    *,
+    scope: str | None = None,
+) -> CompileResult:
+```
+
+### REST equivalent
+
+```json
+{
+  "bank_id": "engineering",
+  "scope": "deployment"
+}
+```
+
+```bash
+curl -X POST https://gateway.example.com/v1/compile \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{"bank_id": "engineering", "scope": "deployment"}'
+```
+
+---
+
 ## Entity graph — M11
 
 Astrocyte can maintain a **knowledge graph of named entities** alongside your vector memories. When entity extraction is enabled, `retain()` automatically identifies entities (people, companies, projects, etc.) and stores them in a graph store. The entity graph powers cross-bank relationship queries and alias-of deduplication (entity resolution).
@@ -792,7 +829,7 @@ Represents a directed relationship between two entities.
 When `EntityResolver` is wired into the orchestrator, each `retain()` call runs an **alias-of** check in the background: new entities are compared against existing candidates and, if an LLM judge confirms they refer to the same real-world entity, an `alias_of` link is created automatically.
 
 ```python
-from astrocyte.brain import Brain
+from astrocyte import Astrocyte
 
 # Enable entity resolution by setting graph_store + resolver in astrocyte.yaml:
 #   graph_store:
@@ -803,7 +840,7 @@ from astrocyte.brain import Brain
 #     similarity_threshold: 0.8   # vector similarity for candidate lookup
 #     confirmation_threshold: 0.75 # LLM confidence to accept the alias
 
-brain = Brain(config_path="astrocyte.yaml")
+brain = Astrocyte.from_config("astrocyte.yaml")
 
 # retain() runs extraction + resolution automatically
 await brain.retain(
@@ -814,18 +851,13 @@ await brain.retain(
 
 ### Querying the entity graph (advanced)
 
-For direct graph access use the `GraphStore` SPI via the `Brain.graph_store` attribute (or inject it into your own orchestrator).
+For direct graph access use the `GraphStore` SPI in your own orchestrator. The `Astrocyte` class also exposes graph convenience methods for common searches.
 
 **Find entity candidates by name:**
 
 ```python
-candidates = await brain.graph_store.find_entity_candidates(
-    name="Alice",
-    bank_id="people",
-    threshold=0.8,
-    limit=5,
-)
-for c in candidates:
+entities = await brain.graph_search("Alice", bank_id="people", limit=5)
+for c in entities:
     print(c.id, c.name, c.entity_type)
 ```
 
@@ -834,13 +866,13 @@ for c in candidates:
 ```python
 from astrocyte.types import MemoryEntityAssociation
 
-hits = await brain.graph_store.query_neighbors(
+hits = await brain.graph_neighbors(
     entity_ids=["person:alice-smith"],
     bank_id="people",
     limit=20,
 )
 for h in hits:
-    print(h.memory_id, h.entity_id)
+    print(h.memory_id, h.text)
 ```
 
 **Manually store a link:**
@@ -855,7 +887,22 @@ link = EntityLink(
     evidence="Alice Smith (formerly Alice Johnson)",
     confidence=0.95,
 )
-link_id = await brain.graph_store.store_links([link], bank_id="people")
+# For custom links, use a configured GraphStore adapter directly.
+link_id = await graph_store.store_entity_link(link, bank_id="people")
+```
+
+### REST equivalents
+
+```bash
+curl -X POST https://gateway.example.com/v1/graph/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{"query": "Alice", "bank_id": "people", "limit": 5}'
+
+curl -X POST https://gateway.example.com/v1/graph/neighbors \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{"entity_ids": ["person:alice-smith"], "bank_id": "people", "max_depth": 2, "limit": 20}'
 ```
 
 ### Setting up `astrocyte-age` (PostgreSQL + Apache AGE)
@@ -904,6 +951,54 @@ ASTROCYTE_AGE_TEST_DSN=postgresql://astrocyte:astrocyte@localhost:5434/astrocyte
 
 ---
 
+## export_bank() and import_bank() -- Move memories
+
+Exports and imports a bank using Astrocyte Memory Archive (AMA) JSONL. These operations are intended for operations, backup, migration, and provider portability. They require admin access when access control is enabled.
+
+### Python signatures
+
+```python
+async def export_bank(
+    self,
+    bank_id: str,
+    path: str,
+    *,
+    include_embeddings: bool = False,
+    include_entities: bool = True,
+    context: AstrocyteContext | None = None,
+) -> int:
+```
+
+```python
+async def import_bank(
+    self,
+    bank_id: str,
+    path: str,
+    *,
+    on_conflict: str = "skip",
+    context: AstrocyteContext | None = None,
+    progress_fn: Any = None,
+) -> ImportResult:
+```
+
+### REST equivalents
+
+The standalone gateway reads and writes paths on the server filesystem:
+
+```bash
+curl -X POST https://gateway.example.com/v1/export \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{"bank_id": "user-prefs", "path": "/backups/user-prefs.ama.jsonl"}'
+
+curl -X POST https://gateway.example.com/v1/import \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{"bank_id": "user-prefs", "path": "/backups/user-prefs.ama.jsonl", "on_conflict": "skip"}'
+```
+
+---
+
 ## Initialization
 
 ### From configuration file
@@ -919,27 +1014,28 @@ The YAML file defines storage backends, memory banks, extraction profiles, and g
 ### Programmatic construction
 
 ```python
-from astrocyte import Astrocyte, AstrocyteConfig
+from astrocyte import Astrocyte
 
-config = AstrocyteConfig(
-    storage_backend="postgresql",
-    connection_url="postgresql://localhost:5432/astrocyte",
-)
-ast = Astrocyte(config)
+ast = Astrocyte.from_config_dict({
+    "provider_tier": "storage",
+    "vector_store": "in_memory",
+    "llm_provider": "mock",
+})
 ```
 
 ---
 
 ## Context and identity
 
-All four operations accept an optional `context` parameter carrying actor identity and session metadata.
+Core operations accept an optional `context` parameter carrying caller identity.
 
 ```python
 from astrocyte import AstrocyteContext, ActorIdentity
 
 ctx = AstrocyteContext(
-    actor=ActorIdentity(actor_id="user_42", role="admin"),
-    session_id="sess_abc123",
+    principal="user:user_42",
+    actor=ActorIdentity(type="user", id="user_42"),
+    tenant_id="tenant_acme",
 )
 
 result = await ast.retain(
@@ -1002,7 +1098,4 @@ Error responses follow a consistent JSON structure:
 - [Access control setup](access-control-setup/) — role-based and attribute-based policies
 - [Storage backend setup](storage-backend-setup/) — pgvector, Qdrant, Neo4j, Elasticsearch
 - [MIP developer guide](/plugins/mip-developer-guide/) — declarative routing rules for retain operations
-- [Time travel guide](time-travel/) — patterns for point-in-time snapshots, post-mortems, and compliance audits
-- [Gap analysis guide](gap-analysis/) — scheduling audits, interpreting scores, and acting on gaps
-- [Entity graph guide](entity-graph/) — entity extraction, alias resolution, and graph query patterns
 - [astrocyte-age setup](storage-backend-setup/#apache-age) — AGE + pgvector on PostgreSQL 16

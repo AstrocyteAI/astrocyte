@@ -2,7 +2,7 @@
 
 This document defines how Astrocyte is distributed, how providers plug in at both tiers, how optional **memory export sinks**, outbound transport, and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier model and the read vs export split, see `architecture.md` §2 and `storage-and-data-planes.md`. For SPI definitions, see `provider-spi.md`. For warehouse / lakehouse export design, see `memory-export-sink.md`. For credential gateways and proxy wiring, see `outbound-transport.md`. For identity wiring and external PDP integration, see `identity-and-external-policy.md`.
 
-**Current release line (`v0.8.x`, latest shipped tag `v0.8.0`):** Tier 1 storage adapters under `adapters-storage-py/` (including **`astrocyte-pgvector`**), optional **`astrocyte-gateway-py`**, optional **`recall_authority`** ([ADR-004](/design/adr/adr-004-recall-authority/)), and ingest connectors (Kafka, Redis streams, GitHub poll). Release history: [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) in the repository root.
+**Current release line (`v0.9.x`, latest patch `0.9.1`):** Tier 1 storage adapters under `adapters-storage-py/` (including **`astrocyte-pgvector`** and **`astrocyte-age`**), optional **`astrocyte-gateway-py`**, optional **`recall_authority`** ([ADR-004](/design/adr/adr-004-recall-authority/)), ingest connectors (Kafka, Redis streams, GitHub poll), and the M8–M11 pre-GA intelligence surface. Release history: [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) in the repository root.
 
 ---
 
@@ -28,10 +28,10 @@ Astrocyte follows an **open-core** distribution model with a two-tier provider a
 
 | Stage | Stack | Cost |
 |---|---|---|
-| Getting started | `astrocyte` + `astrocyte-pgvector` + `astrocyte-openai` | Free (+ LLM API costs) |
+| Getting started | `astrocyte` + `astrocyte-pgvector` + built-in `openai` provider | Free (+ LLM API costs) |
 | Add graph retrieval | + `astrocyte-neo4j` | Free |
-| Want a managed engine | `astrocyte` + `astrocyte-mem0` | Free (+ Mem0 cloud costs) |
-| Want best-in-class | `astrocyte` + `astrocyte-mystique` | Paid |
+| Want a managed engine | Planned Tier 2 provider such as `astrocyte-mem0` | Free (+ Mem0 cloud costs) |
+| Want best-in-class | Planned `astrocyte-mystique` | Paid |
 
 ---
 
@@ -150,18 +150,10 @@ astrocyte-llm-litellm/                    # Unified gateway (100+ models)
 │   ├── __init__.py                    # LiteLLMProvider (implements LLMProvider)
 ├── pyproject.toml
 
-astrocyte-openai/                     # Direct OpenAI adapter
-├── astrocyte_openai/
-│   ├── __init__.py                    # OpenAIProvider (implements LLMProvider)
-├── pyproject.toml
-
-astrocyte-anthropic/                  # Direct Anthropic adapter
-├── astrocyte_anthropic/
-│   ├── __init__.py                    # AnthropicProvider (implements LLMProvider)
-├── pyproject.toml
+# The core `astrocyte` package also ships a built-in `openai` provider.
 ```
 
-Note: AWS Bedrock, Azure OpenAI, and Google Vertex AI are accessed via `astrocyte-llm-litellm` (which supports them natively) or via `astrocyte-openai` with a custom `api_base` for OpenAI-compatible endpoints. Self-hosted models (Ollama, vLLM, LM Studio) also work through either adapter. See `provider-spi.md` section 4.6-4.7 for configuration details.
+Note: AWS Bedrock, Azure OpenAI, Google Vertex AI, Anthropic, and many self-hosted models are accessed via `astrocyte-llm-litellm`. OpenAI-compatible endpoints can also use the built-in `openai` provider with a custom `base_url`. See `provider-spi.md` section 4.6-4.7 for configuration details.
 
 ### 2.5 Outbound transport plugins
 
@@ -477,7 +469,7 @@ All providers receive configuration via the appropriate config section:
 ```yaml
 # Tier 1
 vector_store_config:
-  connection_url: postgresql://localhost/memories
+  dsn: postgresql://localhost/memories
   pool_size: 10
 
 graph_store_config:
@@ -577,12 +569,12 @@ DTOs use `dataclass` with default values for all optional fields. New fields are
 | astrocyte-pgvector | VectorStore | >=0.1 | VS 1 | Official |
 | astrocyte-neo4j | GraphStore | >=0.1 | GS 1 | Official |
 | astrocyte-qdrant | VectorStore | >=0.1 | VS 1 | Official |
-| astrocyte-mystique | EngineProvider | >=0.1 | EP 1 | Official |
-| astrocyte-mem0 | EngineProvider | >=0.1 | EP 1 | Community |
-| astrocyte-zep | EngineProvider | >=0.1 | EP 1 | Community |
+| astrocyte-age | GraphStore | >=0.8 | GS 1 | Official |
+| astrocyte-mystique | EngineProvider | TBD | EP 1 | Planned |
+| astrocyte-mem0 | EngineProvider | TBD | EP 1 | Planned |
+| astrocyte-zep | EngineProvider | TBD | EP 1 | Planned |
 | astrocyte-llm-litellm | LLMProvider | >=0.1 | LP 1 | Official |
-| astrocyte-openai | LLMProvider | >=0.1 | LP 1 | Official |
-| astrocyte-anthropic | LLMProvider | >=0.1 | LP 1 | Official |
+| built-in `openai` provider | LLMProvider | core | LP 1 | Official |
 
 ---
 
@@ -591,7 +583,7 @@ DTOs use `dataclass` with default values for all optional fields. New fields are
 ### Tier 1: DIY with your own databases (fully open source)
 
 ```bash
-pip install astrocyte astrocyte-pgvector astrocyte-openai
+pip install astrocyte astrocyte-pgvector
 ```
 
 ```yaml
@@ -599,7 +591,7 @@ profile: personal
 provider_tier: storage
 vector_store: pgvector
 vector_store_config:
-  connection_url: postgresql://localhost/memories
+  dsn: postgresql://localhost/memories
 llm_provider: openai
 llm_provider_config:
   api_key: ${OPENAI_API_KEY}
@@ -608,7 +600,7 @@ llm_provider_config:
 ### Tier 1: With graph retrieval
 
 ```bash
-pip install astrocyte astrocyte-pgvector astrocyte-neo4j astrocyte-anthropic
+pip install astrocyte astrocyte-pgvector astrocyte-neo4j astrocyte-llm-litellm
 ```
 
 ```yaml
@@ -616,19 +608,22 @@ profile: research
 provider_tier: storage
 vector_store: pgvector
 vector_store_config:
-  connection_url: postgresql://localhost/memories
+  dsn: postgresql://localhost/memories
 graph_store: neo4j
 graph_store_config:
   uri: bolt://localhost:7687
-llm_provider: anthropic
+llm_provider: litellm
 llm_provider_config:
   api_key: ${ANTHROPIC_API_KEY}
+  model: claude-sonnet-4-20250514
 ```
 
-### Tier 1: With split completion + embedding providers
+### Tier 1: With a model gateway
+
+Use `astrocyte-llm-litellm` when you want Anthropic, Bedrock, Vertex, Azure, Ollama, or another LiteLLM-supported endpoint behind the same Astrocyte LLMProvider SPI.
 
 ```bash
-pip install astrocyte astrocyte-pgvector astrocyte-anthropic
+pip install astrocyte astrocyte-pgvector astrocyte-llm-litellm
 ```
 
 ```yaml
@@ -636,14 +631,11 @@ profile: coding
 provider_tier: storage
 vector_store: pgvector
 vector_store_config:
-  connection_url: postgresql://localhost/memories
-llm_provider: anthropic
+  dsn: postgresql://localhost/memories
+llm_provider: litellm
 llm_provider_config:
   api_key: ${ANTHROPIC_API_KEY}
   model: claude-sonnet-4-20250514
-embedding_provider: local                    # No API cost for embeddings
-embedding_provider_config:
-  model: all-MiniLM-L6-v2
 ```
 
 ### Tier 1: Enterprise with AWS Bedrock
@@ -657,7 +649,7 @@ profile: support
 provider_tier: storage
 vector_store: pgvector
 vector_store_config:
-  connection_url: postgresql://rds-host/memories
+  dsn: postgresql://rds-host/memories
 llm_provider: litellm
 llm_provider_config:
   model: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
@@ -667,7 +659,7 @@ llm_provider_config:
 ### Tier 1: Fully local (air-gapped / privacy-sensitive)
 
 ```bash
-pip install astrocyte astrocyte-pgvector astrocyte-openai
+pip install astrocyte astrocyte-pgvector
 ```
 
 ```yaml
@@ -675,15 +667,12 @@ profile: personal
 provider_tier: storage
 vector_store: pgvector
 vector_store_config:
-  connection_url: postgresql://localhost/memories
+  dsn: postgresql://localhost/memories
 llm_provider: openai                         # OpenAI-compatible API
 llm_provider_config:
-  api_base: http://localhost:11434/v1        # Ollama
+  base_url: http://localhost:11434/v1        # Ollama
   api_key: not-needed
   model: llama3.2
-embedding_provider: local
-embedding_provider_config:
-  model: all-MiniLM-L6-v2
 ```
 
 ### Tier 2: Managed memory engine (Mem0)
@@ -719,15 +708,13 @@ provider_config:
 ### Development (minimal, no external services)
 
 ```bash
-pip install astrocyte astrocyte-sqlite astrocyte-openai
+pip install astrocyte
 ```
 
 ```yaml
 profile: minimal
 provider_tier: storage
-vector_store: sqlite
-vector_store_config:
-  db_path: ./dev-memory.db
+vector_store: in_memory
 llm_provider: openai
 llm_provider_config:
   api_key: ${OPENAI_API_KEY}

@@ -154,6 +154,32 @@ class GraphStore(Protocol):
         """Search entities by name or alias."""
         ...
 
+    async def find_entity_candidates(
+        self,
+        name: str,
+        bank_id: str,
+        threshold: float = 0.8,
+        limit: int = 5,
+    ) -> list[Entity]:
+        """Return possible aliases for entity resolution."""
+        ...
+
+    async def find_entity_candidates_scored(
+        self,
+        name: str,
+        bank_id: str,
+        *,
+        name_embedding: list[float] | None = None,
+        trigram_threshold: float = 0.3,
+        limit: int = 10,
+    ) -> list[EntityCandidateMatch]:
+        """Return scored candidates for the entity-resolution cascade."""
+        ...
+
+    async def store_entity_link(self, link: EntityLink, bank_id: str) -> str:
+        """Persist a single evidence-backed entity link."""
+        ...
+
     async def health(self) -> HealthStatus: ...
 
 @dataclass
@@ -166,9 +192,12 @@ class Entity:
 
 @dataclass
 class EntityLink:
-    source_entity_id: str
-    target_entity_id: str
-    link_type: str                         # "works_at", "located_in", "related_to"
+    entity_a: str
+    entity_b: str
+    link_type: str                         # "alias_of", "works_at", "located_in"
+    evidence: str = ""
+    confidence: float = 1.0
+    created_at: datetime | None = None
     metadata: dict[str, Any] | None = None
 
 @dataclass
@@ -248,7 +277,7 @@ provider_tier: storage
 # Required: one vector store
 vector_store: pgvector
 vector_store_config:
-  connection_url: postgresql://localhost:5432/memories
+  dsn: postgresql://localhost:5432/memories
 
 # Optional: graph store for entity-link retrieval
 graph_store: neo4j
@@ -262,11 +291,11 @@ graph_store_config:
 # the vector store adapter may implement DocumentStore as well.
 document_store: null
 
-# LLM provider required for Tier 1 (entity extraction, query analysis, reflect)
-llm_provider: anthropic
+# LLM provider required for Tier 1 (embedding, entity extraction, query analysis, reflect)
+llm_provider: openai
 llm_provider_config:
-  api_key: ${ANTHROPIC_API_KEY}
-  model: claude-sonnet-4-20250514
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
 ```
 
 ### 1.6 What the pipeline does with retrieval providers
@@ -598,10 +627,9 @@ The Astrocyte LLM SPI is intentionally minimal (`complete()` + `embed()`) so tha
 | Package | Wraps | Models / Coverage | Dependency |
 |---|---|---|---|
 | `astrocyte-llm-litellm` | LiteLLM | 100+ models across all providers (OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, etc.) | `litellm` |
-| `astrocyte-openai` | OpenAI SDK | GPT-4o, GPT-4o-mini, o1, o3, text-embedding-3-* | `openai` |
-| `astrocyte-anthropic` | Anthropic SDK | Claude Opus, Sonnet, Haiku | `anthropic` |
+| built-in `openai` provider | OpenAI-compatible SDK | GPT-4o, GPT-4o-mini, o-series, text-embedding-3-*; custom `base_url` for compatible servers | `openai` extra |
 
-**Recommendation:** Use `astrocyte-llm-litellm` if you need flexibility across providers or plan to switch models. Use a direct adapter if you're committed to one provider and want minimal dependencies.
+**Recommendation:** Use `astrocyte-llm-litellm` if you need flexibility across providers or plan to switch models. Use the built-in `openai` provider when you want a minimal direct dependency or an OpenAI-compatible endpoint.
 
 ### 4.6 Cloud-managed LLM endpoints
 
@@ -658,37 +686,24 @@ llm_provider_config:
 # OpenAI-compatible endpoint (works with vLLM, LM Studio, Ollama, TGI, etc.)
 llm_provider: openai
 llm_provider_config:
-  api_base: http://localhost:8000/v1
+  base_url: http://localhost:8000/v1
   api_key: not-needed
   model: local-model
 ```
 
-Most self-hosted inference servers expose an OpenAI-compatible API, so `astrocyte-openai` with a custom `api_base` works without a dedicated adapter.
+Most self-hosted inference servers expose an OpenAI-compatible API, so the built-in `openai` provider with a custom `base_url` works without a dedicated adapter.
 
 ### 4.8 Separate completion and embedding providers
 
-Some architectures use different services for completions vs embeddings (e.g., Claude for reasoning + a local model for embeddings to minimize API costs). Astrocyte supports this via split configuration:
+The config schema reserves `embedding_provider` and `embedding_provider_config` for deployments that split completion and embedding services. The reference Tier 1 pipeline currently uses the configured `llm_provider` for both `complete()` and `embed()` calls, so use a provider that implements both methods (for example the built-in `openai` provider or `astrocyte-llm-litellm` with an embedding-capable backend).
 
 ```yaml
-llm_provider: anthropic
+llm_provider: openai
 llm_provider_config:
-  api_key: ${ANTHROPIC_API_KEY}
-  model: claude-sonnet-4-20250514        # Used for complete()
-
-embedding_provider: openai               # Separate provider for embed()
-embedding_provider_config:
   api_key: ${OPENAI_API_KEY}
-  model: text-embedding-3-small
-
-# Or use local embeddings with no API cost:
-embedding_provider: local
-embedding_provider_config:
-  model: all-MiniLM-L6-v2               # sentence-transformers model
+  model: gpt-4o-mini
+  embedding_model: text-embedding-3-small
 ```
-
-When `embedding_provider` is configured, the core uses it for `embed()` calls instead of the main `llm_provider`. When omitted, the main `llm_provider` handles both.
-
-The `local` embedding provider is built into the `astrocyte` core (optional dependency on `sentence-transformers`) and requires no external API.
 
 ### 4.9 Writing a custom LLM adapter
 

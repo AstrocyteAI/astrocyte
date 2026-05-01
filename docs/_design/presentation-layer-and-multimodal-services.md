@@ -6,7 +6,7 @@ This document clarifies how Astrocyte relates to **commercial AI products that a
 
 ## 1. What the LLM Provider SPI covers
 
-Astrocyte needs **`complete()`** (chat-style messages → text) and **`embed()`** (texts → vectors) for the built-in pipeline and policies. Adapters such as **`astrocyte-llm-litellm`** (and **`openai`** with a custom **`api_base`**) route those calls to **direct vendor SDKs**, **multi-provider gateways** (LiteLLM, Portkey, OpenRouter, cloud routers, …), or any **OpenAI-compatible HTTP** surface your deployment standardizes on.
+Astrocyte needs **`complete()`** (chat-style messages → text) and **`embed()`** (texts → vectors) for the built-in pipeline and policies. Adapters such as **`astrocyte-llm-litellm`** (and the built-in **`openai`** provider with a custom **`base_url`**) route those calls to **direct vendor SDKs**, **multi-provider gateways** (LiteLLM, Portkey, OpenRouter, cloud routers, …), or any **OpenAI-compatible HTTP** surface your deployment standardizes on.
 
 That scope **does not** include:
 
@@ -41,7 +41,7 @@ These platforms emphasize **real-time or scripted video** with AI personas, deve
 
 ### 2.3 Where LLM gateways still help (LiteLLM, OpenRouter, Portkey, …)
 
-**Unified gateways and aggregators** (LiteLLM, OpenRouter, Portkey, Vercel AI Gateway, cloud model routers, …) excel at **text models** (OpenAI, Anthropic, Gemini, Mistral, open models, …). If a **video platform** lets you bring your **own** model via an **OpenAI-compatible** base URL (some document “custom LLM” onboarding), that **same** LLM can often be configured as **`llm_provider: litellm`** or **`openai` + `api_base`** for Astrocyte - **provided** the endpoint implements chat completions (and optionally embeddings) the adapter expects. That is **“shared brain”** between Astrocyte and the video stack, not “Tavus as the LLMProvider” unless Tavus exposes such an endpoint **to your backend** for arbitrary calls.
+**Unified gateways and aggregators** (LiteLLM, OpenRouter, Portkey, Vercel AI Gateway, cloud model routers, …) excel at **text models** (OpenAI, Anthropic, Gemini, Mistral, open models, …). If a **video platform** lets you bring your **own** model via an **OpenAI-compatible** base URL (some document “custom LLM” onboarding), that **same** LLM can often be configured as **`llm_provider: litellm`** or **`openai` + `base_url`** for Astrocyte - **provided** the endpoint implements chat completions (and optionally embeddings) the adapter expects. That is **“shared brain”** between Astrocyte and the video stack, not “Tavus as the LLMProvider” unless Tavus exposes such an endpoint **to your backend** for arbitrary calls.
 
 ---
 
@@ -78,7 +78,7 @@ If the commercial product documents a **chat completions** (and optionally **emb
 # Example: custom OpenAI-compatible endpoint used by Astrocyte only
 llm_provider: openai
 llm_provider_config:
-  api_base: https://your-vendor-or-proxy.example/v1
+  base_url: https://your-vendor-or-proxy.example/v1
   api_key: ${VENDOR_API_KEY}
   model: vendor-text-model
 ```
@@ -89,10 +89,10 @@ Or via a **gateway adapter** (e.g. `litellm`) when the model is listed or proxie
 llm_provider: litellm
 llm_provider_config:
   model: openai/your-model   # or provider-specific slug per your gateway’s docs
-  api_base: https://...
+  base_url: https://...
 ```
 
-Use this **only when** the API truly matches **message-in, text-out** (and embed if needed). **Do not** point `api_base` at a **video-only** REST root expecting it to behave like `/v1/chat/completions`.
+Use this **only when** the API truly matches **message-in, text-out** (and embed if needed). **Do not** point `base_url` at a **video-only** REST root expecting it to behave like `/v1/chat/completions`.
 
 ### 3.3 Feeding memory into presentation (composer pattern)
 

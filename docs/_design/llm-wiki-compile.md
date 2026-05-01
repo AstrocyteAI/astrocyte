@@ -1,6 +1,6 @@
 # LLM wiki compile — compounding knowledge pages for Astrocyte
 
-**Status:** Draft design note (exploratory). Targeted for the **v0.9-era** feature wave (tagged on the `v0.8.x` train; see [product-roadmap.md (§ Release numbering)](product-roadmap.md)).
+**Status:** Implemented in the `0.9.x` pre-GA feature line. See [product-roadmap.md (§ Release numbering)](product-roadmap.md) and the root changelog for release status.
 
 **Origin:** Karpathy's [LLM wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — "a structured, interlinked collection of markdown files that sits between you and the raw sources," with the LLM doing the bookkeeping (summaries, cross-references, lint) so humans only supply curation and direction.
 
@@ -366,7 +366,7 @@ We must be able to **measure whether compile actually helps**, per bank and per 
 - Ship a **regression gate**: `knowledge-update` and `multi-session` accuracy must be **≥ no-compile baseline**. Any regression blocks the release.
 - Track cost: tokens and wall-time per compile call, amortised over recall hits.
 
-### 9.2 Success criteria for v0.9-era shipping
+### 9.2 Success criteria for GA validation
 
 - `multi-session` or `knowledge-update` improves ≥ **10 points absolute** on LongMemEval
 - No other category regresses > 2 points
@@ -428,7 +428,7 @@ class CompileResult:
 
 ---
 
-## 13. Delivery plan (v0.8.x)
+## 13. Delivery plan (v0.9.x)
 
 Rough sequencing (each numbered item is a candidate milestone for roadmap):
 

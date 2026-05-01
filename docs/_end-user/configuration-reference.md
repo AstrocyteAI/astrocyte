@@ -39,14 +39,14 @@ Used when `provider_tier: storage`.
 provider_tier: storage
 vector_store: pgvector
 vector_store_config:
-  connection_url: ${DATABASE_URL}
+  dsn: ${DATABASE_URL}
   embedding_dimensions: 1536
   bootstrap_schema: true
 graph_store: neo4j
 graph_store_config:
   uri: bolt://localhost:7687
-  auth_user: neo4j
-  auth_password: ${NEO4J_PASSWORD}
+  user: neo4j
+  password: ${NEO4J_PASSWORD}
 ```
 
 ## Tier 2: Engine providers
@@ -80,10 +80,8 @@ llm_provider: openai
 llm_provider_config:
   api_key: ${OPENAI_API_KEY}
   model: gpt-4o-mini
-embedding_provider: openai
-embedding_provider_config:
-  model: text-embedding-3-small
-  dimensions: 1536
+# The OpenAI provider handles both chat completions and embeddings.
+# Use astrocyte-llm-litellm for Anthropic, Bedrock, Vertex, Ollama, and other providers.
 ```
 
 ---
@@ -393,13 +391,14 @@ Per-profile reasoning defaults — affect reflect synthesis behavior.
 
 ## mcp
 
-MCP (Model Context Protocol) server settings — used by `astrocyte.integrations.mcp`.
+MCP (Model Context Protocol) server settings — used by `astrocyte.mcp` and the `astrocyte-mcp` CLI.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `default_bank_id` | string \| null | `null` | Default bank for MCP calls |
 | `expose_reflect` | bool | `true` | Allow reflect via MCP |
 | `expose_forget` | bool | `false` | Allow forget via MCP |
+| `expose_admin` | bool | `false` | Allow lifecycle, bank health, and legal-hold admin tools via MCP |
 | `max_results_limit` | int | `50` | Max items returned per request |
 | `principal` | string \| null | `null` | Principal for MCP operations |
 
@@ -615,7 +614,7 @@ Any string value in `astrocyte.yaml` can reference environment variables with `$
 
 ```yaml
 vector_store_config:
-  connection_url: ${DATABASE_URL}
+  dsn: ${DATABASE_URL}
 llm_provider_config:
   api_key: ${OPENAI_API_KEY}
 sources:
@@ -648,7 +647,7 @@ profile: personal
 provider_tier: storage
 vector_store: pgvector
 vector_store_config:
-  connection_url: ${DATABASE_URL}
+  dsn: ${DATABASE_URL}
 
 llm_provider: openai
 llm_provider_config:
