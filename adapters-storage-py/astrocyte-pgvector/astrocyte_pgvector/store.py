@@ -535,14 +535,15 @@ class PgVectorStore:
         await self._ensure_schema(pool)
 
         where = ["bank_id = %s", "forgotten_at IS NULL", "text_fts @@ plainto_tsquery('english', %s)"]
-        params: list[Any] = [bank_id, query]
+        where_params: list[Any] = [bank_id, query]
 
         if filters and filters.tags:
             where.append("tags && %s::text[]")
-            params.append(filters.tags)
+            where_params.append(filters.tags)
 
-        params.append(query)   # for ts_rank_cd
-        params.append(limit)
+        # SELECT ts_rank_cd(%s) appears before the WHERE %s bindings in the
+        # query string, so query must be the first positional param.
+        params = [query] + where_params + [limit]
 
         where_sql = " AND ".join(where)
         sql = f"""
