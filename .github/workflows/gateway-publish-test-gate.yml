@@ -6,7 +6,7 @@ on:
   workflow_call:
 
 # Least privilege for checkout + local tests (no registry push or PR writes).
-# packages: read is required to pull the combined postgres-age-pgvector image from GHCR.
+# packages: read is required to pull the combined astrocyte-postgres image from GHCR.
 permissions:
   contents: read
   packages: read
@@ -137,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: ghcr.io/astrocyteai/astrocyte/postgres-age-pgvector:latest
+        image: ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:latest
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}

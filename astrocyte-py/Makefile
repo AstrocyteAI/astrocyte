@@ -9,12 +9,12 @@ LONGMEMEVAL_DIR := $(DATASETS_DIR)/longmemeval
 RESULTS_DIR   := benchmark-results
 
 # ---------------------------------------------------------------------------
-# Benchmark database (postgres-age-pgvector)
+# Benchmark database (astrocyte-postgres)
 # ---------------------------------------------------------------------------
 BENCH_PG_CONTAINER := astrocyte-bench-pg
 BENCH_PG_PORT      := 5433
-BENCH_PG_IMAGE     := ghcr.io/astrocyteai/astrocyte/postgres-age-pgvector:latest
-BENCH_PG_LOCAL_IMG := astrocyte/postgres-age-pgvector:local
+BENCH_PG_IMAGE     := ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:latest
+BENCH_PG_LOCAL_IMG := astrocyte/astrocyte-postgres:local
 BENCH_PG_USER      := astrocyte
 BENCH_PG_PASSWORD  := astrocyte
 BENCH_PG_DB        := astrocyte_bench
@@ -62,7 +62,7 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 
 .PHONY: bench-db-start bench-db-stop bench-db-reset bench bench-full bench-gate bench-locomo bench-locomo-fair bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
 
-# Start the benchmark Postgres container (postgres-age-pgvector).
+# Start the benchmark Postgres container (astrocyte-postgres).
 # Pulls from GHCR first; falls back to building locally from the Dockerfile.
 # No-ops if the container is already running. Restarts if stopped.
 bench-db-start:
@@ -80,8 +80,8 @@ bench-db-start:
 		if docker pull $(BENCH_PG_IMAGE); then \
 			BENCH_IMG=$(BENCH_PG_IMAGE); \
 		else \
-			echo "  [bench-db] Pull failed — building from ../docker/postgres-age-pgvector/Dockerfile"; \
-			docker build -t $(BENCH_PG_LOCAL_IMG) -f ../docker/postgres-age-pgvector/Dockerfile ..; \
+			echo "  [bench-db] Pull failed — building from ../docker/astrocyte-postgres/Dockerfile"; \
+			docker build -t $(BENCH_PG_LOCAL_IMG) -f ../docker/astrocyte-postgres/Dockerfile ..; \
 			BENCH_IMG=$(BENCH_PG_LOCAL_IMG); \
 		fi; \
 		docker run -d --name $(BENCH_PG_CONTAINER) \

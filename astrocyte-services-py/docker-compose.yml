@@ -7,10 +7,10 @@
 # Postgres is reachable on host port POSTGRES_PUBLISH_PORT (default 5433). The API is on ASTROCYTE_HTTP_PUBLISH_PORT (default 8080).
 services:
   postgres:
-    image: ${ASTROCYTE_POSTGRES_IMAGE:-astrocyte/postgres-age-pgvector:local}
+    image: ${ASTROCYTE_POSTGRES_IMAGE:-astrocyte/astrocyte-postgres:local}
     build:
       context: ..
-      dockerfile: docker/postgres-age-pgvector/Dockerfile
+      dockerfile: docker/astrocyte-postgres/Dockerfile
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-astrocyte}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-astrocyte}
