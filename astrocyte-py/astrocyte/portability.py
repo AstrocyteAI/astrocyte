@@ -84,7 +84,7 @@ async def export_bank(
     Returns:
         Number of memories exported.
     """
-    path = Path(path)
+    path = Path(path).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # Collect all memories via recall with large limit
@@ -161,7 +161,7 @@ async def export_bank(
 
 def read_ama_header(path: str | Path) -> AmaHeader:
     """Read and validate the AMA header (first line)."""
-    path = Path(path)
+    path = Path(path).resolve()
     with open(path, encoding="utf-8") as f:
         first_line = f.readline().strip()
     if not first_line:
@@ -188,7 +188,7 @@ def read_ama_header(path: str | Path) -> AmaHeader:
 
 def iter_ama_memories(path: str | Path) -> list[AmaMemory]:
     """Read all memory records from an AMA file (skips header)."""
-    path = Path(path)
+    path = Path(path).resolve()
     memories: list[AmaMemory] = []
     with open(path, encoding="utf-8") as f:
         # Skip header
