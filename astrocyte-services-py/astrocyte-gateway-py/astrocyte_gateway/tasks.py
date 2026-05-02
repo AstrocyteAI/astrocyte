@@ -28,7 +28,7 @@ class GatewayTaskWorker:
         if self.worker_task is not None:
             self.worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self.worker_task
+                _ = await self.worker_task
         if self.connection is not None:
             await self.connection.close()
 
