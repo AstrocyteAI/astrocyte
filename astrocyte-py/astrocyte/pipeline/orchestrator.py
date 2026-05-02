@@ -343,6 +343,11 @@ class PipelineOrchestrator:
         #: structured facts. Default verbatim because of the recall_hit_rate
         #: regression that concise paraphrasing causes.
         self.structured_fact_extraction_mode: str = "verbatim"
+        #: Chunking strategy used by verbatim SFE pre-chunking. Defaults
+        #: to "paragraph" (which gives the LLM full session context for
+        #: metadata extraction); LoCoMo benchmark losses 2.5 pts overall
+        #: when set to "dialogue".
+        self.structured_fact_extraction_chunk_strategy: str = "paragraph"
         #: Query-level temporal constraint extraction. When enabled,
         #: recall parses temporal expressions in the query into a
         #: time_range filter applied to retrieval. Regex pre-pass is
@@ -438,6 +443,10 @@ class PipelineOrchestrator:
         self,
         prepared,
         request: RetainRequest,
+        *,
+        chunk_strategy: str = "paragraph",
+        chunk_max_size: int | None = None,
+        chunk_overlap: int | None = None,
     ) -> tuple[
         list[str] | None,
         list[Entity] | None,
@@ -477,11 +486,29 @@ class PipelineOrchestrator:
 
             verbatim = (self.structured_fact_extraction_mode or "verbatim") == "verbatim"
             if verbatim:
-                # Pre-chunk first so the LLM enriches each chunk with
-                # metadata WITHOUT paraphrasing. Stored memory text =
-                # original chunk vocabulary.
+                # Pre-chunk using the SAME strategy the legacy retain
+                # path would use (resolved from the extraction profile),
+                # then ask the LLM to enrich each chunk with metadata
+                # WITHOUT paraphrasing. Stored memory text = original
+                # chunk vocabulary at the granularity the profile
+                # specifies (e.g. dialogue turns for conversations,
+                # paragraphs for documents).
+                #
+                # Open-domain regression observed on 2026-05-02 traced
+                # to hardcoded "paragraph" strategy producing one giant
+                # chunk per LoCoMo session (no paragraph breaks in
+                # dialogue text). Profile-driven strategy fixes that.
                 from astrocyte.pipeline.chunking import chunk_text
-                chunks_local = chunk_text(prepared.text, strategy="paragraph")
+                pre_chunk_kwargs: dict[str, int] = {}
+                if chunk_max_size is not None:
+                    pre_chunk_kwargs["max_chunk_size"] = chunk_max_size
+                if chunk_overlap is not None:
+                    pre_chunk_kwargs["overlap"] = chunk_overlap
+                chunks_local = chunk_text(
+                    prepared.text,
+                    strategy=chunk_strategy,
+                    **pre_chunk_kwargs,
+                )
                 facts = await extract_facts_verbatim(
                     chunks_local,
                     self.llm_provider,
@@ -772,12 +799,21 @@ class PipelineOrchestrator:
         # entity extraction with a single LLM call producing facts.
         # Falls back to legacy chunk_text + extract_entities when
         # disabled or when extraction returns no facts.
+        # SFE uses its OWN chunking strategy (not the profile's), because
+        # SFE has different granularity needs: large chunks give the LLM
+        # full context for metadata extraction. Default "paragraph" wins
+        # +2.5pts on LoCoMo over the profile-driven "dialogue" choice.
         (
             sfe_fact_texts,
             sfe_entities,
             sfe_associations,
             sfe_caused_by,
-        ) = await self._structured_fact_extraction_for_text(prepared, request)
+        ) = await self._structured_fact_extraction_for_text(
+            prepared, request,
+            chunk_strategy=self.structured_fact_extraction_chunk_strategy,
+            chunk_max_size=chunking.max_size,
+            chunk_overlap=chunking.overlap,
+        )
         if sfe_fact_texts is not None:
             chunks = list(sfe_fact_texts)
         else:
@@ -1155,12 +1191,18 @@ class PipelineOrchestrator:
             # Structured 5-dim fact extraction (opt-in) — same branch as
             # retain(); produces fact texts + pre-extracted entities +
             # caused_by index pairs for this record.
+            # SFE uses its own chunking strategy (see retain() above).
             (
                 sfe_fact_texts,
                 sfe_entities,
                 sfe_associations,
                 sfe_caused_by,
-            ) = await self._structured_fact_extraction_for_text(prepared, request)
+            ) = await self._structured_fact_extraction_for_text(
+                prepared, request,
+                chunk_strategy=self.structured_fact_extraction_chunk_strategy,
+                chunk_max_size=chunking.max_size,
+                chunk_overlap=chunking.overlap,
+            )
             if sfe_fact_texts is not None:
                 chunks = list(sfe_fact_texts)
             else:

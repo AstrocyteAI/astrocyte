@@ -244,6 +244,15 @@ class StructuredFactExtractionConfig:
     enabled: bool = False
     extraction_mode: str = "verbatim"  # "verbatim" | "concise"
     max_facts_per_call: int = 30
+    #: Chunking strategy used by verbatim mode to pre-chunk the
+    #: source text before LLM enrichment. SFE has different
+    #: granularity needs than legacy retrieval — measured wins on
+    #: LoCoMo with ``"paragraph"`` (large context per chunk → LLM
+    #: extracts richer metadata) vs ``"dialogue"`` (legacy default
+    #: for conversations, which fragments context and lost 2.5 pts
+    #: overall, 8.4 pts on open-domain). Override per workload.
+    #: Available: ``"paragraph"``, ``"dialogue"``, ``"sentence"``.
+    chunk_strategy: str = "paragraph"
 
 
 @dataclass

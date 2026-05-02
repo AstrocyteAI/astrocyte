@@ -268,6 +268,7 @@ class Astrocyte:
         pipeline.structured_fact_extraction_enabled = sfe_cfg.enabled
         pipeline.structured_fact_extraction_max_facts = sfe_cfg.max_facts_per_call
         pipeline.structured_fact_extraction_mode = sfe_cfg.extraction_mode
+        pipeline.structured_fact_extraction_chunk_strategy = sfe_cfg.chunk_strategy
 
         # Query analyzer (temporal constraint extraction at recall time).
         qa_cfg = self._config.query_analyzer
