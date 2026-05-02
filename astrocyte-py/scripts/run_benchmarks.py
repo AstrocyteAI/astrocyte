@@ -146,6 +146,8 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
             similarity_threshold=config.entity_resolution.similarity_threshold,
             confirmation_threshold=config.entity_resolution.confirmation_threshold,
             max_candidates_per_entity=config.entity_resolution.max_candidates_per_entity,
+            enable_llm_disambiguation=config.entity_resolution.enable_llm_disambiguation,
+            canonical_resolution=config.entity_resolution.canonical_resolution,
         )
 
     pipeline = PipelineOrchestrator(
@@ -226,8 +228,15 @@ async def _start_benchmark_task_worker(brain):
 
     worker_task = None
     if config.auto_start_worker:
+        # Bound handler concurrency to keep persona-compile and other
+        # post-retain tasks from saturating the pgvector / AGE connection
+        # pools (default max_size=40 each). Each handler holds a connection
+        # while making LLM calls (~10s), so ~20 in flight is comfortable.
         worker_task = asyncio.create_task(
-            queue.run_continuous(batch_size=config.batch_size),
+            queue.run_continuous(
+                batch_size=config.batch_size,
+                max_concurrent_tasks=max(20, 2 * config.batch_size),
+            ),
             name="astrocyte.benchmark_pgqueuer_worker",
         )
     setattr(brain, "_benchmark_task_queue", queue)
@@ -248,7 +257,7 @@ async def _stop_benchmark_task_worker(runtime: dict | None) -> None:
         try:
             await worker_task
         except asyncio.CancelledError:
-            pass
+            pass  # expected — task was just cancelled above
     connection = runtime.get("connection")
     if connection is not None:
         await connection.close()
@@ -568,7 +577,8 @@ def _locomo_llm_judge(brain, *, use_canonical_judge: bool):
 
 async def run_locomo(
     brain, data_path: str | None, max_questions: int | None,
-    *, use_canonical_judge: bool = False, system: str = "astrocyte",
+    *, max_questions_per_conversation: int | None = None,
+    use_canonical_judge: bool = False, system: str = "astrocyte",
     checkpoint_dir: Path | None = None,
     resume: bool = False,
     retain_concurrency: int = 10,
@@ -614,6 +624,7 @@ async def run_locomo(
             data_path=data_path,
             bank_id="bench-locomo",
             max_questions=max_questions,
+            max_questions_per_conversation=max_questions_per_conversation,
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
             checkpoint=cp,
@@ -729,6 +740,7 @@ async def run_locomo(
             conversations=conversations,
             bank_id="bench-locomo",
             max_questions=max_questions,
+            max_questions_per_conversation=max_questions_per_conversation,
             use_canonical_judge=use_canonical_judge,
             llm_judge=llm_judge,
             checkpoint=cp,
@@ -830,7 +842,17 @@ async def main() -> None:
         "--max-questions",
         type=int,
         default=None,
-        help="Limit number of questions per benchmark (for quick testing)",
+        help="Hard cap on total questions (deterministic head-slice; biased toward "
+             "early conversations when small). For fair-coverage fast benches, "
+             "prefer --max-questions-per-conversation.",
+    )
+    parser.add_argument(
+        "--max-questions-per-conversation",
+        type=int,
+        default=None,
+        help="LoCoMo only: take the first N questions from EACH conversation. "
+             "20 × 10 conversations = 200 questions with uniform per-conversation "
+             "coverage — better fast-iteration sample than --max-questions 200.",
     )
     parser.add_argument(
         "--output-dir",
@@ -966,6 +988,7 @@ async def main() -> None:
             ),
             run_locomo(
                 brain, args.locomo_path, args.max_questions,
+                max_questions_per_conversation=args.max_questions_per_conversation,
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,
@@ -1005,6 +1028,7 @@ async def main() -> None:
         if run_loc:
             outcome = await run_locomo(
                 brain, args.locomo_path, args.max_questions,
+                max_questions_per_conversation=args.max_questions_per_conversation,
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,
                 resume=args.resume,

@@ -12,7 +12,7 @@ For the neuroscience foundations, see `neuroscience-astrocyte.md`. For the desig
 
 Astrocyte is the **third option** for enterprise knowledge management — structure that emerges from content automatically via LLMs, governed and queried by a deterministic harness. Not hand-encoded ontologies (Option 1 — accurate but unmaintainable). Not skip-the-structure RAG (Option 2 — searchable but unintelligent). LLMs propose structure; the harness verifies, persists, and queries it.
 
-From v1.0.0, Astrocyte passes four diagnostic tests that separate genuine third-option systems from sophisticated RAG: **gap analysis** (reason about absence), **entity resolution** (unify identities with evidence), **time travel** (as-of queries), and **sovereignty** (fully self-hosted). See `platform-positioning.md` for the framing and `product-roadmap.md` §M9–M11 for the implementation.
+The current `0.9.x` line implements the four diagnostic capabilities that separate genuine third-option systems from sophisticated RAG: **gap analysis** (reason about absence), **entity resolution** (unify identities with evidence), **time travel** (as-of queries), and **sovereignty** (fully self-hosted). `v1.0.0` GA is declared after those capabilities pass the release eval gates. See `platform-positioning.md` for the framing and `product-roadmap.md` §M9–M11 for the implementation.
 
 Astrocyte is an **open-source memory framework** that sits between AI agents and memory storage. It provides:
 
@@ -197,7 +197,7 @@ The diagram below shows how Astrocyte relates to the systems around it: agent fr
 
 - **Agent frameworks** and **presentation platforms** (Tavus, ElevenLabs, …) are **peers** inside your application orchestrator. The orchestrator calls Astrocyte for memory and the presentation vendor for video/voice — Astrocyte and the vendor do not call each other directly.
 - **Tier 1** (built-in pipeline) and **Tier 2** (memory engine providers) are **alternative paths** through Astrocyte. Governance applies to both.
-- **LLM adapters** are pluggable: `astrocyte-llm-litellm` (recommended, 100+ models via gateway), `astrocyte-openai`, `astrocyte-anthropic`, or custom. LiteLLM is not mandatory.
+- **LLM adapters** are pluggable: `astrocyte-llm-litellm` (recommended, 100+ models via gateway), the built-in `openai` provider, or custom adapters. LiteLLM is not mandatory.
 - **Export sinks** (Iceberg, Delta, warehouse) are designed but **not yet wired** into core — dashed lines indicate future integration.
 
 ```mermaid
@@ -290,8 +290,8 @@ flowchart TB
   subgraph LLM_ADAPTERS["LLM Adapters — complete and embed"]
     direction LR
     A_LITELLM["astrocyte-llm-litellm — 100+ models via gateway (recommended)"]
-    A_OPENAI["astrocyte-openai — direct SDK"]
-    A_ANTHROPIC["astrocyte-anthropic — direct SDK"]
+    A_OPENAI["built-in openai provider — direct SDK / compatible endpoint"]
+    A_ANTHROPIC["Anthropic via astrocyte-llm-litellm"]
     A_CUSTOM["Custom Adapter"]
   end
 
@@ -426,7 +426,7 @@ This is **not** an LLM gateway. It is a narrow internal dependency with two meth
 
 - **Unified gateways and aggregators**: products that front many models behind one API or control plane — e.g. **LiteLLM**, **Portkey**, **OpenRouter**, **Vercel AI Gateway**, cloud **AI Gateway** / router services, or comparable layers — not only LiteLLM.
 - **Direct SDKs**: OpenAI, Anthropic, Google Gemini, Mistral, Cohere
-- **Self-hosted**: Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, TGI) via the OpenAI adapter with custom `api_base`
+- **Self-hosted**: Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, TGI) via the OpenAI provider with custom `base_url`
 - **Local embeddings**: Built-in sentence-transformers support (no API cost for embeddings)
 
 Completion and embedding providers can be configured **separately** - e.g., Claude for reasoning + local models for embeddings. See `provider-spi.md` section 4 for the full LLM SPI specification and gateway integration patterns.
@@ -562,7 +562,7 @@ When a caller does `brain.recall("What do we know about Calvin?")`, they don't k
 provider_tier: storage
 vector_store: pgvector
 vector_store_config:
-  connection_url: postgresql://localhost/memories
+  dsn: postgresql://localhost/memories
 graph_store: neo4j                    # optional
 graph_store_config:
   uri: bolt://localhost:7687
@@ -682,21 +682,21 @@ These capabilities exist at the **framework layer** — they apply regardless of
 | **Retrieval providers (Tier 1)** | | |
 | pgvector adapter | `astrocyte-pgvector` | Apache 2.0 |
 | Apache AGE graph adapter (default graph store, v1.0.0) | `astrocyte-age` | Apache 2.0 |
-| Pinecone adapter | `astrocyte-pinecone` | Apache 2.0 |
+| Pinecone adapter | `astrocyte-pinecone` | Planned |
 | Qdrant adapter | `astrocyte-qdrant` | Apache 2.0 |
-| Weaviate adapter | `astrocyte-weaviate` | Apache 2.0 |
+| Weaviate adapter | `astrocyte-weaviate` | Planned |
 | Neo4j graph adapter | `astrocyte-neo4j` | Apache 2.0 |
-| Memgraph graph adapter | `astrocyte-memgraph` | Apache 2.0 |
+| Memgraph graph adapter | `astrocyte-memgraph` | Planned |
 | **Memory engine providers (Tier 2)** | | |
-| Mystique memory engine provider | `astrocyte-mystique` | Proprietary |
-| Mem0 memory engine provider | `astrocyte-mem0` | Apache 2.0 |
-| Zep memory engine provider | `astrocyte-zep` | Apache 2.0 |
-| Letta memory engine provider | `astrocyte-letta` | Apache 2.0 |
-| Cognee memory engine provider | `astrocyte-cognee` | Apache 2.0 |
+| Mystique memory engine provider | `astrocyte-mystique` | Planned / proprietary |
+| Mem0 memory engine provider | `astrocyte-mem0` | Planned |
+| Zep memory engine provider | `astrocyte-zep` | Planned |
+| Letta memory engine provider | `astrocyte-letta` | Planned |
+| Cognee memory engine provider | `astrocyte-cognee` | Planned |
 | **LLM providers** | | |
 | LiteLLM adapter | `astrocyte-llm-litellm` | Apache 2.0 |
-| OpenAI direct adapter | `astrocyte-openai` | Apache 2.0 |
-| Anthropic direct adapter | `astrocyte-anthropic` | Apache 2.0 |
+| OpenAI direct provider | built into `astrocyte` as `llm_provider: openai` | Apache 2.0 |
+| Anthropic direct adapter | `astrocyte-anthropic` | Planned |
 | **Outbound transport** | | |
 | Example: gateway-specific transport adapter | `astrocyte-transport-{name}` | Apache 2.0 |
 | **Memory export sink (warehouse / lake / open tables)** | | |

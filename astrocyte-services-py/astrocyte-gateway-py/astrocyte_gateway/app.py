@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -360,6 +361,93 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         )
         return to_jsonable(result)
 
+    @app.post("/v1/dsar/forget_principal")
+    async def dsar_forget_principal(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """DSAR right-to-erasure for a single principal across a tenant's banks.
+
+        Called from Cerebro's ``Synapse.DSAR.DeletionWorker`` when an erasure
+        request is approved. Sweeps every configured bank whose name starts
+        with ``{tenant_id}:`` (Cerebro's multi-tenant naming convention) and
+        deletes memories tagged ``principal:{principal}``.
+
+        ## Tag convention
+
+        For a memory to be erasable by this endpoint, it must have been
+        retained with the tag ``principal:{principal}`` (e.g.
+        ``principal:user:alice``). Callers that want their data covered by
+        DSAR must apply this tag at retain time. Memories without the tag
+        are NOT deleted — by design — and are reported as ``deleted: 0`` in
+        the per-bank breakdown.
+
+        ## Response
+
+            {
+              "tenant_id": "...",
+              "principal": "user:alice",
+              "tag_convention": "principal:user:alice",
+              "banks_processed": 3,
+              "memories_deleted": 12,
+              "details": [
+                {"bank_id": "tenant-acme:decisions", "deleted": 7},
+                ...
+              ]
+            }
+
+        ## Compliance bypass
+
+        Calls into ``forget`` with ``compliance=True`` so legal holds are
+        bypassed (right-to-erasure overrides retention obligations) AND the
+        actor is recorded in the audit log for proof-of-deletion.
+        """
+        tenant_id = body.get("tenant_id")
+        principal = body.get("principal")
+
+        if not isinstance(tenant_id, str) or not tenant_id:
+            raise HTTPException(status_code=400, detail="tenant_id (str) is required")
+        if not isinstance(principal, str) or not principal:
+            raise HTTPException(status_code=400, detail="principal (str) is required")
+
+        configured_banks = brain.config.banks or {}
+        tenant_banks = sorted(
+            bid for bid in configured_banks.keys() if bid.startswith(f"{tenant_id}:")
+        )
+
+        principal_tag = f"principal:{principal}"
+        deleted_total = 0
+        details: list[dict[str, Any]] = []
+
+        for bank_id in tenant_banks:
+            try:
+                result = await brain.forget(
+                    bank_id,
+                    tags=[principal_tag],
+                    compliance=True,
+                    reason=f"DSAR erasure for {principal}",
+                    context=ctx,
+                )
+                deleted = getattr(result, "deleted_count", 0) or 0
+                details.append({"bank_id": bank_id, "deleted": deleted})
+                deleted_total += deleted
+            except Exception as exc:
+                # Don't fail the whole sweep on a single-bank error — record
+                # it and continue. Cerebro can re-run the request to retry.
+                _logger.warning(
+                    "dsar_forget_principal: bank %s failed: %s", bank_id, exc, exc_info=False
+                )
+                details.append({"bank_id": bank_id, "deleted": 0, "error": str(exc)})
+
+        return {
+            "tenant_id": tenant_id,
+            "principal": principal,
+            "tag_convention": principal_tag,
+            "banks_processed": len(tenant_banks),
+            "memories_deleted": deleted_total,
+            "details": details,
+        }
+
     @app.post("/v1/compile")
     async def compile(
         body: dict[str, Any],
@@ -457,6 +545,171 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
             raise
         return {"hits": to_jsonable(hits)}
 
+    # ── history (M9 time travel) ───────────────────────────────────────────
+
+    @app.post("/v1/history")
+    async def history(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Reconstruct what the agent knew at a past point in time (M9).
+
+        Body:
+            query (str, required): Recall query to run against the snapshot.
+            bank_id (str, required): Bank to query.
+            as_of (str, required): ISO 8601 UTC datetime — memories after this
+                moment are hidden.
+            max_results (int, optional): Default 10.
+            max_tokens (int, optional): Token budget for result set.
+            tags (list[str], optional): Tag filter.
+        """
+        query = body.get("query")
+        bank_id = body.get("bank_id")
+        as_of_raw = body.get("as_of")
+        if not isinstance(query, str) or not isinstance(bank_id, str):
+            raise HTTPException(status_code=400, detail="query and bank_id (str) are required")
+        if not isinstance(as_of_raw, str):
+            raise HTTPException(status_code=400, detail="as_of (ISO 8601 string) is required")
+        try:
+            as_of = datetime.fromisoformat(as_of_raw)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="as_of must be a valid ISO 8601 datetime string")
+        try:
+            max_results = int(body["max_results"]) if body.get("max_results") is not None else 10
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="max_results must be an integer")
+        max_tokens = body.get("max_tokens")
+        if max_tokens is not None:
+            try:
+                max_tokens = int(max_tokens)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="max_tokens must be an integer")
+        tags = body.get("tags")
+        result = await brain.history(
+            query,
+            bank_id,
+            as_of,
+            max_results=max_results,
+            max_tokens=max_tokens,
+            tags=[str(t) for t in tags] if isinstance(tags, list) else None,
+            context=ctx,
+        )
+        return to_jsonable(result)
+
+    # ── audit (M10 gap analysis) ───────────────────────────────────────────
+
+    @app.post("/v1/audit")
+    async def audit(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Identify knowledge gaps for a topic in a bank (M10).
+
+        Body:
+            scope (str, required): Natural-language topic to audit.
+            bank_id (str, required): Bank to audit.
+            max_memories (int, optional): Memories to scan, default 50.
+            max_tokens (int, optional): Token budget for retrieved memories.
+            tags (list[str], optional): Tag filter.
+        """
+        scope = body.get("scope")
+        bank_id = body.get("bank_id")
+        if not isinstance(scope, str) or not isinstance(bank_id, str):
+            raise HTTPException(status_code=400, detail="scope and bank_id (str) are required")
+        try:
+            max_memories = int(body["max_memories"]) if body.get("max_memories") is not None else 50
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="max_memories must be an integer")
+        max_tokens = body.get("max_tokens")
+        if max_tokens is not None:
+            try:
+                max_tokens = int(max_tokens)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="max_tokens must be an integer")
+        tags = body.get("tags")
+        try:
+            result = await brain.audit(
+                scope,
+                bank_id,
+                max_memories=max_memories,
+                max_tokens=max_tokens,
+                tags=[str(t) for t in tags] if isinstance(tags, list) else None,
+            )
+        except Exception as exc:
+            if "ConfigError" in type(exc).__name__:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
+        return to_jsonable(result)
+
+    # ── export / import (ops portability) ─────────────────────────────────
+
+    @app.post("/v1/export")
+    async def export_bank(
+        body: dict[str, Any],
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Export a bank to an AMA JSONL file on the server filesystem (ops).
+
+        Body:
+            bank_id (str, required): Bank to export.
+            path (str, required): Absolute server-side path to write the JSONL file.
+            include_embeddings (bool, optional): Default false.
+            include_entities (bool, optional): Default true.
+        """
+        bank_id = body.get("bank_id")
+        path = body.get("path")
+        if not isinstance(bank_id, str) or not isinstance(path, str):
+            raise HTTPException(status_code=400, detail="bank_id and path (str) are required")
+        include_embeddings = bool(body.get("include_embeddings", False))
+        include_entities = bool(body.get("include_entities", True))
+        try:
+            count = await brain.export_bank(
+                bank_id,
+                path,
+                include_embeddings=include_embeddings,
+                include_entities=include_entities,
+                context=ctx,
+            )
+        except Exception as exc:
+            if "ConfigError" in type(exc).__name__ or "AccessDenied" in type(exc).__name__:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
+        return {"bank_id": bank_id, "path": path, "exported_count": count}
+
+    @app.post("/v1/import")
+    async def import_bank(
+        body: dict[str, Any],
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Import memories from an AMA JSONL file on the server filesystem (ops).
+
+        Body:
+            bank_id (str, required): Destination bank.
+            path (str, required): Absolute server-side path to the JSONL file.
+            on_conflict (str, optional): "skip" (default) or "overwrite".
+        """
+        bank_id = body.get("bank_id")
+        path = body.get("path")
+        if not isinstance(bank_id, str) or not isinstance(path, str):
+            raise HTTPException(status_code=400, detail="bank_id and path (str) are required")
+        on_conflict = str(body.get("on_conflict", "skip"))
+        if on_conflict not in ("skip", "overwrite"):
+            raise HTTPException(status_code=400, detail='on_conflict must be "skip" or "overwrite"')
+        try:
+            result = await brain.import_bank(
+                bank_id,
+                path,
+                on_conflict=on_conflict,
+                context=ctx,
+            )
+        except Exception as exc:
+            if "ConfigError" in type(exc).__name__ or "AccessDenied" in type(exc).__name__:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
+        return to_jsonable(result)
+
     @app.post("/v1/ingest/webhook/{source_id}")
     async def ingest_webhook(
         source_id: str,
@@ -507,6 +760,96 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
             if rr.error:
                 payload["retain_error"] = rr.error
         return JSONResponse(content=payload, status_code=result.http_status)
+
+    # ── admin: lifecycle ──────────────────────────────────────────────────
+
+    @app.post("/v1/admin/lifecycle")
+    async def admin_lifecycle(
+        body: dict[str, Any],
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Run TTL lifecycle sweep on a bank — archives/deletes expired memories.
+
+        Body:
+            bank_id (str, required): Bank to sweep.
+        """
+        _ = ctx
+        bank_id = body.get("bank_id")
+        if not isinstance(bank_id, str):
+            raise HTTPException(status_code=400, detail="bank_id (str) is required")
+        result = await brain.run_lifecycle(bank_id)
+        return to_jsonable(result)
+
+    # ── admin: bank health ────────────────────────────────────────────────
+
+    @app.get("/v1/admin/banks/health")
+    async def admin_all_bank_health(
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Health scores for all banks that have recorded operations."""
+        _ = ctx
+        results = await brain.all_bank_health()
+        return {"banks": to_jsonable(results)}
+
+    @app.get("/v1/admin/banks/{bank_id}/health")
+    async def admin_bank_health(
+        bank_id: str,
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Health score and issues for a single bank."""
+        _ = ctx
+        result = await brain.bank_health(bank_id)
+        return to_jsonable(result)
+
+    # ── admin: legal hold ─────────────────────────────────────────────────
+
+    @app.post("/v1/admin/banks/{bank_id}/hold")
+    async def admin_set_hold(
+        bank_id: str,
+        body: dict[str, Any],
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Place a bank under legal hold — blocks forget() until released.
+
+        Body:
+            hold_id (str, required): Unique identifier for this hold.
+            reason (str, required): Human-readable reason.
+            set_by (str, optional): Actor label, default "user:api".
+        """
+        _ = ctx
+        hold_id = body.get("hold_id")
+        reason = body.get("reason")
+        if not isinstance(hold_id, str) or not isinstance(reason, str):
+            raise HTTPException(status_code=400, detail="hold_id and reason (str) are required")
+        set_by = str(body.get("set_by", "user:api"))
+        hold = brain.set_legal_hold(bank_id, hold_id, reason, set_by=set_by)
+        return to_jsonable(hold)
+
+    @app.delete("/v1/admin/banks/{bank_id}/hold/{hold_id}")
+    async def admin_release_hold(
+        bank_id: str,
+        hold_id: str,
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Release a legal hold from a bank. Returns whether the hold existed."""
+        _ = ctx
+        released = brain.release_legal_hold(bank_id, hold_id)
+        return {"bank_id": bank_id, "hold_id": hold_id, "released": released}
+
+    @app.get("/v1/admin/banks/{bank_id}/hold")
+    async def admin_check_hold(
+        bank_id: str,
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Check whether a bank is currently under legal hold."""
+        _ = ctx
+        return {"bank_id": bank_id, "under_hold": brain.is_under_hold(bank_id)}
 
     @app.get("/v1/admin/sources")
     async def admin_sources(

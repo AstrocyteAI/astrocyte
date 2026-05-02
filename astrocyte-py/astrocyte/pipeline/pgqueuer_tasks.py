@@ -94,17 +94,50 @@ class PgQueuerMemoryTaskQueue:
         for task_type in TASK_ENTRYPOINTS:
             self._register_task_type(task_type, dispatcher)
 
-    async def run_drain(self, *, batch_size: int = 10) -> None:
-        """Process currently queued jobs and return when the queue is drained."""
+    async def run_drain(
+        self,
+        *,
+        batch_size: int = 10,
+        max_concurrent_tasks: int | None = None,
+    ) -> None:
+        """Process currently queued jobs and return when the queue is drained.
+
+        Args:
+            batch_size: How many jobs PgQueuer dequeues per round.
+            max_concurrent_tasks: Hard ceiling on simultaneously-running task
+                handlers. ``None`` falls back to PgQueuer's unbounded default
+                (``sys.maxsize``), which can exhaust downstream connection
+                pools when handlers do per-task DB I/O. Recommend setting
+                to ~2x ``batch_size`` (PgQueuer's enforced minimum) plus a
+                small margin — e.g. ``20`` for ``batch_size=10``.
+        """
 
         from pgqueuer.types import QueueExecutionMode
 
-        await self.pgq.run(batch_size=batch_size, mode=QueueExecutionMode.drain)
+        await self.pgq.run(
+            batch_size=batch_size,
+            mode=QueueExecutionMode.drain,
+            max_concurrent_tasks=max_concurrent_tasks,
+        )
 
-    async def run_continuous(self, *, batch_size: int = 10) -> None:
-        """Run the PgQueuer worker until shutdown is requested."""
+    async def run_continuous(
+        self,
+        *,
+        batch_size: int = 10,
+        max_concurrent_tasks: int | None = None,
+    ) -> None:
+        """Run the PgQueuer worker until shutdown is requested.
 
-        await self.pgq.run(batch_size=batch_size)
+        ``max_concurrent_tasks`` bounds in-flight handler concurrency. Without
+        a ceiling, PgQueuer dispatches as many tasks as the queue contains,
+        which can saturate downstream connection pools (pgvector / AGE) when
+        handlers do per-task DB I/O. See :meth:`run_drain` for sizing notes.
+        """
+
+        await self.pgq.run(
+            batch_size=batch_size,
+            max_concurrent_tasks=max_concurrent_tasks,
+        )
 
     async def shutdown(self) -> None:
         """Stop PgQueuer listeners/workers."""
@@ -113,7 +146,7 @@ class PgQueuerMemoryTaskQueue:
         if callable(shutdown):
             result = shutdown()
             if result is not None:
-                await result
+                _ = await result  # drive the shutdown coroutine; return value unused
         else:
             shutdown.set()
 

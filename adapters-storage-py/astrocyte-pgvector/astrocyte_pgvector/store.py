@@ -1,4 +1,16 @@
-"""VectorStore backed by PostgreSQL with the pgvector extension."""
+"""VectorStore + DocumentStore backed by PostgreSQL with the pgvector extension.
+
+``PgVectorStore`` satisfies both the ``VectorStore`` *and* ``DocumentStore``
+protocols.  The same ``astrocyte_vectors`` table that stores embeddings also
+carries a ``text_fts tsvector`` column (GIN-indexed, maintained by a trigger)
+so that ``search_fulltext`` runs BM25-style ``ts_rank`` without a separate
+Elasticsearch deployment.
+
+This gives the recall pipeline the ``keyword`` strategy for free: when the
+gateway or test code resolves ``document_store = pgvector``, ``parallel_retrieve``
+can fuse lexical and semantic hits via RRF — exactly as Hindsight does with
+its vector+lexical layer.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +22,15 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 import psycopg
-from astrocyte.types import HealthStatus, VectorFilters, VectorHit, VectorItem
+from astrocyte.types import (
+    Document,
+    DocumentFilters,
+    DocumentHit,
+    HealthStatus,
+    VectorFilters,
+    VectorHit,
+    VectorItem,
+)
 from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
@@ -66,6 +86,15 @@ class PgVectorStore:
 
                 async def configure(conn: psycopg.AsyncConnection) -> None:
                     await conn.execute("SELECT 1")
+                    # Pin search_path to ``public`` first so unqualified table
+                    # writes/reads (``astrocyte_vectors``, ``astrocyte_banks``,
+                    # etc.) always target the canonical migrated tables.
+                    # Postgres defaults search_path to ``"$user", public`` which
+                    # routes writes to ``<user>.<table>`` if the user-named
+                    # schema exists — silently splitting data across schemas
+                    # and breaking the entire benchmark when migrations only
+                    # ran against ``public``.
+                    await conn.execute('SET search_path = public, "$user"')
                     # register_vector_async needs the `vector` type. Skip until pgvector exists (quick path:
                     # /health can run before in-app DDL; runbook path: migrations already created the extension).
                     async with conn.cursor() as cur:
@@ -79,8 +108,16 @@ class PgVectorStore:
                     conninfo=self._dsn,
                     configure=configure,
                     open=False,
-                    min_size=1,
-                    max_size=10,
+                    min_size=2,
+                    # Sized for parallel retain + concurrent PgQueuer workers
+                    # (e.g. persona-compile tasks each call ``list_vectors``,
+                    # ``store_vectors``, etc.). With 10 retain records in
+                    # flight and PgQueuer running unbounded persona-compile
+                    # jobs in the background, the previous max_size=10
+                    # exhausted the pool and triggered cascading
+                    # ``PoolTimeout`` errors. 40 leaves ~3 connections of
+                    # headroom per concurrent unit.
+                    max_size=40,
                     kwargs={"connect_timeout": 10},
                 )
                 await self._pool.open()
@@ -167,6 +204,52 @@ class PgVectorStore:
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         UNIQUE (bank_id, memory_id, temporal_phrase)
                     )
+                    """
+                )
+                # ── Full-text search (DocumentStore protocol) ────────────────
+                # Add a tsvector column maintained by a trigger so that
+                # search_fulltext() can use ts_rank + GIN without a separate
+                # Elasticsearch deployment.  All DDL is idempotent: safe to
+                # run on an existing table.
+                await conn.execute(
+                    f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS text_fts tsvector"
+                )
+                await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS {self._table}_fts_idx
+                    ON {self._table} USING GIN (text_fts)
+                    """
+                )
+                # Trigger function (CREATE OR REPLACE is always idempotent).
+                await conn.execute(
+                    f"""
+                    CREATE OR REPLACE FUNCTION {self._table}_fts_update()
+                    RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN
+                        NEW.text_fts := to_tsvector('english', COALESCE(NEW.text, ''));
+                        RETURN NEW;
+                    END;
+                    $$
+                    """
+                )
+                # DROP the trigger first (IF EXISTS) then re-create so the
+                # function body change above takes effect on existing tables.
+                await conn.execute(
+                    f"DROP TRIGGER IF EXISTS {self._table}_fts_trigger ON {self._table}"
+                )
+                await conn.execute(
+                    f"""
+                    CREATE TRIGGER {self._table}_fts_trigger
+                    BEFORE INSERT OR UPDATE OF text ON {self._table}
+                    FOR EACH ROW EXECUTE FUNCTION {self._table}_fts_update()
+                    """
+                )
+                # Backfill existing rows that have NULL text_fts.
+                await conn.execute(
+                    f"""
+                    UPDATE {self._table}
+                    SET text_fts = to_tsvector('english', COALESCE(text, ''))
+                    WHERE text_fts IS NULL
                     """
                 )
                 await register_vector_async(conn)
@@ -412,3 +495,114 @@ class PgVectorStore:
             return HealthStatus(healthy=True, message="pgvector connected")
         except Exception as e:
             return HealthStatus(healthy=False, message=f"pgvector unhealthy: {e!s}")
+
+    # ── DocumentStore protocol ────────────────────────────────────────────────
+    # PgVectorStore satisfies DocumentStore so the recall pipeline can fuse
+    # lexical (BM25-style ts_rank) hits alongside semantic (cosine) hits via
+    # RRF — exactly the vector+lexical fusion Hindsight uses.  The text is
+    # already stored in astrocyte_vectors at retain time; DocumentStore methods
+    # operate on the same table via the text_fts tsvector column.
+
+    async def store_document(self, document: Document, bank_id: str) -> str:
+        """No-op: text is already stored by store_vectors() at retain time.
+
+        The tsvector trigger keeps text_fts in sync automatically.  This
+        method exists to satisfy the DocumentStore protocol so that callers
+        (e.g. PipelineOrchestrator) can treat PgVectorStore as a
+        DocumentStore without a separate code path.
+        """
+        return document.id
+
+    async def search_fulltext(
+        self,
+        query: str,
+        bank_id: str,
+        limit: int = 10,
+        filters: DocumentFilters | None = None,
+    ) -> list[DocumentHit]:
+        """BM25-style full-text search using PostgreSQL ts_rank over text_fts.
+
+        Ranks results by ``ts_rank_cd`` (cover-density ranking), which
+        rewards query terms appearing close together — a good proxy for BM25
+        on the memory-text lengths typical of Astrocyte.  Normalises the raw
+        score by document length (``|normalization|=1``) so long memories
+        don't dominate short ones.
+        """
+        if not query or not query.strip():
+            return []
+
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+
+        where = ["bank_id = %s", "forgotten_at IS NULL", "text_fts @@ plainto_tsquery('english', %s)"]
+        where_params: list[Any] = [bank_id, query]
+
+        if filters and filters.tags:
+            where.append("tags && %s::text[]")
+            where_params.append(filters.tags)
+
+        # SELECT ts_rank_cd(%s) appears before the WHERE %s bindings in the
+        # query string, so query must be the first positional param.
+        params = [query] + where_params + [limit]
+
+        where_sql = " AND ".join(where)
+        sql = f"""
+            SELECT
+                id,
+                text,
+                metadata,
+                ts_rank_cd(text_fts, plainto_tsquery('english', %s), 1) AS score
+            FROM {self._table}
+            WHERE {where_sql}
+            ORDER BY score DESC
+            LIMIT %s
+        """
+
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, params)
+                rows = await cur.fetchall()
+
+        hits: list[DocumentHit] = []
+        for row in rows:
+            md = row["metadata"]
+            if isinstance(md, str):
+                md = json.loads(md)
+            hits.append(
+                DocumentHit(
+                    document_id=row["id"],
+                    text=row["text"],
+                    score=float(row["score"]),
+                    metadata=md,
+                )
+            )
+        return hits
+
+    async def get_document(self, document_id: str, bank_id: str) -> Document | None:
+        """Retrieve a stored memory as a Document by ID."""
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT id, text, metadata, tags
+                    FROM {self._table}
+                    WHERE id = %s AND bank_id = %s AND forgotten_at IS NULL
+                    """,
+                    (document_id, bank_id),
+                )
+                row = await cur.fetchone()
+
+        if row is None:
+            return None
+        md = row["metadata"]
+        if isinstance(md, str):
+            md = json.loads(md)
+        return Document(
+            id=row["id"],
+            text=row["text"],
+            metadata=md,
+            tags=list(row["tags"]) if row["tags"] else None,
+        )

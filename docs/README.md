@@ -13,7 +13,7 @@ Four diagnostic tests separate systems that pass the third-option bar from syste
 | **Time travel** | "What did we believe about X on March 1st?" | Immutable history with as-of queries |
 | **Sovereignty** | "Can this run fully on our own infrastructure?" | Self-hosted, no data leaving the org |
 
-Astrocyte passes all four.
+Astrocyte implements all four in the current `0.9.x` line. The project will declare `v1.0.0` GA after the eval gates validate those capabilities against the release bar.
 
 ## What Astrocyte does
 
@@ -30,7 +30,9 @@ Your agent ──→ Astrocyte ──→ Storage backend
 - **recall** — search one or more banks and return ranked hits (semantic + keyword + graph), with optional `as_of` for point-in-time queries
 - **reflect** — recall relevant memories and synthesize a natural-language answer
 - **forget** — remove or archive memories, with soft-delete and `forgotten_at` timestamp for compliance
+- **history** — run point-in-time recall with `as_of`
 - **audit** — ask "what don't we know?" — scan a bank's coverage and return gaps, absent topics, and a coverage score
+- **compile** — opt-in wiki compile that turns raw memories into durable topic pages for higher-quality recall
 
 Astrocyte is **not** an LLM gateway and **not** an agent runtime. It does not define orchestration (graphs, tool loops, checkpoints). Your agent framework owns the loop; Astrocyte owns long-term memory, governed retrieval, and synthesis.
 
@@ -52,19 +54,19 @@ Astrocyte is **not** an LLM gateway and **not** an agent runtime. It does not de
 | **MIP** | Memory Intent Protocol — declarative routing rules that determine which bank, tags, and policies apply |
 | **Time travel** | Every memory carries `retained_at` and optional `forgotten_at`; `recall(as_of=datetime)` queries the bank as it stood at any point in time |
 | **Gap analysis** | `brain.audit(scope, bank_id)` reasons about absence — what topics are missing, what's thin, what contradicts — returns `AuditResult(gaps, coverage_score)` |
-| **Entity resolution** | Retain-time pipeline stage: extract entities → look up graph candidates → LLM confirms with evidence quote → `EntityLink(type="alias_of", evidence=quote)` |
-| **Apache AGE** | Default graph store (`astrocyte-age`) — runs inside the same PostgreSQL instance as pgvector, zero additional operational burden |
+| **Entity resolution** | Retain-time pipeline stage: extract entities → look up graph candidates → LLM confirms with evidence quote → `EntityLink(link_type="alias_of", evidence=quote)` |
+| **Apache AGE** | Preferred graph store for the PostgreSQL reference stack (`astrocyte-age`) — runs inside the same PostgreSQL instance as pgvector, zero additional operational burden |
 
 ## Current release
 
-**v0.8.x** (latest tag: **`v0.8.0`**): M1–M7 complete — production storage adapters, standalone gateway, structured recall authority, ingest connectors, gateway plugins. **v1.0.0** (in progress): adds M9–M11 (time travel, gap analysis, entity resolution) and is the first release to pass all four diagnostic tests. See [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
+**v0.9.1** is the current patch release. **v0.9.0** completed the pre-GA feature surface for M8–M11: wiki compile, time travel, gap analysis, entity resolution, and the Apache AGE graph adapter. **v1.0.0** GA will be declared after the `v0.9.x` eval gates pass. See [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
 
 Release notes: [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md)
 
 ## Get started
 
 - **[Quick Start](/end-user/quick-start/)** — install, configure, and run your first retain/recall in minutes
-- **[Memory API reference](/end-user/memory-api-reference/)** — full signatures for retain, recall, reflect, and forget
+- **[Memory API reference](/end-user/memory-api-reference/)** — core Python and REST memory operations
 - **[Configuration reference](/end-user/configuration-reference/)** — complete `astrocyte.yaml` schema
 - **[Bank management](/end-user/bank-management/)** — multi-bank queries, tenant patterns, lifecycle
 
@@ -85,8 +87,8 @@ Release notes: [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main
 | [`astrocyte-gateway-py`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-services-py/astrocyte-gateway-py/README.md) | Python | Optional REST gateway |
 | [`astrocyte-pgvector`](https://github.com/AstrocyteAI/astrocyte/blob/main/adapters-storage-py/astrocyte-pgvector/README.md) | Python | PostgreSQL + pgvector adapter (VectorStore) |
 | [`astrocyte-age`](https://github.com/AstrocyteAI/astrocyte/blob/main/adapters-storage-py/astrocyte-age/README.md) | Python | Apache AGE adapter (GraphStore) — shares PostgreSQL instance with pgvector |
-| [`astrocyte-rs`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-rs/README.md) | Rust | Native crate (same contract as Python) |
+| [`astrocyte-rs`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-rs/README.md) | Rust | Planned native crate; currently a contract stub |
 
 ## Building this documentation site
 
-This `docs/` folder is a [Starlight](https://starlight.astro.build/) package. From `docs/`, run `pnpm install`, then `pnpm dev` to preview or `pnpm build` to emit `dist/`. Source markdown lives in `docs/_design/`, `docs/_plugins/`, `docs/_end-user/`, and `docs/_tutorials/` — the script `scripts/sync-docs.mjs` mirrors them into `src/content/docs/` for the site. Deployment: [`.github/workflows/docs.yml`](https://github.com/AstrocyteAI/astrocyte/blob/main/.github/workflows/docs.yml).
+This `docs/` folder is a [Starlight](https://starlight.astro.build/) package. From `docs/`, run `pnpm install`, then `pnpm dev` to preview or `pnpm build` to emit `dist/`. Source markdown lives in `docs/_design/`, `docs/_plugins/`, `docs/_end-user/`, and `docs/_tutorials/` — `docs/scripts/sync-docs.mjs` mirrors them into `docs/src/content/docs/` for the site. Deployment: [`.github/workflows/docs.yml`](https://github.com/AstrocyteAI/astrocyte/blob/main/.github/workflows/docs.yml).

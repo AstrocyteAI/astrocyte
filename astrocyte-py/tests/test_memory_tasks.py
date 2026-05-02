@@ -128,6 +128,92 @@ async def test_compile_persona_page_and_index_vector() -> None:
     assert any(item.id == "person:alice" and item.fact_type == "wiki" for item in indexed)
 
 
+async def test_compile_persona_page_with_scope_uses_scoped_page_id_and_tag() -> None:
+    """Persona pages built with a scope must store at the scoped page_id
+    AND carry the scope tag, so that:
+      (a) the same person across distinct scopes does not collapse to a
+          single diluted page (the upsert key matches the lookup key), and
+      (b) scoped recall queries — which filter by ``convo:<id>`` — can
+          still surface the persona page.
+
+    This locks in the LoCoMo regression fix where
+    ``_build_persona_page`` previously hardcoded an unscoped page_id and
+    omitted the scope tag.
+    """
+    vector_store = InMemoryVectorStore()
+    wiki_store = InMemoryWikiStore()
+    # Stamp the scope tag the same way the LoCoMo retain path does so
+    # ``_item_in_scope`` can match.
+    await vector_store.store_vectors([
+        VectorItem(
+            id="m1",
+            bank_id="b1",
+            vector=[1.0] + [0.0] * 127,
+            text="Alice in convo-A likes hiking.",
+            metadata={"locomo_persons": "Alice", "conversation_id": "convo-A"},
+            tags=["convo:convo-A"],
+        ),
+        VectorItem(
+            id="m2",
+            bank_id="b1",
+            vector=[1.0] + [0.0] * 127,
+            text="Alice in convo-B likes chess.",
+            metadata={"locomo_persons": "Alice", "conversation_id": "convo-B"},
+            tags=["convo:convo-B"],
+        ),
+    ])
+
+    dispatcher = _dispatcher(vector_store, wiki_store=wiki_store)
+
+    # Compile persona for Alice scoped to convo-A.
+    await dispatcher.run(MemoryTask(
+        task_type=COMPILE_PERSONA_PAGE,
+        bank_id="b1",
+        payload={
+            "person": "Alice",
+            "scope": "convo:convo-A",
+            "index_vector": True,
+        },
+    ))
+    # And again for convo-B — must NOT collapse onto convo-A's page.
+    await dispatcher.run(MemoryTask(
+        task_type=COMPILE_PERSONA_PAGE,
+        bank_id="b1",
+        payload={
+            "person": "Alice",
+            "scope": "convo:convo-B",
+            "index_vector": True,
+        },
+    ))
+
+    page_a = await wiki_store.get_page("person:convo-convo-a:alice", "b1")
+    page_b = await wiki_store.get_page("person:convo-convo-b:alice", "b1")
+    legacy = await wiki_store.get_page("person:alice", "b1")
+
+    # Each scope produced its own page, keyed at the scoped id.
+    assert page_a is not None, "scoped page A should be retrievable at the scoped page_id"
+    assert page_b is not None, "scoped page B should be retrievable at the scoped page_id"
+    # And the unscoped page_id was NOT used as a backdoor write target.
+    assert legacy is None, "scoped compile must not also write to the unscoped page_id"
+
+    # Source isolation: the scope filter prevents cross-conversation bleed.
+    assert page_a.source_ids == ["m1"]
+    assert page_b.source_ids == ["m2"]
+
+    # The page carries the scope tag so scoped recall (which filters by
+    # ``convo:convo-A``) can surface it.
+    assert "convo:convo-A" in page_a.tags
+    assert "convo:convo-B" in page_b.tags
+
+    # And the indexed VectorItem inherits that tag (so vector recall
+    # filtered by tag finds the persona page).
+    indexed = await vector_store.list_vectors("b1")
+    indexed_a = next(v for v in indexed if v.id == "person:convo-convo-a:alice")
+    indexed_b = next(v for v in indexed if v.id == "person:convo-convo-b:alice")
+    assert "convo:convo-A" in (indexed_a.tags or [])
+    assert "convo:convo-B" in (indexed_b.tags or [])
+
+
 async def test_project_entity_edges_uses_person_metadata() -> None:
     vector_store = InMemoryVectorStore()
     graph_store = InMemoryGraphStore()

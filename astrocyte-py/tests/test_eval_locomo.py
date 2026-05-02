@@ -299,6 +299,124 @@ class TestLoComoBenchmark:
         result = await bench.run(conversations=conversations, bank_id="bench-limit", max_questions=3)
         assert result.total_questions == 3
 
+    async def test_max_questions_per_conversation_takes_first_n_per_convo(self):
+        """Per-conversation cap gives uniform coverage across conversations,
+        unlike ``max_questions`` which head-slices and over-weights early
+        conversations. 2 questions × 3 conversations = 6 questions total
+        with one from each conversation represented."""
+        brain, _ = _make_brain()
+        bench = LoComoBenchmark(brain)
+
+        def _convo(cid: str, n: int) -> LoCoMoConversation:
+            return LoCoMoConversation(
+                conversation_id=cid,
+                sessions=[LoCoMoSession(session_id=f"s-{cid}", turns=[{"speaker": "A", "text": "ctx"}])],
+                questions=[
+                    LoCoMoQuestion(
+                        question=f"{cid}-Q{i}", answer=f"A{i}",
+                        category="single-hop", evidence_ids=[], conversation_id=cid,
+                    )
+                    for i in range(n)
+                ],
+            )
+        conversations = [_convo("c-A", 5), _convo("c-B", 5), _convo("c-C", 5)]
+
+        result = await bench.run(
+            conversations=conversations, bank_id="bench-fair",
+            max_questions_per_conversation=2,
+        )
+
+        # Total = 2 * 3 = 6, with each conversation contributing 2 questions.
+        assert result.total_questions == 6
+        # Question text is "{cid}-Q{i}" so we can recover which conversations
+        # were sampled. All three must appear (no head-slicing into c-A only).
+        convos_seen = {q["question"].split("-Q")[0] for q in result.per_question}
+        assert convos_seen == {"c-A", "c-B", "c-C"}, (
+            f"Fair sampling must include every conversation, got convos="
+            f"{convos_seen} from questions={[q['question'] for q in result.per_question]}"
+        )
+
+    async def test_max_questions_per_conversation_stratifies_across_categories(self):
+        """Per-conversation sampling MUST stratify across categories so that
+        rare categories (e.g. adversarial, which historically sits at the
+        end of LoCoMo's question list) aren't systematically excluded by
+        a head-slice.
+
+        Regression: 2026-05-02 fair-bench produced 0 adversarial questions
+        out of 200 because the prior head-slice grabbed [:20] of each
+        conversation's questions, missing categories at the tail.
+        """
+        brain, _ = _make_brain()
+        bench = LoComoBenchmark(brain)
+
+        # Conversation with 5 categories, 10 questions per category, 50 total.
+        # Categories appear in distinct ranges so a naive head-slice would
+        # grab only the first one.
+        categories = ["multi-hop", "open-domain", "single-hop", "temporal", "adversarial"]
+        questions = []
+        for cat_idx, cat in enumerate(categories):
+            for j in range(10):
+                questions.append(
+                    LoCoMoQuestion(
+                        question=f"{cat}-Q{j}", answer=f"A{j}",
+                        category=cat, evidence_ids=[], conversation_id="c1",
+                    )
+                )
+        # Confirm test setup: head-slice [:5] would grab only multi-hop.
+        assert {q.category for q in questions[:5]} == {"multi-hop"}
+
+        conversations = [
+            LoCoMoConversation(
+                conversation_id="c1",
+                sessions=[LoCoMoSession(session_id="s", turns=[{"speaker": "A", "text": "ctx"}])],
+                questions=questions,
+            ),
+        ]
+
+        # Take 5 per conversation → with 5 categories present, take 1 each.
+        # The fix must include EVERY category, not just multi-hop.
+        result = await bench.run(
+            conversations=conversations, bank_id="bench-strat",
+            max_questions_per_conversation=5,
+        )
+
+        cats_seen = {q["category"] for q in result.per_question}
+        assert cats_seen == set(categories), (
+            f"Stratified sampling must include every category present in the "
+            f"conversation. Got {cats_seen}, missing {set(categories) - cats_seen}. "
+            f"This is the bug that produced 0 adversarial questions on 2026-05-02."
+        )
+
+    async def test_max_questions_per_conversation_combines_with_total_cap(self):
+        """When both flags are set, per-conversation runs first, then the
+        total cap is applied as a head-slice. 3 per-convo × 4 convos = 12,
+        capped at 5 → 5 total."""
+        brain, _ = _make_brain()
+        bench = LoComoBenchmark(brain)
+
+        conversations = [
+            LoCoMoConversation(
+                conversation_id=f"c{i}",
+                sessions=[LoCoMoSession(session_id=f"s{i}", turns=[{"speaker": "A", "text": "ctx"}])],
+                questions=[
+                    LoCoMoQuestion(
+                        question=f"c{i}-Q{j}", answer=f"A{j}",
+                        category="single-hop", evidence_ids=[], conversation_id=f"c{i}",
+                    )
+                    for j in range(5)
+                ],
+            )
+            for i in range(4)
+        ]
+
+        result = await bench.run(
+            conversations=conversations, bank_id="bench-both",
+            max_questions_per_conversation=3,
+            max_questions=5,
+        )
+
+        assert result.total_questions == 5
+
     async def test_multiple_categories(self):
         brain, _ = _make_brain()
         bench = LoComoBenchmark(brain)

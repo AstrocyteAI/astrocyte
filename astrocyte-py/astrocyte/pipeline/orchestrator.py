@@ -15,7 +15,12 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from astrocyte.config import ExtractionProfileConfig, RecallAuthorityConfig
+from astrocyte.pipeline.agentic_reflect import AgenticReflectParams
 from astrocyte.pipeline.chunking import DEFAULT_CHUNK_SIZE, chunk_text
+from astrocyte.pipeline.cross_encoder_rerank import (
+    CrossEncoderProtocol,
+    cross_encoder_rerank,
+)
 from astrocyte.pipeline.embedding import generate_embeddings
 from astrocyte.pipeline.entity_extraction import extract_entities
 from astrocyte.pipeline.extraction import (
@@ -31,6 +36,7 @@ from astrocyte.pipeline.fusion import (
     weighted_rrf_fusion,
 )
 from astrocyte.pipeline.hyde import generate_hyde_vector
+from astrocyte.pipeline.link_expansion import LinkExpansionParams, link_expansion
 from astrocyte.pipeline.query_intent import (
     QueryIntent,
     classify_query_intent,
@@ -54,6 +60,7 @@ from astrocyte.types import (
     EntityLink,
     MemoryEntityAssociation,
     MemoryHit,
+    MemoryLink,
     Message,
     RecallRequest,
     RecallResult,
@@ -135,10 +142,45 @@ class _TrackingLLMProvider:
         model: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        tools: list | None = None,  # list[ToolDefinition] — kept loose to avoid import cycle
+        tool_choice: str | None = None,
     ) -> Completion:
-        result = await self._inner.complete(messages, model=model, max_tokens=max_tokens, temperature=temperature)
+        # Forward native function-calling kwargs through to the underlying
+        # provider so the agentic reflect loop (Hindsight parity) can use
+        # ``tools=``/``tool_choice=`` end-to-end. Without this, the loop
+        # silently fell back to forced single-shot synthesis on every
+        # call — observed in 1986/1986 questions on the 2026-05-01 bench.
+        #
+        # Backward compat: only thread the new kwargs when the caller
+        # actually supplied them. Legacy providers / test fakes whose
+        # ``complete()`` signatures predate the tools extension keep
+        # working when invoked via the old text-only path.
+        extra_kwargs: dict = {}
+        if tools is not None:
+            extra_kwargs["tools"] = tools
+        if tool_choice is not None:
+            extra_kwargs["tool_choice"] = tool_choice
+        result = await self._inner.complete(
+            messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            **extra_kwargs,
+        )
         if result.usage:
             self.tokens_used += result.usage.input_tokens + result.usage.output_tokens
+            # Tier-3 observability: record cost + per-phase tokens when a
+            # benchmark collector is attached. Silent no-op otherwise.
+            collector = getattr(self, "_metrics_collector", None)
+            if collector is not None:
+                try:
+                    collector.record_completion_call(
+                        model=getattr(result, "model", None) or "",
+                        input_tokens=result.usage.input_tokens,
+                        output_tokens=result.usage.output_tokens,
+                    )
+                except Exception:
+                    pass  # never let metrics break a real call
         return result
 
     async def embed(
@@ -146,7 +188,20 @@ class _TrackingLLMProvider:
         texts: list[str],
         model: str | None = None,
     ) -> list[list[float]]:
-        return await self._inner.embed(texts, model=model)
+        result = await self._inner.embed(texts, model=model)
+        # Embeddings don't return usage objects; estimate input tokens from
+        # the rough heuristic of ~1 token per 4 chars per text (conservative).
+        collector = getattr(self, "_metrics_collector", None)
+        if collector is not None:
+            try:
+                est_tokens = sum(max(1, len(t) // 4) for t in texts)
+                collector.record_embedding_call(
+                    model=model or "text-embedding-3-small",
+                    tokens=est_tokens,
+                )
+            except Exception:
+                pass  # metrics are best-effort; never block the embedding call
+        return result
 
     def capabilities(self) -> Any:
         return self._inner.capabilities()
@@ -233,6 +288,72 @@ class PipelineOrchestrator:
         self._dedup = DedupDetector(similarity_threshold=0.95)
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when ``recall_authority`` is configured.
         self.recall_authority: RecallAuthorityConfig | None = None
+        #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when
+        #: ``cross_encoder_rerank.enabled`` is true. ``None`` falls back to
+        #: the heuristic ``cross_encoder_like_rerank`` in ``_rank_reflect_context``.
+        self.cross_encoder: CrossEncoderProtocol | None = None
+        #: When ``cross_encoder`` is set, only the first ``cross_encoder_top_k``
+        #: candidates are scored to bound inference cost. Default mirrors the
+        #: config default (30).
+        self.cross_encoder_top_k: int = 30
+        #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when
+        #: ``link_expansion.enabled`` is true. ``None`` skips the
+        #: post-fusion 3-signal expansion. Replaced the old BFS-hop
+        #: ``spreading_activation_params`` per Hindsight C3 rewrite.
+        self.link_expansion_params: LinkExpansionParams | None = None
+        #: Adversarial-defense score-floor abstention. When the top
+        #: recall hit's score is below this floor, reflect short-circuits
+        #: to "insufficient evidence" without invoking the LLM. Targets
+        #: adversarial questions where the LLM left to its own devices
+        #: would hallucinate an answer from weak hits. Wired by
+        #: ``Astrocyte.set_pipeline`` from ``adversarial_defense`` config.
+        self.adversarial_abstention_enabled: bool = False
+        self.adversarial_abstention_floor: float = 0.2
+        #: Pre-loop premise verification — decompose question into atomic
+        #: claims, verify each. Wired below in the reflect path.
+        self.adversarial_premise_verification_enabled: bool = False
+        self.adversarial_premise_min_confidence: float = 0.6
+        #: Tighten the agentic-reflect system prompt with explicit
+        #: adversarial-defense rules ("insufficient evidence is always
+        #: a valid answer", premise-check, etc.).
+        self.adversarial_prompt_enabled: bool = False
+        #: Hindsight-parity causal-link extraction at retain time. When
+        #: enabled, one extra LLM call per record produces directional
+        #: ``causes`` edges. Wired by ``Astrocyte.set_pipeline``.
+        self.causal_links_enabled: bool = False
+        self.causal_max_pairs_per_memory: int = 4
+        self.causal_min_confidence: float = 0.7
+        #: Hindsight-parity semantic-kNN graph (C3a). When enabled, each
+        #: new memory at retain time gets ``MemoryLink(link_type="semantic")``
+        #: edges to its top-K most-similar existing memories above the
+        #: similarity threshold. Wired by ``Astrocyte.set_pipeline``.
+        self.semantic_link_graph_enabled: bool = False
+        self.semantic_link_graph_top_k: int = 5
+        self.semantic_link_graph_threshold: float = 0.7
+        #: Structured fact extraction at retain time (5-dim
+        #: what/when/where/who/why with embedded entities + caused_by
+        #: relations). When enabled, replaces chunk_text +
+        #: extract_entities + fact_causal_extraction with a single
+        #: LLM call producing structured facts. Each fact becomes one
+        #: memory.
+        self.structured_fact_extraction_enabled: bool = False
+        self.structured_fact_extraction_max_facts: int = 30
+        #: Mode: "verbatim" stores raw chunk text + metadata (preserves
+        #: vocabulary for embedding-match), "concise" stores LLM-paraphrased
+        #: structured facts. Default verbatim because of the recall_hit_rate
+        #: regression that concise paraphrasing causes.
+        self.structured_fact_extraction_mode: str = "verbatim"
+        #: Query-level temporal constraint extraction. When enabled,
+        #: recall parses temporal expressions in the query into a
+        #: time_range filter applied to retrieval. Regex pre-pass is
+        #: free; ``allow_llm_fallback`` opt-in adds 1 LLM call per
+        #: temporal-marker query.
+        self.query_analyzer_enabled: bool = False
+        self.query_analyzer_allow_llm_fallback: bool = False
+        #: Hindsight-parity agentic reflect loop. ``None`` = single-shot
+        #: synthesis (legacy path). Set by ``Astrocyte.set_pipeline``
+        #: when ``agentic_reflect.enabled`` is true.
+        self.agentic_reflect_params: AgenticReflectParams | None = None
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when MIP is configured.
         #: Used by :meth:`recall` to resolve per-bank rerank/reflect overrides (P3).
         self.mip_router: MipRouter | None = None
@@ -277,6 +398,342 @@ class PipelineOrchestrator:
         """Return accumulated token count and reset to zero."""
         return self._tracker.reset_tokens()
 
+    async def _attach_entity_name_embeddings(self, entities: list[Entity]) -> None:
+        """Embed each entity's name and attach the vector to ``entity.embedding``.
+
+        Powers the Hindsight-inspired entity-resolution cascade — at retain
+        time we generate one batched embedding call across all entity names,
+        then attach the resulting vector to each entity. Both
+        ``store_entities`` (for adapters that persist embeddings) and
+        ``EntityResolver.resolve()`` (for the cosine-similarity tier of the
+        cascade) consume the attached vectors.
+
+        Skips entities whose ``embedding`` is already set (caller-supplied)
+        and skips entities with empty/whitespace names. On failure logs a
+        warning and leaves embeddings unset — the resolver degrades to
+        trigram-only and the cost is correctness for that one batch, not
+        a retain failure.
+        """
+        targets = [
+            e for e in entities
+            if e.embedding is None and e.name and e.name.strip()
+        ]
+        if not targets:
+            return
+        try:
+            vectors = await generate_embeddings(
+                [e.name.strip() for e in targets],
+                self.llm_provider,
+            )
+        except Exception as exc:
+            _logger.warning(
+                "entity name embedding failed (resolver will fall back to "
+                "trigram-only tier): %s", exc,
+            )
+            return
+        for entity, vec in zip(targets, vectors, strict=False):
+            entity.embedding = vec
+
+    async def _structured_fact_extraction_for_text(
+        self,
+        prepared,
+        request: RetainRequest,
+    ) -> tuple[
+        list[str] | None,
+        list[Entity] | None,
+        list[tuple[int, str]] | None,  # (entity_idx_in_full_list, memory_idx) associations
+        list[tuple[int, int, float]] | None,  # (source_memory_idx, target_memory_idx, confidence) caused_by
+    ]:
+        """Run the structured 5-dim fact extraction path.
+
+        Returns ``(fact_texts, entities, associations, caused_by)`` when
+        the path is enabled and produces facts; ``(None, None, None, None)``
+        otherwise. Caller falls through to the legacy chunk_text +
+        extract_entities path when None is returned.
+
+        Indices in ``associations`` and ``caused_by`` reference positions
+        in the returned ``fact_texts``/``entities`` lists. Callers
+        resolve them to memory IDs after store_vectors.
+        """
+        # SFE supersedes the legacy ``prepared.extract_entities`` gate.
+        # The legacy setting controlled which entity-extraction PATH
+        # ran (metadata vs LLM); SFE is a third path that produces
+        # both entities and structured facts in one call. When SFE is
+        # enabled, it fires regardless of the profile's entity
+        # extraction mode — the profile's metadata-entities are
+        # ignored in favor of the richer SFE output.
+        if (
+            not self.structured_fact_extraction_enabled
+            or self.llm_provider is None
+        ):
+            return None, None, None, None
+
+        try:
+            from astrocyte.pipeline.fact_extraction import (
+                extract_facts,
+                extract_facts_verbatim,
+                materialize_facts,
+            )
+
+            verbatim = (self.structured_fact_extraction_mode or "verbatim") == "verbatim"
+            if verbatim:
+                # Pre-chunk first so the LLM enriches each chunk with
+                # metadata WITHOUT paraphrasing. Stored memory text =
+                # original chunk vocabulary.
+                from astrocyte.pipeline.chunking import chunk_text
+                chunks_local = chunk_text(prepared.text, strategy="paragraph")
+                facts = await extract_facts_verbatim(
+                    chunks_local,
+                    self.llm_provider,
+                    event_date=request.occurred_at,
+                )
+            else:
+                facts = await extract_facts(
+                    prepared.text,
+                    self.llm_provider,
+                    event_date=request.occurred_at,
+                    max_facts=self.structured_fact_extraction_max_facts,
+                )
+        except Exception as exc:
+            _logger.warning(
+                "structured fact extraction failed (%s); falling back "
+                "to legacy chunk + entity-extraction path.", exc,
+            )
+            return None, None, None, None
+        if not facts:
+            return None, None, None, None
+
+        # Materialize without embeddings here — embeddings are batched
+        # later for cost. We only need the list of fact texts and the
+        # pre-extracted entities + association index map.
+        materialized = materialize_facts(
+            facts, bank_id=request.bank_id,
+            occurred_at=request.occurred_at,
+            verbatim=verbatim,  # propagate so VectorItem.text uses raw chunk
+        )
+        fact_texts = [item.text for item in materialized.vector_items]
+        entities = list(materialized.entities)
+
+        # Build (memory_idx, entity_idx) pairs from the materialized
+        # association tuples (which reference items by ID). We need
+        # indices because the caller hasn't assigned final memory IDs
+        # yet — those come after dedup + store_vectors.
+        item_id_to_idx = {item.id: i for i, item in enumerate(materialized.vector_items)}
+        ent_id_to_idx = {e.id: i for i, e in enumerate(entities)}
+        associations: list[tuple[int, str]] = []
+        for item_id, ent_id in materialized.memory_entity_associations:
+            mem_idx = item_id_to_idx.get(item_id)
+            ent_idx = ent_id_to_idx.get(ent_id)
+            if mem_idx is None or ent_idx is None:
+                continue
+            associations.append((ent_idx, mem_idx))
+
+        # caused_by edges: indices both into fact list (= memory list).
+        caused_by: list[tuple[int, int, float]] = []
+        for link in materialized.memory_links:
+            src_idx = item_id_to_idx.get(link.source_memory_id)
+            tgt_idx = item_id_to_idx.get(link.target_memory_id)
+            if src_idx is None or tgt_idx is None:
+                continue
+            caused_by.append((src_idx, tgt_idx, float(link.confidence)))
+
+        return fact_texts, entities, associations, caused_by
+
+    async def _persist_semantic_links(
+        self,
+        bank_id: str,
+        memory_ids: list[str],
+        embeddings: list[list[float]],
+    ) -> None:
+        """Compute & persist semantic-kNN edges for a freshly-stored batch.
+
+        Hindsight parity (C3a): each new memory gets ``MemoryLink(
+        link_type="semantic", weight=cosine)`` edges to its top-K
+        most-similar existing memories with similarity ≥ threshold.
+        Best-effort — failures log and continue rather than aborting
+        retain.
+        """
+        if (
+            not self.semantic_link_graph_enabled
+            or self.graph_store is None
+            or not memory_ids
+        ):
+            return
+        try:
+            from astrocyte.pipeline.semantic_link_graph import compute_semantic_links
+
+            links = await compute_semantic_links(
+                bank_id=bank_id,
+                new_memory_ids=memory_ids,
+                new_embeddings=embeddings,
+                vector_store=self.vector_store,
+                top_k=self.semantic_link_graph_top_k,
+                similarity_threshold=self.semantic_link_graph_threshold,
+            )
+        except Exception as exc:
+            _logger.warning("semantic_link_graph computation failed: %s", exc)
+            return
+        if not links:
+            return
+        try:
+            await self.graph_store.store_memory_links(links, bank_id)
+        except Exception as exc:
+            _logger.warning("storing semantic memory_links failed: %s", exc)
+
+    async def _process_record_entities(self, record: dict[str, Any]) -> None:
+        """Run all entity-related I/O for a single retain_many record.
+
+        Encapsulates the embed-names / store-entities / link-memories /
+        co-occurrence-links / entity-resolution cascade so :meth:`retain_many`
+        can dispatch one task per record via :func:`asyncio.gather`. Each
+        record's writes target distinct ``(bank_id, id)`` and
+        ``(bank_id, memory_id, entity_id)`` keys, so concurrent records
+        don't contend on row-level locks.
+
+        Failures in entity resolution are caught and logged — they must
+        not abort retain because the raw memories are already stored.
+        """
+        if self.graph_store is None:
+            return
+        request: RetainRequest = record["request"]
+        prepared = record["prepared"]
+        memory_ids: list[str] = record["memory_ids"]
+        entities: list[Entity] = record["entities"]
+        if not entities:
+            return
+
+        if self.entity_resolver is not None:
+            await self._attach_entity_name_embeddings(entities)
+            # Path B (Hindsight-style): rewrite tentative IDs to canonical
+            # IDs BEFORE storage so different surface forms that match an
+            # existing canonical never produce duplicate entity rows. The
+            # post-store ``resolve()`` alias pass becomes redundant in this
+            # mode and is skipped below.
+            if self.entity_resolver.canonical_resolution:
+                try:
+                    await self.entity_resolver.resolve_canonical_ids_in_place(
+                        new_entities=entities,
+                        bank_id=request.bank_id,
+                        graph_store=self.graph_store,
+                        event_date=request.occurred_at,
+                    )
+                except Exception as exc:
+                    _logger.warning(
+                        "canonical resolution failed during retain (falling "
+                        "back to tentative IDs): %s", exc,
+                    )
+
+        entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
+
+        # Per-fact entity associations when SFE supplied them
+        # (each memory linked only to entities IT mentions); legacy path
+        # uses the Cartesian product.
+        sfe_associations = record.get("sfe_associations")
+        if sfe_associations is not None:
+            associations = [
+                MemoryEntityAssociation(
+                    memory_id=memory_ids[mem_idx],
+                    entity_id=entity_ids[ent_idx],
+                )
+                for ent_idx, mem_idx in sfe_associations
+                if 0 <= ent_idx < len(entity_ids) and 0 <= mem_idx < len(memory_ids)
+            ]
+        else:
+            associations = [
+                MemoryEntityAssociation(memory_id=mid, entity_id=eid)
+                for mid in memory_ids
+                for eid in entity_ids
+            ]
+        await self.graph_store.link_memories_to_entities(associations, request.bank_id)
+        if len(entity_ids) > 1:
+            links = [
+                EntityLink(
+                    entity_a=entity_ids[i],
+                    entity_b=entity_ids[j],
+                    link_type="co_occurs",
+                )
+                for i in range(len(entity_ids))
+                for j in range(i + 1, len(entity_ids))
+            ]
+            await self.graph_store.store_links(links, request.bank_id)
+
+        # MemoryLinks (caused_by). Two paths:
+        # - SFE supplied them inline → resolve indices, store.
+        # - Legacy fact_causal_extraction LLM call per record.
+        sfe_caused_by = record.get("sfe_caused_by")
+        chunks: list[str] = record.get("chunks") or []
+        if sfe_caused_by:
+            memory_links = [
+                MemoryLink(
+                    source_memory_id=memory_ids[src_idx],
+                    target_memory_id=memory_ids[tgt_idx],
+                    link_type="caused_by",
+                    confidence=conf,
+                    weight=1.0,
+                    created_at=datetime.now(timezone.utc),
+                    metadata={"bank_id": request.bank_id, "source": "fact_extraction"},
+                )
+                for src_idx, tgt_idx, conf in sfe_caused_by
+                if 0 <= src_idx < len(memory_ids)
+                and 0 <= tgt_idx < len(memory_ids)
+                and src_idx != tgt_idx
+            ]
+            if memory_links:
+                try:
+                    await self.graph_store.store_memory_links(
+                        memory_links, request.bank_id,
+                    )
+                except Exception as exc:
+                    _logger.warning("storing memory_links failed: %s", exc)
+        elif (
+            self.causal_links_enabled
+            and len(memory_ids) > 1
+            and len(chunks) == len(memory_ids)
+            and self.llm_provider is not None
+        ):
+            try:
+                from astrocyte.pipeline.fact_causal_extraction import (
+                    build_memory_links_from_relations,
+                    extract_fact_causal_relations,
+                )
+                relations = await extract_fact_causal_relations(
+                    chunks,
+                    self.llm_provider,
+                    max_pairs_per_fact=self.causal_max_pairs_per_memory,
+                    min_confidence=self.causal_min_confidence,
+                )
+                memory_links = build_memory_links_from_relations(
+                    relations, memory_ids, bank_id=request.bank_id,
+                )
+            except Exception as exc:
+                _logger.warning("fact-level causal extraction failed: %s", exc)
+                memory_links = []
+            if memory_links:
+                try:
+                    await self.graph_store.store_memory_links(
+                        memory_links, request.bank_id,
+                    )
+                except Exception as exc:
+                    _logger.warning("storing memory_links failed: %s", exc)
+
+        # Legacy two-stage flow: post-store alias resolution. Skipped when
+        # ``canonical_resolution=True`` because IDs are already canonical.
+        if (
+            self.entity_resolver is not None
+            and not self.entity_resolver.canonical_resolution
+        ):
+            try:
+                await self.entity_resolver.resolve(
+                    new_entities=entities,
+                    source_text=prepared.text,
+                    bank_id=request.bank_id,
+                    graph_store=self.graph_store,
+                    llm_provider=self.llm_provider,
+                    event_date=request.occurred_at,
+                )
+            except Exception as exc:
+                _logger.warning("entity resolution failed during retain: %s", exc)
+
     async def retain(self, request: RetainRequest) -> RetainResult:
         """Retain pipeline: normalize → chunk → extract entities → embed → store."""
         # 0–1. Raw → normalizer → profile metadata/tags (M3 extraction chain)
@@ -310,7 +767,21 @@ class PipelineOrchestrator:
         chunk_kwargs: dict[str, int] = {"max_chunk_size": chunking.max_size}
         if chunking.overlap is not None:
             chunk_kwargs["overlap"] = chunking.overlap
-        chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
+
+        # Structured 5-dim fact extraction (opt-in). Replaces chunking +
+        # entity extraction with a single LLM call producing facts.
+        # Falls back to legacy chunk_text + extract_entities when
+        # disabled or when extraction returns no facts.
+        (
+            sfe_fact_texts,
+            sfe_entities,
+            sfe_associations,
+            sfe_caused_by,
+        ) = await self._structured_fact_extraction_for_text(prepared, request)
+        if sfe_fact_texts is not None:
+            chunks = list(sfe_fact_texts)
+        else:
+            chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
         if not chunks:
             return RetainResult(stored=False, error="No content after chunking")
 
@@ -342,8 +813,31 @@ class PipelineOrchestrator:
         chunks = [chunks[i] for i in keep_indices]
         embeddings = [embeddings[i] for i in keep_indices]
 
-        # 3. Extract entities (profile can disable; metadata profiles avoid LLM calls)
-        if profile is not None and profile.entity_extraction == "metadata":
+        # Remap structured-fact-extraction indices through dedup. The
+        # association and caused_by lists referenced positions in the
+        # ORIGINAL chunks; after dedup, indices need remapping to the
+        # surviving positions (or the records dropped entirely).
+        if sfe_associations is not None or sfe_caused_by is not None:
+            old_to_new = {old: new for new, old in enumerate(keep_indices)}
+            if sfe_associations is not None:
+                sfe_associations = [
+                    (ent_idx, old_to_new[mem_idx])
+                    for ent_idx, mem_idx in sfe_associations
+                    if mem_idx in old_to_new
+                ]
+            if sfe_caused_by is not None:
+                sfe_caused_by = [
+                    (old_to_new[src], old_to_new[tgt], conf)
+                    for src, tgt, conf in sfe_caused_by
+                    if src in old_to_new and tgt in old_to_new
+                ]
+
+        # 3. Extract entities (profile can disable; metadata profiles avoid LLM calls).
+        # Structured fact extraction provides entities pre-extracted —
+        # skip the second LLM call when it ran successfully.
+        if sfe_entities is not None:
+            entities = list(sfe_entities)
+        elif profile is not None and profile.entity_extraction == "metadata":
             entities = _entities_from_metadata(prepared.metadata)
         elif prepared.extract_entities:
             entities = await extract_entities(prepared.text, self.llm_provider)
@@ -399,6 +893,16 @@ class PipelineOrchestrator:
 
         await self.vector_store.store_vectors(items)
 
+        # Hindsight-parity semantic-kNN graph (C3a). Best-effort: links
+        # the new memories to their nearest existing neighbors so the
+        # link-expansion retrieval CTE has a precomputed semantic
+        # signal at recall time. Skipped when disabled.
+        await self._persist_semantic_links(
+            request.bank_id,
+            [item.id for item in items],
+            [item.vector for item in items],
+        )
+
         # 4b. Mirror chunks into the document store so keyword (BM25) search
         # has content to retrieve from. Previously recall.parallel_retrieve
         # ran a keyword strategy when ``document_store`` was configured —
@@ -430,12 +934,54 @@ class PipelineOrchestrator:
 
         # 5. Store entities and links (if graph store configured)
         if self.graph_store and entities:
+            # 5a. Attach name embeddings before persistence so the
+            # Hindsight-inspired entity-resolution cascade has the cheap
+            # cosine-similarity tier available.  Only fires when an
+            # entity_resolver is wired up — without one, the embedding
+            # would be persisted but never used, wasting API budget.
+            if self.entity_resolver is not None:
+                await self._attach_entity_name_embeddings(entities)
+                # Path B (Hindsight): rewrite tentative IDs to canonicals
+                # before storage. Skipped when canonical_resolution=False
+                # to preserve the legacy two-stage (store → resolve aliases)
+                # flow.
+                if self.entity_resolver.canonical_resolution:
+                    try:
+                        await self.entity_resolver.resolve_canonical_ids_in_place(
+                            new_entities=entities,
+                            bank_id=request.bank_id,
+                            graph_store=self.graph_store,
+                            event_date=request.occurred_at,
+                        )
+                    except Exception as exc:
+                        _logger.warning(
+                            "canonical resolution failed during retain "
+                            "(falling back to tentative IDs): %s", exc,
+                        )
+
             entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
 
-            # Link memories to entities
-            associations = [
-                MemoryEntityAssociation(memory_id=mid, entity_id=eid) for mid in memory_ids for eid in entity_ids
-            ]
+            # Link memories to entities. Two paths:
+            # - Structured fact extraction provides per-fact-per-entity
+            #   associations (each memory linked only to entities IT mentions),
+            #   matching Hindsight's fact-grained granularity.
+            # - Legacy path uses the Cartesian product (every memory linked
+            #   to every entity in the batch), which works when extraction
+            #   was over the whole text rather than per fact.
+            if sfe_associations is not None:
+                associations = [
+                    MemoryEntityAssociation(
+                        memory_id=memory_ids[mem_idx],
+                        entity_id=entity_ids[ent_idx],
+                    )
+                    for ent_idx, mem_idx in sfe_associations
+                    if 0 <= ent_idx < len(entity_ids) and 0 <= mem_idx < len(memory_ids)
+                ]
+            else:
+                associations = [
+                    MemoryEntityAssociation(memory_id=mid, entity_id=eid)
+                    for mid in memory_ids for eid in entity_ids
+                ]
             await self.graph_store.link_memories_to_entities(associations, request.bank_id)
 
             # Create co-occurrence links between entities
@@ -451,10 +997,74 @@ class PipelineOrchestrator:
                 ]
                 await self.graph_store.store_links(links, request.bank_id)
 
-            # 5b. Entity resolution (M11) — find alias-of links for newly stored entities.
-            # Opt-in: skipped when entity_resolver is None (default).
-            # Runs after store_entities so the new entities are queryable as candidates.
-            if self.entity_resolver is not None:
+            # Causal MemoryLinks. Two paths:
+            # - Structured fact extraction supplies them inline (no
+            #   extra LLM call); resolve indices to memory IDs and store.
+            # - Legacy path runs a separate fact_causal_extraction LLM call.
+            if sfe_caused_by is not None and sfe_caused_by:
+                memory_links = [
+                    MemoryLink(
+                        source_memory_id=memory_ids[src_idx],
+                        target_memory_id=memory_ids[tgt_idx],
+                        link_type="caused_by",
+                        confidence=conf,
+                        weight=1.0,
+                        created_at=datetime.now(timezone.utc),
+                        metadata={"bank_id": request.bank_id, "source": "fact_extraction"},
+                    )
+                    for src_idx, tgt_idx, conf in sfe_caused_by
+                    if 0 <= src_idx < len(memory_ids)
+                    and 0 <= tgt_idx < len(memory_ids)
+                    and src_idx != tgt_idx
+                ]
+                if memory_links:
+                    try:
+                        await self.graph_store.store_memory_links(
+                            memory_links, request.bank_id,
+                        )
+                    except Exception as exc:
+                        _logger.warning("storing memory_links failed: %s", exc)
+            elif (
+                self.causal_links_enabled
+                and len(memory_ids) > 1
+                and len(chunks) == len(memory_ids)
+                and self.llm_provider is not None
+            ):
+                # Legacy fact-causal-extraction LLM pass (separate call).
+                try:
+                    from astrocyte.pipeline.fact_causal_extraction import (
+                        build_memory_links_from_relations,
+                        extract_fact_causal_relations,
+                    )
+                    relations = await extract_fact_causal_relations(
+                        chunks,
+                        self.llm_provider,
+                        max_pairs_per_fact=self.causal_max_pairs_per_memory,
+                        min_confidence=self.causal_min_confidence,
+                    )
+                    memory_links = build_memory_links_from_relations(
+                        relations, memory_ids, bank_id=request.bank_id,
+                    )
+                except Exception as exc:
+                    _logger.warning("fact-level causal extraction failed: %s", exc)
+                    memory_links = []
+                if memory_links:
+                    try:
+                        await self.graph_store.store_memory_links(
+                            memory_links, request.bank_id,
+                        )
+                    except Exception as exc:
+                        _logger.warning("storing memory_links failed: %s", exc)
+
+            # 5b. Entity resolution (M11) — Hindsight-inspired tiered cascade.
+            # Skipped when canonical_resolution=True (Path B) because IDs
+            # are already canonical from the pre-store pass above. Otherwise
+            # the legacy two-stage path runs the cascade and writes
+            # alias_of links for matched candidates.
+            if (
+                self.entity_resolver is not None
+                and not self.entity_resolver.canonical_resolution
+            ):
                 try:
                     await self.entity_resolver.resolve(
                         new_entities=entities,
@@ -462,6 +1072,7 @@ class PipelineOrchestrator:
                         bank_id=request.bank_id,
                         graph_store=self.graph_store,
                         llm_provider=self.llm_provider,
+                        event_date=request.occurred_at,
                     )
                 except Exception as exc:
                     # Resolution failures must never abort a retain — degrade gracefully.
@@ -540,7 +1151,20 @@ class PipelineOrchestrator:
             chunk_kwargs: dict[str, int] = {"max_chunk_size": chunking.max_size}
             if chunking.overlap is not None:
                 chunk_kwargs["overlap"] = chunking.overlap
-            chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
+
+            # Structured 5-dim fact extraction (opt-in) — same branch as
+            # retain(); produces fact texts + pre-extracted entities +
+            # caused_by index pairs for this record.
+            (
+                sfe_fact_texts,
+                sfe_entities,
+                sfe_associations,
+                sfe_caused_by,
+            ) = await self._structured_fact_extraction_for_text(prepared, request)
+            if sfe_fact_texts is not None:
+                chunks = list(sfe_fact_texts)
+            else:
+                chunks = chunk_text(prepared.text, strategy=chunking.strategy, **chunk_kwargs)
             if not chunks:
                 results[index] = RetainResult(stored=False, error="No content after chunking")
                 continue
@@ -555,6 +1179,12 @@ class PipelineOrchestrator:
                 "chunks": chunks,
                 "start": start,
                 "end": len(all_chunks),
+                # Carry the SFE artefacts through to the second loop and
+                # _process_record_entities. None entries mean the record
+                # took the legacy chunk_text + extract_entities path.
+                "sfe_entities": sfe_entities,
+                "sfe_associations": sfe_associations,
+                "sfe_caused_by": sfe_caused_by,
             })
 
         if not records:
@@ -606,7 +1236,32 @@ class PipelineOrchestrator:
 
             chunks = [chunks[i] for i in keep_indices]
             embeddings = [embeddings[i] for i in keep_indices]
-            if profile is not None and profile.entity_extraction == "metadata":
+
+            # Remap SFE indices through dedup (mirrors retain() path).
+            sfe_associations = record["sfe_associations"]
+            sfe_caused_by = record["sfe_caused_by"]
+            sfe_entities = record["sfe_entities"]
+            if sfe_associations is not None or sfe_caused_by is not None:
+                old_to_new = {old: new for new, old in enumerate(keep_indices)}
+                if sfe_associations is not None:
+                    sfe_associations = [
+                        (ent_idx, old_to_new[mem_idx])
+                        for ent_idx, mem_idx in sfe_associations
+                        if mem_idx in old_to_new
+                    ]
+                if sfe_caused_by is not None:
+                    sfe_caused_by = [
+                        (old_to_new[src], old_to_new[tgt], conf)
+                        for src, tgt, conf in sfe_caused_by
+                        if src in old_to_new and tgt in old_to_new
+                    ]
+                # Persist remapped versions for _process_record_entities.
+                record["sfe_associations"] = sfe_associations
+                record["sfe_caused_by"] = sfe_caused_by
+
+            if sfe_entities is not None:
+                entities = list(sfe_entities)
+            elif profile is not None and profile.entity_extraction == "metadata":
                 entities = _entities_from_metadata(prepared.metadata)
             elif prepared.extract_entities:
                 entities = await extract_entities(prepared.text, self.llm_provider)
@@ -659,6 +1314,16 @@ class PipelineOrchestrator:
         if all_items:
             await self.vector_store.store_vectors(all_items)
 
+        # Hindsight-parity semantic-kNN graph (C3a) — same call as the
+        # single-retain path, applied per record so each batch's
+        # neighbors-search is scoped to its own bank.
+        for record in stored_records:
+            await self._persist_semantic_links(
+                record["request"].bank_id,
+                record["memory_ids"],
+                record["embeddings"],
+            )
+
         if self.document_store is not None:
             from astrocyte.types import Document
 
@@ -683,6 +1348,21 @@ class PipelineOrchestrator:
                             exc,
                         )
 
+        # ── Phase 1: parallel entity processing across all records ──
+        # Each record's entity work (embed names, store entities, write
+        # co-occurrence links, run resolution cascade) is independent of
+        # other records and dominates retain wall-clock when the bank is
+        # large. ``asyncio.gather`` lets all records' LLM/DB I/O run
+        # concurrently — for batches of 10 records this gives ~10× speedup
+        # on the entity-resolution-bound retain phase. The non-I/O steps
+        # (dedup cache, result assembly) stay sequential below.
+        if self.graph_store is not None:
+            entity_records = [r for r in stored_records if r["entities"]]
+            if entity_records:
+                await asyncio.gather(*[
+                    self._process_record_entities(r) for r in entity_records
+                ])
+
         for record in stored_records:
             request: RetainRequest = record["request"]
             prepared = record["prepared"]
@@ -690,37 +1370,6 @@ class PipelineOrchestrator:
             embeddings: list[list[float]] = record["embeddings"]
             chunks: list[str] = record["chunks"]
             entities = record["entities"]
-
-            if self.graph_store and entities:
-                entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
-                associations = [
-                    MemoryEntityAssociation(memory_id=mid, entity_id=eid)
-                    for mid in memory_ids
-                    for eid in entity_ids
-                ]
-                await self.graph_store.link_memories_to_entities(associations, request.bank_id)
-                if len(entity_ids) > 1:
-                    links = [
-                        EntityLink(
-                            entity_a=entity_ids[i],
-                            entity_b=entity_ids[j],
-                            link_type="co_occurs",
-                        )
-                        for i in range(len(entity_ids))
-                        for j in range(i + 1, len(entity_ids))
-                    ]
-                    await self.graph_store.store_links(links, request.bank_id)
-                if self.entity_resolver is not None:
-                    try:
-                        await self.entity_resolver.resolve(
-                            new_entities=entities,
-                            source_text=prepared.text,
-                            bank_id=request.bank_id,
-                            graph_store=self.graph_store,
-                            llm_provider=self.llm_provider,
-                        )
-                    except Exception as exc:
-                        _logger.warning("entity resolution failed during retain: %s", exc)
 
             for mem_id, embedding in zip(memory_ids, embeddings, strict=False):
                 self._dedup.add(request.bank_id, mem_id, embedding)
@@ -786,6 +1435,54 @@ class PipelineOrchestrator:
             time_range=request.time_range,
             as_of=request.as_of,  # M9: time-travel filter
         )
+
+        # 2a. Query-level temporal constraint extraction. The analyzer
+        # parses expressions like "what happened in March 2024?" or
+        # "last week's events" into a (start, end) range that becomes
+        # an extra time_range filter on top of any caller-supplied one.
+        # When the request already supplies a time_range, the
+        # analyzer's hit is the more restrictive of the two — the
+        # caller's filter remains the floor.
+        if (
+            self.query_analyzer_enabled
+            and request.time_range is None  # caller-supplied range wins
+        ):
+            try:
+                from astrocyte.pipeline.query_analyzer import analyze_query
+
+                analysis = await analyze_query(
+                    request.query,
+                    reference_date=request.as_of,
+                    llm_provider=self.llm_provider,
+                    allow_llm_fallback=self.query_analyzer_allow_llm_fallback,
+                )
+                if analysis.temporal_constraint and analysis.temporal_constraint.is_bounded():
+                    c = analysis.temporal_constraint
+                    # VectorFilters.time_range is (start, end) tuple,
+                    # both required for the SQL/in-memory adapters.
+                    # Use bench-bank min/max as defaults for open
+                    # ranges so the adapter contract is satisfied.
+                    far_past = datetime(1900, 1, 1, tzinfo=timezone.utc)
+                    far_future = datetime(2200, 1, 1, tzinfo=timezone.utc)
+                    filters = VectorFilters(
+                        bank_id=filters.bank_id,
+                        tags=filters.tags,
+                        fact_types=filters.fact_types,
+                        time_range=(
+                            c.start_date or far_past,
+                            c.end_date or far_future,
+                        ),
+                        as_of=filters.as_of,
+                    )
+                    _logger.info(
+                        "query_analyzer extracted temporal range %s",
+                        analysis.temporal_constraint,
+                    )
+            except Exception as exc:  # pragma: no cover — defensive
+                _logger.warning(
+                    "query_analyzer failed (%s); continuing without "
+                    "temporal filter.", exc,
+                )
 
         # 2b. Extract entities from query for graph search
         entity_ids: list[str] | None = None
@@ -918,6 +1615,36 @@ class PipelineOrchestrator:
         else:
             fused = weighted_rrf_fusion(weighted_inputs, k=self.rrf_k)
 
+        # 4a. Link expansion (Hindsight parity, C3). After initial RRF
+        # surfaces direct hits, query the three first-class memory-link
+        # signals — entity overlap, semantic kNN, causal — and merge
+        # the resulting candidates back into the fused set. Replaces
+        # the previous BFS-hop spreading-activation path.
+        if (
+            self.link_expansion_params is not None
+            and self.graph_store is not None
+            and fused
+        ):
+            try:
+                expansion_hits = await link_expansion(
+                    fused[: self.link_expansion_params.expansion_limit],
+                    bank_id=request.bank_id,
+                    vector_store=self.vector_store,
+                    graph_store=self.graph_store,
+                    params=self.link_expansion_params,
+                    tags=request.tags,
+                )
+            except Exception as exc:  # pragma: no cover — defensive
+                _logger.warning(
+                    "link expansion failed (%s); continuing with "
+                    "direct fused hits only.", exc,
+                )
+                expansion_hits = []
+            if expansion_hits:
+                # Re-fuse via RRF so direct evidence keeps its precedence
+                # (top-1 direct beats top-1 expansion by construction).
+                fused = rrf_fusion([fused, expansion_hits], k=self.rrf_k)
+
         # 4b. Multi-query expansion: decompose the question into sub-questions,
         # recall for each independently (parallel), and merge all fused lists
         # via a final RRF pass. Only runs when enabled and the LLM judges the
@@ -1047,6 +1774,7 @@ class PipelineOrchestrator:
                 total_candidates=total_candidates,
                 fusion_method="rrf",
             ),
+            top_semantic_score=_top_semantic_score,
         )
 
     async def _retrieve_observations(
@@ -1267,6 +1995,7 @@ class PipelineOrchestrator:
             bank_id=request.bank_id,
             max_results=query_plan.recall_max_results,
             max_tokens=request.max_tokens,
+            tags=request.tags,
         )
         recall_result = await self.recall(recall_request)
         expanded_hits = await self._expand_reflect_sources(
@@ -1277,6 +2006,7 @@ class PipelineOrchestrator:
                 limit=query_plan.reflect_rank_limit,
             ),
             limit=query_plan.reflect_expand_limit,
+            tags=request.tags,
         )
         recall_result.hits = expanded_hits
         if request.max_tokens:
@@ -1300,14 +2030,35 @@ class PipelineOrchestrator:
             if bank_pipeline is not None:
                 mip_reflect = bank_pipeline.reflect
 
-        # 2b. Auto-select a prompt when no MIP prompt override is set.  The
-        # classifier is a zero-cost regex heuristic; explicit MIP prompts
-        # always win over this automatic routing.
+        # 2b. Auto-select a prompt when no MIP prompt override is set.  Priority
+        # (highest → lowest):
+        #   1. MIP explicit prompt (always wins — never overridden here)
+        #   2. Evidence-strict gate: when top raw semantic score < threshold,
+        #      retrieval is uncertain.  Force citation to prevent the LLM from
+        #      constructing answers from tangential memories — the primary
+        #      adversarial failure mode in open-domain benchmarks.  Uses cosine
+        #      similarity from recall(), which is set to 0.0 when no semantic
+        #      results were found.
+        #   3. query_plan prompt variant (pre-retrieval query-shape routing)
+        #   4. _auto_prompt_variant fallback (legacy temporal/inference heuristic)
+        _EVIDENCE_STRICT_THRESHOLD = 0.5
         if mip_reflect is None or mip_reflect.prompt is None:
             from astrocyte.mip.schema import ReflectSpec
             from astrocyte.pipeline.reflect import _auto_prompt_variant
 
             prompt_variant = query_plan.prompt_variant or _auto_prompt_variant(request.query)
+
+            # Evidence-strict override: weak retrieval scores mean the top
+            # semantic match is only tangentially related — upgrade to citation
+            # mode so the LLM admits uncertainty instead of hallucinating.
+            # Skip if query_plan already chose evidence_strict (adversarial
+            # query shape) — no need to double-set.
+            if (
+                recall_result.top_semantic_score < _EVIDENCE_STRICT_THRESHOLD
+                and prompt_variant != "evidence_strict"
+            ):
+                prompt_variant = "evidence_strict"
+
             if prompt_variant is not None:
                 if mip_reflect is None:
                     mip_reflect = ReflectSpec(prompt=prompt_variant)
@@ -1318,15 +2069,184 @@ class PipelineOrchestrator:
                         promote_metadata=mip_reflect.promote_metadata,
                     )
 
-        # 3. Synthesize via LLM
-        return await synthesize(
-            query=request.query,
-            hits=recall_result.hits,
-            llm_provider=self.llm_provider,
+        # 2b1. Adversarial-defense gate: premise verification.
+        # Decompose the question into atomic claims, verify each
+        # against memory. Short-circuit to "insufficient evidence"
+        # when ANY presupposition fails. Targets false-premise and
+        # negative-existence adversarial questions.
+        if (
+            self.adversarial_premise_verification_enabled
+            and self.llm_provider is not None
+        ):
+            try:
+                from astrocyte.pipeline.premise_verification import verify_question
+
+                async def _premise_recall(claim: str, max_results: int) -> list[MemoryHit]:
+                    sub_request = RecallRequest(
+                        query=claim,
+                        bank_id=request.bank_id,
+                        max_results=max_results,
+                        max_tokens=request.max_tokens,
+                        tags=request.tags,
+                    )
+                    sub_result = await self.recall(sub_request)
+                    return sub_result.hits
+
+                verification = await verify_question(
+                    request.query,
+                    recall_fn=_premise_recall,
+                    llm_provider=self.llm_provider,
+                    min_confidence=self.adversarial_premise_min_confidence,
+                )
+                short_circuit = verification.short_circuit_message()
+                if short_circuit is not None:
+                    _logger.info(
+                        "reflect: premise verification short-circuit — %s",
+                        short_circuit,
+                    )
+                    return ReflectResult(answer=short_circuit, sources=[])
+            except Exception as exc:
+                _logger.warning(
+                    "premise verification failed (%s); continuing without "
+                    "the guard.", exc,
+                )
+
+        # 2c. Adversarial-defense gate: score-floor abstention.
+        # Distinct from the evidence-strict prompt switch above.
+        # ``evidence_strict`` keeps invoking the LLM with a tighter
+        # prompt; the abstention floor short-circuits BEFORE any LLM
+        # call when retrieval is so weak that the question almost
+        # certainly has no answer in memory. Targets adversarial
+        # questions (negative existence, false premise, time-shift)
+        # where the LLM left to its own devices invents an answer.
+        #
+        # ``abstention_floor`` is more aggressive than
+        # ``evidence_strict_threshold``: by default 0.2 vs 0.5 — it
+        # must be low enough that legitimate weak-retrieval questions
+        # still go through. Tunable via
+        # ``adversarial_defense.abstention_floor`` config.
+        if (
+            self.adversarial_abstention_enabled
+            and recall_result.top_semantic_score < self.adversarial_abstention_floor
+            and (not recall_result.hits or all(
+                (h.score or 0.0) < self.adversarial_abstention_floor
+                for h in recall_result.hits[:5]
+            ))
+        ):
+            _logger.info(
+                "reflect: abstention floor triggered (top_semantic=%.3f < %.3f); "
+                "returning 'insufficient evidence' without LLM call.",
+                recall_result.top_semantic_score,
+                self.adversarial_abstention_floor,
+            )
+            return ReflectResult(
+                answer="insufficient evidence: no memory supports this question.",
+                sources=[],
+            )
+
+        # 3. Synthesize. Two paths:
+        #
+        # (a) Agentic loop (Hindsight parity) — when configured, the LLM
+        #     selects between ``recall`` and ``done`` over up to N
+        #     iterations. Targets multi-hop / open-domain where a
+        #     single-shot recall misses bridge memories. Each loop
+        #     ``recall`` reuses the full upgraded recall pipeline (RRF
+        #     + spread + cross-encoder rerank + scope tags).
+        #
+        # (b) Single-shot synthesis — original path. Faster, simpler.
+        synthesize_kwargs = dict(
             dispositions=request.dispositions,
             max_tokens=request.max_tokens or 2048,
             authority_context=auth_ctx,
             mip_reflect=mip_reflect,
+        )
+        if self.agentic_reflect_params is not None:
+            from astrocyte.pipeline.agentic_reflect import agentic_reflect
+
+            async def _loop_recall(query: str, max_results: int) -> list[MemoryHit]:
+                # Reuses everything we just shipped: spread, cross-
+                # encoder rerank, tag scoping, RRF — same recall the
+                # outer step ran, parameterized by the agent's refined
+                # query and its requested max_results.
+                sub_request = RecallRequest(
+                    query=query,
+                    bank_id=request.bank_id,
+                    max_results=max_results,
+                    max_tokens=request.max_tokens,
+                    tags=request.tags,
+                )
+                sub_result = await self.recall(sub_request)
+                return sub_result.hits
+
+            # ``search_observations`` tool — searches the consolidated
+            # observation layer when the consolidator is wired up. The
+            # ::obs bank scope is reused to mirror how observations are
+            # stored at retain time.
+            observations_fn = None
+            if self._observation_consolidator is not None:
+                async def _loop_observations(query: str, max_results: int) -> list[MemoryHit]:
+                    qvec_batch = await generate_embeddings([query], self.llm_provider)
+                    qvec = qvec_batch[0] if qvec_batch else []
+                    # ReflectRequest doesn't carry ``as_of`` (recall does);
+                    # observation search uses the bank's current state.
+                    obs_results = await self._retrieve_observations(
+                        qvec,
+                        request.bank_id,
+                        max_results,
+                        None,
+                    )
+                    # Convert ScoredItem → MemoryHit so the loop can
+                    # cite IDs uniformly across tools.
+                    return [
+                        MemoryHit(
+                            text=item.text,
+                            score=item.score,
+                            fact_type=item.fact_type,
+                            metadata=item.metadata,
+                            tags=item.tags,
+                            memory_id=item.id,
+                            bank_id=request.bank_id,
+                            memory_layer="observation",
+                        )
+                        for item in (obs_results or [])
+                    ]
+                observations_fn = _loop_observations
+
+            # ``expand`` tool — fetch source memories cited by a
+            # compiled fact / wiki / observation. Reuses the existing
+            # source-expansion path with a single-id seed.
+            async def _loop_expand(memory_id: str, max_sources: int) -> list[MemoryHit]:
+                # Find the seed hit in the running pool to expand from.
+                seed: MemoryHit | None = next(
+                    (h for h in recall_result.hits if h.memory_id == memory_id), None,
+                )
+                if seed is None:
+                    return []
+                expanded = await self._expand_reflect_sources(
+                    request.bank_id,
+                    [seed],
+                    limit=max(1, max_sources) + 1,
+                    tags=request.tags,
+                )
+                # Drop the seed itself so the model sees only NEW evidence.
+                return [h for h in expanded if h.memory_id != memory_id]
+
+            return await agentic_reflect(
+                request.query,
+                initial_hits=recall_result.hits,
+                recall_fn=_loop_recall,
+                observations_fn=observations_fn,
+                expand_fn=_loop_expand,
+                llm_provider=self.llm_provider,
+                params=self.agentic_reflect_params,
+                final_synthesize_fn=synthesize,
+                final_synthesize_kwargs=synthesize_kwargs,
+            )
+        return await synthesize(
+            query=request.query,
+            hits=recall_result.hits,
+            llm_provider=self.llm_provider,
+            **synthesize_kwargs,
         )
 
     async def shutdown(self) -> None:
@@ -1356,27 +2276,48 @@ class PipelineOrchestrator:
         *,
         limit: int,
     ) -> list[MemoryHit]:
-        """Apply final precision rerank and hierarchy before synthesis."""
+        """Apply final precision rerank and hierarchy before synthesis.
+
+        Uses the configured cross-encoder reranker (Hindsight parity) when
+        ``self.cross_encoder`` is set; otherwise falls back to the
+        deterministic heuristic ``cross_encoder_like_rerank``. The
+        heuristic remains the default so reflect stays dependency-free
+        unless the operator opts into the cross-encoder backend.
+        """
         if not hits:
             return hits
 
-        scored = cross_encoder_like_rerank(
-            [
-                ScoredItem(
-                    id=h.memory_id or f"hit-{idx}",
-                    text=h.text,
-                    score=h.score,
-                    fact_type=h.fact_type,
-                    metadata=h.metadata,
-                    tags=h.tags,
-                    memory_layer=h.memory_layer,
-                    occurred_at=h.occurred_at,
-                    retained_at=h.retained_at,
+        items = [
+            ScoredItem(
+                id=h.memory_id or f"hit-{idx}",
+                text=h.text,
+                score=h.score,
+                fact_type=h.fact_type,
+                metadata=h.metadata,
+                tags=h.tags,
+                memory_layer=h.memory_layer,
+                occurred_at=h.occurred_at,
+                retained_at=h.retained_at,
+            )
+            for idx, h in enumerate(hits)
+        ]
+
+        if self.cross_encoder is not None:
+            try:
+                scored = cross_encoder_rerank(
+                    items, query,
+                    model=self.cross_encoder,
+                    top_k=self.cross_encoder_top_k,
                 )
-                for idx, h in enumerate(hits)
-            ],
-            query,
-        )
+            except Exception as exc:  # pragma: no cover — defensive
+                _logger.warning(
+                    "cross-encoder rerank failed (%s); falling back to "
+                    "heuristic.", exc,
+                )
+                scored = cross_encoder_like_rerank(items, query)
+        else:
+            scored = cross_encoder_like_rerank(items, query)
+
         hit_by_id = {h.memory_id or f"hit-{idx}": h for idx, h in enumerate(hits)}
         return [hit_by_id[item.id] for item in scored[:limit] if item.id in hit_by_id]
 
@@ -1403,12 +2344,18 @@ class PipelineOrchestrator:
         hits: list[MemoryHit],
         *,
         limit: int,
+        tags: list[str] | None = None,
     ) -> list[MemoryHit]:
         """Append raw sources cited by top wiki/observation hits.
 
         This mirrors Hindsight's reflect loop in a bounded, non-agentic form:
         start from compiled/observation evidence, then expand to raw facts for
         grounding before synthesis.
+
+        ``tags`` (optional): when set, only fetched memories carrying every
+        listed tag are appended. Closes the leak where a tag-scoped reflect
+        could otherwise pull cross-scope raw memories via a wiki page's
+        ``_wiki_source_ids`` metadata.
         """
         if not hits:
             return hits
@@ -1423,7 +2370,7 @@ class PipelineOrchestrator:
         if not source_ids:
             return hits[:limit]
 
-        raw_hits = await self._fetch_memory_hits_by_id(bank_id, source_ids)
+        raw_hits = await self._fetch_memory_hits_by_id(bank_id, source_ids, tags=tags)
         existing_ids = {h.memory_id for h in hits if h.memory_id}
         expanded = list(hits)
         for raw in raw_hits:
@@ -1434,19 +2381,40 @@ class PipelineOrchestrator:
                 break
         return expanded[:limit]
 
-    async def _fetch_memory_hits_by_id(self, bank_id: str, ids: list[str]) -> list[MemoryHit]:
+    async def _fetch_memory_hits_by_id(
+        self,
+        bank_id: str,
+        ids: list[str],
+        *,
+        tags: list[str] | None = None,
+    ) -> list[MemoryHit]:
         target = set(ids)
         found: dict[str, VectorItem] = {}
         offset = 0
         batch = 100
+        # Tag scoping: a fetched memory is kept only if it carries every
+        # tag in ``tags``. ``None``/empty disables the filter (legacy
+        # behavior). Comparison is case-insensitive to match recall's
+        # tag-filter convention.
+        required_tags = (
+            {str(t).lower() for t in tags} if tags else None
+        )
         while target:
             chunk = await self.vector_store.list_vectors(bank_id, offset=offset, limit=batch)
             if not chunk:
                 break
             for item in chunk:
-                if item.id in target:
-                    found[item.id] = item
-                    target.discard(item.id)
+                if item.id not in target:
+                    continue
+                if required_tags is not None:
+                    item_tags = {str(t).lower() for t in (item.tags or [])}
+                    if not required_tags.issubset(item_tags):
+                        # ID matches but scope tags missing — drop and
+                        # mark as resolved so we don't keep scanning.
+                        target.discard(item.id)
+                        continue
+                found[item.id] = item
+                target.discard(item.id)
             if len(chunk) < batch:
                 break
             offset += batch

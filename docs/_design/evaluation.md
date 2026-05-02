@@ -344,6 +344,7 @@ make bench-smoke
 
 # Quick subsets (requires API key via Doppler)
 doppler run -- make bench-locomo-quick       # 50 questions, ~2-3 min
+doppler run -- make bench-locomo-fair        # 200 questions (20×10), ~15-20 min
 doppler run -- make bench-longmemeval-quick  # 100 questions, ~30-60 min
 
 # Full canonical run — LME + LoCoMo in parallel, LLM-judge
@@ -354,6 +355,45 @@ doppler run -- make bench-full
 doppler run -- make bench-full RESUME=1
 ```
 
+#### LoCoMo: choosing the right tier
+
+Three LoCoMo bench tiers cover different needs along the speed/signal trade-off:
+
+| | **`bench-locomo-quick`** | **`bench-locomo-fair`** | **`bench-locomo`** |
+|---|---|---|---|
+| **Questions** | 50 | 200 (20 × 10 convos) | 1,986 (full) |
+| **Wall time** | ~3 min | ~15–20 min | ~3 hrs |
+| **Cost (gpt-4o-mini)** | ~$0.30 | ~$1 | ~$5–10 |
+| **Sampling** | First 50 (head-slice) | Category-stratified within each of all 10 conversations | All |
+| **Conversation coverage** | 1 conversation | **All 10 conversations × all categories** | All 10 |
+| **Per-category n** | ~10 (too small) | ~30–60 (even, balanced) | ~400 |
+| **95% CI on overall** | ±14 pts | ±7 pts | ±2.2 pts |
+| **Comparable across runs** | ✅ deterministic | ✅ deterministic | ✅ |
+| **Detects 4-pt change** | ❌ | marginal | ✅ |
+| **Detects 8-pt change** | ❌ | ✅ | ✅ |
+
+**When to use which:**
+
+- **`quick`** — sanity check / smoke test only. 50 questions can't tell you anything statistically meaningful about quality. Use for: "does my code crash on real bench data?" and CI gates.
+- **`fair`** — recommended fast-iteration target. Same speed as a 200-question head-slice but **stratified across both conversations AND categories**: for each of 10 conversations, take ⌈N / num_categories⌉ questions per category. Every conversation AND every category gets representation. Per-category numbers are reliable enough to detect ~8-pt swings.
+- **`bench-locomo`** — release-quality measurement. Tight per-category CIs (±5 pts) let you make claims like "multi-hop +5 pts." Direct comparison to published numbers (Hindsight, BEAM, paper baselines).
+
+**Recommended workflow** for each change you want to ship:
+
+```text
+1. Implement the change
+2. make bench-locomo-fair       (~20 min)  → does it move the needle?
+3. If no signal → reject, iterate, or shelve
+4. If positive signal → make bench-locomo  (~3 hrs) → confirm magnitude
+5. If confirmed at full scale → ship
+```
+
+Cost per feature: ~3.5 hrs of bench time, ~$6–11. Compare to "always full bench" at 6 hrs and ~$10–20 per feature.
+
+##### Why no fixed 200-question head-slice tier?
+
+A head-slice (`--max-questions 200`) draws all 200 questions from the first one or two conversations in the dataset. Persona scoping, cross-conversation tag filters, and entity disambiguation across storylines all go untested at that sample. `bench-locomo-fair` (`--max-questions-per-conversation 20`) costs the same but exercises every conversation. The deprecated `bench-locomo-200` target was removed for this reason; use `bench-locomo-fair` instead.
+
 **Key CLI flags** (`scripts/run_benchmarks.py`):
 
 | Flag | Effect |
@@ -362,7 +402,8 @@ doppler run -- make bench-full RESUME=1
 | `--multi-query` | Enable multi-query expansion in retrieval (extra LLM calls, improves multi-hop recall). |
 | `--max-sessions N` | Cap LongMemEval retain phase at N unique sessions (default: all ~1,500). |
 | `--resume` | Continue an interrupted run from `benchmark-results/checkpoints/`. |
-| `--max-questions N` | Limit questions per benchmark (for quick testing). |
+| `--max-questions N` | Hard cap on total questions (deterministic head-slice; biased toward early conversations when small). |
+| `--max-questions-per-conversation N` | LoCoMo only: take **N questions per conversation, stratified across categories** (⌈N / num_categories⌉ per category). Ensures every category gets representation; previously head-sliced and could exclude rare categories. Used by `bench-locomo-fair`. |
 
 **Checkpoint / resume:** Every evaluated question is checkpointed to `benchmark-results/checkpoints/`. If a run is interrupted, `--resume` (or `RESUME=1` in `make bench-full`) replays already-scored questions from cache and skips already-retained sessions (with persistent stores). The checkpoint is deleted on successful completion.
 

@@ -55,7 +55,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-    uses: ./.github/workflows/publish-postgres-age-pgvector-image.yml
+    uses: ./.github/workflows/publish-astrocyte-postgres-image.yml
     secrets: inherit
 
   publish-gateway-image:

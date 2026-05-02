@@ -205,13 +205,22 @@ vars_for_prompt = await memory.load_memory_variables({})
 
 ```python
 # Run the Astrocyte MCP server — agents connect via MCP protocol
-from astrocyte.integrations.mcp import create_mcp_server
+from astrocyte import Astrocyte
+from astrocyte.config import load_config
+from astrocyte.mcp import create_mcp_server
 
-brain = Astrocyte.from_config("astrocyte.yaml")
-server = create_mcp_server(brain, default_bank="user-123")
+config = load_config("astrocyte.yaml")
+brain = Astrocyte(config)
+server = create_mcp_server(brain, config)
 ```
 
-Exposes `retain`, `recall`, `reflect`, `forget`, `list_banks`, `bank_health` as MCP tools.
+The CLI form is usually simpler for local agents:
+
+```bash
+astrocyte-mcp --config astrocyte.yaml
+```
+
+Exposes `memory_retain`, `memory_recall`, `memory_reflect`, and optionally `memory_forget`, graph, compile, and admin tools depending on `mcp:` configuration.
 
 </TabItem>
 <TabItem label="CrewAI">

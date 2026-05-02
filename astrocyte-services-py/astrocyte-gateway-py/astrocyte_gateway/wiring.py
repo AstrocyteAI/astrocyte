@@ -100,6 +100,15 @@ def build_tier1_pipeline(config: AstrocyteConfig, *, wiki_store: WikiStore | Non
     llm = resolve_llm_provider(config)
     graph_store = resolve_graph_store(config)
     document_store = resolve_document_store(config)
+
+    # Auto-wire: when no explicit document_store is configured but the
+    # vector_store also satisfies the DocumentStore protocol (i.e. it's
+    # PgVectorStore, which has search_fulltext via the tsvector layer),
+    # reuse the same instance.  This activates the ``keyword`` strategy in
+    # parallel_retrieve without requiring a separate Elasticsearch deployment.
+    if document_store is None and hasattr(vector_store, "search_fulltext"):
+        document_store = vector_store  # type: ignore[assignment]
+
     entity_resolver = None
     if config.entity_resolution.enabled:
         if graph_store is None:

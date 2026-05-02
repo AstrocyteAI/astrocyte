@@ -307,8 +307,8 @@ All policies are configured under one config file and can be overridden per-bank
 
 ```yaml
 # astrocyte.yaml
-provider: mystique
-llm_provider: anthropic
+provider_tier: storage
+llm_provider: openai
 
 homeostasis:
   recall_max_tokens: 4096

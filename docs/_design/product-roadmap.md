@@ -1,6 +1,6 @@
 # Astrocyte v1.0.0 Roadmap
 
-This roadmap organizes **8** identified architectural gaps into milestones, ordered by dependency and impact. Each milestone is a shippable increment — earlier milestones unblock later ones.
+This roadmap organizes the v1.0.0 path into milestones, ordered by dependency and impact. Each milestone is a shippable increment — earlier milestones unblock later ones. `0.9.x` contains the pre-GA M8–M11 implementation; `v1.0.0` is reserved for the GA declaration after eval gates pass.
 
 **Architecture references**: See `c4-deployment-domain.md` (System Architecture, Domain Model, Application Architecture), ADR-001 (Deployment Models), ADR-002 (Identity Model), ADR-003 (Config Schema).
 
@@ -17,20 +17,20 @@ This roadmap organizes **8** identified architectural gaps into milestones, orde
 | M5 | Production Storage Providers | v0.8.0 | Gap 6 | None (parallel) | Adapters |
 | M6 | Standalone Gateway | v0.8.0 | Gap 3 | M1, M2 | Shipped in-repo (`astrocyte-gateway-py`); **v0.8.x** tags (see § Release numbering) |
 | M7 | Structured recall authority | v0.8.0 | Gap 8 | M5 | Core |
-| M8 | LLM wiki compile | v0.8.x | — | M3, M5 | Core; opt-in per bank; ships when evaluation confirms ≥10pp lift on multi-session/knowledge-update — [`llm-wiki-compile.md`](llm-wiki-compile.md) |
-| M9 | Time travel | v1.0.0 | — | M5 | Core; `retained_at` + `forgotten_at` + `as_of` on VectorFilters + `brain.history()` |
-| M10 | Gap analysis | v1.0.0 | — | M7, M9 | Core; `brain.audit()` → `AuditResult(gaps, coverage_score)` |
-| M11 | Entity resolution | v1.0.0 | — | M5 (GraphStore) | Core; retain-time `EntityResolver` + evidence chains + `astrocyte-age` default adapter |
+| M8 | LLM wiki compile | v0.9.0 | — | M3, M5 | Core; opt-in per bank; manual `brain.compile()` plus gateway/MCP surfaces — [`llm-wiki-compile.md`](llm-wiki-compile.md) |
+| M9 | Time travel | v0.9.0 | — | M5 | Core; `retained_at` + `forgotten_at` + `as_of` on VectorFilters + `brain.history()` |
+| M10 | Gap analysis | v0.9.0 | — | M7, M9 | Core; `brain.audit()` → `AuditResult(gaps, coverage_score)` |
+| M11 | Entity resolution | v0.9.0 | — | M5 (GraphStore) | Core; retain-time `EntityResolver` + evidence chains + `astrocyte-age` graph adapter |
 
 **Release pairing:** **M1 and M2 ship together in a single v0.5.0 tag** (identity + structured context first; config schema immediately after in the same minor). Later milestones renumber as above.
 
 **v0.8.0 ships three milestones:** **M5** (production storage adapters), **M6** (standalone gateway — deployment models / Gap 3), and **M7** (structured recall authority). M7 depends on multi-store hybrid recall from M5; **M6** is logically last but ships on the **same v0.8.x line** as M5/M7.
 
-**v0.8.x ships M8** (LLM wiki compile) after the eval gate passes — opt-in per bank, depends on M3 + M5, no dependency on M9–M11. M9–M11 will enrich M8 (provenance timestamps, lint-driven gap detection, entity cross-links) when they land in v1.0.0.
+**v0.9.0 ships M8–M11** (LLM wiki compile, time travel, gap analysis, and entity resolution). These complete the pre-GA feature surface. GA remains gated on the v0.9.x evaluation bar, not on additional API surface.
 
-**v1.0.0 general availability requires M1–M11 complete.** M9 (time travel), M10 (gap analysis), and M11 (entity resolution) are v1.0.0 scope — they constitute the full "third option" answer and are required before GA, not deferred. See `platform-positioning.md` for the diagnostic test framing.
+**v1.0.0 general availability requires M1–M11 implemented and eval-validated.** M9 (time travel), M10 (gap analysis), and M11 (entity resolution) constitute the full "third option" answer; they are implemented in v0.9.0 and remain under release-gate validation before GA. See `platform-positioning.md` for the diagnostic test framing.
 
-**v0.9.0 — research track:** Five research phases (R1–R5) targeting fundamental barriers to benchmark accuracy. Runs between v0.8.x and v1.0.0; each phase has an eval gate before promotion to core. See § v0.9.0 below.
+**Post-0.9 research track:** Five research phases (R1–R5) target fundamental barriers to benchmark accuracy after the M8–M11 feature surface. Each phase has an eval gate before promotion to core. See § Research track below.
 
 **v0.7.4** closes out pre-**v0.8** standalone gateway and repository packaging (image workflows, Helm, CI gates, docs alignment) before **v0.8.0** milestone work.
 
@@ -409,7 +409,7 @@ Gateway **plugin** integration (Kong, APISIX, Azure API Management, and similar)
 
 **Why**: Diagnostic test 2 from *Familiarity is the Enemy* — "Is 'Calvin' the same person as 'the CTO'?" Cosine similarity can retrieve both documents, but it cannot assert they are the same entity with evidence. Entity resolution with evidence chains is what enables cross-document reasoning, graph traversal, and trustworthy recall.
 
-**Design**: Retain-time pipeline stage. After fact extraction: extract named entities from the incoming content → query `GraphStore` for existing entity candidates → for each candidate above similarity threshold, call LLM to confirm with evidence quote → if confirmed, write `EntityLink(type="alias_of", entity_a, entity_b, evidence, confidence)` to graph. On recall, graph-enhanced retrieval automatically traverses entity links.
+**Design**: Retain-time pipeline stage. After fact extraction: extract named entities from the incoming content → query `GraphStore` for existing entity candidates → for each candidate above similarity threshold, call LLM to confirm with evidence quote → if confirmed, write `EntityLink(link_type="alias_of", entity_a, entity_b, evidence, confidence)` to graph. On recall, graph-enhanced retrieval automatically traverses entity links.
 
 **Default graph store**: `astrocyte-age` (Apache AGE on PostgreSQL) — same instance as `astrocyte-pgvector`, zero additional operational burden. Neo4j remains available as an alternative.
 
@@ -446,12 +446,12 @@ graph LR
     M5 -.->|parallel| M2
     M5 -.->|parallel| M3
     M5 --> M7["M7: Structured recall authority (v0.8.0)"]
-    M3 --> M8["M8: LLM Wiki Compile (v0.8.x)"]
+    M3 --> M8["M8: LLM Wiki Compile (v0.9.0)"]
     M5 --> M8
-    M5 --> M9["M9: Time Travel (v1.0.0)"]
-    M7 --> M10["M10: Gap Analysis (v1.0.0)"]
+    M5 --> M9["M9: Time Travel (v0.9.0)"]
+    M7 --> M10["M10: Gap Analysis (v0.9.0)"]
     M9 --> M10
-    M5 --> M11["M11: Entity Resolution (v1.0.0)"]
+    M5 --> M11["M11: Entity Resolution (v0.9.0)"]
 
     style M1 fill:#e1f5fe
     style M2 fill:#e1f5fe
@@ -466,7 +466,7 @@ graph LR
     style M11 fill:#e0f2f1
 ```
 
-**Critical path to v1.0.0**: M1 → M2 → M3 → M4 → M5 → M7 → M9 → M10; M5 → M11 (parallel with M9). M8 ships on the v0.8.x track before v0.9.0.
+**Critical path to v1.0.0**: M1 → M2 → M3 → M4 → M5 → M7 → M8/M9/M10/M11 → eval gates. M8–M11 are implemented in v0.9.0; GA is the validation milestone.
 
 **Parallel track**: M5 (storage providers) can proceed independently of M1–M4
 
@@ -474,11 +474,11 @@ graph LR
 
 **Authority track**: **M5 → M7** (both ship **v0.8.0**)
 
-**Wiki compile track (v0.8.x)**: M3 + M5 → M8. Eval-gated; no dependency on M9–M11. Ships before v0.9.0; M9/M10/M11 will enrich it when they land.
+**Wiki compile track (v0.9.0)**: M3 + M5 → M8. It now runs alongside M9–M11 and is part of the pre-GA validation surface.
 
-**Third-option track (v1.0.0)**: M5 → M9 (time travel) → M10 (gap analysis); M5 → M11 (entity resolution). All three required for v1.0.0 GA.
+**Third-option track (v0.9.0 → v1.0.0)**: M5 → M9 (time travel) → M10 (gap analysis); M5 → M11 (entity resolution). All three are implemented before v1.0.0 GA.
 
-**Research track (v0.9.0, between v0.8.x and v1.0.0)**: R1–R5 phases targeting benchmark accuracy barriers; eval gates promotion.
+**Research track (post-0.9)**: R1–R5 phases targeting benchmark accuracy barriers; eval gates promotion.
 
 ---
 
@@ -523,7 +523,7 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 
 ### Current release line
 
-**`v0.8.0`** and follow-on **`v0.8.x`** tags are the active line for **M5–M7** (production storage adapters, standalone gateway, structured recall authority) and the connector track. Release notes: root **`CHANGELOG.md`**; tag and PyPI order: **`RELEASING.md`**.
+**`v0.8.0`** and follow-on **`v0.8.x`** tags shipped **M5–M7** (production storage adapters, standalone gateway, structured recall authority) and the connector track. **`v0.9.0`** shipped **M8–M11**. Release notes: root **`CHANGELOG.md`**; tag and PyPI order: **`RELEASING.md`**.
 
 ### Historical — v0.4.x era (pre–M1 snapshot)
 
@@ -559,47 +559,41 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 - **M6 — gateway:** FastAPI **`astrocyte-gateway-py`** (implemented in repo): Tier 1 REST, JWT/OIDC → `AstrocyteContext`, webhook ingest, health/admin, Docker/Compose/Helm, GHCR — **§ M6**
 - **M7 — precedence:** Optional `astrocyte.yaml` `recall_authority:` (ADR-004); labeled `authority_context` for recall/reflect; **not** the default recall path — full spec **§ M7**
 
-### v0.8.x — Connector & gateway integration track (toward v1.0.0)
+### v0.8.x — Connector & gateway integration track
 
-**Scope:** Implemented **from the v0.8.0 baseline** toward **v1.0.0**. You can describe this as the **”v0.9-era”** feature wave (streams, poll, gateway plugins, **LLM wiki compile**) in planning docs; **git tags** stay **v0.8.1**, **v0.8.2**, … — **no v0.9.0 tag** — see § Release numbering.
+**Scope:** Implemented from the v0.8.0 baseline. This line added ingest transports, gateway plugins, and gateway hardening before the v0.9.0 M8–M11 feature release.
 
 - Additional event stream / poll connectors (beyond Kafka, Redis, GitHub) and NATS where needed
 - **Gateway plugins — shipped:** Thin integration plugins for **Kong** (Lua), **Apache APISIX** (Lua), and **Azure API Management** (XML policy fragments + Bicep/Terraform/APIOps deployment). Located in **`gateway-plugins/`** at the repo root. Each plugin intercepts OpenAI-compatible `/chat/completions` requests and calls the standalone gateway for recall (pre-hook) and retain (post-hook). See **[`gateway-plugins/README.md`](../../gateway-plugins/README.md)**.
 - Hardening: CORS, body limits, admin auth, rate limits at the edge (as product requires)
-- **LLM wiki compile (M8 — v0.8.x):** Async CompileEngine maintains rewritable **`WikiPage`** memories (entity/topic/concept) from raw memories, with provenance and cross-links; recall tiers wiki hits ahead of raw with fallback; periodic **lint** pass catches contradictions, stale claims, and orphans. Opt-in per bank via MIP config; defaults **off**. Depends on M3 (extraction pipeline) and M5 (production storage); ships before v0.9.0 when the LongMemEval **compile vs no-compile** A/B gate passes (≥ 10-point absolute lift on `multi-session` or `knowledge-update`, no other category regressing > 2 points; retain p95 unchanged). M9/M10/M11 will deepen M8 (provenance timestamps, lint-driven gap audit, entity cross-links) when they land in v1.0.0. Full design: **[`llm-wiki-compile.md`](llm-wiki-compile.md)**.
+- **LLM wiki compile (M8 — v0.9.0):** Async CompileEngine maintains rewritable **`WikiPage`** memories (entity/topic/concept) from raw memories, with provenance and cross-links; recall tiers wiki hits ahead of raw with fallback; periodic **lint** pass catches contradictions, stale claims, and orphans. Opt-in per bank; defaults **off**. Full design: **[`llm-wiki-compile.md`](llm-wiki-compile.md)**.
 
 SPI, adapter, and **astrocyte.yaml** / **mip.yaml** stability rules for this track — **§ Stability: SPI, adapters, and config files**.
 
-### v1.0.0 — General Availability
-- Milestones **M1–M7** complete (storage, gateway, structured recall authority — **§ M5–M7**)
-- Documentation complete for operators and integrators; **no v0.4 → v1.0 migration guide required** while there are no active external production users (revisit if adoption grows)
-- **SPI and config stability** per **§ Stability** (1.x avoids breaking changes to documented SPIs and config contracts)
-- Phase 2 integration adapter migration (framework-native identity extraction)
-- Benchmark validation across storage backends as appropriate
-
 ### v1.0.0 — General Availability (M1–M11)
 
-M9, M10, and M11 are v1.0.0 scope — they are required for GA, not deferred. Together with M1–M7 they constitute the full "third option" system that passes all four diagnostic tests.
+M8–M11 are implemented in v0.9.0 and are required for GA validation. Together with M1–M7 they constitute the full "third option" system that passes all four diagnostic tests once the eval gates clear.
 
 | Milestone | Diagnostic test | What it delivers |
 |-----------|----------------|-----------------|
+| **M8: Wiki compile** | Supports gap/entity/time-travel quality | `brain.compile()` + durable wiki pages and provenance |
 | **M9: Time travel** | Test 3 — time travel | `retained_at` + `forgotten_at` + `as_of` filter + `brain.history()` |
 | **M10: Gap analysis** | Test 1 — gap analysis | `brain.audit()` → `AuditResult(gaps, coverage_score)` |
-| **M11: Entity resolution** | Test 2 — entity resolution | `EntityResolver` + `EntityLink` with evidence + `astrocyte-age` default graph adapter |
+| **M11: Entity resolution** | Test 2 — entity resolution | `EntityResolver` + `EntityLink` with evidence + `astrocyte-age` graph adapter |
 
-**`astrocyte-age` is the default graph store from v1.0.0** — Apache AGE runs inside the same PostgreSQL instance as pgvector, eliminating the need for a separate graph database for most deployments.
+**`astrocyte-age` is the preferred graph store for the PostgreSQL reference stack** — Apache AGE runs inside the same PostgreSQL instance as pgvector, eliminating the need for a separate graph database for most deployments.
 
-### v0.8.x — LLM wiki compile (M8)
+### v0.9.0 — M8–M11 feature release
 
-M8 ships on the v0.8.x track — after M5 (production storage) but before v0.9.0 (research track). Eval gate: ≥10pp absolute lift on LongMemEval `multi-session` or `knowledge-update`, no other category regressing > 2pp, retain p95 unchanged. Full design: [`llm-wiki-compile.md`](llm-wiki-compile.md).
+v0.9.0 ships M8–M11: wiki compile, time travel, gap analysis, entity resolution, and the `astrocyte-age` Apache AGE adapter. Full design: [`llm-wiki-compile.md`](llm-wiki-compile.md).
 
-When M9–M11 land in v1.0.0, M8 gains: `retained_at`-stamped provenance on WikiPage edits, gap-audit-driven lint pass, and entity cross-links via the AGE graph. These are additive enhancements — M8 ships useful without them.
+GA eval gate: validate quality gains and no unacceptable latency regression across the memory benchmarks before declaring `v1.0.0`.
 
-### v0.9.0 — Research track (parallel with M9–M11 engineering)
+### Research track
 
-The research track runs in parallel with the v1.0.0 engineering track. v0.9.0 is a valid semver label for this work; eval gates determine promotion of each technique to core. All techniques are additive — no SPI breaking changes.
+The research track continues after the M8–M11 implementation. Eval gates determine promotion of each technique to core. All techniques are additive — no SPI breaking changes.
 
-**Post-GA engineering (on the v0.9.0 line):**
+**Post-GA engineering candidates:**
 - Additional storage adapters (Pinecone, Weaviate, Memgraph)
 - Multi-region / global deployment patterns
 - Tavus CVI integration (bidirectional) — HTTP client package **`astrocyte-integration-tavus`** (`adapters-integration-py/`); full bidirectional + e2e deferred
@@ -671,8 +665,8 @@ See `platform-positioning.md` § Research Agenda for the full diagnostic-test gr
 | Phase | LoCoMo (canonical) | LongMemEval (canonical) | Primary categories improved |
 |-------|-------------------|------------------------|----------------------------|
 | **Current** | ~70–78% | ~75% (20Q) | — |
-| **v0.8.x + M8 (wiki compile)** | ~72–80% | ~60–68% (200Q) | Multi-session, knowledge-update |
-| **v1.0.0 (M9–M11)** | ~78–85% | ~68–75% (200Q) | Multi-hop, temporal, reasoning, update |
+| **v0.9.x + M8–M11** | ~72–80% | ~60–68% (200Q) | Multi-session, knowledge-update, temporal, entity |
+| **v1.0.0 GA gates** | ~78–85% | ~68–75% (200Q) | Multi-hop, temporal, reasoning, update |
 | **After R1 (retrieval)** | ~82–88% | ~75–82% | All (higher recall hit rate) |
 | **After R2 (synthesis)** | ~85–90% | ~80–85% | Multi-hop, open-domain, reasoning |
 | **After R3 (structured)** | ~88–92% | ~83–88% | Multi-hop, update |
@@ -690,7 +684,7 @@ See `platform-positioning.md` § Research Agenda for the full diagnostic-test gr
 |-----|-------------|-----------|---------|--------|
 | Gap 1 | Identity & Authorization Protocol | M1 | v0.5.0 | Implemented in core (ADR-002 Phase 1); JWT/`tenant_id` enforcement = later milestones |
 | Gap 2 | External Data Sources | M4 + M4.1 | v0.7.0 / v0.7.1 | Shipped: webhook ingest, source registry, stream + poll adapters (`adapters-ingestion-py/`), proxy federated recall (`astrocyte.recall.proxy`) |
-| Gap 3 | Deployment Models | M6 | v0.8.0 | **Shipped in-repo:** `astrocyte-gateway-py`, Docker/Compose/Helm, CI, GHCR (ADR-001 standalone path). **v0.8.x** tags per § Release numbering (no separate v0.9.0 tag). |
+| Gap 3 | Deployment Models | M6 | v0.8.0 | **Shipped in-repo:** `astrocyte-gateway-py`, Docker/Compose/Helm, CI, GHCR (ADR-001 standalone path). |
 | Gap 4 | Config Schema Evolution | M2 | v0.5.0 | Implemented in core (ADR-003); ships with M1 in same tag |
 | Gap 5 | User-Scoped Memory | M1 | v0.5.0 | Implemented in core (`BankResolver`, ACL, optional adapter `context`); HTTP UX via **`astrocyte-gateway-py`** auth + config |
 | Gap 6 | Production Storage Providers | M5 | v0.8.0 | Implemented: `adapters-storage-py/` packages + CI + publish workflows |
@@ -701,20 +695,20 @@ See `platform-positioning.md` § Research Agenda for the full diagnostic-test gr
 
 ## Next milestone focus
 
-**Current state:** M1–M7 complete. Active lines in order:
+**Current state:** M1–M11 are implemented on the v0.9.x line. Active lines in order:
 
-**1. M8 (v0.8.x) — LLM wiki compile, eval-gated**
-Ships on the current v0.8.x line once the LongMemEval compile vs no-compile A/B gate passes. Depends on M3 + M5 (both done). No dependency on M9–M11.
+**1. M8–M11 (v0.9.x) — pre-GA feature surface, eval-gated**
+Ships the complete third-option implementation surface: wiki compile, time travel, gap analysis, entity resolution, and Apache AGE. Depends on M3 + M5 (both done).
 
-**2. v0.9.0 — Research track (R1–R5)**
-Runs after M8 ships, before v1.0.0 GA. Five research phases targeting fundamental benchmark accuracy barriers; each has its own eval gate. See § v0.9.0.
+**2. Research track (R1–R5)**
+Runs after the M8–M11 feature surface, before and after v1.0.0 GA as quality work warrants. Five research phases target fundamental benchmark accuracy barriers; each has its own eval gate. See § Research track.
 
-**3. v1.0.0 GA — Third-option primitives (M9–M11)**
-Required for GA. Ordered by dependency; M9 and M11 can proceed in parallel:
+**3. v1.0.0 GA — validation and stabilization**
+Required for GA:
 
-1. **M9 (time travel)** — `retained_at` / `forgotten_at` on `VectorItem`, `as_of` on `VectorFilters`, pgvector + age adapter updates, `brain.history()`. Unblocks M10.
-2. **M11 (entity resolution)** — `EntityResolver`, `EntityLink`, `GraphStore` SPI extensions, `astrocyte-age` package. Parallel with M9.
-3. **M10 (gap analysis)** — `brain.audit()` + `AuditResult`. Depends on M9 and M7.
-4. **Tag v1.0.0** once M1–M11 all pass CI.
+1. **Eval gates** — M8–M11 pass the benchmark and latency release bar.
+2. **Docs and examples** — operator and integrator docs match the shipped API surface.
+3. **Stability pass** — SPI, adapter, `astrocyte.yaml`, and `mip.yaml` contracts are frozen or explicitly deprecated.
+4. **Tag v1.0.0** once M1–M11 all pass CI and release gates.
 
 **SPI, adapter, `astrocyte.yaml`, and `mip.yaml` stability:** follow **§ Stability**; encode deprecations before breaking changes.

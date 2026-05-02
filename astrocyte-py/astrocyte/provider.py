@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         DocumentHit,
         EngineCapabilities,
         Entity,
+        EntityCandidateMatch,
         EntityLink,
         ForgetRequest,
         ForgetResult,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         HttpClientContext,
         LLMCapabilities,
         MemoryEntityAssociation,
+        MemoryLink,
         Message,
         RecallRequest,
         RecallResult,
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
         ReflectResult,
         RetainRequest,
         RetainResult,
+        ToolDefinition,
         TransportCapabilities,
         VectorFilters,
         VectorHit,
@@ -182,6 +185,45 @@ class GraphStore(Protocol):
         """
         pass
 
+    async def store_memory_links(
+        self,
+        links: list["MemoryLink"],
+        bank_id: str,
+    ) -> list[str]:
+        """Persist directional memory-to-memory links (Hindsight parity).
+
+        Used for causal chains (``caused_by``) and the precomputed
+        semantic kNN graph (``semantic``). Adapters that don't
+        implement this should silently no-op (return ``[]``) — the
+        spread / link-expansion path probes via ``getattr`` and
+        degrades to entity-only when the method is absent.
+
+        Returns the list of stored link IDs.
+        """
+        return []
+
+    async def find_memory_links(
+        self,
+        seed_memory_ids: list[str],
+        bank_id: str,
+        *,
+        link_types: list[str] | None = None,
+        limit: int = 200,
+    ) -> list["MemoryLink"]:
+        """Return memory links touching any seed (either direction).
+
+        Adapter contract: results SHOULD include links where the seed
+        is the source OR the target — the link-expansion retrieval
+        treats both directions for ``semantic`` and only the target
+        direction for ``caused_by`` (effect → cause). Callers filter
+        as needed.
+
+        Adapters that haven't implemented this return ``[]``; the
+        link-expansion retrieval probes via ``getattr`` and skips the
+        memory-link signal when the method is absent.
+        """
+        return []
+
     async def query_neighbors(
         self,
         entity_ids: list[str],
@@ -229,6 +271,47 @@ class GraphStore(Protocol):
 
         Returns:
             Candidate entities ordered by similarity descending.
+        """
+        pass
+
+    async def find_entity_candidates_scored(
+        self,
+        name: str,
+        bank_id: str,
+        *,
+        name_embedding: list[float] | None = None,
+        trigram_threshold: float = 0.3,
+        limit: int = 10,
+    ) -> list[EntityCandidateMatch]:
+        """Return scored entity candidates for the Hindsight entity-resolution cascade.
+
+        Scores each candidate against two cheap signals:
+
+        - ``name_similarity`` — trigram similarity between the candidate's
+          name and ``name`` in ``[0.0, 1.0]``. Production adapters use
+          ``pg_trgm.similarity()``; the in-memory adapter approximates with
+          :class:`difflib.SequenceMatcher`.
+        - ``embedding_similarity`` — cosine similarity between the
+          candidate's stored embedding and ``name_embedding``, or ``None``
+          when either side has no embedding.
+
+        The resolver uses these scores to autolink, skip, or escalate to LLM
+        without further round-trips.
+
+        Args:
+            name: Surface form to resolve.
+            bank_id: Bank scope.
+            name_embedding: Optional embedding of ``name`` for the embedding
+                tier. When ``None``, ``embedding_similarity`` is ``None`` for
+                every result and the cascade falls back to trigram + LLM.
+            trigram_threshold: Adapter-side prefilter — candidates with a
+                trigram similarity strictly below this value are dropped.
+                Default ``0.3`` matches PostgreSQL's ``pg_trgm.similarity_threshold``.
+            limit: Maximum candidates returned, ordered by descending score.
+
+        Returns:
+            ``list[EntityCandidateMatch]`` ordered by best score first.
+            Defaults to an empty list when no candidates clear the threshold.
         """
         pass
 
@@ -443,10 +526,21 @@ class LLMProvider(Protocol):
         model: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | None = None,
     ) -> Completion:
         """Generate a text completion from a message sequence.
 
         Used by reflect, MIP intent routing, and consolidation summarization.
+
+        ``tools`` (optional) — when provided, the provider passes them as
+        native function-calling tools to the underlying API and the
+        returned :class:`Completion`'s ``tool_calls`` field carries any
+        invocations the model emitted. ``tool_choice`` may be ``"auto"``
+        (default when tools is set), ``"required"`` (force a tool call),
+        or a specific tool name. Providers that don't support tools
+        SHOULD ignore both args and return ``tool_calls=None`` so callers
+        can feature-detect.
         """
         pass
 

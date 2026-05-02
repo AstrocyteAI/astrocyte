@@ -2,7 +2,7 @@
 
 This document describes Astrocyte's innovation roadmap — capabilities inspired by ByteRover (agent-native curation, zero-infra, progressive retrieval) and Hindsight (biomimetic memory, multi-strategy retrieval, mental models). Each innovation is independently implementable, backward-compatible, and feature-gated.
 
-For the core architecture see `architecture.md`. For the built-in pipeline see `built-in-pipeline.md`. For **C4 / deployment / domain model** detail and **milestone sequencing** (M1–M7 for **v1.0.0** GA; **M5** + **M7** in **v0.8.0**), see `c4-deployment-domain.md` and `product-roadmap.md`.
+For the core architecture see `architecture.md`. For the built-in pipeline see `built-in-pipeline.md`. For **C4 / deployment / domain model** detail and **milestone sequencing** (M1–M7 in **v0.8.0**, M8–M11 in **v0.9.0**, **v1.0.0** GA after eval gates), see `c4-deployment-domain.md` and `product-roadmap.md`.
 
 ---
 
@@ -275,18 +275,18 @@ Quality-based loss functions and observation formation — Hindsight's engine ad
 These capabilities constitute the complete answer to the four diagnostic tests in *Familiarity is the Enemy* (see `platform-positioning.md` for the framing). Each is an open-source framework capability — not a Mystique exclusive.
 
 **Shipping order:**
-- **v0.8.x** — M8 (LLM wiki compile): ships before v0.9.0, eval-gated, no M9–M11 dependency
-- **v0.9.0** — research track (R1–R5), parallel
-- **v1.0.0** — M9 (time travel), M10 (gap analysis), M11 (entity resolution): deepen M8 when they land
+- **v0.8.x** — connector and gateway integration track
+- **v0.9.0** — M8–M11: LLM wiki compile, time travel, gap analysis, and entity resolution
+- **v1.0.0** — GA declaration after the v0.9.x eval gates pass
 
 The open-core split for this phase:
 
 | Capability | Astrocyte (free) | Mystique (premium) |
 |---|---|---|
-| LLM wiki compile (v0.8.x) | `WikiPage` compiled memories + provenance + lint pass | Same + disposition-aware compilation + cross-bank wiki merge |
-| Time travel (v1.0.0) | `retained_at` + `forgotten_at` + `as_of` filter + `brain.history()` | Same + temporal spreading activation in graph traversal |
-| Gap analysis (v1.0.0) | `brain.audit()` + LLM judge + `AuditResult` | Same + multi-bank gap synthesis + scheduled gap alerts |
-| Entity resolution (v1.0.0) | `EntityResolver` + `EntityLink` with evidence + `astrocyte-age` default | Same + gleaning passes (multi-pass entity extraction) + co-occurrence tracking |
+| LLM wiki compile (v0.9.0) | `WikiPage` compiled memories + provenance + lint pass | Same + disposition-aware compilation + cross-bank wiki merge |
+| Time travel (v0.9.0) | `retained_at` + `forgotten_at` + `as_of` filter + `brain.history()` | Same + temporal spreading activation in graph traversal |
+| Gap analysis (v0.9.0) | `brain.audit()` + LLM judge + `AuditResult` | Same + multi-bank gap synthesis + scheduled gap alerts |
+| Entity resolution (v0.9.0) | `EntityResolver` + `EntityLink` with evidence + `astrocyte-age` reference adapter | Same + gleaning passes (multi-pass entity extraction) + co-occurrence tracking |
 
 ### 5.1 Time Travel (M9)
 
@@ -388,11 +388,11 @@ On recall, graph traversal automatically follows entity links. A query for "Calv
 # astrocyte.yaml — default v1.0.0 stack
 vector_store: pgvector
 vector_store_config:
-  connection_url: postgresql://localhost/memories  # same instance
+  dsn: postgresql://localhost/memories  # same instance
 
 graph_store: age
 graph_store_config:
-  connection_url: postgresql://localhost/memories  # same instance, no extra service
+  dsn: postgresql://localhost/memories  # same instance, no extra service
 
 entity_resolution:
   enabled: true
@@ -402,7 +402,7 @@ entity_resolution:
 
 **Impact:** Entity resolution turns the memory graph into a structured knowledge base. Cross-document queries become semantically accurate rather than just syntactically similar. The evidence chain makes the resolution auditable and correctable.
 
-### 5.4 LLM Wiki Compile (M8 — v0.8.x)
+### 5.4 LLM Wiki Compile (M8 — v0.9.0)
 
 **All four diagnostic tests** — first step toward the full third-option system.
 
@@ -416,9 +416,9 @@ An async `CompileEngine` maintains rewritable `WikiPage` memories (entity/topic/
 
 On recall, wiki hits are ranked ahead of raw memories with fallback. A periodic lint pass catches contradictions, stale claims, and orphaned cross-links.
 
-**Ships when**: LongMemEval compile vs no-compile A/B gate passes — ≥10pp absolute lift on `multi-session` or `knowledge-update`, no other category regressing > 2pp, retain p95 unchanged. Depends on M3 (extraction pipeline) + M5 (production storage). Ships before v0.9.0.
+**Status**: Implemented in v0.9.0. GA validation still checks the LongMemEval compile vs no-compile A/B gate — ≥10pp absolute lift on `multi-session` or `knowledge-update`, no other category regressing > 2pp, retain p95 unchanged. Depends on M3 (extraction pipeline) + M5 (production storage).
 
-**Deepened by M9–M11 (v1.0.0):** When the three primitives land, M8 gains `retained_at`-stamped provenance on WikiPage edits (M9), gap-audit-driven lint detection (M10), and entity cross-links via the AGE graph (M11). These are additive enhancements — M8 ships useful without them.
+**Integrated with M9–M11 (v0.9.0):** M8 works with `retained_at`-stamped provenance on WikiPage edits (M9), gap-audit-driven lint detection (M10), and entity cross-links via the AGE graph (M11).
 
 ---
 

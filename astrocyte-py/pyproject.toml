@@ -24,6 +24,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
+    "h2>=4.3.0",
     "httpx>=0.27",
     "pyyaml>=6.0",
 ]
@@ -56,6 +57,14 @@ eval = [
 ]
 openai = [
     "openai>=1.0",
+]
+rerank = [
+    # Cross-encoder reranker backend (Hindsight parity). Pulls torch
+    # transitively (~700 MB). Default model
+    # ``cross-encoder/ms-marco-MiniLM-L-6-v2`` is ~80 MB, loaded
+    # on-demand from HuggingFace on first reflect when
+    # ``cross_encoder_rerank.enabled = true`` in config.
+    "sentence-transformers>=2.2",
 ]
 gateway = [
     "fastapi>=0.115",

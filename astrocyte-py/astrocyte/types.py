@@ -8,7 +8,7 @@ See docs/_design/implementation-language-strategy.md for constraints.
 from __future__ import annotations
 
 import json as _json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from typing import Literal
 
@@ -95,6 +95,62 @@ class Entity:
     entity_type: str  # PERSON, ORG, LOCATION, …
     aliases: list[str] | None = None
     metadata: Metadata | None = None
+    #: Per-entity name embedding for the Hindsight-inspired entity-resolution
+    #: cascade. When present, the resolver uses cosine similarity against
+    #: candidate embeddings to decide whether two surface forms refer to the
+    #: same canonical entity, falling back to LLM disambiguation only for
+    #: genuinely ambiguous pairs. Optional and nullable — a ``None`` value
+    #: signals "no embedding tier available for this entity" and the cascade
+    #: degrades gracefully to trigram + LLM.
+    embedding: list[float] | None = None
+    #: Hindsight-parity mention count — how many times this entity has been
+    #: resolved-to during retain. Treated as a soft popularity signal in the
+    #: composite cascade (cheap tiebreaker, never a primary decider). Adapter
+    #: stores increment this on every successful canonical resolution; new
+    #: entities start at 1.
+    mention_count: int = 1
+
+
+@dataclass
+class EntityCandidateMatch:
+    """Scored candidate produced by ``GraphStore.find_entity_candidates_scored``.
+
+    The Hindsight-inspired entity-resolution cascade asks the graph store for
+    candidates pre-scored against four cheap signals — trigram, embedding,
+    co-occurrence, and temporal proximity — so the resolver can decide
+    whether to autolink, skip, or escalate to the LLM without paying for
+    additional database round-trips.
+
+    Fields:
+        entity: The candidate entity.
+        name_similarity: Trigram similarity of the candidate's name against
+            the query name in ``[0.0, 1.0]``. Adapters compute this with
+            ``pg_trgm.similarity()`` (PostgreSQL) or ``difflib.SequenceMatcher``
+            (in-memory).
+        embedding_similarity: Cosine similarity of the candidate's stored
+            embedding against the supplied query embedding in ``[0.0, 1.0]``,
+            or ``None`` when either side has no embedding stored.
+        co_occurring_names: Names of entities that co-occur with this
+            candidate via ``EntityLink(link_type="co_occurs")``. Lowercased.
+            Used by the resolver to compute overlap with the new entity's
+            nearby entities — strong evidence two surface forms refer to
+            the same canonical entity when their contexts overlap.
+        last_seen: The candidate's last-activity timestamp (typically
+            ``updated_at``). Used to compute temporal proximity to the new
+            entity's event date — recent candidates score higher for the
+            same name. ``None`` when not stored.
+    """
+
+    entity: Entity
+    name_similarity: float
+    embedding_similarity: float | None = None
+    co_occurring_names: list[str] = field(default_factory=list)
+    last_seen: datetime | None = None
+    #: Hindsight-parity popularity signal — how many memories this entity has
+    #: been resolved-to. Used by :meth:`EntityResolver._composite_score` as a
+    #: soft tiebreaker (capped contribution; never overrides name/cooccurrence
+    #: signals on its own).
+    mention_count: int = 1
 
 
 @dataclass
@@ -132,6 +188,39 @@ class EntityLink:
 class MemoryEntityAssociation:
     memory_id: str
     entity_id: str
+
+
+@dataclass
+class MemoryLink:
+    """A typed directional link between two memories (Hindsight parity).
+
+    Distinct from :class:`EntityLink` (which connects entities). Memory
+    links capture relationships between fact-level units — the granularity
+    Hindsight's ``link_expansion_retrieval`` walks for causal chains and
+    semantic-kNN edges.
+
+    Three link types are first-class in the link-expansion retrieval
+    signal:
+    - ``"caused_by"`` — extracted at retain time from cause-effect text
+      ("she lost her job, so she couldn't pay rent").
+    - ``"semantic"`` — precomputed kNN (each new memory linked to its
+      top-K most similar prior memories at insert time, similarity ≥ 0.7).
+    - ``"entity_overlap"`` — query-time signal computed from shared
+      entities (not persisted; included here for documentation parity).
+
+    Direction matters: ``source_memory_id`` is the "from" side. For
+    ``caused_by`` semantics, the source is the EFFECT and the target is
+    the CAUSE. (Hindsight's convention; preserved here for parity.)
+    """
+
+    source_memory_id: str
+    target_memory_id: str
+    link_type: str
+    evidence: str = ""
+    confidence: float = 1.0
+    weight: float = 1.0
+    created_at: datetime | None = None
+    metadata: Metadata | None = None
 
 
 @dataclass
@@ -257,6 +346,11 @@ class RecallResult:
     trace: RecallTrace | None = None
     #: Optional labeled sections + rules for synthesis (M7 structured recall authority).
     authority_context: str | None = None
+    #: Top raw cosine-similarity score from the semantic strategy (0.0 when no semantic
+    #: results were found).  Used by the reflect evidence-strict gate to detect uncertain
+    #: retrieval and force citation rather than letting the LLM hallucinate from
+    #: tangential memories.
+    top_semantic_score: float = 0.0
 
 
 @dataclass
@@ -351,6 +445,11 @@ class ReflectRequest:
     max_tokens: int | None = None
     include_sources: bool = True
     dispositions: Dispositions | None = None
+    #: Optional tag filter forwarded to the dispatcher's internal recall.
+    #: When set, reflect's underlying retrieval is scoped to memories
+    #: carrying every listed tag — closing the leak where single-bank
+    #: ``Astrocyte.reflect(tags=...)`` previously dropped the filter.
+    tags: list[str] | None = None
 
 
 @dataclass
@@ -422,8 +521,21 @@ class ContentPart:
 
 @dataclass
 class Message:
-    role: str  # "system", "user", "assistant"
+    role: str  # "system", "user", "assistant", "tool"
     content: str | list[ContentPart] = ""
+    #: When ``role == "assistant"`` and the model emitted tool calls, the
+    #: provider adapter places them here so downstream consumers can
+    #: round-trip them back into a follow-up turn (along with the
+    #: matching ``role="tool"`` results).
+    tool_calls: list[ToolCall] | None = None
+    #: When ``role == "tool"``, the OpenAI / Anthropic spec requires this
+    #: field to point back at the originating ``ToolCall.id``. The provider
+    #: adapter uses it to reconstruct the wire-format tool result message.
+    tool_call_id: str | None = None
+    #: When ``role == "tool"``, the human-readable tool name. Carried for
+    #: providers (and for our own logging) that surface the name on
+    #: tool result messages.
+    name: str | None = None
 
 
 @dataclass
@@ -432,11 +544,56 @@ class TokenUsage:
     output_tokens: int
 
 
+#: JSON-shaped value type for tool-call arguments and JSON Schema —
+#: replaces ``Any`` to satisfy the FFI-safety constraint on DTOs
+#: (see :data:`Metadata` for the same idiom on memory metadata).
+JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+@dataclass
+class ToolCall:
+    """A single tool invocation requested by an LLM during native function calling.
+
+    Mirrors the OpenAI/Anthropic tool-call shape: each call carries an
+    opaque ``id`` (for round-tripping a tool result back to the model),
+    a ``name`` matching one of the tools provided in the request, and
+    the model's chosen ``arguments`` as a parsed dict.
+
+    The agentic reflect loop (Hindsight parity) consumes these instead
+    of parsing JSON out of the response text — significantly more
+    reliable than the JSON-in-prose protocol.
+    """
+
+    id: str
+    name: str
+    arguments: dict[str, JsonValue]
+
+
+@dataclass
+class ToolDefinition:
+    """A tool the LLM can call. JSON-Schema-shaped, OpenAI-compatible.
+
+    ``parameters`` is a JSON Schema object; the provider adapter is
+    responsible for translating to the wire format the underlying API
+    expects (OpenAI: ``tools=[{"type": "function", "function": {...}}]``;
+    Anthropic: ``tools=[{"name": ..., "input_schema": ...}]``).
+    """
+
+    name: str
+    description: str
+    parameters: dict[str, JsonValue]
+
+
 @dataclass
 class Completion:
     text: str
     model: str
     usage: TokenUsage | None = None
+    #: Tool calls the LLM emitted, when ``tools`` were supplied to
+    #: :meth:`LLMProvider.complete`. ``None`` means the provider did
+    #: not produce tool calls (or doesn't support them — feature-detect
+    #: with ``getattr`` rather than assuming).
+    tool_calls: list[ToolCall] | None = None
 
 
 @dataclass(frozen=True)
@@ -691,6 +848,73 @@ class EvalMetrics:
     reflect_hallucination_rate: float | None = None
     reflect_latency_p50_ms: float | None = None
     reflect_latency_p95_ms: float | None = None
+    # Tier-3 metrics: populated by ``BenchmarkMetricsCollector`` when the
+    # bench wires it up. All optional so legacy callers stay valid.
+
+    # ── Quality ──────────────────────────────────────────────
+    #: Fraction of questions where at least one retrieved memory had
+    #: token-overlap ≥ threshold with the gold answer. Distinguishes
+    #: "missed evidence" from "had evidence, synthesised wrong".
+    recall_coverage: float | None = None
+    #: Cross-tab of (recall_hit, reflect_hit) outcomes. Keys:
+    #: ``"both_hit"``, ``"recall_hit_reflect_miss"``,
+    #: ``"recall_miss_reflect_hit"``, ``"both_miss"``.
+    recall_reflect_gap: dict[str, int] | None = None
+    #: For adversarial questions: fraction where reflect correctly abstained
+    #: ("Insufficient evidence" / "I don't have …" patterns) instead of
+    #: hallucinating an answer.
+    abstention_rate_adversarial: float | None = None
+
+    # ── Cost & efficiency ────────────────────────────────────
+    #: Tokens by pipeline phase. Keys: ``"retain"``, ``"eval"``,
+    #: ``"persona_compile"``, ``"observation_consolidation"``, ``"other"``.
+    tokens_by_phase: dict[str, int] | None = None
+    #: Total HTTP API calls across the run.
+    api_calls_total: int | None = None
+    #: HTTP API calls by endpoint. Typical keys: ``"chat/completions"``,
+    #: ``"embeddings"``.
+    api_calls_by_endpoint: dict[str, int] | None = None
+    #: Total cost in USD computed from per-model pricing × actual tokens.
+    cost_total_usd: float | None = None
+    #: Mean cost per question.
+    cost_per_question_usd: float | None = None
+
+    # ── Latency (tail) ───────────────────────────────────────
+    retain_latency_p99_ms: float | None = None
+    recall_latency_p99_ms: float | None = None
+    reflect_latency_p99_ms: float | None = None
+    #: Median end-to-end question time (recall + reflect).
+    e2e_per_question_p50_ms: float | None = None
+    e2e_per_question_p95_ms: float | None = None
+
+    # ── Robustness ───────────────────────────────────────────
+    #: Counts of categorised errors. Typical keys: ``"pool_timeout"``,
+    #: ``"deadlock"``, ``"openai_429"``, ``"openai_5xx"``, ``"other"``.
+    error_count_by_type: dict[str, int] | None = None
+    #: Number of OpenAI retries triggered (rate limits, transient errors).
+    openai_retry_count: int | None = None
+    #: Number of retain calls that returned ``stored=False`` or raised.
+    failed_retain_count: int | None = None
+
+    # ── Memory-architecture (cascade observability) ──────────
+    #: Counts of entity-resolution cascade decisions. Typical keys:
+    #: ``"trigram_autolink"``, ``"embedding_autolink"``,
+    #: ``"composite_autolink"``, ``"llm_disambiguation"``, ``"skipped"``,
+    #: ``"created_new"``.
+    cascade_decisions: dict[str, int] | None = None
+    #: Number of new entities resolved to an existing canonical via Path B
+    #: (count of pre-store ID rewrites).
+    entities_resolved_count: int | None = None
+    #: Number of new entities that became fresh canonicals (no match).
+    entities_created_count: int | None = None
+    #: Histogram of composite scores keyed by bucket label
+    #: (``"0.0-0.1"``, ``"0.1-0.2"``, …, ``"0.9-1.0"``).
+    composite_score_distribution: dict[str, int] | None = None
+    #: Total wiki-page rows in the bank at end-of-run.
+    wiki_pages_total: int | None = None
+    #: Mean number of wiki pages per unique persona name. >1 indicates
+    #: scoping (per-conversation pages); 1 indicates single canonical.
+    wiki_pages_per_persona: float | None = None
 
 
 @dataclass

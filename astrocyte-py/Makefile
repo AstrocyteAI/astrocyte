@@ -9,18 +9,18 @@ LONGMEMEVAL_DIR := $(DATASETS_DIR)/longmemeval
 RESULTS_DIR   := benchmark-results
 
 # ---------------------------------------------------------------------------
-# Benchmark database (postgres-age-pgvector)
+# Benchmark database (astrocyte-postgres)
 # ---------------------------------------------------------------------------
 BENCH_PG_CONTAINER := astrocyte-bench-pg
 BENCH_PG_PORT      := 5433
-BENCH_PG_IMAGE     := ghcr.io/astrocyteai/astrocyte/postgres-age-pgvector:latest
-BENCH_PG_LOCAL_IMG := astrocyte/postgres-age-pgvector:local
+BENCH_PG_IMAGE     := ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:latest
+BENCH_PG_LOCAL_IMG := astrocyte/astrocyte-postgres:local
 BENCH_PG_USER      := astrocyte
 BENCH_PG_PASSWORD  := astrocyte
 BENCH_PG_DB        := astrocyte_bench
 BENCH_EMBEDDING_DIMENSIONS := 1536
 BENCH_DATABASE_URL := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0.1:$(BENCH_PG_PORT)/$(BENCH_PG_DB)
-BENCH_UV_RUN := uv run --extra dev
+BENCH_UV_RUN := uv run --extra dev --extra rerank
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -60,9 +60,9 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench-db-start bench-db-stop bench-db-reset bench bench-full bench-gate bench-locomo bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
+.PHONY: bench-db-start bench-db-stop bench-db-reset bench bench-full bench-gate bench-locomo bench-locomo-fair bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
 
-# Start the benchmark Postgres container (postgres-age-pgvector).
+# Start the benchmark Postgres container (astrocyte-postgres).
 # Pulls from GHCR first; falls back to building locally from the Dockerfile.
 # No-ops if the container is already running. Restarts if stopped.
 bench-db-start:
@@ -80,8 +80,8 @@ bench-db-start:
 		if docker pull $(BENCH_PG_IMAGE); then \
 			BENCH_IMG=$(BENCH_PG_IMAGE); \
 		else \
-			echo "  [bench-db] Pull failed — building from ../docker/postgres-age-pgvector/Dockerfile"; \
-			docker build -t $(BENCH_PG_LOCAL_IMG) -f ../docker/postgres-age-pgvector/Dockerfile ..; \
+			echo "  [bench-db] Pull failed — building from ../docker/astrocyte-postgres/Dockerfile"; \
+			docker build -t $(BENCH_PG_LOCAL_IMG) -f ../docker/astrocyte-postgres/Dockerfile ..; \
 			BENCH_IMG=$(BENCH_PG_LOCAL_IMG); \
 		fi; \
 		docker run -d --name $(BENCH_PG_CONTAINER) \
@@ -130,6 +130,19 @@ bench-locomo-quick: fetch-locomo bench-db-start
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
 		--max-questions 50 \
+		--canonical-judge
+
+# Fair-coverage fast LoCoMo: 20 questions × 10 conversations = 200 total
+# with EVERY conversation represented. Recommended fast-iteration sample
+# — replaces the prior bench-locomo-200 (head-slice) which over-weighted
+# early conversations and obscured per-category signal.
+# ~15-20 min wall time, ~$1 cost.
+bench-locomo-fair: fetch-locomo bench-db-start
+	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
+		--config benchmarks/config.yaml \
+		--benchmarks locomo \
+		--locomo-path $(LOCOMO_DIR)/data \
+		--max-questions-per-conversation 20 \
 		--canonical-judge
 
 # Full LongMemEval benchmark (requires OPENAI_API_KEY, ~2-4 hrs for all 500 questions)

@@ -9,8 +9,8 @@
 #   - vector   (pgvector dense vector similarity)
 #
 # Usage:
-#   docker build -t astrocyte-postgres-age-pgvector \
-#       docker/postgres-age-pgvector/
+#   docker build -t astrocyte-astrocyte-postgres \
+#       docker/astrocyte-postgres/
 #
 # Or via docker-compose:
 #   docker compose -f astrocyte-services-py/docker-compose-age.yml up --build

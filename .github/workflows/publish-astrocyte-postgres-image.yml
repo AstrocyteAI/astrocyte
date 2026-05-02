@@ -5,20 +5,20 @@
 #   - The `postgres` service in docker-compose-age.yml for local dev
 #
 # Pushed tags:
-#   ghcr.io/<org>/astrocyte/postgres-age-pgvector:latest   (always)
-#   ghcr.io/<org>/astrocyte/postgres-age-pgvector:<vtag>   (on release tags)
+#   ghcr.io/<org>/astrocyte/astrocyte-postgres:latest   (always)
+#   ghcr.io/<org>/astrocyte/astrocyte-postgres:<vtag>   (on release tags)
 #
 # Triggered by:
 #   - Changes to the Dockerfile (keeps `latest` fresh for CI)
 #   - workflow_call from release.yml (pins a versioned tag)
 #   - workflow_dispatch for manual rebuilds
-name: Publish postgres-age-pgvector image to GHCR
+name: Publish astrocyte-postgres image to GHCR
 
 on:
   push:
     paths:
-      - ".github/workflows/publish-postgres-age-pgvector-image.yml"
-      - "docker/postgres-age-pgvector/Dockerfile"
+      - ".github/workflows/publish-astrocyte-postgres-image.yml"
+      - "docker/astrocyte-postgres/Dockerfile"
     branches:
       - main
   workflow_call:
@@ -67,12 +67,12 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/postgres-age-pgvector/Dockerfile
+          file: docker/astrocyte-postgres/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ steps.meta.outputs.repository_lc }}/postgres-age-pgvector:latest
-            ${{ steps.meta.outputs.version_tag && format('ghcr.io/{0}/postgres-age-pgvector:{1}', steps.meta.outputs.repository_lc, steps.meta.outputs.version_tag) || '' }}
+            ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-postgres:latest
+            ${{ steps.meta.outputs.version_tag && format('ghcr.io/{0}/astrocyte-postgres:{1}', steps.meta.outputs.repository_lc, steps.meta.outputs.version_tag) || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -81,6 +81,6 @@ jobs:
         if: steps.meta.outputs.version_tag != ''
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ghcr.io/${{ steps.meta.outputs.repository_lc }}/postgres-age-pgvector
+          subject-name: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-postgres
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true

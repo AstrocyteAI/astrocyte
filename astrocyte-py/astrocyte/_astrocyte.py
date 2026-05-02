@@ -228,6 +228,93 @@ class Astrocyte:
 
         pipeline.extraction_profiles = merged_extraction_profiles(self._config)
         pipeline.recall_authority = self._config.recall_authority
+
+        # Cross-encoder reranker (Hindsight parity) — only loaded when the
+        # operator opts in via config. Lazy load: deferring the model load
+        # to first-use keeps process startup cheap and keeps the
+        # ``sentence-transformers`` dep optional. ``None`` here means
+        # ``_rank_reflect_context`` falls through to the heuristic.
+        cer_cfg = self._config.cross_encoder_rerank
+        if cer_cfg.enabled:
+            from astrocyte.pipeline.cross_encoder_rerank import (
+                get_default_cross_encoder,
+            )
+            pipeline.cross_encoder = get_default_cross_encoder(
+                cer_cfg.model_name, force_cpu=cer_cfg.force_cpu,
+            )
+            pipeline.cross_encoder_top_k = cer_cfg.top_k
+        else:
+            pipeline.cross_encoder = None
+
+        # Spreading activation through entity links (Hindsight parity).
+        # Enabled at recall time when ``spreading_activation.enabled``
+        # AND a graph store is configured AND the adapter implements
+        # ``expand_entities_via_links``. Falls back to seed-only when
+        # the adapter doesn't support multi-hop traversal.
+        # Causal-link extraction at retain time (Hindsight parity).
+        cl_cfg = self._config.causal_links
+        pipeline.causal_links_enabled = cl_cfg.enabled
+        pipeline.causal_max_pairs_per_memory = cl_cfg.max_pairs_per_memory
+        pipeline.causal_min_confidence = cl_cfg.min_confidence
+
+        # Semantic-kNN graph at retain time (Hindsight parity, C3a).
+        slg_cfg = self._config.semantic_link_graph
+        pipeline.semantic_link_graph_enabled = slg_cfg.enabled
+        pipeline.semantic_link_graph_top_k = slg_cfg.top_k
+        pipeline.semantic_link_graph_threshold = slg_cfg.similarity_threshold
+
+        # Structured fact extraction at retain time.
+        sfe_cfg = self._config.structured_fact_extraction
+        pipeline.structured_fact_extraction_enabled = sfe_cfg.enabled
+        pipeline.structured_fact_extraction_max_facts = sfe_cfg.max_facts_per_call
+        pipeline.structured_fact_extraction_mode = sfe_cfg.extraction_mode
+
+        # Query analyzer (temporal constraint extraction at recall time).
+        qa_cfg = self._config.query_analyzer
+        pipeline.query_analyzer_enabled = qa_cfg.enabled
+        pipeline.query_analyzer_allow_llm_fallback = qa_cfg.allow_llm_fallback
+
+        # Link expansion (Hindsight parity, C3) — replaces the previous
+        # spreading-activation BFS with the 3-parallel-signal path.
+        # Reuses the legacy ``spreading_activation:`` config block so
+        # benchmarks don't have to rewrite their YAML; the relevant
+        # knobs (expansion_limit, etc.) translate directly. Block-name
+        # rename can come later as a backward-incompatible change.
+        sa_cfg = self._config.spreading_activation
+        if sa_cfg.enabled:
+            from astrocyte.pipeline.link_expansion import LinkExpansionParams
+            pipeline.link_expansion_params = LinkExpansionParams(
+                expansion_limit=sa_cfg.expansion_limit,
+            )
+        else:
+            pipeline.link_expansion_params = None
+
+        # Adversarial-defense layer.
+        ad_cfg = self._config.adversarial_defense
+        pipeline.adversarial_abstention_enabled = ad_cfg.abstention_enabled
+        pipeline.adversarial_abstention_floor = ad_cfg.abstention_floor
+        pipeline.adversarial_premise_verification_enabled = ad_cfg.premise_verification_enabled
+        pipeline.adversarial_premise_min_confidence = ad_cfg.premise_verification_min_confidence
+        pipeline.adversarial_prompt_enabled = ad_cfg.adversarial_prompt_enabled
+
+        # Agentic reflect loop.
+        ar_cfg = self._config.agentic_reflect
+        if ar_cfg.enabled:
+            from astrocyte.pipeline.agentic_reflect import AgenticReflectParams
+            pipeline.agentic_reflect_params = AgenticReflectParams(
+                max_iterations=ar_cfg.max_iterations,
+                recall_step_max_results=ar_cfg.recall_step_max_results,
+                max_evidence_pool_size=ar_cfg.max_evidence_pool_size,
+                # Adversarial-defense rules in the system prompt are
+                # opt-in via the separate adversarial_defense block —
+                # the agentic loop's own ``adversarial_defense`` param
+                # mirrors that flag so a user enabling adversarial
+                # defense automatically gets the loop-level prompt
+                # tightening too.
+                adversarial_defense=ad_cfg.adversarial_prompt_enabled,
+            )
+        else:
+            pipeline.agentic_reflect_params = None
         # Wire the LLM provider to the MIP router for intent-layer escalation
         if self._mip_router and hasattr(pipeline, "llm_provider"):
             self._mip_router._llm_provider = pipeline.llm_provider
@@ -664,6 +751,7 @@ class Astrocyte:
                     max_tokens=max_tokens,
                     include_sources=include_sources,
                     dispositions=dispositions,
+                    tags=tags,
                 )
                 try:
                     self._policy.check_circuit(self._provider_name)

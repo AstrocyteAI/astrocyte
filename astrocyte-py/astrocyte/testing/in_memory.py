@@ -18,6 +18,7 @@ from astrocyte.types import (
     DocumentHit,
     EngineCapabilities,
     Entity,
+    EntityCandidateMatch,
     EntityLink,
     ForgetRequest,
     ForgetResult,
@@ -153,6 +154,8 @@ class InMemoryGraphStore:
         self._entities: dict[str, dict[str, Entity]] = {}  # bank_id → {entity_id → Entity}
         self._links: dict[str, list[EntityLink]] = {}  # bank_id → links
         self._memory_entity_map: dict[str, list[MemoryEntityAssociation]] = {}  # bank_id → assocs
+        # Memory-to-memory links (Hindsight parity) — caused_by, semantic, etc.
+        self._memory_links: dict[str, list] = {}  # bank_id → list[MemoryLink]
 
     async def store_entities(self, entities: list[Entity], bank_id: str) -> list[str]:
         if bank_id not in self._entities:
@@ -189,21 +192,24 @@ class InMemoryGraphStore:
         max_depth: int = 2,
         limit: int = 20,
     ) -> list[GraphHit]:
-        # Find memories linked to these entities within this bank
-        memory_ids: set[str] = set()
+        # Find memories linked to these entities within this bank.
+        # Per-memory ``connected_entities`` is the SUBSET of entity_ids
+        # that this memory is associated with — spreading activation uses
+        # this to decide which activated entity surfaced the memory.
+        per_memory: dict[str, set[str]] = {}
         for assoc in self._memory_entity_map.get(bank_id, []):
             if assoc.entity_id in entity_ids:
-                memory_ids.add(assoc.memory_id)
+                per_memory.setdefault(assoc.memory_id, set()).add(assoc.entity_id)
 
         return [
             GraphHit(
                 memory_id=mid,
                 text=f"[graph result for {mid}]",
-                connected_entities=list(entity_ids),
+                connected_entities=sorted(connected),
                 depth=1,
                 score=0.5,
             )
-            for mid in list(memory_ids)[:limit]
+            for mid, connected in list(per_memory.items())[:limit]
         ]
 
     async def query_entities(self, query: str, bank_id: str, limit: int = 10) -> list[Entity]:
@@ -233,6 +239,233 @@ class InMemoryGraphStore:
             if name_lower in e.name.lower() or e.name.lower() in name_lower
         ]
         return results[:limit]
+
+    async def find_entity_candidates_scored(
+        self,
+        name: str,
+        bank_id: str,
+        *,
+        name_embedding: list[float] | None = None,
+        trigram_threshold: float = 0.3,
+        limit: int = 10,
+    ) -> list[EntityCandidateMatch]:
+        """In-memory equivalent of pg_trgm + cosine candidate scoring.
+
+        - ``name_similarity`` is computed with :class:`difflib.SequenceMatcher`
+          on lowercased names, which approximates PostgreSQL's pg_trgm
+          ``similarity()`` closely enough for tests.
+        - ``embedding_similarity`` is computed with the module's
+          :func:`_cosine_sim` against the candidate's stored embedding when
+          both sides have one; ``None`` otherwise.
+        - ``co_occurring_names`` are derived from the in-memory link list —
+          for each ``co_occurs`` link involving the candidate, the OTHER
+          entity's lowercased name is collected.
+        - ``last_seen`` mirrors PostgreSQL's ``updated_at`` semantics —
+          the in-memory store doesn't track update timestamps, so this is
+          ``None`` unless the entity has a ``last_seen`` in metadata.
+
+        Candidates with ``name_similarity < trigram_threshold`` are dropped.
+        Results are ordered by ``max(name_similarity, embedding_similarity or 0)``
+        descending.
+        """
+        from difflib import SequenceMatcher
+
+        bank_entities = self._entities.get(bank_id, {})
+        if not bank_entities:
+            return []
+
+        name_norm = (name or "").strip().lower()
+        if not name_norm:
+            return []
+
+        # Pre-build a map: candidate_id → list of co-occurring entity names.
+        # Walks the bank's links once; the resolver only iterates a
+        # pre-filtered candidate slice afterward.
+        cooccurrence_map: dict[str, list[str]] = {}
+        for link in self._links.get(bank_id, []):
+            if link.link_type != "co_occurs":
+                continue
+            other_a = bank_entities.get(link.entity_b)
+            other_b = bank_entities.get(link.entity_a)
+            if other_a is not None:
+                cooccurrence_map.setdefault(link.entity_a, []).append(
+                    (other_a.name or "").strip().lower()
+                )
+            if other_b is not None:
+                cooccurrence_map.setdefault(link.entity_b, []).append(
+                    (other_b.name or "").strip().lower()
+                )
+
+        scored: list[EntityCandidateMatch] = []
+        for entity in bank_entities.values():
+            cand_name = (entity.name or "").strip().lower()
+            if not cand_name:
+                continue
+            name_sim = SequenceMatcher(None, name_norm, cand_name).ratio()
+            if name_sim < trigram_threshold:
+                continue
+
+            emb_sim: float | None = None
+            if name_embedding is not None and entity.embedding is not None:
+                emb_sim = _cosine_sim(name_embedding, entity.embedding)
+                # Clamp to [0, 1] — _cosine_sim can return negative values
+                # for vectors that aren't non-negative.
+                emb_sim = max(0.0, min(1.0, emb_sim))
+
+            co_names = cooccurrence_map.get(entity.id, [])
+            last_seen = None
+            if entity.metadata and "last_seen" in entity.metadata:
+                # InMemoryGraphStore doesn't auto-stamp last_seen — tests can
+                # populate via metadata to exercise the temporal tier.
+                raw = entity.metadata["last_seen"]
+                if isinstance(raw, str):
+                    try:
+                        last_seen = datetime.fromisoformat(raw)
+                    except ValueError:
+                        last_seen = None
+
+            scored.append(
+                EntityCandidateMatch(
+                    entity=entity,
+                    name_similarity=name_sim,
+                    embedding_similarity=emb_sim,
+                    co_occurring_names=co_names,
+                    last_seen=last_seen,
+                    mention_count=getattr(entity, "mention_count", 1),
+                )
+            )
+
+        def _sort_key(m: EntityCandidateMatch) -> float:
+            return max(m.name_similarity, m.embedding_similarity or 0.0)
+
+        scored.sort(key=_sort_key, reverse=True)
+        return scored[:limit]
+
+    async def store_memory_links(
+        self,
+        links: list,  # list[MemoryLink] — kept loose to avoid forward-ref noise
+        bank_id: str,
+    ) -> list[str]:
+        """Persist memory-to-memory links (Hindsight-parity)."""
+        store = self._memory_links.setdefault(bank_id, [])
+        ids: list[str] = []
+        for link in links:
+            lid = uuid.uuid4().hex[:12]
+            store.append(link)
+            ids.append(lid)
+        return ids
+
+    async def find_memory_links(
+        self,
+        seed_memory_ids: list[str],
+        bank_id: str,
+        *,
+        link_types: list[str] | None = None,
+        limit: int = 200,
+    ) -> list:  # list[MemoryLink]
+        """Find links touching any seed memory in either direction."""
+        if not seed_memory_ids:
+            return []
+        seeds = set(seed_memory_ids)
+        type_filter = set(link_types) if link_types else None
+        out: list = []
+        for link in self._memory_links.get(bank_id, []):
+            if type_filter is not None and link.link_type not in type_filter:
+                continue
+            if link.source_memory_id in seeds or link.target_memory_id in seeds:
+                out.append(link)
+                if len(out) >= limit:
+                    break
+        return out
+
+    async def get_entity_ids_for_memories(
+        self,
+        memory_ids: list[str],
+        bank_id: str,
+    ) -> dict[str, list[str]]:
+        """Return ``{memory_id: [entity_id, ...]}`` from the association table.
+
+        Used by the spreading-activation pipeline to seed entity IDs
+        directly from memory↔entity associations (the most-accurate
+        path; metadata-based extraction is the fallback).
+        """
+        if not memory_ids:
+            return {}
+        target = set(memory_ids)
+        out: dict[str, list[str]] = {}
+        for assoc in self._memory_entity_map.get(bank_id, []):
+            if assoc.memory_id in target:
+                out.setdefault(assoc.memory_id, []).append(assoc.entity_id)
+        return out
+
+    async def expand_entities_via_links(
+        self,
+        entity_ids: list[str],
+        bank_id: str,
+        *,
+        max_hops: int = 2,
+        link_types: list[str] | None = None,
+    ) -> dict[str, int]:
+        """BFS over entity-to-entity links to ``max_hops`` distance.
+
+        Returns ``{entity_id: hop_distance}`` where ``hop_distance == 0``
+        for entities in the input set, ``1`` for direct neighbors, etc.
+
+        Used by the spreading-activation pipeline to walk
+        ``co_occurs`` links from seed entities to their graph
+        neighborhood. Mirrors the AGE adapter's recursive-CTE
+        implementation so behavior is consistent across stores.
+        """
+        if not entity_ids:
+            return {}
+        accepted_types = set(link_types or ["co_occurs"])
+        bank_links = self._links.get(bank_id, [])
+
+        # Pre-build a neighbor map keyed by entity_id for O(1) lookup
+        # during the BFS frontier expansion.
+        neighbors: dict[str, set[str]] = {}
+        for link in bank_links:
+            if link.link_type not in accepted_types:
+                continue
+            neighbors.setdefault(link.entity_a, set()).add(link.entity_b)
+            neighbors.setdefault(link.entity_b, set()).add(link.entity_a)
+
+        distances: dict[str, int] = {eid: 0 for eid in entity_ids}
+        frontier = set(entity_ids)
+        for hop in range(1, max(1, max_hops) + 1):
+            next_frontier: set[str] = set()
+            for eid in frontier:
+                for nb in neighbors.get(eid, ()):
+                    if nb not in distances:
+                        distances[nb] = hop
+                        next_frontier.add(nb)
+            if not next_frontier:
+                break
+            frontier = next_frontier
+        return distances
+
+    async def increment_mention_counts(
+        self,
+        entity_ids: list[str],
+        bank_id: str,
+    ) -> None:
+        """Bump ``mention_count`` for each canonical entity ID by 1.
+
+        Mirrors the AGE adapter's :meth:`increment_mention_counts` for
+        in-memory tests of the resolver's mention-count flow.
+        """
+        bank_entities = self._entities.get(bank_id, {})
+        for eid in entity_ids:
+            entity = bank_entities.get(eid)
+            if entity is None:
+                continue
+            # Entity is a frozen-ish dataclass — replace via dataclasses.replace
+            # to avoid mutating the original object held elsewhere.
+            from dataclasses import replace as _dc_replace
+            bank_entities[eid] = _dc_replace(
+                entity,
+                mention_count=int(getattr(entity, "mention_count", 1)) + 1,
+            )
 
     async def store_entity_link(self, link: EntityLink, bank_id: str) -> str:
         """Store a single resolved entity link (M11 entity resolution)."""
@@ -574,6 +807,8 @@ class MockLLMProvider:
         model: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        tools: list = None,  # list[ToolDefinition] | None — kept untyped to avoid import cycle
+        tool_choice: str | None = None,
     ) -> Completion:
         self._call_count += 1
         for m in reversed(messages):

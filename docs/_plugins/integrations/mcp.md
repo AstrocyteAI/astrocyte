@@ -3,7 +3,7 @@
 Astrocyte as a Model Context Protocol server for Claude Code, Cursor, Windsurf, and any MCP-capable agent.
 
 **Module:** `astrocyte.mcp`
-**Pattern:** MCP server with 6 tools — stdio or SSE transport
+**Pattern:** MCP server — stdio or SSE transport, with tools gated by `mcp:` configuration
 **Framework dependency:** `fastmcp` (required for `astrocyte[mcp]`)
 
 ## Install
@@ -44,8 +44,11 @@ astrocyte-mcp --config astrocyte.yaml --transport sse --port 8080
 | `memory_recall` | `query`, `bank_id?`, `banks?`, `strategy?`, `max_results?`, `tags?` | Search memories |
 | `memory_reflect` | `query`, `bank_id?`, `banks?`, `strategy?`, `max_tokens?` | Synthesize answer |
 | `memory_forget` | `bank_id?`, `memory_ids?`, `tags?` | Delete memories |
-| `memory_banks` | (none) | List available banks |
-| `memory_health` | (none) | Check system health |
+| `memory_compile` | `bank_id?`, `scope?` | Compile wiki pages when a `WikiStore` is configured |
+| `memory_graph_search` | `query`, `bank_id?`, `limit?` | Search graph entities when a `GraphStore` is configured |
+| `memory_graph_neighbors` | `entity_ids`, `bank_id?`, `max_depth?`, `limit?` | Traverse graph-linked memories |
+| `memory_bank_health` | `bank_id?` | Admin-only bank health when `expose_admin: true` |
+| `memory_lifecycle` / legal-hold tools | varies | Admin-only lifecycle and legal hold operations when `expose_admin: true` |
 
 ## Configuration
 
@@ -55,6 +58,7 @@ mcp:
   default_bank_id: personal        # Used when bank_id is omitted
   expose_reflect: true             # Toggle reflect tool (default: true)
   expose_forget: false             # Toggle forget tool (default: false)
+  expose_admin: false              # Toggle lifecycle / bank health / legal hold tools
   max_results_limit: 50            # Hard cap on max_results
   principal: "agent:claude-code"   # Identity for access control
 ```

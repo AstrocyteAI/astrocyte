@@ -1,6 +1,6 @@
 # Benchmark configuration for Astrocyte eval runs.
 #
-# Uses Tier 1 pipeline with the production postgres-age-pgvector stack and
+# Uses Tier 1 pipeline with the production astrocyte-postgres stack and
 # real LLM/embedding providers. All secrets are read from environment variables.
 #
 # Usage:
@@ -13,7 +13,7 @@ profile: research
 provider_tier: storage
 
 # -- Storage backends --
-# Uses the production postgres-age-pgvector stack so benchmark scores reflect
+# Uses the production astrocyte-postgres stack so benchmark scores reflect
 # real-world HNSW retrieval, not in-memory exact NN.
 # Both providers read DATABASE_URL from the environment automatically.
 # `make bench-*` starts the benchmark database and runs HNSW migrations with
@@ -39,14 +39,85 @@ wiki_compile:
   auto_start: true
   size_threshold: 50
 
+# Entity resolution uses the Hindsight-inspired tiered cascade — for the
+# LoCoMo benchmark we run with the LLM tier OFF, matching Hindsight's
+# published design. The cheap tiers (trigram + embedding + composite
+# cooccurrence/temporal) handle the common cases at indexed-SQL speed; the
+# LLM tier mostly fires on hard semantic edge cases that don't move
+# benchmark scores and adds significant retain latency. See
+# astrocyte/pipeline/entity_resolution.py for cascade details.
 entity_resolution:
   enabled: true
+  enable_llm_disambiguation: false  # Hindsight-style; trigram + embedding + composite only
+  canonical_resolution: true        # Path B: lookup-then-decide (rewrite IDs before storage)
 
 async_tasks:
   enabled: true
   backend: pgqueuer
   install_on_start: true
   auto_start_worker: true
+
+# Hindsight-parity retrieval/reasoning stack (full re-implementation,
+# matches their actual code paths from hindsight-api-slim/). See:
+#   - astrocyte/pipeline/link_expansion.py (3-signal CTE-style retrieval)
+#   - astrocyte/pipeline/semantic_link_graph.py (precomputed kNN at retain)
+#   - astrocyte/pipeline/fact_causal_extraction.py (fact-to-fact causal)
+#   - astrocyte/pipeline/agentic_reflect.py (native function-calling loop)
+#   - astrocyte/pipeline/cross_encoder_rerank.py (final-stage CE rerank)
+
+# Link expansion replaces the prior BFS-hop spread. The block name is
+# kept as ``spreading_activation:`` for backward-compatible YAML; only
+# ``enabled`` and ``expansion_limit`` are read by the new path.
+spreading_activation:
+  enabled: true
+  expansion_limit: 30
+
+# Semantic kNN graph precomputation at retain time — feeds the
+# ``semantic`` signal of the link-expansion CTE.
+semantic_link_graph:
+  enabled: true
+  top_k: 5
+  similarity_threshold: 0.7
+
+# Fact-level cause→effect extraction at retain — fact-to-fact (chunk-
+# to-chunk) causal edges feed the ``causal`` signal of the link
+# expansion CTE with a +1.0 weight boost.
+causal_links:
+  enabled: true
+  max_pairs_per_memory: 2  # Hindsight's "max 2 per fact" guideline
+  min_confidence: 0.6
+
+# Agentic reflect loop — native function calling with 4 tools
+# (recall, search_observations, expand, done), 10 iterations max.
+agentic_reflect:
+  enabled: true
+  max_iterations: 10
+  recall_step_max_results: 10
+  max_evidence_pool_size: 30
+
+cross_encoder_rerank:
+  enabled: true
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_k: 30
+  force_cpu: false  # set true on Apple Silicon if MPS misbehaves
+
+# --- ISOLATION RUN: all three new feature blocks DISABLED ---
+# Goal: confirm we return to ~50-55% baseline (200q fair-bench scale)
+# when only the C-bundle is active. This isolates whether the prior
+# run's 26.5% regression is from these new layers or from elsewhere.
+# Re-enable individually once baseline is confirmed.
+adversarial_defense:
+  abstention_enabled: false
+  premise_verification_enabled: false
+  adversarial_prompt_enabled: false
+
+structured_fact_extraction:
+  enabled: true
+  extraction_mode: verbatim   # raw chunk text + per-chunk metadata
+  max_facts_per_call: 30
+
+query_analyzer:
+  enabled: false
 
 # -- LLM & Embedding --
 # The OpenAI provider handles both completions and embeddings.

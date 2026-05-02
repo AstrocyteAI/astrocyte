@@ -1,6 +1,6 @@
 # C4, deployment & domain model
 
-This document consolidates **C4 views**, deployment models, **domain modeling** (bounded contexts, aggregates), and **application architecture** (ports, sequences, enforcement) for Astrocyte as a product. It complements the normative framework specification in [`architecture.md`](./architecture.md). **Milestone plan** (M1–M7 through v1.0.0; **M5** and **M7** share **v0.8.0**): [`product-roadmap.md`](./product-roadmap.md).
+This document consolidates **C4 views**, deployment models, **domain modeling** (bounded contexts, aggregates), and **application architecture** (ports, sequences, enforcement) for Astrocyte as a product. It complements the normative framework specification in [`architecture.md`](./architecture.md). **Milestone plan** (M1–M7 in **v0.8.0**, M8–M11 in **v0.9.0**, **v1.0.0** GA after eval gates): [`product-roadmap.md`](./product-roadmap.md).
 
 ## System Architecture
 
@@ -24,7 +24,7 @@ C4Context
 
     System_Boundary(storage, "Storage Backends") {
         SystemDb_Ext(pgvector, "pgvector", "Vector store (production)")
-        SystemDb_Ext(graph_db, "Graph Store", "Neo4j (astrocyte-neo4j adapter)")
+        SystemDb_Ext(graph_db, "Graph Store", "Apache AGE reference stack or Neo4j adapter")
         SystemDb_Ext(doc_store, "Document Store", "Elasticsearch (astrocyte-elasticsearch adapter)")
     }
 
