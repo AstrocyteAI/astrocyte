@@ -14,7 +14,7 @@ input, so the risk surface is minimal.
 Prerequisites
 -------------
 - PostgreSQL 16 with the AGE extension installed (see
-  ``docker/postgres-age-pgvector/Dockerfile``).
+  ``docker/astrocyte-postgres/Dockerfile``).
 - Run migrations in ``migrations/`` order before first use, or set
   ``bootstrap_schema=True`` (default) to auto-create on first connection.
 - The database user needs ``SUPERUSER`` or ``pg_read_server_files`` to run

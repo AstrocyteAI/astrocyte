@@ -1,6 +1,6 @@
 # Benchmark configuration for Astrocyte eval runs.
 #
-# Uses Tier 1 pipeline with the production postgres-age-pgvector stack and
+# Uses Tier 1 pipeline with the production astrocyte-postgres stack and
 # real LLM/embedding providers. All secrets are read from environment variables.
 #
 # Usage:
@@ -13,7 +13,7 @@ profile: research
 provider_tier: storage
 
 # -- Storage backends --
-# Uses the production postgres-age-pgvector stack so benchmark scores reflect
+# Uses the production astrocyte-postgres stack so benchmark scores reflect
 # real-world HNSW retrieval, not in-memory exact NN.
 # Both providers read DATABASE_URL from the environment automatically.
 # `make bench-*` starts the benchmark database and runs HNSW migrations with
