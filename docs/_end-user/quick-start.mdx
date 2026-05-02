@@ -39,11 +39,76 @@ Run Astrocyte as a **REST API** (`astrocyte-gateway-py`) with Docker Compose. Ag
 
 **Best for:** multi-agent deployments, microservice architectures, teams that want a shared memory service.
 
+<Tabs syncKey="gateway-setup">
+<TabItem label="Pre-built images">
+
+No repo clone needed. Pull the pre-built images from GHCR and start with a single compose file.
+
+```bash
+docker pull ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:latest
+docker pull ghcr.io/astrocyteai/astrocyte/astrocyte-gateway-py:latest
+```
+
+Save this as `docker-compose.yml` and add your API key:
+
+```yaml
+services:
+  postgres:
+    image: ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:latest
+    environment:
+      POSTGRES_USER: astrocyte
+      POSTGRES_PASSWORD: astrocyte
+      POSTGRES_DB: astrocyte
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astrocyte -d astrocyte"]
+      interval: 3s
+      retries: 5
+
+  gateway:
+    image: ghcr.io/astrocyteai/astrocyte/astrocyte-gateway-py:latest
+    environment:
+      DATABASE_URL: postgresql://astrocyte:astrocyte@postgres:5432/astrocyte
+      ASTROCYTE_VECTOR_STORE: pgvector
+      ASTROCYTE_GRAPH_STORE: age
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+```
+
+```bash
+OPENAI_API_KEY=sk-... docker compose up
+```
+
+</TabItem>
+<TabItem label="From source">
+
+Clone the repo and build locally — picks up any local changes.
+
 ```bash
 cd astrocyte-services-py
 cp .env.example .env        # edit ports / secrets as needed
 docker compose up --build
 ```
+
+From the repo root (alternative):
+
+```bash
+docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build
+```
+
+For production-shaped migrations and HNSW indexes:
+
+```bash
+./astrocyte-services-py/scripts/runbook-up.sh
+```
+
+</TabItem>
+</Tabs>
 
 Verify it's running:
 
@@ -64,18 +129,6 @@ curl -X POST http://127.0.0.1:8080/v1/retain \
 curl -X POST http://127.0.0.1:8080/v1/recall \
   -H "Content-Type: application/json" \
   -d '{"query": "What theme does Calvin prefer?", "bank_id": "user-123"}'
-```
-
-From the repo root (alternative):
-
-```bash
-docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build
-```
-
-For production-shaped migrations and HNSW indexes:
-
-```bash
-./astrocyte-services-py/scripts/runbook-up.sh
 ```
 
 See [Production-grade HTTP service](production-grade-http-service/) for auth, TLS, rate limits, and observability.
