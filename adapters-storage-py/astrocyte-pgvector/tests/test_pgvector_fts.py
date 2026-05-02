@@ -206,8 +206,9 @@ class TestDocumentStoreProtocol:
             limit=10,
         )
 
-        # keyword strategy should have contributed m1 (contains "jazz")
-        ids = {r.id for r in result}
+        # parallel_retrieve returns dict[str, list[ScoredItem]] keyed by strategy name.
+        # Flatten all strategies and check that the keyword strategy contributed m1.
+        ids = {item.id for items in result.values() for item in items}
         assert "m1" in ids, (
             "parallel_retrieve with PgVectorStore as document_store must activate "
             "the keyword strategy and return the lexical match."
