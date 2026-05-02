@@ -361,6 +361,93 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         )
         return to_jsonable(result)
 
+    @app.post("/v1/dsar/forget_principal")
+    async def dsar_forget_principal(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """DSAR right-to-erasure for a single principal across a tenant's banks.
+
+        Called from Cerebro's ``Synapse.DSAR.DeletionWorker`` when an erasure
+        request is approved. Sweeps every configured bank whose name starts
+        with ``{tenant_id}:`` (Cerebro's multi-tenant naming convention) and
+        deletes memories tagged ``principal:{principal}``.
+
+        ## Tag convention
+
+        For a memory to be erasable by this endpoint, it must have been
+        retained with the tag ``principal:{principal}`` (e.g.
+        ``principal:user:alice``). Callers that want their data covered by
+        DSAR must apply this tag at retain time. Memories without the tag
+        are NOT deleted — by design — and are reported as ``deleted: 0`` in
+        the per-bank breakdown.
+
+        ## Response
+
+            {
+              "tenant_id": "...",
+              "principal": "user:alice",
+              "tag_convention": "principal:user:alice",
+              "banks_processed": 3,
+              "memories_deleted": 12,
+              "details": [
+                {"bank_id": "tenant-acme:decisions", "deleted": 7},
+                ...
+              ]
+            }
+
+        ## Compliance bypass
+
+        Calls into ``forget`` with ``compliance=True`` so legal holds are
+        bypassed (right-to-erasure overrides retention obligations) AND the
+        actor is recorded in the audit log for proof-of-deletion.
+        """
+        tenant_id = body.get("tenant_id")
+        principal = body.get("principal")
+
+        if not isinstance(tenant_id, str) or not tenant_id:
+            raise HTTPException(status_code=400, detail="tenant_id (str) is required")
+        if not isinstance(principal, str) or not principal:
+            raise HTTPException(status_code=400, detail="principal (str) is required")
+
+        configured_banks = brain.config.banks or {}
+        tenant_banks = sorted(
+            bid for bid in configured_banks.keys() if bid.startswith(f"{tenant_id}:")
+        )
+
+        principal_tag = f"principal:{principal}"
+        deleted_total = 0
+        details: list[dict[str, Any]] = []
+
+        for bank_id in tenant_banks:
+            try:
+                result = await brain.forget(
+                    bank_id,
+                    tags=[principal_tag],
+                    compliance=True,
+                    reason=f"DSAR erasure for {principal}",
+                    context=ctx,
+                )
+                deleted = getattr(result, "deleted_count", 0) or 0
+                details.append({"bank_id": bank_id, "deleted": deleted})
+                deleted_total += deleted
+            except Exception as exc:
+                # Don't fail the whole sweep on a single-bank error — record
+                # it and continue. Cerebro can re-run the request to retry.
+                _logger.warning(
+                    "dsar_forget_principal: bank %s failed: %s", bank_id, exc, exc_info=False
+                )
+                details.append({"bank_id": bank_id, "deleted": 0, "error": str(exc)})
+
+        return {
+            "tenant_id": tenant_id,
+            "principal": principal,
+            "tag_convention": principal_tag,
+            "banks_processed": len(tenant_banks),
+            "memories_deleted": deleted_total,
+            "details": details,
+        }
+
     @app.post("/v1/compile")
     async def compile(
         body: dict[str, Any],
