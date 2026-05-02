@@ -1,8 +1,7 @@
 # Astrocyte
 
 [![PyPI - astrocyte](https://img.shields.io/pypi/v/astrocyte?label=astrocyte)](https://pypi.org/project/astrocyte/)
-[![PyPI - astrocyte-pgvector](https://img.shields.io/pypi/v/astrocyte-pgvector?label=astrocyte-pgvector)](https://pypi.org/project/astrocyte-pgvector/)
-[![Docker - astrocyte-postgres](https://ghcr-badge.egpl.dev/astrocyteai/astrocyte/astrocyte-postgres/latest_tag?trim=major&label=astrocyte-postgres)](https://github.com/AstrocyteAI/astrocyte/pkgs/container/astrocyte%2Fastrocyte-postgres)
+[![Docker - astrocyte-postgres](https://img.shields.io/github/v/release/AstrocyteAI/astrocyte?label=astrocyte-postgres&logo=docker&color=blue)](https://github.com/AstrocyteAI/astrocyte/pkgs/container/astrocyte%2Fastrocyte-postgres)
 [![CI](https://github.com/AstrocyteAI/astrocyte/actions/workflows/ci.yml/badge.svg)](https://github.com/AstrocyteAI/astrocyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://astrocyteai.github.io/astrocyte/coverage/badge.json)](https://astrocyteai.github.io/astrocyte/coverage/htmlcov/)
 
