@@ -24,6 +24,7 @@ from astrocyte.pipeline.fact_extraction import (
     FactCausalRelation,
     FactEntity,
     extract_facts,
+    extract_facts_verbatim,
     materialize_facts,
 )
 from astrocyte.testing.in_memory import MockLLMProvider
@@ -211,6 +212,175 @@ class TestExtractFacts:
 # ---------------------------------------------------------------------------
 # materialize_facts — translation to retain artefacts
 # ---------------------------------------------------------------------------
+
+
+class TestExtractFactsVerbatim:
+    """Verbatim mode preserves the original chunk text and only adds
+    structured metadata. Critical for benchmarks where question
+    embeddings need to match against the original conversation
+    vocabulary (the LoCoMo recall_hit_rate regression that motivated
+    the redesign)."""
+
+    @pytest.mark.asyncio
+    async def test_what_is_chunk_text_verbatim(self):
+        """``ExtractedFact.what`` MUST equal the input chunk text exactly,
+        regardless of what the LLM returns in its 'what' field."""
+        # LLM helpfully tries to paraphrase; verbatim mode ignores that
+        # and uses the chunk text instead.
+        llm = _ScriptedLLM(
+            '{"facts": ['
+            '{"what": "LLM PARAPHRASE 0", "who": "Alice", '
+            ' "entities": [{"name": "Alice", "entity_type": "PERSON"}]},'
+            '{"what": "LLM PARAPHRASE 1", "who": "Bob",'
+            ' "entities": [{"name": "Bob", "entity_type": "PERSON"}]}'
+            ']}'
+        )
+
+        chunks = [
+            "Alice went hiking yesterday and had a great time.",
+            "Bob played chess in the park with his friend.",
+        ]
+
+        facts = await extract_facts_verbatim(chunks, llm)
+
+        assert len(facts) == 2
+        assert facts[0].what == chunks[0], (
+            "Verbatim mode must use chunk text as 'what', not the LLM paraphrase"
+        )
+        assert facts[1].what == chunks[1]
+        # Metadata still comes from the LLM.
+        assert facts[0].who == "Alice"
+        assert facts[1].who == "Bob"
+        assert facts[0].entities[0].name == "Alice"
+        assert facts[1].entities[0].name == "Bob"
+
+    @pytest.mark.asyncio
+    async def test_returns_one_fact_per_chunk_in_order(self):
+        """Output length and order MUST match the input chunks list."""
+        llm = _ScriptedLLM('{"facts": ['
+            '{"who": "A"}, {"who": "B"}, {"who": "C"}'
+        ']}')
+        chunks = ["chunk-A", "chunk-B", "chunk-C"]
+
+        facts = await extract_facts_verbatim(chunks, llm)
+
+        assert [f.what for f in facts] == chunks
+        assert [f.who for f in facts] == ["A", "B", "C"]
+
+    @pytest.mark.asyncio
+    async def test_handles_llm_returning_fewer_facts_than_chunks(self):
+        """When the LLM emits fewer entries than chunks, the trailing
+        chunks get empty-metadata facts (chunk text preserved)."""
+        llm = _ScriptedLLM('{"facts": [{"who": "Alice"}]}')  # only 1 entry
+        chunks = ["A", "B", "C"]
+
+        facts = await extract_facts_verbatim(chunks, llm)
+
+        assert len(facts) == 3, "One fact per chunk regardless of LLM output length"
+        assert facts[0].who == "Alice"
+        assert facts[1].who == "N/A"
+        assert facts[2].who == "N/A"
+        assert [f.what for f in facts] == chunks
+
+    @pytest.mark.asyncio
+    async def test_causal_relations_indices_into_chunks(self):
+        """``target_fact_index`` references chunk position (= memory
+        position after materialization)."""
+        llm = _ScriptedLLM(
+            '{"facts": ['
+            '{"who": "cause"},'
+            '{"who": "effect", "causal_relations": [{"target_fact_index": 0, "strength": 0.9}]}'
+            ']}'
+        )
+        chunks = ["she worked overtime", "she felt burned out"]
+
+        facts = await extract_facts_verbatim(chunks, llm)
+
+        assert facts[1].causal_relations[0].target_fact_index == 0
+        assert facts[1].causal_relations[0].strength == 0.9
+
+    @pytest.mark.asyncio
+    async def test_self_loop_causal_dropped(self):
+        llm = _ScriptedLLM(
+            '{"facts": [{"causal_relations": [{"target_fact_index": 0, "strength": 0.9}]}]}'
+        )
+        facts = await extract_facts_verbatim(["only-chunk"], llm)
+        assert facts[0].causal_relations == []
+
+    @pytest.mark.asyncio
+    async def test_out_of_range_causal_dropped(self):
+        llm = _ScriptedLLM(
+            '{"facts": ['
+            '{"causal_relations": [{"target_fact_index": 99, "strength": 0.9}]}'
+            ']}'
+        )
+        facts = await extract_facts_verbatim(["chunk-0"], llm)
+        assert facts[0].causal_relations == []
+
+    @pytest.mark.asyncio
+    async def test_empty_chunks_returns_empty_no_llm_call(self):
+        llm = _ScriptedLLM("{}")
+        facts = await extract_facts_verbatim([], llm)
+        assert facts == []
+        assert llm.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_all_blank_chunks_returns_empty(self):
+        llm = _ScriptedLLM("{}")
+        facts = await extract_facts_verbatim(["", "  ", "\n"], llm)
+        assert facts == []
+        assert llm.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_returns_empty(self):
+        llm = _ScriptedLLM("not json")
+        facts = await extract_facts_verbatim(["chunk-A"], llm)
+        assert facts == []
+
+
+class TestMaterializeFactsVerbatimFlag:
+    """``materialize_facts(verbatim=True)`` uses ``fact.what`` directly
+    (no Involving/At/When decorations)."""
+
+    def test_verbatim_text_is_chunk_text_not_decorated(self):
+        facts = [
+            ExtractedFact(
+                what="Alice went hiking yesterday.",
+                who="Alice", when="yesterday", where="N/A",
+            ),
+        ]
+        materialized = materialize_facts(facts, bank_id="b1", verbatim=True)
+        # Stored text is the raw chunk, NOT "Alice went hiking yesterday. | Involving: Alice | When: yesterday"
+        assert materialized.vector_items[0].text == "Alice went hiking yesterday."
+
+    def test_concise_default_decorates_text(self):
+        """Concise mode (default, verbatim=False) keeps the build_text
+        decoration behavior."""
+        facts = [
+            ExtractedFact(
+                what="Alice went hiking",
+                who="Alice", when="yesterday",
+            ),
+        ]
+        materialized = materialize_facts(facts, bank_id="b1")  # verbatim=False default
+        text = materialized.vector_items[0].text
+        assert "Alice went hiking" in text
+        assert "Involving:" in text or "When:" in text, (
+            "Concise mode must include build_text decorations"
+        )
+
+    def test_verbatim_metadata_still_populated(self):
+        """Even in verbatim mode, structured fields go into _fact_* metadata."""
+        facts = [
+            ExtractedFact(
+                what="Alice went hiking yesterday.",
+                who="Alice", when="yesterday",
+            ),
+        ]
+        materialized = materialize_facts(facts, bank_id="b1", verbatim=True)
+        meta = materialized.vector_items[0].metadata
+        assert meta["_fact_who"] == "Alice"
+        assert meta["_fact_when"] == "yesterday"
 
 
 class TestMaterializeFacts:

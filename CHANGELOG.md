@@ -4,6 +4,51 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-05-02 (retrieval quality, gateway surface area, lifecycle, DSAR)
+
+A substantial release covering retrieval-quality improvements (HyDE, observation consolidation, multi-query gating, adversarial defense), expanded gateway surface (graph search/neighbors, compile, DSAR erasure), bank lifecycle features (history, audit, export/import, legal hold), ingestion adapters (S3/Garage, document folders), and a 7× speedup on the retain phase of LongMemEval.
+
+### Added
+
+- **R1 — Hypothetical Document Embedding (HyDE)** (`pipeline/retrieval.py`): query is rewritten by an LLM into a hypothetical answer document, embedded, and used as the retrieval query alongside the literal one. Lifts recall on questions where the user's surface form differs lexically from the stored memory.
+- **Observation consolidation layer** (`pipeline/observation.py`): post-retain LLM synthesis layer that compresses raw memories into structured observations stored in a dedicated `::obs` bank. Routed via MIP; surfaced through intent-gated injection during recall on open-domain queries.
+- **Multi-query confidence gate** (`pipeline/recall.py`): retrieval at threshold 0.72 — when the top-K confidence is below the gate, recall expands the query and retries before returning. Reduces low-confidence hallucination on ambiguous prompts.
+- **Adversarial defense** (`pipeline/reflect.py`): adversarial-abstention prompt template + temporal-aware prompt auto-selection in `brain.reflect()`. Detects and refuses prompt-injection-style queries.
+- **Structured fact extraction** (`pipeline/structured_facts.py`): typed fact extraction with provenance pointers; surfaces under `MemoryHit.facts`.
+- **Query temporal analyzer** (`pipeline/query_analyzer.py`): classifies queries on temporal axis (point-in-time, range, change-detection) and steers retrieval policy.
+- **Agentic reflect** (`pipeline/agentic_reflect.py`): tool-calling reflect that can iteratively widen retrieval, follow links, and consolidate evidence before answering.
+- **Fact-level causal links + link expansion** (`pipeline/links.py`): graph-walks at recall time to surface evidence chains, not just the top-K.
+- **Bank lifecycle surface** — `brain.history()`, `brain.audit()` (gap analysis), `brain.export_bank()`, `brain.import_bank()`, `brain.bank_health()`, `brain.legal_hold()`. Each is exposed as a public method with full pipeline tracing.
+- **`POST /v1/dsar/forget_principal`** (gateway): right-to-erasure endpoint for Cerebro. Enumerates a tenant's banks, erases all rows tagged `principal:{principal}`, returns per-bank deletion counts. The contract counterpart of `Synapse.DSAR.DeletionWorker` in the cerebro repo.
+- **`POST /v1/compile`** + **`POST /v1/graph/search`** + **`POST /v1/graph/neighbors`** (gateway): wiki compile trigger, semantic graph search, neighbor expansion. Backed by new public methods `brain.graph_search()` and `brain.graph_neighbors()` and exposed as MCP tools.
+- **S3 / Garage ingestion adapter** + **document folder ingestion adapter** (`adapters-ingestion-py/`): two new ingestion sources, available as gateway extras (`pip install astrocyte[ingest-s3]` / `astrocyte[ingest-document]`).
+- **Hindsight-informed reference stack** (`pipeline/hindsight.py`): retrieval pipeline preset that mirrors the Hindsight paper's offline-augmentation pattern. Default for LoCoMo benchmark runs.
+- **PgQueuer-backed memory task worker** (`pipeline/tasks.py`): out-of-band background work (compile, lifecycle sweeps) backed by Postgres queues; eliminates the in-process work loop.
+- **Concurrent retain phase** (eval): token-bucket rate limiter on LongMemEval retain, ~7× speedup.
+- **Configurable HNSW vector schema** (`adapters-storage-py/astrocyte-pgvector/`): operators can tune `m` / `ef_construction` per bank.
+- **Postgres reference stack parity**: `docker/postgres-age-pgvector/` ships a single image with both extensions; matches what the published `astrocyte-postgres` image bundles.
+
+### Fixed
+
+- **`pipeline/reflect.py`**: evidence-strict gate restored on weak retrieval to prevent hallucination when no high-confidence memories match.
+- **`pipeline/observation.py`**: observation I/O now correctly routed through the dedicated `::obs` bank (previously could leak into the parent bank under some configs).
+- **AGE adapter**: `_ensure_schema` now eagerly pre-creates the `Entity` vlabel and `LINK` elabel; removes a startup race where the first `store_entities` call could fail with "label not found." `store_entities` skips the embedding column when no embedding is supplied.
+- **Entity extraction**: `raw_decode` now used to handle multi-array LLM responses (was failing with `Extra data` errors); `max_tokens` raised to 1024 to fit larger responses.
+- **CodeQL**: path traversal in `portability.py` (CWE-022), `StatementNoEffect`, `EmptyExcept`, and unhandled `await` results across `pipeline/`, `tasks/`, and benchmark scripts.
+- **Webhook ingest**: error responses now sanitised before being returned to the caller.
+
+### Changed
+
+- **Multi-arch publishing**: gateway image and reference Postgres image now published as `linux/amd64` AND `linux/arm64` manifests.
+- **Reference providers**: warmed during gateway startup, not lazily on first request — eliminates the cold-start latency on the first `/v1/recall` after deploy.
+
+### Eval
+
+- LoCoMo retrieval pipeline rewritten with hindsight-informed reranking; significant accuracy gains on multi-session questions.
+- LoCoMo retain phase concurrent with rate limiter (~7× faster).
+- Benchmark history files updated through 2026-05-01.
+- Stratified per-conversation sampling in `fair-bench` for reproducible category coverage.
+
 ## [0.9.1] — 2026-04-25 (patch — widen adapter dep range)
 
 ### Fixed

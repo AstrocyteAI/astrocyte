@@ -338,6 +338,11 @@ class PipelineOrchestrator:
         #: memory.
         self.structured_fact_extraction_enabled: bool = False
         self.structured_fact_extraction_max_facts: int = 30
+        #: Mode: "verbatim" stores raw chunk text + metadata (preserves
+        #: vocabulary for embedding-match), "concise" stores LLM-paraphrased
+        #: structured facts. Default verbatim because of the recall_hit_rate
+        #: regression that concise paraphrasing causes.
+        self.structured_fact_extraction_mode: str = "verbatim"
         #: Query-level temporal constraint extraction. When enabled,
         #: recall parses temporal expressions in the query into a
         #: time_range filter applied to retrieval. Regex pre-pass is
@@ -450,23 +455,45 @@ class PipelineOrchestrator:
         in the returned ``fact_texts``/``entities`` lists. Callers
         resolve them to memory IDs after store_vectors.
         """
+        # SFE supersedes the legacy ``prepared.extract_entities`` gate.
+        # The legacy setting controlled which entity-extraction PATH
+        # ran (metadata vs LLM); SFE is a third path that produces
+        # both entities and structured facts in one call. When SFE is
+        # enabled, it fires regardless of the profile's entity
+        # extraction mode — the profile's metadata-entities are
+        # ignored in favor of the richer SFE output.
         if (
             not self.structured_fact_extraction_enabled
             or self.llm_provider is None
-            or not prepared.extract_entities
         ):
             return None, None, None, None
+
         try:
             from astrocyte.pipeline.fact_extraction import (
                 extract_facts,
+                extract_facts_verbatim,
                 materialize_facts,
             )
-            facts = await extract_facts(
-                prepared.text,
-                self.llm_provider,
-                event_date=request.occurred_at,
-                max_facts=self.structured_fact_extraction_max_facts,
-            )
+
+            verbatim = (self.structured_fact_extraction_mode or "verbatim") == "verbatim"
+            if verbatim:
+                # Pre-chunk first so the LLM enriches each chunk with
+                # metadata WITHOUT paraphrasing. Stored memory text =
+                # original chunk vocabulary.
+                from astrocyte.pipeline.chunking import chunk_text
+                chunks_local = chunk_text(prepared.text, strategy="paragraph")
+                facts = await extract_facts_verbatim(
+                    chunks_local,
+                    self.llm_provider,
+                    event_date=request.occurred_at,
+                )
+            else:
+                facts = await extract_facts(
+                    prepared.text,
+                    self.llm_provider,
+                    event_date=request.occurred_at,
+                    max_facts=self.structured_fact_extraction_max_facts,
+                )
         except Exception as exc:
             _logger.warning(
                 "structured fact extraction failed (%s); falling back "
@@ -482,6 +509,7 @@ class PipelineOrchestrator:
         materialized = materialize_facts(
             facts, bank_id=request.bank_id,
             occurred_at=request.occurred_at,
+            verbatim=verbatim,  # propagate so VectorItem.text uses raw chunk
         )
         fact_texts = [item.text for item in materialized.vector_items]
         entities = list(materialized.entities)

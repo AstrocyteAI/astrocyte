@@ -112,7 +112,9 @@ adversarial_defense:
   adversarial_prompt_enabled: false
 
 structured_fact_extraction:
-  enabled: false
+  enabled: true
+  extraction_mode: verbatim   # raw chunk text + per-chunk metadata
+  max_facts_per_call: 30
 
 query_analyzer:
   enabled: false

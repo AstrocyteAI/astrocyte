@@ -213,12 +213,26 @@ class StructuredFactExtractionConfig:
 
     When enabled, replaces the legacy chunk + entity-extraction +
     fact-causal-extraction three-pass pipeline with a single LLM call
-    that produces structured facts (what/when/where/who/why) with
-    embedded entities and intra-batch caused_by relations.
+    that produces structured metadata (entities, causal_relations,
+    temporal range, where/who/why annotations) per memory.
 
-    Each extracted fact becomes ONE memory (replaces chunk-based
-    memories). The structured fields populate ``metadata['_fact_*']``
-    so downstream rerank / synthesis can filter/promote on them.
+    Two extraction modes:
+
+    - ``"verbatim"`` (recommended for benchmarks): pre-chunks the
+      text, then asks the LLM to produce per-chunk metadata. The
+      stored memory text is the ORIGINAL chunk text — preserves
+      vocabulary for embedding-match against questions. Adds rich
+      metadata without losing surface terms.
+
+    - ``"concise"``: the LLM generates atomic fact statements that
+      replace the chunks. The stored text is the LLM's structured
+      paraphrase (``"what | Involving: who | why"``). Higher-density
+      knowledge representation, BUT loses surface vocabulary which
+      can hurt recall_hit_rate when questions share words with the
+      original text. Documented regression on LoCoMo 2026-05-02.
+
+    Each fact becomes ONE memory in both modes. The structured fields
+    populate ``metadata['_fact_*']`` either way.
 
     Cost approximately equal to the legacy two-pass (one LLM call
     replaces two); output substantially richer, especially for
@@ -228,6 +242,7 @@ class StructuredFactExtractionConfig:
     """
 
     enabled: bool = False
+    extraction_mode: str = "verbatim"  # "verbatim" | "concise"
     max_facts_per_call: int = 30
 
 

@@ -122,6 +122,59 @@ class ExtractedFact:
 # ---------------------------------------------------------------------------
 
 
+_VERBATIM_SYSTEM_PROMPT = """\
+You enrich PRE-CHUNKED text with structured metadata. Do NOT rewrite \
+or paraphrase the chunk text — the caller will use the original chunk \
+text verbatim. Your job is to produce per-chunk metadata.
+
+Output a JSON object: {"facts": [...]}. The facts list MUST be the \
+same length as the input chunks list, in the same order. For each \
+chunk, produce ONE entry with:
+- "what": leave EMPTY (""). The caller substitutes the original chunk \
+text. Including content here is wasted output tokens.
+- "when" (string, default "N/A"): natural-language time expression \
+present in this chunk; "N/A" otherwise.
+- "where" (string, default "N/A"): location.
+- "who" (string, default "N/A"): people involved.
+- "why" (string, default "N/A"): reason / motivation if explicit.
+- "fact_type" ("world" | "experience"): classify the chunk.
+- "occurred_start" (ISO 8601 string or null): resolve "when" to an \
+absolute date when possible; null otherwise.
+- "occurred_end" (ISO 8601 string or null): instant or end of range.
+- "entities" (list): each entity mentioned in this chunk, as \
+{"name": str, "entity_type": str}. Types: PERSON, ORG, LOCATION, \
+PRODUCT, CONCEPT, OTHER.
+- "causal_relations" (list, default []): each entry is \
+{"target_fact_index": int, "strength": float} pointing at ANOTHER \
+chunk in the input that THIS chunk was caused_by. ``target_fact_index`` \
+references the chunk's position in the input list.
+
+Rules:
+1. Output exactly one entry per input chunk, in the same order.
+2. NEVER include content in "what" — leave it empty.
+3. Don't invent. Use "N/A" / null / [] for absent metadata.
+4. Output JSON only.
+"""
+
+
+def _build_verbatim_user_prompt(
+    chunk_texts: list[str], event_date: datetime | None = None,
+) -> str:
+    lines = []
+    if event_date is not None:
+        lines.append(f"Reference date for relative time expressions: {event_date.isoformat()}")
+        lines.append("")
+    lines.append(f"Chunks ({len(chunk_texts)} total, indexed):")
+    for i, text in enumerate(chunk_texts):
+        snippet = text.strip()
+        if len(snippet) > 800:
+            snippet = snippet[:797] + "..."
+        lines.append(f"[{i}] {snippet}")
+    lines.append("")
+    lines.append("Per-chunk metadata (JSON, same order, same length):")
+    return "\n".join(lines)
+
+
 _SYSTEM_PROMPT = """\
 You extract STRUCTURED FACTS from text. Each fact is a discrete \
 factual unit with five dimensions: what / when / where / who / why.
@@ -314,6 +367,130 @@ async def extract_facts(
     return out
 
 
+async def extract_facts_verbatim(
+    chunk_texts: list[str],
+    llm_provider,
+    *,
+    event_date: datetime | None = None,
+) -> list[ExtractedFact]:
+    """Extract per-chunk metadata WITHOUT paraphrasing the chunk text.
+
+    The "what" field of each returned :class:`ExtractedFact` is set to
+    the original chunk text — not an LLM-generated summary. The LLM's
+    job here is only to produce structured metadata (entities,
+    causal_relations, temporal range, fact_type, where/who/why
+    annotations) per chunk.
+
+    Why this exists (the design lesson from 2026-05-02):
+    The "concise" mode :func:`extract_facts` replaces conversation text
+    with structured paraphrases like "Caroline went hiking | Involving:
+    Caroline | When: yesterday". That paraphrase loses the surface
+    vocabulary of the original conversation, which question embeddings
+    typically share — causing severe recall_hit_rate degradation. The
+    verbatim mode preserves the original vocabulary while still
+    enriching each chunk with the structured metadata needed for
+    causal/temporal/per-fact retrieval signals.
+
+    Returns one :class:`ExtractedFact` per input chunk, in the same
+    order, with ``what`` = the chunk text. Returns ``[]`` on any
+    failure so retain falls back to legacy chunking.
+
+    Args:
+        chunk_texts: List of pre-chunked source texts; one per memory.
+        llm_provider: Producer of the metadata extraction.
+        event_date: Reference for resolving relative time expressions.
+    """
+    if not chunk_texts:
+        return []
+    # Prefilter: drop empty chunks but preserve indices for the LLM.
+    if not any(t.strip() for t in chunk_texts):
+        return []
+
+    try:
+        completion = await llm_provider.complete(
+            [
+                Message(role="system", content=_VERBATIM_SYSTEM_PROMPT),
+                Message(
+                    role="user",
+                    content=_build_verbatim_user_prompt(chunk_texts, event_date),
+                ),
+            ],
+            max_tokens=4096,
+            temperature=0.0,
+        )
+    except Exception as exc:
+        _logger.warning("fact_extraction (verbatim) LLM call failed (%s)", exc)
+        return []
+
+    parsed = _parse_json_object(completion.text)
+    if parsed is None:
+        _logger.warning("fact_extraction (verbatim): malformed JSON response")
+        return []
+    raw_metadata = parsed.get("facts")
+    if not isinstance(raw_metadata, list):
+        _logger.warning("fact_extraction (verbatim): 'facts' is not a list")
+        return []
+
+    out: list[ExtractedFact] = []
+    for idx, chunk in enumerate(chunk_texts):
+        # Pull the matching metadata entry by index. When the LLM
+        # returned fewer entries than chunks, the trailing chunks get
+        # bare metadata-less ExtractedFacts (still preserves chunk text).
+        raw = raw_metadata[idx] if idx < len(raw_metadata) else {}
+        if not isinstance(raw, dict):
+            raw = {}
+
+        # Entities
+        entities: list[FactEntity] = []
+        for ent in raw.get("entities") or []:
+            if not isinstance(ent, dict):
+                continue
+            name = str(ent.get("name") or "").strip()
+            if not name:
+                continue
+            etype = str(ent.get("entity_type") or "OTHER").strip().upper() or "OTHER"
+            entities.append(FactEntity(name=name, entity_type=etype))
+
+        # Causal relations — same semantics as concise mode but indices
+        # reference the chunk position (which IS the memory position).
+        causal: list[FactCausalRelation] = []
+        for rel in raw.get("causal_relations") or []:
+            if not isinstance(rel, dict):
+                continue
+            try:
+                target = int(rel.get("target_fact_index"))
+            except (TypeError, ValueError):
+                continue
+            if target == idx or not (0 <= target < len(chunk_texts)):
+                continue
+            try:
+                strength = float(rel.get("strength", 1.0))
+            except (TypeError, ValueError):
+                strength = 1.0
+            causal.append(FactCausalRelation(target_fact_index=target, strength=strength))
+
+        ftype = str(raw.get("fact_type") or "experience").strip().lower()
+        if ftype not in {"world", "experience"}:
+            ftype = "experience"
+
+        out.append(
+            ExtractedFact(
+                # KEY: "what" is the ORIGINAL chunk text, not a paraphrase.
+                what=chunk,
+                when=str(raw.get("when") or "N/A").strip() or "N/A",
+                where=str(raw.get("where") or "N/A").strip() or "N/A",
+                who=str(raw.get("who") or "N/A").strip() or "N/A",
+                why=str(raw.get("why") or "N/A").strip() or "N/A",
+                fact_type=ftype,
+                occurred_start=_parse_iso_datetime(raw.get("occurred_start")),
+                occurred_end=_parse_iso_datetime(raw.get("occurred_end")),
+                entities=entities,
+                causal_relations=causal,
+            )
+        )
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Materialization
 # ---------------------------------------------------------------------------
@@ -355,6 +532,7 @@ def materialize_facts(
     metadata: dict | None = None,
     occurred_at: datetime | None = None,
     embeddings: list[list[float]] | None = None,
+    verbatim: bool = False,
 ) -> MaterializedFacts:
     """Convert extracted facts to retain-pipeline artefacts.
 
@@ -363,7 +541,7 @@ def materialize_facts(
     store_memory_links) without further translation.
 
     Args:
-        facts: Output of :func:`extract_facts`.
+        facts: Output of :func:`extract_facts` or :func:`extract_facts_verbatim`.
         bank_id: Target bank.
         tags: Tags applied to every produced VectorItem.
         metadata: Base metadata merged onto every VectorItem; the
@@ -376,6 +554,12 @@ def materialize_facts(
         embeddings: Optional pre-computed embeddings per fact (must
             match ``len(facts)``). When omitted, items are created
             with empty vectors — caller is responsible for embedding.
+        verbatim: When True, the VectorItem's text is the raw chunk
+            text (``fact.what``) — no Involving/At/When decorations.
+            Use with :func:`extract_facts_verbatim` to preserve
+            original vocabulary for embedding-match against questions.
+            When False (default), uses :meth:`ExtractedFact.build_text`
+            which decorates the fact with structured field annotations.
     """
     base_metadata = dict(metadata or {})
     base_tags = list(tags or [])
@@ -430,7 +614,10 @@ def materialize_facts(
                 id=item_id,
                 bank_id=bank_id,
                 vector=vector,
-                text=fact.build_text(),
+                # Verbatim mode: store the chunk text as-is so question
+                # embeddings can match against the original vocabulary.
+                # Concise mode: use the structured/decorated fact text.
+                text=fact.what if verbatim else fact.build_text(),
                 metadata=fact_metadata,
                 tags=list(base_tags),
                 fact_type=fact.fact_type,
