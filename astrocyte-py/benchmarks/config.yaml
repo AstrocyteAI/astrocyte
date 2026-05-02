@@ -101,6 +101,22 @@ cross_encoder_rerank:
   top_k: 30
   force_cpu: false  # set true on Apple Silicon if MPS misbehaves
 
+# --- ISOLATION RUN: all three new feature blocks DISABLED ---
+# Goal: confirm we return to ~50-55% baseline (200q fair-bench scale)
+# when only the C-bundle is active. This isolates whether the prior
+# run's 26.5% regression is from these new layers or from elsewhere.
+# Re-enable individually once baseline is confirmed.
+adversarial_defense:
+  abstention_enabled: false
+  premise_verification_enabled: false
+  adversarial_prompt_enabled: false
+
+structured_fact_extraction:
+  enabled: false
+
+query_analyzer:
+  enabled: false
+
 # -- LLM & Embedding --
 # The OpenAI provider handles both completions and embeddings.
 # Requires OPENAI_API_KEY env var (or pass api_key below).
