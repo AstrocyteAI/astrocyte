@@ -364,8 +364,8 @@ Three LoCoMo bench tiers cover different needs along the speed/signal trade-off:
 | **Questions** | 50 | 200 (20 × 10 convos) | 1,986 (full) |
 | **Wall time** | ~3 min | ~15–20 min | ~3 hrs |
 | **Cost (gpt-4o-mini)** | ~$0.30 | ~$1 | ~$5–10 |
-| **Sampling** | First 50 (head-slice) | First 20 from EACH conversation | All |
-| **Conversation coverage** | 1 conversation | **All 10 conversations** | All 10 |
+| **Sampling** | First 50 (head-slice) | Category-stratified within each of all 10 conversations | All |
+| **Conversation coverage** | 1 conversation | **All 10 conversations × all categories** | All 10 |
 | **Per-category n** | ~10 (too small) | ~30–60 (even, balanced) | ~400 |
 | **95% CI on overall** | ±14 pts | ±7 pts | ±2.2 pts |
 | **Comparable across runs** | ✅ deterministic | ✅ deterministic | ✅ |
@@ -375,7 +375,7 @@ Three LoCoMo bench tiers cover different needs along the speed/signal trade-off:
 **When to use which:**
 
 - **`quick`** — sanity check / smoke test only. 50 questions can't tell you anything statistically meaningful about quality. Use for: "does my code crash on real bench data?" and CI gates.
-- **`fair`** — recommended fast-iteration target. Same speed as a 200-question head-slice but every conversation is represented, so persona scoping and cross-conversation tag filters all get exercised. Per-category numbers are reliable enough to detect ~8-pt swings.
+- **`fair`** — recommended fast-iteration target. Same speed as a 200-question head-slice but **stratified across both conversations AND categories**: for each of 10 conversations, take ⌈N / num_categories⌉ questions per category. Every conversation AND every category gets representation. Per-category numbers are reliable enough to detect ~8-pt swings.
 - **`bench-locomo`** — release-quality measurement. Tight per-category CIs (±5 pts) let you make claims like "multi-hop +5 pts." Direct comparison to published numbers (Hindsight, BEAM, paper baselines).
 
 **Recommended workflow** for each change you want to ship:
@@ -403,7 +403,7 @@ A head-slice (`--max-questions 200`) draws all 200 questions from the first one 
 | `--max-sessions N` | Cap LongMemEval retain phase at N unique sessions (default: all ~1,500). |
 | `--resume` | Continue an interrupted run from `benchmark-results/checkpoints/`. |
 | `--max-questions N` | Hard cap on total questions (deterministic head-slice; biased toward early conversations when small). |
-| `--max-questions-per-conversation N` | LoCoMo only: take the first N questions from EACH conversation. Preserves per-conversation balance. Used by `bench-locomo-fair`. |
+| `--max-questions-per-conversation N` | LoCoMo only: take **N questions per conversation, stratified across categories** (⌈N / num_categories⌉ per category). Ensures every category gets representation; previously head-sliced and could exclude rare categories. Used by `bench-locomo-fair`. |
 
 **Checkpoint / resume:** Every evaluated question is checkpointed to `benchmark-results/checkpoints/`. If a run is interrupted, `--resume` (or `RESUME=1` in `make bench-full`) replays already-scored questions from cache and skips already-retained sessions (with persistent stores). The checkpoint is deleted on successful completion.
 

@@ -20,7 +20,7 @@ BENCH_PG_PASSWORD  := astrocyte
 BENCH_PG_DB        := astrocyte_bench
 BENCH_EMBEDDING_DIMENSIONS := 1536
 BENCH_DATABASE_URL := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0.1:$(BENCH_PG_PORT)/$(BENCH_PG_DB)
-BENCH_UV_RUN := uv run --extra dev
+BENCH_UV_RUN := uv run --extra dev --extra rerank
 
 # ---------------------------------------------------------------------------
 # Tests

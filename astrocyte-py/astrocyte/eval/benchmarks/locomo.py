@@ -748,12 +748,34 @@ class LoComoBenchmark:
 
         # ── Phase 2: Collect all questions ──
         # Per-conversation sampling FIRST (preserves category/conversation
-        # balance), then the optional total cap. With both unset, all
+        # balance), then the optional total cap.  With both unset, all
         # questions are evaluated.
+        #
+        # Per-conversation sampling is **category-stratified**: questions
+        # in each conversation's list are grouped by category, then a
+        # ceil(N / num_categories) slice is taken per category.  This
+        # avoids the prior head-slice bias where adversarial questions
+        # (typically at the END of each conversation's list) were
+        # systematically excluded — observed in the 2026-05-02 fair-bench
+        # run that produced 0 adversarial questions out of 200.
         all_questions: list[LoCoMoQuestion] = []
         if max_questions_per_conversation is not None:
             for convo in conversations:
-                all_questions.extend(convo.questions[:max_questions_per_conversation])
+                by_category: dict[str, list[LoCoMoQuestion]] = {}
+                for q in convo.questions:
+                    by_category.setdefault(q.category, []).append(q)
+                if not by_category:
+                    continue
+                # Per-category quota: ceil-divide N across the categories
+                # actually present in this conversation. Round up so the
+                # total stays close to the requested per-conversation
+                # budget when category counts don't divide evenly.
+                n_cats = len(by_category)
+                per_cat = max(1, (max_questions_per_conversation + n_cats - 1) // n_cats)
+                # Sort categories deterministically so two runs with the
+                # same dataset produce identical samples.
+                for cat in sorted(by_category):
+                    all_questions.extend(by_category[cat][:per_cat])
         else:
             for convo in conversations:
                 all_questions.extend(convo.questions)
