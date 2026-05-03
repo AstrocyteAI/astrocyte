@@ -80,7 +80,11 @@ class TestCustomExtension:
         r2 = client.get("/probe", headers={"X-Tenant-Schema": "tenant_globex"})
         assert r2.json() == {"schema": "tenant_globex"}
 
-    def test_authentication_error_returns_401(self):
+    def test_authentication_error_returns_401(self, caplog):
+        """A 401 response surfaces only a stable error identifier — never
+        the raw ``str(exc)`` from extension code (CWE-209). Full detail
+        is captured in server logs for operators."""
+
         class StrictExtension(TenantExtension):
             async def authenticate(self, request) -> TenantContext:
                 raise AuthenticationError("no api key supplied")
@@ -90,11 +94,16 @@ class TestCustomExtension:
 
         app = _make_app_with_probe(StrictExtension())
         client = TestClient(app)
-        resp = client.get("/probe")
+        with caplog.at_level("WARNING", logger="astrocyte.gateway.tenancy"):
+            resp = client.get("/probe")
         assert resp.status_code == 401
         body = resp.json()
-        assert body["error"] == "authentication_failed"
-        assert "no api key supplied" in body["detail"]
+        # Only a stable identifier surfaces to the client — no raw exc text.
+        assert body == {"error": "authentication_failed"}
+        # Operator-visible detail must still be captured server-side.
+        assert any("no api key supplied" in rec.message for rec in caplog.records), (
+            "expected the AuthenticationError message in the warning log"
+        )
 
     def test_request_object_passed_to_authenticate(self):
         """The TenantExtension contract takes ``Any`` for context — the gateway
