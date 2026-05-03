@@ -30,7 +30,7 @@ import logging
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,6 +46,16 @@ class BenchmarkRunOutcome:
 
     result: dict | None
     used_real_data: bool
+
+
+def _serialize_metrics(metrics) -> dict:
+    """Serialize EvalMetrics without losing optional benchmark observability fields."""
+    data = {}
+    for field in fields(metrics):
+        value = getattr(metrics, field.name)
+        if value is not None:
+            data[field.name] = value
+    return data
 
 
 def _build_test_brain(*, enable_multi_query_expansion: bool = False):
@@ -333,19 +343,7 @@ def _serialize_result(
         "category_accuracy": result.category_accuracy,
         "total_questions": result.total_questions,
         "correct": result.correct,
-        "metrics": {
-            "recall_precision": result.eval_result.metrics.recall_precision,
-            "recall_hit_rate": result.eval_result.metrics.recall_hit_rate,
-            "recall_mrr": result.eval_result.metrics.recall_mrr,
-            "recall_ndcg": result.eval_result.metrics.recall_ndcg,
-            "retain_latency_p50_ms": result.eval_result.metrics.retain_latency_p50_ms,
-            "retain_latency_p95_ms": result.eval_result.metrics.retain_latency_p95_ms,
-            "recall_latency_p50_ms": result.eval_result.metrics.recall_latency_p50_ms,
-            "recall_latency_p95_ms": result.eval_result.metrics.recall_latency_p95_ms,
-            "reflect_accuracy": result.eval_result.metrics.reflect_accuracy,
-            "total_tokens_used": result.eval_result.metrics.total_tokens_used,
-            "total_duration_seconds": result.eval_result.metrics.total_duration_seconds,
-        },
+        "metrics": _serialize_metrics(result.eval_result.metrics),
         "provider": result.eval_result.provider,
         "provider_tier": result.eval_result.provider_tier,
         "per_question": per_question,
@@ -792,18 +790,7 @@ async def run_builtin_suites(brain) -> dict:
         results[suite_name] = {
             "suite": suite_name,
             "timestamp": result.timestamp.isoformat(),
-            "metrics": {
-                "recall_precision": m.recall_precision,
-                "recall_hit_rate": m.recall_hit_rate,
-                "recall_mrr": m.recall_mrr,
-                "recall_ndcg": m.recall_ndcg,
-                "reflect_accuracy": m.reflect_accuracy,
-                "retain_latency_p50_ms": m.retain_latency_p50_ms,
-                "retain_latency_p95_ms": m.retain_latency_p95_ms,
-                "recall_latency_p50_ms": m.recall_latency_p50_ms,
-                "recall_latency_p95_ms": m.recall_latency_p95_ms,
-                "total_duration_seconds": m.total_duration_seconds,
-            },
+            "metrics": _serialize_metrics(m),
             "provider": result.provider,
             "provider_tier": result.provider_tier,
         }

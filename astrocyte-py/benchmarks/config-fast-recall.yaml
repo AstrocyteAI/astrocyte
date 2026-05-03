@@ -1,0 +1,116 @@
+# Fast-recall benchmark configuration.
+#
+# Purpose:
+# - Measure the lowest-latency practical Tier 1 path on the Postgres stack.
+# - Keep high-cost LLM retrieval aids off; prefer lexical + semantic + indexed
+#   graph primitives once implemented.
+
+profile: research
+
+provider_tier: storage
+
+benchmark_preset:
+  name: fast-recall
+  version: 1
+  budget: low
+  low:
+    candidate_limit: 12
+    graph_expansion_limit: 12
+    rerank_top_k: 12
+    max_tokens: 2048
+    observation_weight: 0.0
+    agentic_reflect_allowed: false
+
+vector_store: pgvector
+vector_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+document_store: pgvector
+document_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+graph_store: age
+
+entity_resolution:
+  enabled: true
+  enable_llm_disambiguation: false
+  canonical_resolution: true
+
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  install_on_start: true
+  auto_start_worker: true
+
+wiki_compile:
+  enabled: false
+  auto_start: false
+
+spreading_activation:
+  enabled: true
+  expansion_limit: 12
+
+semantic_link_graph:
+  enabled: true
+  top_k: 3
+  similarity_threshold: 0.75
+
+causal_links:
+  enabled: false
+
+agentic_reflect:
+  enabled: false
+
+cross_encoder_rerank:
+  enabled: false
+
+adversarial_defense:
+  abstention_enabled: true
+  abstention_floor: 0.2
+  premise_verification_enabled: false
+  adversarial_prompt_enabled: true
+
+structured_fact_extraction:
+  enabled: true
+  extraction_mode: verbatim
+  max_facts_per_call: 30
+  chunk_strategy: paragraph
+
+query_analyzer:
+  enabled: true
+  allow_llm_fallback: false
+
+llm_provider: openai
+llm_provider_config:
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
+  embedding_model: text-embedding-3-small
+
+barriers:
+  pii:
+    mode: disabled
+  validation:
+    reject_empty_content: true
+
+homeostasis:
+  recall_max_tokens: 2048
+  reflect_max_tokens: 4096
+  rate_limits:
+    retain_per_minute: 500
+    recall_per_minute: 500
+    reflect_per_minute: 200
+
+signal_quality:
+  dedup:
+    enabled: false
+  noisy_bank:
+    enabled: false
+
+escalation:
+  degraded_mode: error
+
+observability:
+  otel_enabled: false
+  prometheus_enabled: false

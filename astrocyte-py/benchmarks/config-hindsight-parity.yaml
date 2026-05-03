@@ -1,0 +1,127 @@
+# Hindsight-parity benchmark configuration.
+#
+# Purpose:
+# - The named preset for the full Hindsight-inspired native Tier 1 stack.
+# - Keeps the existing benchmark behavior explicit while feature/baseline
+#   establishes ablation and acceptance gates.
+
+profile: research
+
+provider_tier: storage
+
+benchmark_preset:
+  name: hindsight-parity
+  version: 1
+  budget: mid
+  mid:
+    candidate_limit: 30
+    graph_expansion_limit: 30
+    rerank_top_k: 30
+    max_tokens: 8192
+    observation_weight: 0.15
+    agentic_reflect_allowed: true
+
+vector_store: pgvector
+vector_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+document_store: pgvector
+document_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+graph_store: age
+
+wiki_store: pgvector
+wiki_store_config:
+  bootstrap_schema: false
+
+wiki_compile:
+  enabled: true
+  auto_start: true
+  size_threshold: 50
+
+entity_resolution:
+  enabled: true
+  enable_llm_disambiguation: false
+  canonical_resolution: true
+
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  install_on_start: true
+  auto_start_worker: true
+
+spreading_activation:
+  enabled: true
+  expansion_limit: 30
+
+semantic_link_graph:
+  enabled: true
+  top_k: 5
+  similarity_threshold: 0.7
+
+causal_links:
+  enabled: true
+  max_pairs_per_memory: 2
+  min_confidence: 0.6
+
+agentic_reflect:
+  enabled: true
+  max_iterations: 10
+  recall_step_max_results: 10
+  max_evidence_pool_size: 30
+
+cross_encoder_rerank:
+  enabled: true
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_k: 30
+  force_cpu: false
+
+adversarial_defense:
+  abstention_enabled: false
+  premise_verification_enabled: false
+  adversarial_prompt_enabled: false
+
+structured_fact_extraction:
+  enabled: true
+  extraction_mode: verbatim
+  max_facts_per_call: 30
+  chunk_strategy: paragraph
+
+query_analyzer:
+  enabled: false
+
+llm_provider: openai
+llm_provider_config:
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
+  embedding_model: text-embedding-3-small
+
+barriers:
+  pii:
+    mode: disabled
+  validation:
+    reject_empty_content: true
+
+homeostasis:
+  recall_max_tokens: 16384
+  reflect_max_tokens: 16384
+  rate_limits:
+    retain_per_minute: 500
+    recall_per_minute: 500
+    reflect_per_minute: 200
+
+signal_quality:
+  dedup:
+    enabled: false
+  noisy_bank:
+    enabled: false
+
+escalation:
+  degraded_mode: error
+
+observability:
+  otel_enabled: false
+  prometheus_enabled: false

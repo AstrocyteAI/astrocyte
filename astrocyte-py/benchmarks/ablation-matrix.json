@@ -1,0 +1,48 @@
+{
+  "description": "Feature/baseline ablation matrix. Run each scenario against the same dataset slice before promoting a Hindsight-parity default.",
+  "branch": "feature/baseline",
+  "default_benchmarks": ["locomo", "longmemeval"],
+  "default_commands": {
+    "locomo_fair_200": "make bench-locomo-fair CONFIG=benchmarks/{config}",
+    "longmemeval_quick_100": "make bench-longmemeval-quick CONFIG=benchmarks/{config}"
+  },
+  "scenarios": [
+    {
+      "id": "baseline",
+      "config": "config-baseline.yaml",
+      "purpose": "Conservative Tier 1 storage path with Hindsight-parity feature bundles disabled."
+    },
+    {
+      "id": "fast-recall",
+      "config": "config-fast-recall.yaml",
+      "purpose": "Low-latency profile for recall p95 gates and fast-chat use cases."
+    },
+    {
+      "id": "hindsight-parity",
+      "config": "config-hindsight-parity.yaml",
+      "purpose": "Full Hindsight-inspired feature bundle used for parity tracking."
+    },
+    {
+      "id": "quality-max",
+      "config": "config-quality-max.yaml",
+      "purpose": "Upper-bound quality profile with higher-cost reasoning and reranking enabled."
+    }
+  ],
+  "promotion_gates": {
+    "locomo_fair_200": {
+      "minimums": {
+        "overall_accuracy": 0.65,
+        "category_accuracy.single-hop": 0.68,
+        "metrics.recall_hit_rate": 0.60
+      },
+      "maximums": {
+        "metrics.recall_latency_p95_ms": 2000
+      }
+    },
+    "fast_recall_postgres": {
+      "maximums": {
+        "metrics.recall_latency_p95_ms": 600
+      }
+    }
+  }
+}

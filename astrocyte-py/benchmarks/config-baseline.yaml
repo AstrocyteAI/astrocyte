@@ -1,0 +1,107 @@
+# Baseline benchmark configuration for feature/baseline.
+#
+# Purpose:
+# - Keep the Tier 1 storage pipeline close to the conservative production path.
+# - Disable expensive Hindsight-parity feature bundles so each later feature can
+#   be added through the ablation matrix and measured independently.
+#
+# Run examples:
+#   make bench-baseline-locomo-fair
+#   make bench-baseline-longmemeval-quick
+
+profile: research
+
+provider_tier: storage
+
+benchmark_preset:
+  name: baseline
+  version: 1
+  budget: low
+  low:
+    candidate_limit: 12
+    graph_expansion_limit: 0
+    rerank_top_k: 12
+    max_tokens: 2048
+    observation_weight: 0.0
+    agentic_reflect_allowed: false
+
+vector_store: pgvector
+vector_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+document_store: pgvector
+document_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+graph_store: age
+
+entity_resolution:
+  enabled: false
+
+async_tasks:
+  enabled: false
+
+wiki_compile:
+  enabled: false
+  auto_start: false
+
+spreading_activation:
+  enabled: false
+
+semantic_link_graph:
+  enabled: false
+
+causal_links:
+  enabled: false
+
+agentic_reflect:
+  enabled: false
+
+cross_encoder_rerank:
+  enabled: false
+
+adversarial_defense:
+  abstention_enabled: false
+  premise_verification_enabled: false
+  adversarial_prompt_enabled: false
+
+structured_fact_extraction:
+  enabled: false
+
+query_analyzer:
+  enabled: false
+
+llm_provider: openai
+llm_provider_config:
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
+  embedding_model: text-embedding-3-small
+
+barriers:
+  pii:
+    mode: disabled
+  validation:
+    reject_empty_content: true
+
+homeostasis:
+  recall_max_tokens: 8192
+  reflect_max_tokens: 8192
+  rate_limits:
+    retain_per_minute: 500
+    recall_per_minute: 500
+    reflect_per_minute: 200
+
+signal_quality:
+  dedup:
+    enabled: false
+  noisy_bank:
+    enabled: false
+
+escalation:
+  degraded_mode: error
+
+observability:
+  otel_enabled: false
+  prometheus_enabled: false

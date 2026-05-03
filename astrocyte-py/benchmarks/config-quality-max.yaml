@@ -1,0 +1,130 @@
+# Quality-max benchmark configuration.
+#
+# Purpose:
+# - Bias toward retrieval and synthesis quality, accepting higher cost.
+# - Use after baseline and fast-recall gates are stable to measure the upper
+#   bound of Astrocyte's native Tier 1 pipeline.
+
+profile: research
+
+provider_tier: storage
+
+benchmark_preset:
+  name: quality-max
+  version: 1
+  budget: high
+  high:
+    candidate_limit: 60
+    graph_expansion_limit: 40
+    rerank_top_k: 40
+    max_tokens: 16384
+    observation_weight: 0.25
+    agentic_reflect_allowed: true
+
+vector_store: pgvector
+vector_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+document_store: pgvector
+document_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+graph_store: age
+
+wiki_store: pgvector
+wiki_store_config:
+  bootstrap_schema: false
+
+wiki_compile:
+  enabled: true
+  auto_start: true
+  size_threshold: 50
+
+entity_resolution:
+  enabled: true
+  enable_llm_disambiguation: true
+  canonical_resolution: true
+
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  install_on_start: true
+  auto_start_worker: true
+
+spreading_activation:
+  enabled: true
+  expansion_limit: 40
+
+semantic_link_graph:
+  enabled: true
+  top_k: 8
+  similarity_threshold: 0.65
+
+causal_links:
+  enabled: true
+  max_pairs_per_memory: 4
+  min_confidence: 0.6
+
+agentic_reflect:
+  enabled: true
+  max_iterations: 10
+  recall_step_max_results: 12
+  max_evidence_pool_size: 40
+
+cross_encoder_rerank:
+  enabled: true
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_k: 40
+  force_cpu: false
+
+adversarial_defense:
+  abstention_enabled: true
+  abstention_floor: 0.2
+  premise_verification_enabled: true
+  premise_verification_min_confidence: 0.6
+  adversarial_prompt_enabled: true
+
+structured_fact_extraction:
+  enabled: true
+  extraction_mode: verbatim
+  max_facts_per_call: 30
+  chunk_strategy: paragraph
+
+query_analyzer:
+  enabled: true
+  allow_llm_fallback: true
+
+llm_provider: openai
+llm_provider_config:
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
+  embedding_model: text-embedding-3-small
+
+barriers:
+  pii:
+    mode: disabled
+  validation:
+    reject_empty_content: true
+
+homeostasis:
+  recall_max_tokens: 16384
+  reflect_max_tokens: 16384
+  rate_limits:
+    retain_per_minute: 500
+    recall_per_minute: 500
+    reflect_per_minute: 200
+
+signal_quality:
+  dedup:
+    enabled: false
+  noisy_bank:
+    enabled: false
+
+escalation:
+  degraded_mode: error
+
+observability:
+  otel_enabled: false
+  prometheus_enabled: false

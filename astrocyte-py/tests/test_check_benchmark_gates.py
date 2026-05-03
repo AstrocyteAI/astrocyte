@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from astrocyte.types import EvalMetrics
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT_PATH = _REPO_ROOT / "scripts" / "check_benchmark_gates.py"
 _SPEC = importlib.util.spec_from_file_location("check_benchmark_gates", _SCRIPT_PATH)
@@ -70,3 +72,35 @@ def test_main_returns_zero_for_passing_run(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(sys, "argv", ["check", "--gates", str(gates_path), "--results", str(results_path)])
 
     assert _CHECKER.main() == 0
+
+
+def test_benchmark_metric_serializer_keeps_optional_observability_fields() -> None:
+    runner_path = _REPO_ROOT / "scripts" / "run_benchmarks.py"
+    spec = importlib.util.spec_from_file_location("run_benchmarks", runner_path)
+    assert spec and spec.loader
+    runner = importlib.util.module_from_spec(spec)
+    sys.modules["run_benchmarks"] = runner
+    spec.loader.exec_module(runner)
+
+    metrics = EvalMetrics(
+        recall_precision=0.2,
+        recall_hit_rate=0.3,
+        recall_mrr=0.4,
+        recall_ndcg=0.5,
+        retain_latency_p50_ms=10.0,
+        retain_latency_p95_ms=20.0,
+        recall_latency_p50_ms=30.0,
+        recall_latency_p95_ms=40.0,
+        total_tokens_used=123,
+        total_duration_seconds=4.5,
+        recall_latency_p99_ms=55.0,
+        tokens_by_phase={"retain": 100, "eval": 23},
+        cost_total_usd=0.12,
+    )
+
+    serialized = runner._serialize_metrics(metrics)
+
+    assert serialized["recall_latency_p99_ms"] == 55.0
+    assert serialized["tokens_by_phase"] == {"retain": 100, "eval": 23}
+    assert serialized["cost_total_usd"] == 0.12
+    assert "reflect_accuracy" not in serialized

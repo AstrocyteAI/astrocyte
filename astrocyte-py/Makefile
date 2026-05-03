@@ -7,6 +7,7 @@ DATASETS_DIR  := datasets
 LOCOMO_DIR    := $(DATASETS_DIR)/locomo
 LONGMEMEVAL_DIR := $(DATASETS_DIR)/longmemeval
 RESULTS_DIR   := benchmark-results
+CONFIG        ?= benchmarks/config.yaml
 
 # ---------------------------------------------------------------------------
 # Benchmark database (astrocyte-postgres)
@@ -117,7 +118,7 @@ bench-db-reset: bench-db-stop bench-db-start
 # Pass RESUME=1 to continue an interrupted run: make bench-locomo RESUME=1
 bench-locomo: fetch-locomo bench-db-start
 	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config.yaml \
+		--config $(CONFIG) \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
 		--canonical-judge \
@@ -126,7 +127,7 @@ bench-locomo: fetch-locomo bench-db-start
 # Quick LoCoMo subset (50 questions, ~2-3 min)
 bench-locomo-quick: fetch-locomo bench-db-start
 	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config.yaml \
+		--config $(CONFIG) \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
 		--max-questions 50 \
@@ -139,7 +140,7 @@ bench-locomo-quick: fetch-locomo bench-db-start
 # ~15-20 min wall time, ~$1 cost.
 bench-locomo-fair: fetch-locomo bench-db-start
 	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config.yaml \
+		--config $(CONFIG) \
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
 		--max-questions-per-conversation 20 \
@@ -149,7 +150,7 @@ bench-locomo-fair: fetch-locomo bench-db-start
 # Pass RESUME=1 to continue an interrupted run: make bench-longmemeval RESUME=1
 bench-longmemeval: fetch-longmemeval bench-db-start
 	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config.yaml \
+		--config $(CONFIG) \
 		--benchmarks longmemeval \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--canonical-judge \
@@ -158,7 +159,7 @@ bench-longmemeval: fetch-longmemeval bench-db-start
 # Quick LongMemEval subset (100 questions, stratified across all categories, ~30-60 min)
 bench-longmemeval-quick: fetch-longmemeval bench-db-start
 	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config.yaml \
+		--config $(CONFIG) \
 		--benchmarks longmemeval \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--max-questions 100 \
@@ -202,13 +203,13 @@ bench-compare: fetch-locomo bench-db-start
 # Built-in eval suites (basic + accuracy)
 bench-builtin: bench-db-start
 	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config.yaml \
+		--config $(CONFIG) \
 		--benchmarks builtin
 
 # All benchmarks
 bench: fetch-datasets bench-db-start
 	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config.yaml \
+		--config $(CONFIG) \
 		--benchmarks builtin longmemeval locomo \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--locomo-path $(LOCOMO_DIR)/data
@@ -218,7 +219,7 @@ bench: fetch-datasets bench-db-start
 # Pass RESUME=1 to continue an interrupted run: doppler run -- make bench-full RESUME=1
 bench-full: fetch-datasets bench-db-start
 	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config.yaml \
+		--config $(CONFIG) \
 		--benchmarks longmemeval locomo \
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--locomo-path $(LOCOMO_DIR)/data \
@@ -230,6 +231,19 @@ bench-full: fetch-datasets bench-db-start
 bench-gate:
 	uv run python scripts/check_benchmark_gates.py \
 		--gates benchmarks/gates-hindsight-informed.json \
+		--results $(RESULTS_DIR)/latest.json
+
+.PHONY: bench-baseline-locomo-fair bench-baseline-longmemeval-quick bench-baseline-gate
+
+bench-baseline-locomo-fair:
+	$(MAKE) bench-locomo-fair CONFIG=benchmarks/config-baseline.yaml
+
+bench-baseline-longmemeval-quick:
+	$(MAKE) bench-longmemeval-quick CONFIG=benchmarks/config-baseline.yaml
+
+bench-baseline-gate:
+	uv run python scripts/check_benchmark_gates.py \
+		--gates benchmarks/gates-baseline.json \
 		--results $(RESULTS_DIR)/latest.json
 
 # Smoke test — in-memory providers, no API key needed.

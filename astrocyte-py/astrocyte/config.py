@@ -112,6 +112,47 @@ class RecallCacheConfig:
 
 
 @dataclass
+class BenchmarkBudgetConfig:
+    """Named benchmark budget for Hindsight-parity preset routing."""
+
+    candidate_limit: int = 30
+    graph_expansion_limit: int = 30
+    rerank_top_k: int = 30
+    max_tokens: int = 8192
+    observation_weight: float = 0.0
+    agentic_reflect_allowed: bool = False
+
+
+@dataclass
+class BenchmarkPresetConfig:
+    """Versioned benchmark preset metadata.
+
+    Runtime operators can ignore this section; benchmark scripts and regression
+    tests use it to keep preset semantics explicit across branches.
+    """
+
+    name: str = "custom"
+    version: int = 1
+    budget: str = "mid"
+    low: BenchmarkBudgetConfig = field(default_factory=lambda: BenchmarkBudgetConfig(
+        candidate_limit=12,
+        graph_expansion_limit=12,
+        rerank_top_k=12,
+        max_tokens=2048,
+        agentic_reflect_allowed=False,
+    ))
+    mid: BenchmarkBudgetConfig = field(default_factory=BenchmarkBudgetConfig)
+    high: BenchmarkBudgetConfig = field(default_factory=lambda: BenchmarkBudgetConfig(
+        candidate_limit=60,
+        graph_expansion_limit=40,
+        rerank_top_k=40,
+        max_tokens=16384,
+        observation_weight=0.25,
+        agentic_reflect_allowed=True,
+    ))
+
+
+@dataclass
 class AdversarialDefenseConfig:
     """Adversarial-question defense layer.
 
@@ -704,6 +745,7 @@ class AstrocyteConfig:
     wiki_compile: WikiCompileConfig = field(default_factory=WikiCompileConfig)
     entity_resolution: EntityResolutionConfig = field(default_factory=EntityResolutionConfig)
     async_tasks: AsyncTasksConfig = field(default_factory=AsyncTasksConfig)
+    benchmark_preset: BenchmarkPresetConfig = field(default_factory=BenchmarkPresetConfig)
 
     # MIP (Memory Intent Protocol)
     mip_config_path: str | None = None  # Path to mip.yaml
@@ -866,6 +908,20 @@ def _parse_homeostasis(data: dict) -> HomeostasisConfig:
         rate_limits=RateLimitConfig(**_filter_dataclass_fields(RateLimitConfig, rl, drop_none=True)),
         quotas=QuotaConfig(**_filter_dataclass_fields(QuotaConfig, q, drop_none=True)),
     )
+
+
+def _parse_benchmark_preset(data: dict) -> BenchmarkPresetConfig:
+    """Parse versioned benchmark preset metadata with nested budget blocks."""
+    preset = BenchmarkPresetConfig(**_filter_dataclass_fields(BenchmarkPresetConfig, data))
+    for budget_name in ("low", "mid", "high"):
+        budget_data = data.get(budget_name)
+        if isinstance(budget_data, dict):
+            setattr(
+                preset,
+                budget_name,
+                BenchmarkBudgetConfig(**_filter_dataclass_fields(BenchmarkBudgetConfig, budget_data)),
+            )
+    return preset
 
 
 def _parse_barriers(data: dict) -> BarrierConfig:
@@ -1069,6 +1125,9 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
 
     if "signal_quality" in data:
         config.signal_quality = _parse_signal_quality(data["signal_quality"])
+
+    if "benchmark_preset" in data and isinstance(data["benchmark_preset"], dict):
+        config.benchmark_preset = _parse_benchmark_preset(data["benchmark_preset"])
 
     if "recall_authority" in data and isinstance(data["recall_authority"], dict):
         config.recall_authority = _parse_recall_authority(data["recall_authority"])
