@@ -26,6 +26,7 @@ help:
 	@echo "  make live             GET /live — process up only (no DB; good smoke test)"
 	@echo "  make health           GET /health — includes vector store / DB check"
 	@echo "  make migrate          Run adapters-storage-py/astrocyte-postgres/scripts/migrate.sh (needs Postgres on host port)"
+	@echo "  make migrate-all-tenants  Run migrations across multiple tenant schemas. Pass TENANTS=acme,globex or TENANTS_FILE=path; otherwise auto-discovers."
 	@echo "  make clean            down and remove volumes (wipes Postgres data)"
 	@echo "  make ci-checks        CI: pytest (astrocyte-py + astrocyte-gateway-py), bash -n runbook-up.sh, compose config"
 	@echo "  make smoke-gateway    curl retain/recall against running gateway (see scripts/smoke-gateway.sh)"
@@ -71,6 +72,21 @@ migrate:
 	if [[ -n "$${MIGRATE_DATABASE_URL:-}" ]]; then export DATABASE_URL="$$MIGRATE_DATABASE_URL"; \
 	else export DATABASE_URL="postgresql://$${POSTGRES_USER:-astrocyte}:$${POSTGRES_PASSWORD:-astrocyte}@127.0.0.1:$${POSTGRES_PUBLISH_PORT:-5433}/$${POSTGRES_DB:-astrocyte}"; fi; \
 	../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh
+
+# Run migrations against multiple tenant schemas. Pass TENANTS=acme,globex
+# for an explicit list, TENANTS_FILE=path/to/tenants.txt for a file, or
+# leave both unset to auto-discover schemas from the database.
+migrate-all-tenants:
+	@set -a; [[ -f .env ]] && source ./.env; set +a; \
+	if [[ -n "$${MIGRATE_DATABASE_URL:-}" ]]; then export DATABASE_URL="$$MIGRATE_DATABASE_URL"; \
+	else export DATABASE_URL="postgresql://$${POSTGRES_USER:-astrocyte}:$${POSTGRES_PASSWORD:-astrocyte}@127.0.0.1:$${POSTGRES_PUBLISH_PORT:-5433}/$${POSTGRES_DB:-astrocyte}"; fi; \
+	if [[ -n "$${TENANTS:-}" ]]; then \
+		../adapters-storage-py/astrocyte-postgres/scripts/migrate-all-tenants.sh --tenants "$${TENANTS}"; \
+	elif [[ -n "$${TENANTS_FILE:-}" ]]; then \
+		../adapters-storage-py/astrocyte-postgres/scripts/migrate-all-tenants.sh --tenants-file "$${TENANTS_FILE}"; \
+	else \
+		../adapters-storage-py/astrocyte-postgres/scripts/migrate-all-tenants.sh; \
+	fi
 
 # CI: astrocyte-py tests + shellcheck-style + compose merge + gateway unit tests (no Docker stack required).
 ci-checks: ci-shell ci-compose ci-pytest ci-gateway-tests
