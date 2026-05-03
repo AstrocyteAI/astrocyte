@@ -4,7 +4,62 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-## [0.10.0] — 2026-05-02 (retrieval quality, gateway surface area, lifecycle, DSAR)
+## [0.11.0] — 2026-05-03 (multi-tenancy, mental models, package rename)
+
+This release introduces schema-per-tenant isolation across the entire stack, a new mental-model knowledge tier, intent-driven reflect routing, and a comprehensive package rename. Operators upgrading from v0.10.0 must replace `astrocyte-pgvector` with `astrocyte-postgres` in their dependency lists.
+
+### ⚠️ Breaking — package rename
+
+The Postgres adapter package has been renamed from `astrocyte-pgvector` to `astrocyte-postgres`. The new name reflects that the package can grow to host alternate Postgres-backed strategies (IVFFlat, scalar quantization) without further renames, and aligns with the `docker/astrocyte-postgres` image name.
+
+**Migration:**
+
+```bash
+pip uninstall astrocyte-pgvector
+pip install astrocyte-postgres==0.11.0
+```
+
+The following names have changed in code:
+
+| Before | After |
+|---|---|
+| PyPI: `astrocyte-pgvector` | `astrocyte-postgres` |
+| Class: `PgVectorStore` | `PostgresStore` |
+| Class: `PgWikiStore` | `PostgresWikiStore` |
+| Entry-point key: `pgvector` | `postgres` |
+| Gateway extra: `pip install astrocyte-gateway-py[pgvector]` | `[postgres]` |
+
+The underlying `pgvector` PostgreSQL extension and the `pgvector/pgvector:pg16` upstream Docker image are unchanged — they are upstream technologies, not Astrocyte packages.
+
+### Added
+
+- **Schema-per-tenant isolation** (`astrocyte/tenancy.py`, `adapters-storage-py/astrocyte-postgres/`, `adapters-storage-py/astrocyte-age/`): every tenant gets its own Postgres schema, isolating both vector tables and AGE graphs. Adapters honour `use_schema()` via a `ContextVar` + `fq_table` primitive; the gateway installs tenant-binding middleware around every request so per-tenant boundaries are enforced at the request edge, not the query.
+- **Per-tenant migration script** (`adapters-storage-py/astrocyte-postgres/scripts/migrate.sh`): accepts `SCHEMA=<name>` to migrate a single tenant's schema; new `migrate-all-tenants` wrapper supports four discovery modes (env list, JSON manifest, SQL query, schema regex).
+- **Per-tenant PgQueuer fan-out** (`astrocyte-services-py/astrocyte-gateway-py/`): the gateway worker spawns one poller per tenant, so async work runs against the correct schema without cross-tenant queue starvation.
+- **Mental models knowledge tier** (`pipeline/mental_models.py`): a new top-of-pipeline knowledge layer that sits above raw memories and observation-consolidated digests. Queryable via `brain.search_mental_models()`. Surfaced through the gateway and the agentic-reflect tool registry.
+- **Observation scope + invalidation** (`pipeline/observation.py`): observations can now be scoped to bank / tag / time-range and invalidated when their source memories change. Eliminates stale digests that previously could survive forget operations.
+- **Postgres-native fast paths** (`pipeline/recall.py`): query rewriting at the SQL level (UNION ALL across fact-types, partial indexes per (bank_id, fact_type)) cuts recall latency on multi-bank workloads. Per-strategy timings exposed via `RecallTrace.strategy_latencies`.
+- **Intent-driven reflect routing** (`pipeline/reflect.py`): prompt-variant selection is now driven by query-intent classification (temporal / inference / abstention / synthesis) rather than regex-based heuristics. Adds extraction-discipline rules for date arithmetic and counting.
+- **Four-preset benchmark ablation matrix** (`benchmarks/`): four versioned configs (`config-baseline.yaml`, `config-hindsight-balanced.yaml`, `config-hindsight-aggressive.yaml`, plus the existing default) for per-feature ablation. Used by the bench harness to identify which features actually move scores.
+- **Benchmark state-reset helper** (`astrocyte/eval/_state_reset.py`): TRUNCATEs every bench-relevant Postgres table and recreates the AGE graph at the start of every benchmark run. Eliminates state leakage across runs (stale wiki pages, accumulated entity aliases, orphaned PgQueuer tasks). Wired into `LoComoBenchmark.run`, `LongMemEvalBenchmark.run`, `MemoryEvaluator.run_suite`.
+- **Schema-per-tenant operator guide** (`docs/_end-user/`): production runbook covering per-tenant migrations, AGE schema setup, and the gateway's tenant-binding middleware.
+
+### Changed
+
+- **`pgvector` adapter** (`adapters-storage-py/astrocyte-postgres/`): `text_fts` tsvector column is now part of static migrations rather than added lazily by `_ensure_schema`. Migrations are the single source of truth for the schema.
+- **Reflect prompt-variant selection** routes by intent classification rather than regex heuristics; adds date-arithmetic discipline rules.
+
+### Fixed
+
+- **Bootstrap test** (`adapters-storage-py/astrocyte-postgres/tests/`): test fixture's bootstrap path now stays in sync with the migration files so test/prod schema parity is enforced at CI time.
+
+### Eval
+
+- Benchmark history files updated through 2026-05-03.
+- Hindsight-balanced preset added for adversarial-defense ablation runs.
+- All bench targets now start from a clean Postgres state via the new state-reset helper, removing a class of run-to-run variance.
+
+
 
 A substantial release covering retrieval-quality improvements (HyDE, observation consolidation, multi-query gating, adversarial defense), expanded gateway surface (graph search/neighbors, compile, DSAR erasure), bank lifecycle features (history, audit, export/import, legal hold), ingestion adapters (S3/Garage, document folders), and a 7× speedup on the retain phase of LongMemEval.
 

@@ -13,7 +13,7 @@ const docsDir = path.resolve(__dirname, "..");
 const outFile = path.join(docsDir, "src/data/pypi-install-pins.json");
 const sampleFile = path.join(docsDir, "src/data/pypi-install-pins.sample.json");
 
-const PACKAGES = ["astrocyte", "astrocyte-pgvector"];
+const PACKAGES = ["astrocyte", "astrocyte-postgres"];
 
 function isStableVersion(version) {
   return !/(?:a|b|rc|dev)\d*$/i.test(version);

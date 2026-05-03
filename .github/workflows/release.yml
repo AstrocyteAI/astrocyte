@@ -26,7 +26,7 @@ jobs:
     uses: ./.github/workflows/publish.yml
     secrets: inherit
 
-  publish-pgvector:
+  publish-postgres:
     needs: publish-astrocyte
     permissions:
       contents: read
@@ -48,7 +48,7 @@ jobs:
 
   publish-postgres-image:
     needs:
-      - publish-pgvector
+      - publish-postgres
       - publish-age
     permissions:
       contents: read
