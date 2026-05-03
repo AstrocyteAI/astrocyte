@@ -150,3 +150,33 @@ class TestPostgresStoreStructure:
 
     def test_spi_version_is_1(self):
         assert PostgresStore.SPI_VERSION == 1
+
+    def test_ensure_schema_mirrors_every_migration(self):
+        """Lock in the invariant that ``_ensure_schema()`` (the bootstrap=True
+        dev/test path) stays in sync with the SQL migrations (the
+        bootstrap=False production path).
+
+        Each migration file under ``adapters-storage-py/astrocyte-postgres/migrations/``
+        MUST be referenced by name in the ``_ensure_schema()`` source, so that
+        when someone adds a new migration they're forced to either mirror it
+        in the bootstrap path or document why it's deliberately skipped (e.g.
+        a migration that only deprecates / drops something).
+
+        This prevents the class of bug we hit with ``text_fts``: the column
+        existed only in ``_ensure_schema()`` (bootstrap=True), so production
+        deployments using ``bootstrap_schema=false`` had every keyword/hybrid
+        SQL query failing silently with ``column \"text_fts\" does not exist``.
+        """
+        repo_root = Path(__file__).resolve().parents[3]
+        migrations_dir = repo_root / "adapters-storage-py/astrocyte-postgres/migrations"
+        source = inspect.getsource(PostgresStore._ensure_schema)
+
+        migration_files = sorted(p.name for p in migrations_dir.glob("[0-9][0-9][0-9]_*.sql"))
+        assert migration_files, "no migrations found — wrong path?"
+
+        missing = [name for name in migration_files if name not in source]
+        assert not missing, (
+            f"_ensure_schema() does not mention these migration files: {missing}. "
+            f"Add the matching DDL (or an explicit comment justifying skip) "
+            f"so the bootstrap=True path stays in sync with bootstrap=False."
+        )
