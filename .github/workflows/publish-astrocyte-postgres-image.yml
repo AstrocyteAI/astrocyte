@@ -1,7 +1,7 @@
 # Builds and pushes the combined PostgreSQL 16 + AGE + pgvector image to GHCR.
 #
 # This image is used as:
-#   - The service container in the gateway pgvector+AGE integration test job
+#   - The service container in the gateway postgres+AGE integration test job
 #   - The `postgres` service in docker-compose-age.yml for local dev
 #
 # Pushed tags:

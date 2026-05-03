@@ -42,7 +42,7 @@ _BENCH_TABLES: tuple[str, ...] = (
     "astrocyte_wiki_links",
     "astrocyte_wiki_revisions",
     "astrocyte_wiki_pages",
-    # Entity layer (cross-store: same tables shared by pgvector + AGE)
+    # Entity layer (cross-store: same tables shared by postgres + AGE)
     "astrocyte_memory_entities",
     "astrocyte_age_mem_entity",
     "astrocyte_entity_links",

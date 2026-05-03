@@ -1,4 +1,4 @@
-"""HTTP integration against real Postgres + pgvector when DATABASE_URL is set."""
+"""HTTP integration against the astrocyte-postgres stack (Postgres + pgvector + AGE) when DATABASE_URL is set."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_gateway_retain_recall_health_pgvector(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_gateway_retain_recall_health_postgres(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Full reference Postgres stack against DATABASE_URL.
 
     Local: set ``bootstrap_schema: true`` (no prior ``migrate.sh``).
@@ -34,9 +34,9 @@ def test_gateway_retain_recall_health_pgvector(monkeypatch: pytest.MonkeyPatch, 
     cfg.write_text(
         f"""
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 graph_store: age
-wiki_store: pgvector
+wiki_store: postgres
 llm_provider: mock
 llm_provider_config:
   embedding_dimensions: {embedding_dimensions}
