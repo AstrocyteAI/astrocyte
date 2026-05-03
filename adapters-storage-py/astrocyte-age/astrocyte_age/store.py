@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from typing import Any, ClassVar
 
 import psycopg
+from astrocyte.tenancy import DEFAULT_SCHEMA, fq_table, get_current_schema
 from astrocyte.types import (
     Entity,
     EntityCandidateMatch,
@@ -172,8 +173,38 @@ class AgeGraphStore:
         self._bootstrap_schema = bootstrap_schema
         self._pool: AsyncConnectionPool | None = None
         self._pool_lock = asyncio.Lock()
-        self._schema_ready = not bootstrap_schema
+        # Per-tenant-schema bootstrap tracking. A single AgeGraphStore can
+        # serve multiple tenants when the gateway middleware sets
+        # ``_current_schema`` per request — each tenant gets its own AGE
+        # graph and SQL helper tables in its own schema.
+        self._bootstrapped_schemas: set[str] = set()
         self._schema_lock = asyncio.Lock()
+
+    # ------------------------------------------------------------------
+    # Per-tenant naming helpers
+    # ------------------------------------------------------------------
+
+    def _active_graph(self) -> str:
+        """Return the AGE graph name for the active tenant.
+
+        - When the active schema is the default (``public``), uses the base
+          graph name (``astrocyte`` by default) so single-tenant deployments
+          stay byte-compatible with their existing graph.
+        - For any other schema, suffixes the graph name with the schema:
+          ``astrocyte__tenant_acme``. AGE graphs are cluster-global, so we
+          have to namespace them ourselves.
+
+        Validated through :func:`_safe_graph_name` so an injection-shaped
+        schema can never produce an invalid identifier.
+        """
+        active = get_current_schema()
+        if active == DEFAULT_SCHEMA:
+            return self._graph
+        return _safe_graph_name(f"{self._graph}__{active}")
+
+    def _fq(self, table: str) -> str:
+        """Schema-qualify an SQL helper-table name using the active tenant."""
+        return fq_table(table)
 
     # ------------------------------------------------------------------
     # Connection pool
@@ -231,11 +262,28 @@ class AgeGraphStore:
     # ------------------------------------------------------------------
 
     async def _ensure_schema(self) -> None:
-        if self._schema_ready:
+        """Per-tenant-aware bootstrap of AGE graph + SQL helper tables.
+
+        Creates ``<base_graph>__<schema>`` (or just ``<base_graph>`` for the
+        default schema) plus the helper SQL tables in the active tenant's
+        Postgres schema. Tracks bootstrapped schemas so a single
+        ``AgeGraphStore`` instance can serve multiple tenants when the
+        gateway middleware sets ``_current_schema`` per request.
+        """
+        if not self._bootstrap_schema:
+            return
+        active_schema = get_current_schema()
+        if active_schema in self._bootstrapped_schemas:
             return
         async with self._schema_lock:
-            if self._schema_ready:
+            if active_schema in self._bootstrapped_schemas:
                 return
+            graph = self._active_graph()
+            mem_links = self._fq("astrocyte_memory_links")
+            mem_entity = self._fq("astrocyte_age_mem_entity")
+            entities = self._fq("astrocyte_entities")
+            entity_links = self._fq("astrocyte_entity_links")
+            memory_entities = self._fq("astrocyte_memory_entities")
             conn = await self._conn()
             try:
                 # Ensure the AGE extension exists (idempotent; requires superuser).
@@ -247,8 +295,10 @@ class AgeGraphStore:
                     # search-path order. ``public`` first prevents plain-SQL
                     # writes from creating duplicate tables in ag_catalog.
                     await cur.execute(
-                        "SET search_path = public, \"$user\", ag_catalog"
+                        f'SET search_path = "{active_schema}", public, "$user", ag_catalog'
                     )
+                    # Make sure the tenant schema exists before any helper-table DDL.
+                    await cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{active_schema}"')
 
                 # Create the graph if it doesn't exist yet.
                 # AGE raises an error if you call create_graph twice,
@@ -256,12 +306,12 @@ class AgeGraphStore:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT count(*) FROM ag_catalog.ag_graph WHERE name = %s",
-                        [self._graph],
+                        [graph],
                     )
                     row = await cur.fetchone()
                     if row and row[0] == 0:
                         await cur.execute(
-                            "SELECT ag_catalog.create_graph(%s)", [self._graph]
+                            "SELECT ag_catalog.create_graph(%s)", [graph]
                         )
 
                     # Pre-create vertex and edge labels so concurrent MERGE
@@ -274,12 +324,12 @@ class AgeGraphStore:
                         JOIN ag_catalog.ag_graph g ON g.graphid = l.graph
                         WHERE g.name = %s AND l.name = 'Entity'
                         """,
-                        [self._graph],
+                        [graph],
                     )
                     if (await cur.fetchone() or (0,))[0] == 0:
                         await cur.execute(
                             "SELECT ag_catalog.create_vlabel(%s, 'Entity')",
-                            [self._graph],
+                            [graph],
                         )
 
                     await cur.execute(
@@ -288,12 +338,12 @@ class AgeGraphStore:
                         JOIN ag_catalog.ag_graph g ON g.graphid = l.graph
                         WHERE g.name = %s AND l.name = 'LINK'
                         """,
-                        [self._graph],
+                        [graph],
                     )
                     if (await cur.fetchone() or (0,))[0] == 0:
                         await cur.execute(
                             "SELECT ag_catalog.create_elabel(%s, 'LINK')",
-                            [self._graph],
+                            [graph],
                         )
 
                     # Memory-entity mapping table (plain SQL)
@@ -303,8 +353,8 @@ class AgeGraphStore:
                     # memory linked to top-K most-similar prior memories
                     # with similarity >= threshold). Used by the
                     # link-expansion retrieval CTE.
-                    await cur.execute("""
-                        CREATE TABLE IF NOT EXISTS astrocyte_memory_links (
+                    await cur.execute(f"""
+                        CREATE TABLE IF NOT EXISTS {mem_links} (
                             id BIGSERIAL PRIMARY KEY,
                             bank_id TEXT NOT NULL,
                             source_memory_id TEXT NOT NULL,
@@ -313,25 +363,25 @@ class AgeGraphStore:
                             evidence TEXT,
                             confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
                             weight DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-                            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             UNIQUE (bank_id, source_memory_id, target_memory_id, link_type)
                         )
                     """)
-                    await cur.execute("""
+                    await cur.execute(f"""
                         CREATE INDEX IF NOT EXISTS idx_mem_links_source
-                        ON astrocyte_memory_links (bank_id, source_memory_id)
+                        ON {mem_links} (bank_id, source_memory_id)
                     """)
-                    await cur.execute("""
+                    await cur.execute(f"""
                         CREATE INDEX IF NOT EXISTS idx_mem_links_target
-                        ON astrocyte_memory_links (bank_id, target_memory_id)
+                        ON {mem_links} (bank_id, target_memory_id)
                     """)
-                    await cur.execute("""
+                    await cur.execute(f"""
                         CREATE INDEX IF NOT EXISTS idx_mem_links_type
-                        ON astrocyte_memory_links (bank_id, link_type)
+                        ON {mem_links} (bank_id, link_type)
                     """)
-                    await cur.execute("""
-                        CREATE TABLE IF NOT EXISTS astrocyte_age_mem_entity (
+                    await cur.execute(f"""
+                        CREATE TABLE IF NOT EXISTS {mem_entity} (
                             id         BIGSERIAL PRIMARY KEY,
                             bank_id    TEXT        NOT NULL,
                             memory_id  TEXT        NOT NULL,
@@ -340,18 +390,18 @@ class AgeGraphStore:
                             UNIQUE (bank_id, memory_id, entity_id)
                         )
                     """)
-                    await cur.execute("""
+                    await cur.execute(f"""
                         CREATE INDEX IF NOT EXISTS idx_age_mem_entity_bank_entity
-                        ON astrocyte_age_mem_entity (bank_id, entity_id)
+                        ON {mem_entity} (bank_id, entity_id)
                     """)
-                    await cur.execute("""
-                        CREATE TABLE IF NOT EXISTS astrocyte_entities (
+                    await cur.execute(f"""
+                        CREATE TABLE IF NOT EXISTS {entities} (
                             id TEXT NOT NULL,
                             bank_id TEXT NOT NULL,
                             name TEXT NOT NULL,
                             entity_type TEXT NOT NULL,
                             aliases TEXT[],
-                            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             mention_count BIGINT NOT NULL DEFAULT 1,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -360,12 +410,12 @@ class AgeGraphStore:
                     """)
                     # Backfill column for existing deployments where the table
                     # was created before mention_count was introduced. Idempotent.
-                    await cur.execute("""
-                        ALTER TABLE astrocyte_entities
+                    await cur.execute(f"""
+                        ALTER TABLE {entities}
                             ADD COLUMN IF NOT EXISTS mention_count BIGINT NOT NULL DEFAULT 1
                     """)
-                    await cur.execute("""
-                        CREATE TABLE IF NOT EXISTS astrocyte_entity_links (
+                    await cur.execute(f"""
+                        CREATE TABLE IF NOT EXISTS {entity_links} (
                             id BIGSERIAL PRIMARY KEY,
                             bank_id TEXT NOT NULL,
                             entity_a TEXT NOT NULL,
@@ -373,13 +423,13 @@ class AgeGraphStore:
                             link_type TEXT NOT NULL,
                             evidence TEXT,
                             confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-                            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             UNIQUE (bank_id, entity_a, entity_b, link_type)
                         )
                     """)
-                    await cur.execute("""
-                        CREATE TABLE IF NOT EXISTS astrocyte_memory_entities (
+                    await cur.execute(f"""
+                        CREATE TABLE IF NOT EXISTS {memory_entities} (
                             bank_id TEXT NOT NULL,
                             memory_id TEXT NOT NULL,
                             entity_id TEXT NOT NULL,
@@ -389,13 +439,13 @@ class AgeGraphStore:
                             PRIMARY KEY (bank_id, memory_id, entity_id)
                         )
                     """)
-                    await cur.execute("""
+                    await cur.execute(f"""
                         CREATE INDEX IF NOT EXISTS astrocyte_memory_entities_entity_idx
-                        ON astrocyte_memory_entities (bank_id, entity_id)
+                        ON {memory_entities} (bank_id, entity_id)
                     """)
 
                 await conn.commit()
-                self._schema_ready = True
+                self._bootstrapped_schemas.add(active_schema)
             except Exception:
                 await conn.rollback()
                 raise
@@ -420,7 +470,7 @@ class AgeGraphStore:
             columns: Expected return column names, used to build the AS clause.
         """
         as_clause = ", ".join(f"{col} agtype" for col in columns)
-        sql = f"SELECT * FROM ag_catalog.cypher('{self._graph}', $$ {cypher} $$) AS ({as_clause})"
+        sql = f"SELECT * FROM ag_catalog.cypher('{self._active_graph()}', $$ {cypher} $$) AS ({as_clause})"
         async with conn.cursor() as cur:
             try:
                 await cur.execute(sql)
@@ -476,8 +526,8 @@ class AgeGraphStore:
                     if embedding_text is not None:
                         # pgvector column present — include embedding in upsert.
                         await cur.execute(
-                            """
-                            INSERT INTO astrocyte_entities
+                            f"""
+                            INSERT INTO {self._fq("astrocyte_entities")}
                                 (bank_id, id, name, entity_type, aliases, metadata,
                                  embedding, updated_at)
                             VALUES (%s, %s, %s, %s, %s, %s, %s::vector, NOW())
@@ -486,7 +536,7 @@ class AgeGraphStore:
                                 entity_type = EXCLUDED.entity_type,
                                 aliases = EXCLUDED.aliases,
                                 metadata = EXCLUDED.metadata,
-                                embedding = COALESCE(EXCLUDED.embedding, astrocyte_entities.embedding),
+                                embedding = COALESCE(EXCLUDED.embedding, {self._fq("astrocyte_entities")}.embedding),
                                 updated_at = NOW()
                             """,
                             [
@@ -505,8 +555,8 @@ class AgeGraphStore:
                         # the INSERT works even if the column hasn't been added yet by
                         # migration 005_entities_trigram_embedding.sql.
                         await cur.execute(
-                            """
-                            INSERT INTO astrocyte_entities
+                            f"""
+                            INSERT INTO {self._fq("astrocyte_entities")}
                                 (bank_id, id, name, entity_type, aliases, metadata,
                                  updated_at)
                             VALUES (%s, %s, %s, %s, %s, %s, NOW())
@@ -564,8 +614,8 @@ class AgeGraphStore:
             for i, link in enumerate(sorted_links):
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        """
-                        INSERT INTO astrocyte_entity_links
+                        f"""
+                        INSERT INTO {self._fq("astrocyte_entity_links")}
                             (bank_id, entity_a, entity_b, link_type, evidence, confidence, metadata, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (bank_id, entity_a, entity_b, link_type) DO UPDATE SET
@@ -622,16 +672,16 @@ class AgeGraphStore:
             async with conn.cursor() as cur:
                 for assoc in associations:
                     await cur.execute(
-                        """
-                        INSERT INTO astrocyte_age_mem_entity (bank_id, memory_id, entity_id)
+                        f"""
+                        INSERT INTO {self._fq("astrocyte_age_mem_entity")} (bank_id, memory_id, entity_id)
                         VALUES (%s, %s, %s)
                         ON CONFLICT (bank_id, memory_id, entity_id) DO NOTHING
                         """,
                         [bank_id, assoc.memory_id, assoc.entity_id],
                     )
                     await cur.execute(
-                        """
-                        INSERT INTO astrocyte_memory_entities (bank_id, memory_id, entity_id)
+                        f"""
+                        INSERT INTO {self._fq("astrocyte_memory_entities")} (bank_id, memory_id, entity_id)
                         VALUES (%s, %s, %s)
                         ON CONFLICT (bank_id, memory_id, entity_id) DO NOTHING
                         """,
@@ -662,7 +712,7 @@ class AgeGraphStore:
                 await cur.execute(
                     f"""
                     SELECT DISTINCT memory_id
-                    FROM astrocyte_memory_entities
+                    FROM {self._fq("astrocyte_memory_entities")}
                     WHERE bank_id = %s AND entity_id IN ({placeholders})
                     LIMIT %s
                     """,
@@ -696,9 +746,9 @@ class AgeGraphStore:
             q_lower = query.strip().lower()
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
+                    f"""
                     SELECT id, name, entity_type, aliases, metadata
-                    FROM astrocyte_entities
+                    FROM {self._fq("astrocyte_entities")}
                     WHERE bank_id = %s
                       AND (
                         lower(name) LIKE %s
@@ -780,7 +830,7 @@ class AgeGraphStore:
                 # because (entity_a, entity_b) pairs can have multiple links
                 # of varied types.
                 await cur.execute(
-                    """
+                    f"""
                     SELECT
                         e.id,
                         e.name,
@@ -794,8 +844,8 @@ class AgeGraphStore:
                         COALESCE(
                             (
                                 SELECT array_agg(DISTINCT lower(other.name))
-                                FROM astrocyte_entity_links l
-                                JOIN astrocyte_entities other
+                                FROM {self._fq("astrocyte_entity_links")} l
+                                JOIN {self._fq("astrocyte_entities")} other
                                   ON other.bank_id = l.bank_id
                                  AND other.id = CASE
                                      WHEN l.entity_a = e.id THEN l.entity_b
@@ -807,7 +857,7 @@ class AgeGraphStore:
                             ),
                             ARRAY[]::text[]
                         ) AS co_occurring_names
-                    FROM astrocyte_entities e
+                    FROM {self._fq("astrocyte_entities")} e
                     WHERE e.bank_id = %s
                       AND similarity(lower(e.name), lower(%s)) >= %s
                     ORDER BY name_sim DESC
@@ -894,9 +944,9 @@ class AgeGraphStore:
         try:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
+                    f"""
                     SELECT memory_id, entity_id
-                    FROM astrocyte_age_mem_entity
+                    FROM {self._fq("astrocyte_age_mem_entity")}
                     WHERE bank_id = %s
                       AND memory_id = ANY(%s::text[])
                     """,
@@ -940,7 +990,7 @@ class AgeGraphStore:
         try:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
+                    f"""
                     WITH RECURSIVE
                     seeds AS (
                         SELECT unnest(%s::text[]) AS entity_id, 0 AS depth
@@ -955,7 +1005,7 @@ class AgeGraphStore:
                             END AS entity_id,
                             w.depth + 1 AS depth
                         FROM walk w
-                        JOIN astrocyte_entity_links l
+                        JOIN {self._fq("astrocyte_entity_links")} l
                           ON l.bank_id = %s
                          AND (l.entity_a = w.entity_id OR l.entity_b = w.entity_id)
                          AND l.link_type = ANY(%s::text[])
@@ -996,8 +1046,8 @@ class AgeGraphStore:
         try:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
-                    UPDATE astrocyte_entities
+                    f"""
+                    UPDATE {self._fq("astrocyte_entities")}
                        SET mention_count = mention_count + 1,
                            updated_at = NOW()
                      WHERE bank_id = %s
@@ -1038,8 +1088,8 @@ class AgeGraphStore:
                         else datetime.now(timezone.utc).isoformat()
                     )
                     await cur.execute(
-                        """
-                        INSERT INTO astrocyte_memory_links
+                        f"""
+                        INSERT INTO {self._fq("astrocyte_memory_links")}
                             (bank_id, source_memory_id, target_memory_id,
                              link_type, evidence, confidence, weight,
                              metadata, created_at)
@@ -1101,7 +1151,7 @@ class AgeGraphStore:
                     f"""
                     SELECT source_memory_id, target_memory_id, link_type,
                            evidence, confidence, weight, metadata, created_at
-                    FROM astrocyte_memory_links
+                    FROM {self._fq("astrocyte_memory_links")}
                     WHERE bank_id = %s
                       AND (source_memory_id = ANY(%s::text[])
                            OR target_memory_id = ANY(%s::text[]))
@@ -1153,14 +1203,14 @@ class AgeGraphStore:
         try:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
+                    f"""
                     WITH
                     seeds AS (
                         SELECT unnest(%s::text[]) AS memory_id
                     ),
                     seed_entities AS (
                         SELECT DISTINCT entity_id
-                        FROM astrocyte_age_mem_entity
+                        FROM {self._fq("astrocyte_age_mem_entity")}
                         WHERE bank_id = %s
                           AND memory_id = ANY(%s::text[])
                     ),
@@ -1171,7 +1221,7 @@ class AgeGraphStore:
                             0.0::double precision AS semantic_total,
                             0.0::double precision AS causal_total,
                             ARRAY['entity_overlap']::text[] AS sources
-                        FROM astrocyte_age_mem_entity me
+                        FROM {self._fq("astrocyte_age_mem_entity")} me
                         JOIN seed_entities se ON se.entity_id = me.entity_id
                         WHERE me.bank_id = %s
                           AND NOT (me.memory_id = ANY(%s::text[]))
@@ -1187,7 +1237,7 @@ class AgeGraphStore:
                             END AS memory_id,
                             ml.link_type,
                             ml.weight
-                        FROM astrocyte_memory_links ml
+                        FROM {self._fq("astrocyte_memory_links")} ml
                         WHERE ml.bank_id = %s
                           AND ml.link_type = ANY(%s::text[])
                           AND (
@@ -1313,8 +1363,8 @@ class AgeGraphStore:
             ts = (link.created_at or datetime.now(timezone.utc)).isoformat()
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
-                    INSERT INTO astrocyte_entity_links
+                    f"""
+                    INSERT INTO {self._fq("astrocyte_entity_links")}
                         (bank_id, entity_a, entity_b, link_type, evidence, confidence, metadata, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (bank_id, entity_a, entity_b, link_type) DO UPDATE SET
@@ -1362,11 +1412,11 @@ class AgeGraphStore:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT count(*) FROM ag_catalog.ag_graph WHERE name = %s",
-                        [self._graph],
+                        [self._active_graph()],
                     )
                     row = await cur.fetchone()
                 graph_exists = row is not None and row[0] > 0
-                msg = f"age ok (graph '{self._graph}' {'found' if graph_exists else 'not yet created'})"
+                msg = f"age ok (graph '{self._active_graph()}' {'found' if graph_exists else 'not yet created'})"
                 return HealthStatus(healthy=True, message=msg)
             finally:
                 await pool.putconn(conn)
