@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 import psycopg
+from astrocyte.tenancy import fq_table, get_current_schema
 from astrocyte.types import HealthStatus, WikiPage
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
@@ -16,7 +17,12 @@ from psycopg_pool import AsyncConnectionPool
 
 
 class PostgresWikiStore:
-    """Durable WikiStore using the reference Astrocyte Postgres schema."""
+    """Durable WikiStore using the reference Astrocyte Postgres schema.
+
+    Per-tenant aware via :func:`astrocyte.tenancy.fq_table` — every SQL
+    string that references a table goes through :meth:`_fq` so the active
+    tenant's schema is honoured.
+    """
 
     SPI_VERSION: ClassVar[int] = 1
 
@@ -35,8 +41,13 @@ class PostgresWikiStore:
         self._bootstrap_schema = bool(bootstrap_schema)
         self._pool: AsyncConnectionPool | None = None
         self._pool_lock = asyncio.Lock()
-        self._schema_ready = not self._bootstrap_schema
+        # Per-tenant-schema bootstrap tracking — see PostgresStore for rationale.
+        self._bootstrapped_schemas: set[str] = set()
         self._schema_lock = asyncio.Lock()
+
+    def _fq(self, table: str) -> str:
+        """Schema-qualify a table name using the current tenant context."""
+        return fq_table(table)
 
     async def _ensure_pool(self) -> AsyncConnectionPool:
         async with self._pool_lock:
@@ -65,21 +76,37 @@ class PostgresWikiStore:
             return self._pool
 
     async def _ensure_schema(self, pool: AsyncConnectionPool) -> None:
-        if self._schema_ready:
+        """Per-tenant-aware bootstrap of wiki tables in the active schema.
+
+        Same per-(schema, store) tracking pattern as
+        :meth:`PostgresStore._ensure_schema`. Mirrors ``007_wiki_tables.sql``
+        for the active tenant schema.
+        """
+        if not self._bootstrap_schema:
+            return
+        active_schema = get_current_schema()
+        if active_schema in self._bootstrapped_schemas:
             return
         async with self._schema_lock:
-            if self._schema_ready:
+            if active_schema in self._bootstrapped_schemas:
                 return
+            banks = self._fq("astrocyte_banks")
+            pages = self._fq("astrocyte_wiki_pages")
+            revisions = self._fq("astrocyte_wiki_revisions")
+            sources = self._fq("astrocyte_wiki_revision_sources")
+            links = self._fq("astrocyte_wiki_links")
+            lint = self._fq("astrocyte_wiki_lint_issues")
             async with pool.connection() as conn:
+                await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{active_schema}"')
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
                 await conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS astrocyte_banks (
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {banks} (
                         id TEXT PRIMARY KEY,
                         tenant_id TEXT,
                         display_name TEXT,
                         description TEXT,
-                        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         archived_at TIMESTAMPTZ
@@ -87,8 +114,8 @@ class PostgresWikiStore:
                     """
                 )
                 await conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS astrocyte_wiki_pages (
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {pages} (
                         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                         page_id TEXT NOT NULL,
                         bank_id TEXT NOT NULL,
@@ -99,7 +126,7 @@ class PostgresWikiStore:
                         current_revision_id UUID,
                         confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
                         tags TEXT[],
-                        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         deleted_at TIMESTAMPTZ,
@@ -109,59 +136,59 @@ class PostgresWikiStore:
                     """
                 )
                 await conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS astrocyte_wiki_revisions (
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {revisions} (
                         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                        page_uuid UUID NOT NULL REFERENCES astrocyte_wiki_pages(id) ON DELETE CASCADE,
+                        page_uuid UUID NOT NULL REFERENCES {pages}(id) ON DELETE CASCADE,
                         revision_number INTEGER NOT NULL,
                         markdown TEXT NOT NULL,
                         summary TEXT,
                         compiled_by TEXT,
                         source_count INTEGER NOT NULL DEFAULT 0,
                         tokens_used INTEGER NOT NULL DEFAULT 0,
-                        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         UNIQUE (page_uuid, revision_number)
                     )
                     """
                 )
                 await conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS astrocyte_wiki_revision_sources (
-                        revision_id UUID NOT NULL REFERENCES astrocyte_wiki_revisions(id) ON DELETE CASCADE,
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {sources} (
+                        revision_id UUID NOT NULL REFERENCES {revisions}(id) ON DELETE CASCADE,
                         memory_id TEXT NOT NULL,
                         bank_id TEXT NOT NULL,
                         quote TEXT,
                         relevance DOUBLE PRECISION,
-                        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         PRIMARY KEY (revision_id, memory_id)
                     )
                     """
                 )
                 await conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS astrocyte_wiki_links (
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {links} (
                         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                        from_page_id UUID NOT NULL REFERENCES astrocyte_wiki_pages(id) ON DELETE CASCADE,
-                        to_page_id UUID REFERENCES astrocyte_wiki_pages(id) ON DELETE SET NULL,
+                        from_page_id UUID NOT NULL REFERENCES {pages}(id) ON DELETE CASCADE,
+                        to_page_id UUID REFERENCES {pages}(id) ON DELETE SET NULL,
                         target_slug TEXT NOT NULL,
                         link_type TEXT NOT NULL DEFAULT 'related',
-                        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         UNIQUE (from_page_id, target_slug, link_type)
                     )
                     """
                 )
                 await conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS astrocyte_wiki_lint_issues (
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {lint} (
                         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                        page_id UUID NOT NULL REFERENCES astrocyte_wiki_pages(id) ON DELETE CASCADE,
-                        revision_id UUID REFERENCES astrocyte_wiki_revisions(id) ON DELETE SET NULL,
+                        page_id UUID NOT NULL REFERENCES {pages}(id) ON DELETE CASCADE,
+                        revision_id UUID REFERENCES {revisions}(id) ON DELETE SET NULL,
                         issue_type TEXT NOT NULL,
                         severity TEXT NOT NULL CHECK (severity IN ('low', 'medium', 'high')),
                         message TEXT NOT NULL,
-                        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        evidence JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         status TEXT NOT NULL DEFAULT 'open',
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         resolved_at TIMESTAMPTZ
@@ -169,14 +196,14 @@ class PostgresWikiStore:
                     """
                 )
                 await conn.execute(
-                    """
+                    f"""
                     CREATE INDEX IF NOT EXISTS astrocyte_wiki_pages_bank_kind_idx
-                    ON astrocyte_wiki_pages (bank_id, kind)
+                    ON {pages} (bank_id, kind)
                     WHERE deleted_at IS NULL
                     """
                 )
                 await conn.commit()
-            self._schema_ready = True
+            self._bootstrapped_schemas.add(active_schema)
 
     async def upsert_page(self, page: WikiPage, bank_id: str) -> str:
         pool = await self._ensure_pool()
@@ -185,18 +212,18 @@ class PostgresWikiStore:
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    """
-                    INSERT INTO astrocyte_banks (id, updated_at)
+                    f"""
+                    INSERT INTO {self._fq("astrocyte_banks")} (id, updated_at)
                     VALUES (%s, NOW())
                     ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
                     """,
                     (bank_id,),
                 )
                 await cur.execute(
-                    """
+                    f"""
                     SELECT p.id, COALESCE(MAX(r.revision_number), 0) AS revision_number
-                    FROM astrocyte_wiki_pages p
-                    LEFT JOIN astrocyte_wiki_revisions r ON r.page_uuid = p.id
+                    FROM {self._fq("astrocyte_wiki_pages")} p
+                    LEFT JOIN {self._fq("astrocyte_wiki_revisions")} r ON r.page_uuid = p.id
                     WHERE p.bank_id = %s AND p.page_id = %s
                     GROUP BY p.id
                     """,
@@ -207,8 +234,8 @@ class PostgresWikiStore:
                     page_uuid = existing["id"]
                     revision = int(existing["revision_number"]) + 1
                     await cur.execute(
-                        """
-                        UPDATE astrocyte_wiki_pages
+                        f"""
+                        UPDATE {self._fq("astrocyte_wiki_pages")}
                         SET slug = %s,
                             title = %s,
                             kind = %s,
@@ -233,8 +260,8 @@ class PostgresWikiStore:
                 else:
                     revision = 1
                     await cur.execute(
-                        """
-                        INSERT INTO astrocyte_wiki_pages
+                        f"""
+                        INSERT INTO {self._fq("astrocyte_wiki_pages")}
                             (page_id, bank_id, slug, title, kind, scope, tags, metadata, created_at, updated_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
@@ -255,8 +282,8 @@ class PostgresWikiStore:
                     page_uuid = (await cur.fetchone())["id"]
 
                 await cur.execute(
-                    """
-                    INSERT INTO astrocyte_wiki_revisions
+                    f"""
+                    INSERT INTO {self._fq("astrocyte_wiki_revisions")}
                         (page_uuid, revision_number, markdown, source_count, metadata, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id
@@ -274,8 +301,8 @@ class PostgresWikiStore:
 
                 for source_id in page.source_ids:
                     await cur.execute(
-                        """
-                        INSERT INTO astrocyte_wiki_revision_sources (revision_id, memory_id, bank_id)
+                        f"""
+                        INSERT INTO {self._fq("astrocyte_wiki_revision_sources")} (revision_id, memory_id, bank_id)
                         VALUES (%s, %s, %s)
                         ON CONFLICT (revision_id, memory_id) DO NOTHING
                         """,
@@ -284,8 +311,8 @@ class PostgresWikiStore:
 
                 for link in page.cross_links:
                     await cur.execute(
-                        """
-                        INSERT INTO astrocyte_wiki_links (from_page_id, target_slug, link_type)
+                        f"""
+                        INSERT INTO {self._fq("astrocyte_wiki_links")} (from_page_id, target_slug, link_type)
                         VALUES (%s, %s, 'related')
                         ON CONFLICT (from_page_id, target_slug, link_type) DO NOTHING
                         """,
@@ -293,8 +320,8 @@ class PostgresWikiStore:
                     )
 
                 await cur.execute(
-                    """
-                    UPDATE astrocyte_wiki_pages
+                    f"""
+                    UPDATE {self._fq("astrocyte_wiki_pages")}
                     SET current_revision_id = %s, updated_at = %s
                     WHERE id = %s
                     """,
@@ -309,10 +336,10 @@ class PostgresWikiStore:
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    """
+                    f"""
                     SELECT p.*, r.id AS revision_id, r.revision_number, r.markdown, r.created_at AS revised_at
-                    FROM astrocyte_wiki_pages p
-                    JOIN astrocyte_wiki_revisions r ON r.id = p.current_revision_id
+                    FROM {self._fq("astrocyte_wiki_pages")} p
+                    JOIN {self._fq("astrocyte_wiki_revisions")} r ON r.id = p.current_revision_id
                     WHERE p.bank_id = %s AND p.page_id = %s AND p.deleted_at IS NULL
                     """,
                     (bank_id, page_id),
@@ -343,8 +370,8 @@ class PostgresWikiStore:
                 await cur.execute(
                     f"""
                     SELECT p.*, r.id AS revision_id, r.revision_number, r.markdown, r.created_at AS revised_at
-                    FROM astrocyte_wiki_pages p
-                    JOIN astrocyte_wiki_revisions r ON r.id = p.current_revision_id
+                    FROM {self._fq("astrocyte_wiki_pages")} p
+                    JOIN {self._fq("astrocyte_wiki_revisions")} r ON r.id = p.current_revision_id
                     WHERE {" AND ".join(where)}
                     ORDER BY p.page_id
                     """,
@@ -359,8 +386,8 @@ class PostgresWikiStore:
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
-                    UPDATE astrocyte_wiki_pages
+                    f"""
+                    UPDATE {self._fq("astrocyte_wiki_pages")}
                     SET deleted_at = NOW()
                     WHERE bank_id = %s AND page_id = %s AND deleted_at IS NULL
                     """,
@@ -388,9 +415,9 @@ class PostgresWikiStore:
 
     async def _page_from_row(self, cur: psycopg.AsyncCursor[dict[str, Any]], row: dict[str, Any]) -> WikiPage:
         await cur.execute(
-            """
+            f"""
             SELECT memory_id
-            FROM astrocyte_wiki_revision_sources
+            FROM {self._fq("astrocyte_wiki_revision_sources")}
             WHERE revision_id = %s
             ORDER BY memory_id
             """,
@@ -399,9 +426,9 @@ class PostgresWikiStore:
         sources = [source_row["memory_id"] for source_row in await cur.fetchall()]
 
         await cur.execute(
-            """
+            f"""
             SELECT target_slug
-            FROM astrocyte_wiki_links
+            FROM {self._fq("astrocyte_wiki_links")}
             WHERE from_page_id = %s
             ORDER BY target_slug
             """,

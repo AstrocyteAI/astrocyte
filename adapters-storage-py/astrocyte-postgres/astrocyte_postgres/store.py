@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 import psycopg
+from astrocyte.tenancy import fq_function, fq_table, get_current_schema
 from astrocyte.types import (
     Document,
     DocumentFilters,
@@ -76,9 +77,28 @@ class PostgresStore:
         self._bootstrap_schema = bool(bootstrap_schema)
         self._pool: AsyncConnectionPool | None = None
         self._pool_lock = asyncio.Lock()
-        # When migrations own DDL, skip in-app CREATE TABLE / indexes.
-        self._schema_ready = not self._bootstrap_schema
+        # Per-tenant-schema bootstrap tracking. A single PostgresStore instance
+        # can serve multiple tenants when the gateway sets ``_current_schema``
+        # per request, so the legacy single-shot ``_schema_ready`` flag has
+        # been replaced with a set of schemas that have had bootstrap applied.
+        # When ``bootstrap_schema=False`` (production), the set is pre-seeded
+        # with every schema the store has been touched from, effectively a
+        # no-op.
+        self._bootstrapped_schemas: set[str] = set()
         self._schema_lock = asyncio.Lock()
+
+    def _fq(self, table: str | None = None) -> str:
+        """Schema-qualify a table name using the current tenant context.
+
+        Defaults to ``self._table`` for the store's primary table; pass an
+        explicit name (e.g. ``"astrocyte_banks"``) for the cross-cutting
+        helper tables this store also writes to.
+        """
+        return fq_table(table or self._table)
+
+    def _fq_func(self, function_name: str) -> str:
+        """Schema-qualify a function/trigger-function name."""
+        return fq_function(function_name)
 
     async def _ensure_pool(self) -> AsyncConnectionPool:
         async with self._pool_lock:
@@ -124,14 +144,60 @@ class PostgresStore:
             return self._pool
 
     async def _ensure_schema(self, pool: AsyncConnectionPool) -> None:
+        """Apply the dev/test schema for this store's table_name in the active tenant schema.
+
+        Only runs when ``bootstrap_schema=True`` (the default for tests using
+        per-test ``table_name`` strings that migrations cannot pre-create).
+        Production sets ``bootstrap_schema=False`` and relies entirely on
+        ``migrations/`` applied by ``scripts/migrate.sh`` at deploy time.
+
+        **Per-tenant aware.** A single ``PostgresStore`` instance can serve
+        multiple tenants when the gateway sets ``_current_schema`` per
+        request; this method tracks which schemas have been bootstrapped and
+        runs DDL once per (schema, table_name) pair.
+
+        **Invariant: this method MUST produce the same schema as the SQL
+        migrations for ``table_name='astrocyte_vectors'``.** Each DDL block
+        below is annotated with the migration file it mirrors. If you add
+        DDL here, add the matching migration. If you change the migration,
+        update this method.
+
+        ``register_vector_async`` is intentionally NOT called here — the
+        pool's per-connection ``configure`` callback handles vector-type
+        registration uniformly across both bootstrap modes.
+        """
+        if not self._bootstrap_schema:
+            return
+        active_schema = get_current_schema()
+        # Cheap fast-path before grabbing the lock.
+        if active_schema in self._bootstrapped_schemas:
+            return
         async with self._schema_lock:
-            if self._schema_ready:
+            if active_schema in self._bootstrapped_schemas:
                 return
+            # Resolve all qualified names ONCE up front so the giant DDL
+            # block below stays readable. Captures `get_current_schema()` at
+            # this moment so the whole bootstrap targets the same schema.
+            vectors = self._fq()
+            banks = self._fq("astrocyte_banks")
+            grants = self._fq("astrocyte_bank_access_grants")
+            temporal = self._fq("astrocyte_temporal_facts")
+            fts_func = self._fq_func(f"{self._table}_fts_update")
             async with pool.connection() as conn:
+                # Schemas don't auto-create; create the target schema first
+                # if it doesn't exist (no-op for the default ``public``).
+                await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{active_schema}"')
+                # Mirrors 001_extension.sql. Extensions live in a single
+                # schema cluster-wide; CREATE IF NOT EXISTS is idempotent.
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                # Mirrors 002_astrocytes_vectors.sql (with embedding_dimensions
+                # bound to ``self._dim`` instead of psql's :embedding_dimensions
+                # variable, plus the lifecycle/layer columns from
+                # 004_memory_layer.sql and 006_lifecycle_indexes.sql folded in
+                # so a fresh test table needs no follow-up ALTERs).
                 await conn.execute(
                     f"""
-                    CREATE TABLE IF NOT EXISTS {self._table} (
+                    CREATE TABLE IF NOT EXISTS {vectors} (
                         id TEXT PRIMARY KEY,
                         bank_id TEXT NOT NULL,
                         embedding vector({self._dim}) NOT NULL,
@@ -146,46 +212,53 @@ class PostgresStore:
                     )
                     """
                 )
+                # Mirrors 003_indexes.sql. Index names stay UNqualified —
+                # Postgres puts them in the same schema as the indexed table
+                # automatically and qualifying them here is a syntax error.
                 await conn.execute(
-                    f"CREATE INDEX IF NOT EXISTS {self._table}_bank_idx ON {self._table} (bank_id)"
+                    f"CREATE INDEX IF NOT EXISTS {self._table}_bank_idx ON {vectors} (bank_id)"
                 )
+                # Mirrors 006_lifecycle_indexes.sql.
                 await conn.execute(
                     f"""
                     CREATE INDEX IF NOT EXISTS {self._table}_bank_retained_idx
-                    ON {self._table} (bank_id, retained_at DESC)
+                    ON {vectors} (bank_id, retained_at DESC)
                     """
                 )
                 await conn.execute(
                     f"""
                     CREATE INDEX IF NOT EXISTS {self._table}_bank_occurred_idx
-                    ON {self._table} (bank_id, occurred_at DESC)
+                    ON {vectors} (bank_id, occurred_at DESC)
                     WHERE occurred_at IS NOT NULL
                     """
                 )
                 await conn.execute(
                     f"""
-                    CREATE INDEX IF NOT EXISTS {self._table}_bank_fact_type_idx
-                    ON {self._table} (bank_id, fact_type)
+                    CREATE INDEX IF NOT EXISTS {self._table}_bank_current_idx
+                    ON {vectors} (bank_id)
                     WHERE forgotten_at IS NULL
                     """
                 )
+                # Mirrors 010_hybrid_recall_indexes.sql. Index name aligned
+                # with the migration so bootstrap=True and bootstrap=False
+                # produce the same schema (was previously diverging:
+                # ``..._bank_fact_type_idx`` vs migration ``..._current_idx``).
                 await conn.execute(
-                    f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS memory_layer TEXT"
-                )
-                await conn.execute(
-                    f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS retained_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
-                )
-                await conn.execute(
-                    f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS forgotten_at TIMESTAMPTZ"
-                )
-                await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS {self._table}_bank_fact_type_current_idx
+                    ON {vectors} (bank_id, fact_type)
+                    WHERE forgotten_at IS NULL
                     """
-                    CREATE TABLE IF NOT EXISTS astrocyte_banks (
+                )
+                # Mirrors 005_banks_access.sql.
+                await conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {banks} (
                         id TEXT PRIMARY KEY,
                         tenant_id TEXT,
                         display_name TEXT,
                         description TEXT,
-                        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         archived_at TIMESTAMPTZ
@@ -193,13 +266,20 @@ class PostgresStore:
                     """
                 )
                 await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS astrocyte_banks_tenant_idx
+                    ON {banks} (tenant_id)
+                    WHERE tenant_id IS NOT NULL
                     """
-                    CREATE TABLE IF NOT EXISTS astrocyte_bank_access_grants (
+                )
+                await conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {grants} (
                         id BIGSERIAL PRIMARY KEY,
                         bank_id TEXT NOT NULL,
                         principal TEXT NOT NULL,
                         permissions TEXT[] NOT NULL,
-                        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         revoked_at TIMESTAMPTZ,
@@ -208,8 +288,26 @@ class PostgresStore:
                     """
                 )
                 await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS astrocyte_bank_access_grants_principal_idx
+                    ON {grants} (principal)
+                    WHERE revoked_at IS NULL
                     """
-                    CREATE TABLE IF NOT EXISTS astrocyte_temporal_facts (
+                )
+                # 007_wiki_tables.sql is intentionally NOT mirrored here —
+                # those tables are owned by ``astrocyte_postgres.wiki_store``
+                # which has its own ``_ensure_schema()``.
+                #
+                # 009_entities_trigram_embedding.sql is intentionally NOT
+                # mirrored here — entity tables are owned by the
+                # entity-resolution module and other store adapters.
+                #
+                # Mirrors 008_entities_temporal.sql (temporal_facts table only;
+                # the entity_* tables in 008 are owned by the entity-resolution
+                # adapter, not this store).
+                await conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {temporal} (
                         id BIGSERIAL PRIMARY KEY,
                         bank_id TEXT NOT NULL,
                         memory_id TEXT NOT NULL,
@@ -220,30 +318,26 @@ class PostgresStore:
                         resolved_date DATE,
                         date_granularity TEXT,
                         confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-                        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         UNIQUE (bank_id, memory_id, temporal_phrase)
                     )
                     """
                 )
-                # ── Full-text search (DocumentStore protocol) ────────────────
-                # Add a tsvector column maintained by a trigger so that
-                # search_fulltext() can use ts_rank + GIN without a separate
-                # Elasticsearch deployment.  All DDL is idempotent: safe to
-                # run on an existing table.
+                # Mirrors 011_text_fts.sql (BM25/full-text column +
+                # GIN index + trigger function + trigger + backfill).
                 await conn.execute(
-                    f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS text_fts tsvector"
+                    f"ALTER TABLE {vectors} ADD COLUMN IF NOT EXISTS text_fts tsvector"
                 )
                 await conn.execute(
                     f"""
                     CREATE INDEX IF NOT EXISTS {self._table}_fts_idx
-                    ON {self._table} USING GIN (text_fts)
+                    ON {vectors} USING GIN (text_fts)
                     """
                 )
-                # Trigger function (CREATE OR REPLACE is always idempotent).
                 await conn.execute(
                     f"""
-                    CREATE OR REPLACE FUNCTION {self._table}_fts_update()
+                    CREATE OR REPLACE FUNCTION {fts_func}()
                     RETURNS trigger LANGUAGE plpgsql AS $$
                     BEGIN
                         NEW.text_fts := to_tsvector('english', COALESCE(NEW.text, ''));
@@ -252,29 +346,28 @@ class PostgresStore:
                     $$
                     """
                 )
-                # DROP the trigger first (IF EXISTS) then re-create so the
-                # function body change above takes effect on existing tables.
+                # DROP-then-CREATE so the function body change above takes
+                # effect on existing tables (CREATE TRIGGER has no OR REPLACE).
                 await conn.execute(
-                    f"DROP TRIGGER IF EXISTS {self._table}_fts_trigger ON {self._table}"
+                    f"DROP TRIGGER IF EXISTS {self._table}_fts_trigger ON {vectors}"
                 )
                 await conn.execute(
                     f"""
                     CREATE TRIGGER {self._table}_fts_trigger
-                    BEFORE INSERT OR UPDATE OF text ON {self._table}
-                    FOR EACH ROW EXECUTE FUNCTION {self._table}_fts_update()
+                    BEFORE INSERT OR UPDATE OF text ON {vectors}
+                    FOR EACH ROW EXECUTE FUNCTION {fts_func}()
                     """
                 )
                 # Backfill existing rows that have NULL text_fts.
                 await conn.execute(
                     f"""
-                    UPDATE {self._table}
+                    UPDATE {vectors}
                     SET text_fts = to_tsvector('english', COALESCE(text, ''))
                     WHERE text_fts IS NULL
                     """
                 )
-                await register_vector_async(conn)
                 await conn.commit()
-            self._schema_ready = True
+            self._bootstrapped_schemas.add(active_schema)
 
     async def store_vectors(self, items: list[VectorItem]) -> list[str]:
         pool = await self._ensure_pool()
@@ -290,7 +383,7 @@ class PostgresStore:
                     await self._upsert_bank(cur, item.bank_id)
                     await cur.execute(
                         f"""
-                        INSERT INTO {self._table}
+                        INSERT INTO {self._fq()}
                             (
                                 id, bank_id, embedding, text, metadata, tags, fact_type,
                                 occurred_at, memory_layer, retained_at, forgotten_at
@@ -327,8 +420,8 @@ class PostgresStore:
 
     async def _upsert_bank(self, cur: psycopg.AsyncCursor[Any], bank_id: str) -> None:
         await cur.execute(
-            """
-            INSERT INTO astrocyte_banks (id, updated_at)
+            f"""
+            INSERT INTO {self._fq("astrocyte_banks")} (id, updated_at)
             VALUES (%s, NOW())
             ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
             """,
@@ -347,8 +440,8 @@ class PostgresStore:
             resolved = resolved_dates[index] if index < len(resolved_dates) else resolved_dates[0]
             granularity = granularities[index] if index < len(granularities) else None
             await cur.execute(
-                """
-                INSERT INTO astrocyte_temporal_facts
+                f"""
+                INSERT INTO {self._fq("astrocyte_temporal_facts")}
                     (bank_id, memory_id, temporal_phrase, anchor_time, resolved_date, date_granularity)
                 VALUES (%s, %s, %s, %s::timestamptz, %s::date, %s)
                 ON CONFLICT (bank_id, memory_id, temporal_phrase) DO UPDATE SET
@@ -394,7 +487,7 @@ class PostgresStore:
         sql = f"""
             SELECT id, text, metadata, tags, fact_type, occurred_at, memory_layer, retained_at,
                    (1 - (embedding <=> %s::vector))::float AS score
-            FROM {self._table}
+            FROM {self._fq()}
             WHERE {where_sql}
             ORDER BY embedding <=> %s::vector
             LIMIT %s
@@ -492,7 +585,7 @@ class PostgresStore:
                     id, text, metadata, tags, fact_type, occurred_at,
                     memory_layer, retained_at,
                     (1 - (embedding <=> %s::vector))::float AS score
-                FROM {self._table}
+                FROM {self._fq()}
                 WHERE {semantic_sql}
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
@@ -503,7 +596,7 @@ class PostgresStore:
                     id, text, metadata, tags, fact_type, occurred_at,
                     memory_layer, retained_at,
                     ts_rank_cd(text_fts, plainto_tsquery('english', %s), 1)::float AS score
-                FROM {self._table}
+                FROM {self._fq()}
                 WHERE {keyword_sql}
                 ORDER BY score DESC
                 LIMIT %s
@@ -574,7 +667,7 @@ class PostgresStore:
                     f"""
                     SELECT id, bank_id, embedding, text, metadata, tags, fact_type,
                            occurred_at, memory_layer, retained_at
-                    FROM {self._table}
+                    FROM {self._fq()}
                     WHERE bank_id = %s
                       AND forgotten_at IS NULL
                     ORDER BY id
@@ -642,7 +735,7 @@ class PostgresStore:
                     f"""
                     SELECT id, bank_id, embedding, text, metadata, tags, fact_type,
                            occurred_at, memory_layer, retained_at
-                    FROM {self._table}
+                    FROM {self._fq()}
                     WHERE {where_sql}
                     ORDER BY COALESCE(occurred_at, retained_at) DESC, id
                     LIMIT %s
@@ -681,7 +774,7 @@ class PostgresStore:
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""
-                    UPDATE {self._table}
+                    UPDATE {self._fq()}
                     SET forgotten_at = NOW()
                     WHERE bank_id = %s
                       AND id = ANY(%s::text[])
@@ -770,7 +863,7 @@ class PostgresStore:
                 text,
                 metadata,
                 ts_rank_cd(text_fts, plainto_tsquery('english', %s), 1) AS score
-            FROM {self._table}
+            FROM {self._fq()}
             WHERE {where_sql}
             ORDER BY score DESC
             LIMIT %s
@@ -806,7 +899,7 @@ class PostgresStore:
                 await cur.execute(
                     f"""
                     SELECT id, text, metadata, tags
-                    FROM {self._table}
+                    FROM {self._fq()}
                     WHERE id = %s AND bank_id = %s AND forgotten_at IS NULL
                     """,
                     (document_id, bank_id),
