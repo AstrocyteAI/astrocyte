@@ -59,7 +59,12 @@ The underlying `pgvector` PostgreSQL extension and the `pgvector/pgvector:pg16` 
 - Hindsight-balanced preset added for adversarial-defense ablation runs.
 - All bench targets now start from a clean Postgres state via the new state-reset helper, removing a class of run-to-run variance.
 
+### Security
 
+- **Path-traversal containment** (`portability.py`, CWE-022): `export_bank`, `read_ama_header`, `iter_ama_memories`, and `import_bank` now route every input path through an explicit `_safe_resolve()` validator. Production deployments should set `ASTROCYTE_PORTABILITY_ROOTS=/var/lib/astrocyte/exports` (os.pathsep-joined for multiple roots) to opt into containment; library / CLI / test usage is unchanged. Closes CodeQL alerts #29–#35.
+- **Exception message sanitization** (`gateway/tenancy.py`, `gateway/app.py`, CWE-209): the 401 response from the tenant-binding middleware and the per-bank error in the DSAR forget-principal sweep now return stable identifiers (`authentication_failed`, `internal_error`) instead of raw `str(exc)` text. Full detail is captured in server logs (`exc_info=True`). Closes CodeQL alerts #36–#37.
+
+## [0.10.0] — 2026-05-02 (retrieval quality, gateway surface area, lifecycle, DSAR)
 
 A substantial release covering retrieval-quality improvements (HyDE, observation consolidation, multi-query gating, adversarial defense), expanded gateway surface (graph search/neighbors, compile, DSAR erasure), bank lifecycle features (history, audit, export/import, legal hold), ingestion adapters (S3/Garage, document folders), and a 7× speedup on the retain phase of LongMemEval.
 

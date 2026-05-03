@@ -545,10 +545,16 @@ def create_app(
             except Exception as exc:
                 # Don't fail the whole sweep on a single-bank error — record
                 # it and continue. Cerebro can re-run the request to retry.
+                # Log full detail server-side; surface only a stable
+                # error code to the caller.  Raw ``str(exc)`` could leak
+                # cross-tenant schema names or internal SQL state (CWE-209).
                 _logger.warning(
-                    "dsar_forget_principal: bank %s failed: %s", bank_id, exc, exc_info=False
+                    "dsar_forget_principal: bank %s failed: %s",
+                    bank_id,
+                    exc,
+                    exc_info=True,
                 )
-                details.append({"bank_id": bank_id, "deleted": 0, "error": str(exc)})
+                details.append({"bank_id": bank_id, "deleted": 0, "error": "internal_error"})
 
         return {
             "tenant_id": tenant_id,

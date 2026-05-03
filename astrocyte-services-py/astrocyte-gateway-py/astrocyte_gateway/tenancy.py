@@ -106,10 +106,19 @@ def install_tenant_middleware(app: FastAPI, extension: TenantExtension) -> None:
         try:
             tenant_ctx = await extension.authenticate(request)
         except AuthenticationError as exc:
-            _logger.info("tenant authentication failed for %s: %s", request.url.path, exc)
+            # Log full detail server-side; return only a stable identifier
+            # to the unauthenticated caller.  ``str(exc)`` could leak schema
+            # names, JWK config, or token internals raised by user-supplied
+            # tenant-extension code (CWE-209).
+            _logger.warning(
+                "tenant authentication failed for %s: %s",
+                request.url.path,
+                exc,
+                exc_info=True,
+            )
             return JSONResponse(
                 status_code=401,
-                content={"error": "authentication_failed", "detail": str(exc)},
+                content={"error": "authentication_failed"},
             )
         token = set_current_schema(tenant_ctx.schema_name)
         try:
