@@ -183,7 +183,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        task_worker = await start_gateway_task_worker(brain)
+        # ``tenant_extension`` is passed through so the worker fans out one
+        # pgqueuer poller per tenant. Single-tenant (DefaultTenantExtension)
+        # gets exactly one worker — same as before.
+        task_worker = await start_gateway_task_worker(brain, tenant_extension)
         await brain.start_background_tasks()
         await _warm_reference_stack_providers(brain)
         await ingest_supervisor.start()

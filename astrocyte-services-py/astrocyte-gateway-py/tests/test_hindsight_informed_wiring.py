@@ -180,8 +180,12 @@ async def test_gateway_starts_pgqueuer_task_worker_with_in_memory_backend(
     worker = await start_gateway_task_worker(brain)
 
     assert worker is not None
-    assert isinstance(worker.queue, PgQueuerMemoryTaskQueue)
-    assert worker.worker_task is None
+    # Default tenant extension yields a single tenant ("public") → exactly one worker.
+    assert len(worker.tenants) == 1
+    only_tenant = worker.tenants[0]
+    assert only_tenant.schema == "public"
+    assert isinstance(only_tenant.queue, PgQueuerMemoryTaskQueue)
+    assert only_tenant.worker_task is None
     await worker.stop()
 
 
