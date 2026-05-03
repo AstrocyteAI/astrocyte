@@ -23,6 +23,11 @@
       "purpose": "Full Hindsight-inspired feature bundle used for parity tracking."
     },
     {
+      "id": "hindsight-balanced",
+      "config": "config-hindsight-balanced.yaml",
+      "purpose": "Hindsight-parity bundle with cheap adversarial defense (abstention floor + adversarial prompt, no premise verification) — single-variable test for recovering adversarial accuracy without harming single/multi-hop wins."
+    },
+    {
       "id": "quality-max",
       "config": "config-quality-max.yaml",
       "purpose": "Upper-bound quality profile with higher-cost reasoning and reranking enabled."
