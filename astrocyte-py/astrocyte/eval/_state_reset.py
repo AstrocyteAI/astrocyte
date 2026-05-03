@@ -103,9 +103,7 @@ async def reset_benchmark_state(
         for table in tables:
             try:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"
-                    )
+                    await cur.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
                 truncated.append(table)
             except psycopg.errors.UndefinedTable:
                 # Table not present in this deployment (e.g. PgQueuer not
@@ -136,9 +134,7 @@ async def reset_benchmark_state(
             except psycopg.errors.UndefinedFunction:
                 skipped.append(("AGE graph", "AGE functions not in ag_catalog"))
             except Exception as exc:  # noqa: BLE001 - best-effort cleanup
-                skipped.append(
-                    (f"AGE graph '{age_graph_name}'", f"{type(exc).__name__}: {exc!s}"[:120])
-                )
+                skipped.append((f"AGE graph '{age_graph_name}'", f"{type(exc).__name__}: {exc!s}"[:120]))
 
     logger.info(
         "reset_benchmark_state: truncated=%d skipped=%d",

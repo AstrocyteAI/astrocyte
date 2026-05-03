@@ -194,6 +194,7 @@ class LongMemEvalBenchmark:
         # resuming a checkpoint or when DATABASE_URL is unset.
         if reset_state_before and checkpoint is None:
             from astrocyte.eval._state_reset import reset_benchmark_state
+
             await reset_benchmark_state()
 
         if questions is None and data_path is not None:
@@ -249,17 +250,19 @@ class LongMemEvalBenchmark:
                 content = msg.get("content", "")
                 if not content.strip():
                     continue
-                sessions_to_retain.append({
-                    "session_key": session_key,
-                    "content": content,
-                    "tags": [msg.get("role", "user"), q.category],
-                    "metadata": {
-                        "session_id": session_key,
-                        "source": "longmemeval",
-                        "session_date": msg.get("session_date", ""),
-                    },
-                    "occurred_at": _parse_longmemeval_date(msg.get("session_date")),
-                })
+                sessions_to_retain.append(
+                    {
+                        "session_key": session_key,
+                        "content": content,
+                        "tags": [msg.get("role", "user"), q.category],
+                        "metadata": {
+                            "session_id": session_key,
+                            "source": "longmemeval",
+                            "session_date": msg.get("session_date", ""),
+                        },
+                        "occurred_at": _parse_longmemeval_date(msg.get("session_date")),
+                    }
+                )
 
         retain_phase_start = time.monotonic()
         retain_count = 0
@@ -298,21 +301,28 @@ class LongMemEvalBenchmark:
                             checkpoint.record_session(item["session_key"])
                         break  # success
                     except Exception as exc:
-                        is_unique_violation = "UniqueViolation" in type(exc).__name__ or (
-                            hasattr(exc, "__cause__") and "UniqueViolation" in type(exc.__cause__).__name__
-                        ) or "duplicate key value" in str(exc)
+                        is_unique_violation = (
+                            "UniqueViolation" in type(exc).__name__
+                            or (hasattr(exc, "__cause__") and "UniqueViolation" in type(exc.__cause__).__name__)
+                            or "duplicate key value" in str(exc)
+                        )
                         if is_unique_violation and attempt < max_retries - 1:
-                            wait = 0.1 * (2 ** attempt)  # 0.1s, 0.2s
+                            wait = 0.1 * (2**attempt)  # 0.1s, 0.2s
                             logger.debug(
                                 "LongMemEval: retain UniqueViolation for session_id=%s (attempt %d/%d), "
                                 "retrying in %.1fs",
-                                item["session_key"], attempt + 1, max_retries, wait,
+                                item["session_key"],
+                                attempt + 1,
+                                max_retries,
+                                wait,
                             )
                             await asyncio.sleep(wait)
                         else:
                             logger.warning(
                                 "LongMemEval: retain failed for session_id=%s (attempt %d/%d)",
-                                item["session_key"], attempt + 1, max_retries,
+                                item["session_key"],
+                                attempt + 1,
+                                max_retries,
                                 exc_info=True,
                             )
                             break
@@ -443,17 +453,16 @@ class LongMemEvalBenchmark:
                         except Exception as exc:
                             logging.getLogger("astrocyte.eval.longmemeval").warning(
                                 "canonical judge failed for q=%s: %s (counted as incorrect)",
-                                q.question_id, exc,
+                                q.question_id,
+                                exc,
                             )
                             is_correct = False
                     else:
                         answer_found = any(
-                            text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD
-                            for h in result.hits
+                            text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD for h in result.hits
                         )
                         answer_in_reflect = (
-                            text_overlap_score([q.answer], reflect_result.answer)
-                            > ANSWER_MATCH_THRESHOLD
+                            text_overlap_score([q.answer], reflect_result.answer) > ANSWER_MATCH_THRESHOLD
                         )
                         is_correct = answer_found or answer_in_reflect
 
@@ -505,7 +514,8 @@ class LongMemEvalBenchmark:
                 except Exception as exc:
                     logging.getLogger("astrocyte.eval.longmemeval").warning(
                         "eval failed for q=%s: %s (counted as incorrect)",
-                        q.question_id, exc,
+                        q.question_id,
+                        exc,
                     )
                     # Leave per_question_arr[idx] as None; filter later.
 
@@ -692,11 +702,7 @@ def load_longmemeval_dataset(
                         if sess_idx < len(haystack_session_id_list)
                         else f"session_{sess_idx}"
                     )
-                    sess_date = (
-                        haystack_dates_list[sess_idx]
-                        if sess_idx < len(haystack_dates_list)
-                        else None
-                    )
+                    sess_date = haystack_dates_list[sess_idx] if sess_idx < len(haystack_dates_list) else None
                     # Concatenate all turns of a session into a single memory
                     # entry. Previously we emitted one entry per turn and the
                     # retain loop deduped by session_id — storing the FIRST

@@ -209,7 +209,9 @@ async def _start_benchmark_task_worker(brain):
 
         dsn = config.dsn or os.environ.get("ASTROCYTE_TASKS_DSN") or os.environ.get("DATABASE_URL")
         if not dsn:
-            raise ValueError("async_tasks.backend=pgqueuer requires async_tasks.dsn, ASTROCYTE_TASKS_DSN, or DATABASE_URL")
+            raise ValueError(
+                "async_tasks.backend=pgqueuer requires async_tasks.dsn, ASTROCYTE_TASKS_DSN, or DATABASE_URL"
+            )
         connection = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
         queue = PgQueuerMemoryTaskQueue.from_psycopg_connection(connection)
     else:
@@ -230,7 +232,9 @@ async def _start_benchmark_task_worker(brain):
             llm_provider=pipeline.llm_provider,
             wiki_store=wiki_store,
             graph_store=getattr(pipeline, "graph_store", None),
-            compile_engine=CompileEngine(pipeline.vector_store, pipeline.llm_provider, wiki_store) if wiki_store else None,
+            compile_engine=CompileEngine(pipeline.vector_store, pipeline.llm_provider, wiki_store)
+            if wiki_store
+            else None,
             lint_engine=LintEngine(pipeline.vector_store, wiki_store, pipeline.llm_provider) if wiki_store else None,
         )
     )
@@ -363,7 +367,9 @@ def _serialize_result(
     if f1_overall is not None:
         data["canonical_f1_overall"] = f1_overall
         data["canonical_f1_by_category"] = getattr(
-            result, "canonical_f1_by_category", {},
+            result,
+            "canonical_f1_by_category",
+            {},
         )
     return data
 
@@ -401,8 +407,12 @@ def _print_result(result, benchmark_name: str) -> None:
 
 
 async def run_longmemeval(
-    brain, data_path: str | None, max_questions: int | None,
-    *, use_canonical_judge: bool = False, system: str = "astrocyte",
+    brain,
+    data_path: str | None,
+    max_questions: int | None,
+    *,
+    use_canonical_judge: bool = False,
+    system: str = "astrocyte",
     max_sessions: int | None = None,
     checkpoint_dir: Path | None = None,
     resume: bool = False,
@@ -435,8 +445,11 @@ async def run_longmemeval(
     cp_dir = checkpoint_dir or checkpoint_dir_for(Path("benchmark-results"))
     is_resumable = _pipeline_is_persistent(brain)
     cp = load_or_create(
-        "longmemeval", "bench-longmemeval", cp_dir,
-        resume=resume, is_resumable=is_resumable,
+        "longmemeval",
+        "bench-longmemeval",
+        cp_dir,
+        resume=resume,
+        is_resumable=is_resumable,
     )
     if resume and not is_resumable:
         print("  [LongMemEval] WARNING: in-memory store — retain phase will re-run (data was lost on exit).")
@@ -516,7 +529,8 @@ async def run_longmemeval(
     _print_result(result, "LongMemEval")
     return BenchmarkRunOutcome(
         _serialize_result(
-            result, "longmemeval",
+            result,
+            "longmemeval",
             judge="canonical" if use_canonical_judge else "legacy",
             system=system,
         ),
@@ -576,9 +590,13 @@ def _locomo_llm_judge(brain, *, use_canonical_judge: bool):
 
 
 async def run_locomo(
-    brain, data_path: str | None, max_questions: int | None,
-    *, max_questions_per_conversation: int | None = None,
-    use_canonical_judge: bool = False, system: str = "astrocyte",
+    brain,
+    data_path: str | None,
+    max_questions: int | None,
+    *,
+    max_questions_per_conversation: int | None = None,
+    use_canonical_judge: bool = False,
+    system: str = "astrocyte",
     checkpoint_dir: Path | None = None,
     resume: bool = False,
     retain_concurrency: int = 10,
@@ -612,8 +630,11 @@ async def run_locomo(
     cp_dir = checkpoint_dir or checkpoint_dir_for(Path("benchmark-results"))
     is_resumable = _pipeline_is_persistent(brain)
     cp = load_or_create(
-        "locomo", "bench-locomo", cp_dir,
-        resume=resume, is_resumable=is_resumable,
+        "locomo",
+        "bench-locomo",
+        cp_dir,
+        resume=resume,
+        is_resumable=is_resumable,
     )
     if resume and not is_resumable:
         print("  [LoCoMo] WARNING: in-memory store — retain phase will re-run (data was lost on exit).")
@@ -671,7 +692,10 @@ async def run_locomo(
                     LoCoMoSession(
                         session_id="session_4",
                         turns=[
-                            {"speaker": "User1", "text": "Max is growing so fast! He loves the dog park near Golden Gate."},
+                            {
+                                "speaker": "User1",
+                                "text": "Max is growing so fast! He loves the dog park near Golden Gate.",
+                            },
                             {"speaker": "User2", "text": "I'm thinking of visiting SF next month. We should meet up!"},
                         ],
                         date_time="April 5, 2025",
@@ -838,16 +862,16 @@ async def main() -> None:
         type=int,
         default=None,
         help="Hard cap on total questions (deterministic head-slice; biased toward "
-             "early conversations when small). For fair-coverage fast benches, "
-             "prefer --max-questions-per-conversation.",
+        "early conversations when small). For fair-coverage fast benches, "
+        "prefer --max-questions-per-conversation.",
     )
     parser.add_argument(
         "--max-questions-per-conversation",
         type=int,
         default=None,
         help="LoCoMo only: take the first N questions from EACH conversation. "
-             "20 × 10 conversations = 200 questions with uniform per-conversation "
-             "coverage — better fast-iteration sample than --max-questions 200.",
+        "20 × 10 conversations = 200 questions with uniform per-conversation "
+        "coverage — better fast-iteration sample than --max-questions 200.",
     )
     parser.add_argument(
         "--output-dir",
@@ -960,6 +984,7 @@ async def main() -> None:
     # TRUNCATE / drop_graph and don't clobber each other's data mid-flight.
     # No-op when DATABASE_URL is unset.
     from astrocyte.eval._state_reset import reset_benchmark_state
+
     print("Resetting benchmark Postgres state...")
     await reset_benchmark_state()
 
@@ -977,7 +1002,9 @@ async def main() -> None:
     if run_lme and run_loc:
         lme_outcome, loc_outcome = await asyncio.gather(
             run_longmemeval(
-                brain, args.longmemeval_path, args.max_questions,
+                brain,
+                args.longmemeval_path,
+                args.max_questions,
                 use_canonical_judge=args.canonical_judge,
                 max_sessions=args.max_sessions,
                 checkpoint_dir=cp_dir,
@@ -990,7 +1017,9 @@ async def main() -> None:
                 eval_tpm=args.eval_tpm,
             ),
             run_locomo(
-                brain, args.locomo_path, args.max_questions,
+                brain,
+                args.locomo_path,
+                args.max_questions,
                 max_questions_per_conversation=args.max_questions_per_conversation,
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,
@@ -1012,7 +1041,9 @@ async def main() -> None:
     else:
         if run_lme:
             outcome = await run_longmemeval(
-                brain, args.longmemeval_path, args.max_questions,
+                brain,
+                args.longmemeval_path,
+                args.max_questions,
                 use_canonical_judge=args.canonical_judge,
                 max_sessions=args.max_sessions,
                 checkpoint_dir=cp_dir,
@@ -1030,7 +1061,9 @@ async def main() -> None:
 
         if run_loc:
             outcome = await run_locomo(
-                brain, args.locomo_path, args.max_questions,
+                brain,
+                args.locomo_path,
+                args.max_questions,
                 max_questions_per_conversation=args.max_questions_per_conversation,
                 use_canonical_judge=args.canonical_judge,
                 checkpoint_dir=cp_dir,

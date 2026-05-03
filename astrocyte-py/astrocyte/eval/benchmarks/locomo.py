@@ -249,12 +249,11 @@ def _persona_compile_tasks_for_session(
                     "source_ids": source_ids,
                     "index_vector": True,
                 },
-                idempotency_key=(
-                    f"locomo:persona:{bank_id}:{conversation_id}:{session_id}:{key_speaker}"
-                ),
+                idempotency_key=(f"locomo:persona:{bank_id}:{conversation_id}:{session_id}:{key_speaker}"),
             )
         )
     return tasks
+
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
@@ -399,6 +398,7 @@ class LoComoBenchmark:
         # against).  Skipped when DATABASE_URL is unset (in-memory tests).
         if reset_state_before and checkpoint is None:
             from astrocyte.eval._state_reset import reset_benchmark_state
+
             await reset_benchmark_state()
 
         if conversations is None and data_path is not None:
@@ -493,10 +493,10 @@ class LoComoBenchmark:
                 parse_attempts = 1
                 date_formats = (
                     "%I:%M %p on %d %B, %Y",  # "10:04 am on 19 December, 2023" (LoCoMo native)
-                    "%B %d, %Y",               # "January 15, 2026"
-                    "%Y-%m-%d",                # "2026-01-15"
-                    "%m/%d/%Y",                # "01/15/2026"
-                    "%d %B %Y",                # "15 January 2026"
+                    "%B %d, %Y",  # "January 15, 2026"
+                    "%Y-%m-%d",  # "2026-01-15"
+                    "%m/%d/%Y",  # "01/15/2026"
+                    "%d %B %Y",  # "15 January 2026"
                 )
                 for fmt in date_formats:
                     try:
@@ -558,13 +558,15 @@ class LoComoBenchmark:
                 )
             source_ids = [raw_result.memory_id] if raw_result.memory_id else []
             if persona_task_queue is not None:
-                deferred_persona_tasks.extend(_persona_compile_tasks_for_session(
-                    bank_id=bank_id,
-                    conversation_id=convo.conversation_id,
-                    session_id=session.session_id,
-                    turns=session.turns,
-                    source_ids=source_ids,
-                ))
+                deferred_persona_tasks.extend(
+                    _persona_compile_tasks_for_session(
+                        bank_id=bank_id,
+                        conversation_id=convo.conversation_id,
+                        session_id=session.session_id,
+                        turns=session.turns,
+                        source_ids=source_ids,
+                    )
+                )
             else:
                 persona_request = _persona_retain_request(
                     bank_id=bank_id,
@@ -607,14 +609,16 @@ class LoComoBenchmark:
                         extraction_profile="locomo_conversation",
                     )
                 )
-                prepared_sessions.append({
-                    "convo": convo,
-                    "session": session,
-                    "session_key": session_key,
-                    "occurred_at": occurred_at,
-                    "parse_attempts": parse_attempts,
-                    "unparseable_count": unparseable_count,
-                })
+                prepared_sessions.append(
+                    {
+                        "convo": convo,
+                        "session": session,
+                        "session_key": session_key,
+                        "occurred_at": occurred_at,
+                        "parse_attempts": parse_attempts,
+                        "unparseable_count": unparseable_count,
+                    }
+                )
 
             if raw_requests:
                 async with retain_rate_limiter:
@@ -630,13 +634,15 @@ class LoComoBenchmark:
                 session = prepared_session["session"]
                 source_ids = [raw_result.memory_id] if raw_result.memory_id else []
                 if persona_task_queue is not None:
-                    deferred_persona_tasks.extend(_persona_compile_tasks_for_session(
-                        bank_id=bank_id,
-                        conversation_id=convo.conversation_id,
-                        session_id=session.session_id,
-                        turns=session.turns,
-                        source_ids=source_ids,
-                    ))
+                    deferred_persona_tasks.extend(
+                        _persona_compile_tasks_for_session(
+                            bank_id=bank_id,
+                            conversation_id=convo.conversation_id,
+                            session_id=session.session_id,
+                            turns=session.turns,
+                            source_ids=source_ids,
+                        )
+                    )
                 else:
                     persona_request = _persona_retain_request(
                         bank_id=bank_id,
@@ -655,12 +661,14 @@ class LoComoBenchmark:
                 if prepared_session.get("skip"):
                     results_for_batch.append(None)
                 else:
-                    results_for_batch.append((
-                        prepared_session["session_key"],
-                        elapsed_ms,
-                        int(prepared_session["parse_attempts"]),
-                        int(prepared_session["unparseable_count"]),
-                    ))
+                    results_for_batch.append(
+                        (
+                            prepared_session["session_key"],
+                            elapsed_ms,
+                            int(prepared_session["parse_attempts"]),
+                            int(prepared_session["unparseable_count"]),
+                        )
+                    )
             return results_for_batch
 
         work_queue: asyncio.Queue[tuple[LoCoMoConversation, LoCoMoSession, str]] = asyncio.Queue()
@@ -709,7 +717,7 @@ class LoComoBenchmark:
         batch_size = max(1, retain_concurrency)
         if pipeline is not None and hasattr(pipeline, "retain_many"):
             for start in range(0, len(session_work), batch_size):
-                retained_batch = await _retain_pipeline_batch(session_work[start:start + batch_size])
+                retained_batch = await _retain_pipeline_batch(session_work[start : start + batch_size])
                 for retained in retained_batch:
                     await _record_retained(retained)
         else:
@@ -739,15 +747,14 @@ class LoComoBenchmark:
                 await persona_task_queue.enqueue(task)
         elif deferred_persona_requests:
             print(
-                f"  [LoCoMo] Running deferred persona retain phase for "
-                f"{len(deferred_persona_requests)} documents...",
+                f"  [LoCoMo] Running deferred persona retain phase for {len(deferred_persona_requests)} documents...",
                 flush=True,
             )
             pipeline = getattr(self.brain, "_pipeline", None)
             if pipeline is not None and hasattr(pipeline, "retain_many"):
                 for start in range(0, len(deferred_persona_requests), batch_size):
                     async with retain_rate_limiter:
-                        await pipeline.retain_many(deferred_persona_requests[start:start + batch_size])
+                        await pipeline.retain_many(deferred_persona_requests[start : start + batch_size])
             else:
                 for request in deferred_persona_requests:
                     async with retain_rate_limiter:
@@ -879,8 +886,7 @@ class LoComoBenchmark:
                 if qi == 1 or qi % 10 == 0 or qi == total_q:
                     acc_so_far = correct / qi if qi > 0 else 0.0
                     print(
-                        f"  [LoCoMo] Question {qi}/{total_q} — "
-                        f"accuracy: {acc_so_far:.1%} ({correct}/{qi}) [resumed]",
+                        f"  [LoCoMo] Question {qi}/{total_q} — accuracy: {acc_so_far:.1%} ({correct}/{qi}) [resumed]",
                         flush=True,
                     )
                 return
@@ -910,9 +916,7 @@ class LoComoBenchmark:
                     # Synthesis path — always run reflect so we have the model's
                     # answer to score. Same tag scope as recall above.
                     reflect_t0 = time.monotonic()
-                    reflect_result = await self.brain.reflect(
-                        q.question, bank_id=bank_id, tags=convo_tags
-                    )
+                    reflect_result = await self.brain.reflect(q.question, bank_id=bank_id, tags=convo_tags)
                     reflect_elapsed = (time.monotonic() - reflect_t0) * 1000
                     reflect_latencies.append(reflect_elapsed)
                     metrics_collector.record_reflect_latency(reflect_elapsed)
@@ -935,18 +939,14 @@ class LoComoBenchmark:
                             category=q.category,
                         )
                         total_f1_sum += canonical_f1
-                        category_f1_sum[q.category] = (
-                            category_f1_sum.get(q.category, 0.0) + canonical_f1
-                        )
+                        category_f1_sum[q.category] = category_f1_sum.get(q.category, 0.0) + canonical_f1
                         is_correct = canonical_f1 > 0.3
                     else:
                         answer_in_recall = any(
-                            word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD
-                            for h in result.hits
+                            word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD for h in result.hits
                         )
                         answer_in_reflect = (
-                            word_overlap_score(q.answer, reflect_result.answer)
-                            > ANSWER_OVERLAP_THRESHOLD
+                            word_overlap_score(q.answer, reflect_result.answer) > ANSWER_OVERLAP_THRESHOLD
                         )
                         is_correct = answer_in_recall or answer_in_reflect
 
@@ -957,12 +957,10 @@ class LoComoBenchmark:
                     # Tier-3: per-question record for recall-vs-reflect gap
                     # analysis + abstention detection.
                     answer_in_recall_for_metrics = any(
-                        word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD
-                        for h in result.hits[:10]
+                        word_overlap_score(q.answer, h.text) > ANSWER_OVERLAP_THRESHOLD for h in result.hits[:10]
                     )
                     answer_in_reflect_for_metrics = (
-                        word_overlap_score(q.answer, reflect_result.answer)
-                        > ANSWER_OVERLAP_THRESHOLD
+                        word_overlap_score(q.answer, reflect_result.answer) > ANSWER_OVERLAP_THRESHOLD
                     )
                     abstain_markers = (
                         "insufficient evidence",
@@ -970,10 +968,7 @@ class LoComoBenchmark:
                         "i do not have",
                         "not available in my memories",
                     )
-                    abstained = any(
-                        marker in (reflect_result.answer or "").lower()
-                        for marker in abstain_markers
-                    )
+                    abstained = any(marker in (reflect_result.answer or "").lower() for marker in abstain_markers)
                     metrics_collector.record_question(
                         idx=idx,
                         category=q.category,
@@ -1040,7 +1035,8 @@ class LoComoBenchmark:
                 except Exception as exc:
                     logging.getLogger("astrocyte.eval.locomo").warning(
                         "eval failed for q=%s: %s (counted as incorrect)",
-                        q_key, exc,
+                        q_key,
+                        exc,
                     )
                     metrics_collector.record_error(_classify_error(exc))
                     # Leave per_question_arr[idx] as None; filter later.
@@ -1072,9 +1068,7 @@ class LoComoBenchmark:
         if use_canonical_judge:
             canonical_f1_overall = total_f1_sum / max(len(all_questions), 1)
             for cat in category_total:
-                canonical_f1_by_category[cat] = (
-                    category_f1_sum.get(cat, 0.0) / category_total[cat]
-                )
+                canonical_f1_by_category[cat] = category_f1_sum.get(cat, 0.0) / category_total[cat]
 
         from astrocyte.eval.metrics import percentile
 
@@ -1094,7 +1088,8 @@ class LoComoBenchmark:
         # Tier-3 finalize: snapshot wiki-page state then decorate metrics.
         try:
             wiki_pages_count, unique_personas = await _wiki_page_stats(
-                self.brain, bank_id,
+                self.brain,
+                bank_id,
             )
             metrics_collector.set_wiki_page_stats(
                 total=wiki_pages_count,
@@ -1102,7 +1097,8 @@ class LoComoBenchmark:
             )
         except Exception as exc:
             logging.getLogger("astrocyte.eval.locomo").debug(
-                "wiki page stats unavailable: %s", exc,
+                "wiki page stats unavailable: %s",
+                exc,
             )
         metrics = metrics_collector.finalize(base_metrics)
         # Detach the collector from the pipeline so subsequent runs / live

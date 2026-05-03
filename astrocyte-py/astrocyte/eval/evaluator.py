@@ -250,6 +250,7 @@ class MemoryEvaluator:
         # DATABASE_URL is unset.
         if reset_state_before:
             from astrocyte.eval._state_reset import reset_benchmark_state
+
             await reset_benchmark_state()
 
         start_time = time.monotonic()
