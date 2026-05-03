@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from astrocyte.pipeline.lint import LintEngine
 from astrocyte.pipeline.tasks import (
@@ -17,6 +17,7 @@ from astrocyte.pipeline.tasks import (
     MemoryTaskDispatcher,
     MemoryTaskWorker,
     TaskHandlerContext,
+    split_texts_by_token_budget,
 )
 from astrocyte.testing.in_memory import (
     InMemoryGraphStore,
@@ -86,6 +87,32 @@ async def test_in_memory_backend_idempotency_and_worker() -> None:
     assert first == second
     assert await worker.run_once(limit=1) == 1
     assert backend.get(first).status == "succeeded"
+
+
+async def test_recover_stale_running_task_requeues_for_retry() -> None:
+    backend = InMemoryTaskBackend()
+    task_id = await backend.enqueue(MemoryTask(
+        task_type=NORMALIZE_TEMPORAL_FACTS,
+        bank_id="b1",
+    ))
+    claimed = await backend.claim("worker-1", limit=1)
+    assert claimed[0].id == task_id
+
+    recovered = await backend.recover_stale(
+        stale_after=timedelta(0),
+    )
+
+    task = backend.get(task_id)
+    assert recovered == 1
+    assert task is not None
+    assert task.status == "queued"
+    assert task.claimed_by is None
+
+
+def test_split_texts_by_token_budget_keeps_order_and_splits() -> None:
+    batches = split_texts_by_token_budget(["a" * 8, "b" * 8, "c" * 20], max_tokens=4)
+
+    assert batches == [["a" * 8, "b" * 8], ["c" * 20]]
 
 
 async def test_normalize_temporal_facts_updates_vector_metadata() -> None:

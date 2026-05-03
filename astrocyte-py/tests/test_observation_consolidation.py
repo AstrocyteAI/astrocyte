@@ -18,6 +18,7 @@ from astrocyte.pipeline.observation import (
     ObservationConsolidator,
     _parse_actions,
     obs_bank_id,
+    observation_scope,
 )
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 from astrocyte.pipeline.reranking import _observation_proof_boost
@@ -161,6 +162,27 @@ class TestObservationConsolidatorCreate:
         assert obs[0].metadata["_obs_proof_count"] == 1
         assert json.loads(str(obs[0].metadata["_obs_source_ids"])) == ["mem001"]
         assert float(str(obs[0].metadata["_obs_confidence"])) == pytest.approx(0.9)
+        assert obs[0].metadata["_obs_scope"] == observation_scope("bank-a")
+        assert obs[0].metadata["_obs_freshness"] == "fresh"
+
+    @pytest.mark.asyncio
+    async def test_invalidate_sources_deletes_dependent_observations(self):
+        vs = InMemoryVectorStore()
+        llm = _make_json_llm('[{"action": "create", "text": "Alice is a software engineer.", "confidence": 0.9}]')
+        consolidator = ObservationConsolidator()
+        await consolidator.consolidate(
+            new_memory_text="Alice told me she works as a software engineer.",
+            new_memory_ids=["mem001"],
+            bank_id="bank-invalidate",
+            vector_store=vs,
+            llm_provider=llm,
+            scope="team:eng",
+        )
+
+        deleted = await consolidator.invalidate_sources(["mem001"], "bank-invalidate", vs)
+
+        assert deleted == 1
+        assert await vs.list_vectors(obs_bank_id("bank-invalidate")) == []
 
     @pytest.mark.asyncio
     async def test_low_confidence_observation_not_stored(self):

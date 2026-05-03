@@ -22,7 +22,12 @@ def test_openapi_paths_include_v1_memory_routes() -> None:
     for route in (
         "/v1/retain",
         "/v1/recall",
+        "/v1/debug/recall",
         "/v1/reflect",
+        "/v1/mental-models",
+        "/v1/mental-models/{model_id}",
+        "/v1/mental-models/{model_id}/refresh",
+        "/v1/observations/invalidate",
         "/v1/forget",
         "/v1/ingest/webhook/{source_id}",
         "/v1/admin/sources",

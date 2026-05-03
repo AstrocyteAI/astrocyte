@@ -31,6 +31,7 @@ from astrocyte.ingest.registry import SourceRegistry
 from astrocyte.ingest.runtime import retain_callable_for_astrocyte
 from astrocyte.ingest.supervisor import IngestSupervisor, merge_source_health
 from astrocyte.ingest.webhook import handle_webhook_ingest
+from astrocyte.pipeline.mental_model import MentalModelService
 from astrocyte.types import AstrocyteContext
 from astrocyte_gateway.auth import get_astrocyte_context
 from astrocyte_gateway.brain import build_astrocyte
@@ -314,6 +315,20 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         )
         return to_jsonable(result)
 
+    @app.post("/v1/debug/recall")
+    async def debug_recall(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Debug-only recall endpoint exposing low-level trace and result counts."""
+
+        result = await recall(body, ctx)
+        results = result.get("results", []) if isinstance(result, dict) else []
+        return {
+            "trace": result.get("trace") if isinstance(result, dict) else None,
+            "result_count": len(results) if isinstance(results, list) else None,
+        }
+
     @app.post("/v1/reflect")
     async def reflect(
         body: dict[str, Any],
@@ -338,6 +353,75 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
             context=ctx,
         )
         return to_jsonable(result)
+
+    def _mental_models() -> MentalModelService:
+        wiki_store = getattr(brain, "_wiki_store", None)
+        if wiki_store is None:
+            raise HTTPException(status_code=501, detail="mental models require a configured wiki_store")
+        return MentalModelService(wiki_store)
+
+    @app.post("/v1/mental-models")
+    async def create_mental_model(body: dict[str, Any]) -> dict[str, Any]:
+        bank_id = body.get("bank_id")
+        model_id = body.get("model_id")
+        title = body.get("title")
+        content = body.get("content")
+        if not all(isinstance(value, str) for value in (bank_id, model_id, title, content)):
+            raise HTTPException(status_code=400, detail="bank_id, model_id, title, and content are required strings")
+        model = await _mental_models().create(
+            bank_id=bank_id,
+            model_id=model_id,
+            title=title,
+            content=content,
+            scope=str(body.get("scope") or "bank"),
+            source_ids=[str(x) for x in body.get("source_ids", [])] if isinstance(body.get("source_ids"), list) else [],
+        )
+        return to_jsonable(model)
+
+    @app.get("/v1/mental-models")
+    async def list_mental_models(bank_id: str, scope: str | None = None) -> dict[str, Any]:
+        return {"models": to_jsonable(await _mental_models().list(bank_id, scope=scope))}
+
+    @app.get("/v1/mental-models/{model_id}")
+    async def get_mental_model(model_id: str, bank_id: str) -> dict[str, Any]:
+        model = await _mental_models().get(bank_id, model_id)
+        if model is None:
+            raise HTTPException(status_code=404, detail="mental model not found")
+        return to_jsonable(model)
+
+    @app.post("/v1/mental-models/{model_id}/refresh")
+    async def refresh_mental_model(model_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        bank_id = body.get("bank_id")
+        content = body.get("content")
+        if not isinstance(bank_id, str) or not isinstance(content, str):
+            raise HTTPException(status_code=400, detail="bank_id and content are required strings")
+        model = await _mental_models().refresh(
+            bank_id=bank_id,
+            model_id=model_id,
+            content=content,
+            source_ids=[str(x) for x in body.get("source_ids", [])] if isinstance(body.get("source_ids"), list) else None,
+        )
+        if model is None:
+            raise HTTPException(status_code=404, detail="mental model not found")
+        return to_jsonable(model)
+
+    @app.delete("/v1/mental-models/{model_id}")
+    async def delete_mental_model(model_id: str, bank_id: str) -> dict[str, Any]:
+        return {"deleted": await _mental_models().delete(bank_id, model_id)}
+
+    @app.post("/v1/observations/invalidate")
+    async def invalidate_observations(body: dict[str, Any]) -> dict[str, Any]:
+        bank_id = body.get("bank_id")
+        source_ids = body.get("source_ids")
+        if not isinstance(bank_id, str) or not isinstance(source_ids, list):
+            raise HTTPException(status_code=400, detail="bank_id and source_ids are required")
+        pipeline = getattr(brain, "_pipeline", None)
+        consolidator = getattr(pipeline, "_observation_consolidator", None)
+        vector_store = getattr(pipeline, "vector_store", None)
+        if consolidator is None or vector_store is None:
+            raise HTTPException(status_code=501, detail="observations require a configured pipeline consolidator")
+        deleted = await consolidator.invalidate_sources([str(x) for x in source_ids], bank_id, vector_store)
+        return {"deleted": deleted}
 
     @app.post("/v1/forget")
     async def forget(

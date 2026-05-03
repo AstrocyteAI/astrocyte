@@ -47,6 +47,8 @@ Metadata schema on observation VectorItems
 ``_obs_source_ids``   str (JSON list)       — raw memory IDs that contributed
 ``_obs_confidence``   str (float, 0–1)      — LLM-assigned confidence
 ``_obs_updated_at``   str (ISO datetime)    — last mutation timestamp
+``_obs_scope``        str                   — scope key ("bank" or caller tag)
+``_obs_freshness``    str                   — "fresh" | "stale"
 """
 
 from __future__ import annotations
@@ -88,6 +90,13 @@ def obs_bank_id(bank_id: str) -> str:
     answers).
     """
     return f"{bank_id}{_OBS_SUFFIX}"
+
+
+def observation_scope(bank_id: str, tags: list[str] | None = None) -> str:
+    """Return a stable observation scope for a retain/recall context."""
+    if tags:
+        return "|".join(sorted(str(tag) for tag in tags))
+    return f"bank:{bank_id}"
 
 # ---------------------------------------------------------------------------
 # Result
@@ -255,6 +264,7 @@ class ObservationConsolidator:
         llm_provider: LLMProvider,
         *,
         query_vector: list[float] | None = None,
+        scope: str | None = None,
     ) -> ObservationConsolidationResult:
         """Integrate a new memory into the observations layer.
 
@@ -273,6 +283,7 @@ class ObservationConsolidator:
                 call.
         """
         result = ObservationConsolidationResult()
+        obs_scope = scope or observation_scope(bank_id)
 
         try:
             # 1. Embed the new memory (or reuse the caller's vector)
@@ -329,6 +340,7 @@ class ObservationConsolidator:
                             action, bank_id, vector_store, llm_provider,
                             source_ids=new_memory_ids,
                             now_iso=now_iso,
+                            scope=obs_scope,
                         )
                         if r:
                             result.created += 1
@@ -343,6 +355,7 @@ class ObservationConsolidator:
                             new_source_ids=new_memory_ids,
                             now_iso=now_iso,
                             new_ids_json=new_ids_json,
+                            scope=obs_scope,
                         )
                         if r:
                             result.updated += 1
@@ -381,6 +394,39 @@ class ObservationConsolidator:
         )
         return result
 
+    async def invalidate_sources(
+        self,
+        source_ids: list[str],
+        bank_id: str,
+        vector_store: VectorStore,
+    ) -> int:
+        """Delete observations whose provenance references any source ID."""
+        if not source_ids:
+            return 0
+        source_set = set(source_ids)
+        obs_bank = obs_bank_id(bank_id)
+        deleted = 0
+        offset = 0
+        while True:
+            page = await vector_store.list_vectors(obs_bank, offset=offset, limit=200)
+            if not page:
+                break
+            to_delete: list[str] = []
+            for item in page:
+                metadata = item.metadata or {}
+                try:
+                    obs_sources = set(json.loads(str(metadata.get("_obs_source_ids", "[]"))))
+                except (json.JSONDecodeError, TypeError):
+                    obs_sources = set()
+                if obs_sources & source_set:
+                    to_delete.append(item.id)
+            if to_delete:
+                deleted += await vector_store.delete(to_delete, obs_bank)
+            if len(page) < 200:
+                break
+            offset += len(page)
+        return deleted
+
     async def _apply_create(
         self,
         action: dict[str, Any],
@@ -390,6 +436,7 @@ class ObservationConsolidator:
         *,
         source_ids: list[str],
         now_iso: str,
+        scope: str,
     ) -> bool:
         """Store a new observation."""
         text = (action.get("text") or "").strip()
@@ -416,6 +463,8 @@ class ObservationConsolidator:
                 "_obs_source_ids": json.dumps(source_ids),
                 "_obs_confidence": str(round(confidence, 3)),
                 "_obs_updated_at": now_iso,
+                "_obs_scope": scope,
+                "_obs_freshness": "fresh",
                 "_created_at": now_iso,
             },
             retained_at=datetime.now(timezone.utc),
@@ -434,6 +483,7 @@ class ObservationConsolidator:
         new_source_ids: list[str],
         now_iso: str,
         new_ids_json: str,
+        scope: str,
     ) -> bool:
         """Delete old observation and store the revised version."""
         text = (action.get("text") or "").strip()
@@ -447,10 +497,12 @@ class ObservationConsolidator:
         old_proof = 1
         old_sources: list[str] = []
         old_created_at = now_iso
+        old_scope = scope
         if existing is not None:
             meta = existing.metadata or {}
             old_proof = int(meta.get("_obs_proof_count", 1))
             old_created_at = str(meta.get("_created_at", now_iso))
+            old_scope = str(meta.get("_obs_scope", scope))
             try:
                 old_sources = json.loads(str(meta.get("_obs_source_ids", "[]")))
             except (json.JSONDecodeError, TypeError):
@@ -479,6 +531,8 @@ class ObservationConsolidator:
                 "_obs_source_ids": json.dumps(merged_sources),
                 "_obs_confidence": str(round(confidence, 3)),
                 "_obs_updated_at": now_iso,
+                "_obs_scope": old_scope,
+                "_obs_freshness": "fresh",
                 "_created_at": old_created_at,
             },
             retained_at=datetime.now(timezone.utc),

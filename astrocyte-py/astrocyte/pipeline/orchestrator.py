@@ -1142,6 +1142,7 @@ class PipelineOrchestrator:
                         vector_store=vs,
                         llm_provider=llm,
                         query_vector=representative_vec,
+                        scope="|".join(sorted(request.tags)) if request.tags else None,
                     )
                 except Exception as exc:
                     _logger.warning(
@@ -1434,6 +1435,7 @@ class PipelineOrchestrator:
                             vector_store=vs,
                             llm_provider=llm,
                             query_vector=representative_vec,
+                            scope="|".join(sorted(request.tags)) if request.tags else None,
                         )
                     except Exception as exc:
                         _logger.warning(
@@ -1564,6 +1566,8 @@ class PipelineOrchestrator:
 
         # 3. Parallel retrieval
         overfetch_limit = request.max_results * self.semantic_overfetch
+        strategy_timings_ms: dict[str, float] = {}
+        strategy_candidate_counts: dict[str, int] = {}
         strategy_results = await parallel_retrieve(
             query_vector=query_vector,
             query_text=request.query,
@@ -1578,6 +1582,8 @@ class PipelineOrchestrator:
             temporal_scan_cap=self.temporal_scan_cap,
             temporal_half_life_days=effective_half_life,
             hyde_vector=hyde_vec,
+            strategy_timings_ms=strategy_timings_ms,
+            strategy_candidate_counts=strategy_candidate_counts,
         )
         query_plan = build_query_plan(request.query)
         if (
@@ -1815,6 +1821,8 @@ class PipelineOrchestrator:
                 strategies_used=strategies_used,
                 total_candidates=total_candidates,
                 fusion_method="rrf",
+                strategy_timings_ms=strategy_timings_ms or None,
+                strategy_candidate_counts=strategy_candidate_counts or None,
             ),
             top_semantic_score=_top_semantic_score,
         )

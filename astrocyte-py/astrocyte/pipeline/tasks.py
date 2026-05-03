@@ -134,6 +134,34 @@ class InMemoryTaskBackend:
     def get(self, task_id: str) -> MemoryTask | None:
         return self._tasks.get(task_id)
 
+    def list_by_status(self, status: TaskStatus | None = None) -> list[MemoryTask]:
+        tasks = list(self._tasks.values())
+        if status is not None:
+            tasks = [task for task in tasks if task.status == status]
+        return sorted(tasks, key=lambda task: (task.created_at, task.id))
+
+    async def recover_stale(
+        self,
+        *,
+        stale_after: timedelta,
+        now: datetime | None = None,
+    ) -> int:
+        """Requeue running tasks whose worker claim is stale."""
+        current = now or datetime.now(UTC)
+        recovered = 0
+        for task in self._tasks.values():
+            if task.status != "running" or task.claimed_at is None:
+                continue
+            if current - task.claimed_at < stale_after:
+                continue
+            task.status = "queued" if task.attempts < task.max_attempts else "dead"
+            task.claimed_by = None
+            task.claimed_at = None
+            task.run_after = current
+            task.updated_at = current
+            recovered += 1
+        return recovered
+
 
 @dataclass
 class TaskHandlerContext:
@@ -495,6 +523,26 @@ class MemoryTaskWorker:
             else:
                 await self._backend.complete(task.id, result)
         return len(tasks)
+
+
+def split_texts_by_token_budget(texts: list[str], max_tokens: int) -> list[list[str]]:
+    """Split retain payloads into sub-batches under an approximate token budget."""
+    if max_tokens <= 0:
+        raise ValueError("max_tokens must be positive")
+    batches: list[list[str]] = []
+    current: list[str] = []
+    current_tokens = 0
+    for text in texts:
+        token_estimate = max(1, len(text) // 4)
+        if current and current_tokens + token_estimate > max_tokens:
+            batches.append(current)
+            current = []
+            current_tokens = 0
+        current.append(text)
+        current_tokens += token_estimate
+    if current:
+        batches.append(current)
+    return batches
 
 
 async def _list_bank_vectors(vector_store: VectorStore, bank_id: str) -> list[VectorItem]:
