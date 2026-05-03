@@ -150,6 +150,26 @@ class PgVectorStore:
                     f"CREATE INDEX IF NOT EXISTS {self._table}_bank_idx ON {self._table} (bank_id)"
                 )
                 await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS {self._table}_bank_retained_idx
+                    ON {self._table} (bank_id, retained_at DESC)
+                    """
+                )
+                await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS {self._table}_bank_occurred_idx
+                    ON {self._table} (bank_id, occurred_at DESC)
+                    WHERE occurred_at IS NOT NULL
+                    """
+                )
+                await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS {self._table}_bank_fact_type_idx
+                    ON {self._table} (bank_id, fact_type)
+                    WHERE forgotten_at IS NULL
+                    """
+                )
+                await conn.execute(
                     f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS memory_layer TEXT"
                 )
                 await conn.execute(
@@ -410,6 +430,136 @@ class PgVectorStore:
             )
         return hits
 
+    async def search_hybrid_semantic_bm25(
+        self,
+        query_vector: list[float],
+        query: str,
+        bank_id: str,
+        limit: int = 10,
+        filters: VectorFilters | None = None,
+    ) -> dict[str, list[VectorHit | DocumentHit]]:
+        """Return semantic and BM25 hits with one SQL round trip.
+
+        This is the Postgres-specific Hindsight-style fast path. It preserves
+        the public VectorStore/DocumentStore methods as fallbacks while letting
+        the native pgvector stack avoid two separate pool checkouts on hot recall.
+        """
+        if len(query_vector) != self._dim:
+            raise ValueError(
+                f"Query vector length {len(query_vector)} != embedding_dimensions {self._dim}",
+            )
+        if not query or not query.strip():
+            semantic = await self.search_similar(query_vector, bank_id, limit=limit, filters=filters)
+            return {"semantic": semantic, "keyword": []}
+
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+
+        semantic_where = ["bank_id = %s"]
+        semantic_params: list[Any] = [bank_id]
+        keyword_where = ["bank_id = %s", "text_fts @@ plainto_tsquery('english', %s)"]
+        keyword_params: list[Any] = [bank_id, query]
+
+        if filters and filters.as_of:
+            semantic_where.append("retained_at <= %s")
+            semantic_where.append("(forgotten_at IS NULL OR forgotten_at > %s)")
+            semantic_params.extend([filters.as_of, filters.as_of])
+            keyword_where.append("retained_at <= %s")
+            keyword_where.append("(forgotten_at IS NULL OR forgotten_at > %s)")
+            keyword_params.extend([filters.as_of, filters.as_of])
+        else:
+            semantic_where.append("forgotten_at IS NULL")
+            keyword_where.append("forgotten_at IS NULL")
+
+        if filters and filters.tags:
+            semantic_where.append("tags && %s::text[]")
+            semantic_params.append(filters.tags)
+            keyword_where.append("tags && %s::text[]")
+            keyword_params.append(filters.tags)
+
+        if filters and filters.fact_types:
+            semantic_where.append("fact_type = ANY(%s::text[])")
+            semantic_params.append(filters.fact_types)
+            keyword_where.append("fact_type = ANY(%s::text[])")
+            keyword_params.append(filters.fact_types)
+
+        semantic_sql = " AND ".join(semantic_where)
+        keyword_sql = " AND ".join(keyword_where)
+        sql = f"""
+            WITH semantic AS (
+                SELECT
+                    'semantic'::text AS strategy,
+                    id, text, metadata, tags, fact_type, occurred_at,
+                    memory_layer, retained_at,
+                    (1 - (embedding <=> %s::vector))::float AS score
+                FROM {self._table}
+                WHERE {semantic_sql}
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+            ),
+            keyword AS (
+                SELECT
+                    'keyword'::text AS strategy,
+                    id, text, metadata, tags, fact_type, occurred_at,
+                    memory_layer, retained_at,
+                    ts_rank_cd(text_fts, plainto_tsquery('english', %s), 1)::float AS score
+                FROM {self._table}
+                WHERE {keyword_sql}
+                ORDER BY score DESC
+                LIMIT %s
+            )
+            SELECT * FROM semantic
+            UNION ALL
+            SELECT * FROM keyword
+        """
+        params = [
+            query_vector,
+            *semantic_params,
+            query_vector,
+            limit,
+            query,
+            *keyword_params,
+            limit,
+        ]
+
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, params)
+                rows = await cur.fetchall()
+
+        semantic_hits: list[VectorHit] = []
+        keyword_hits: list[DocumentHit] = []
+        for row in rows:
+            md = row["metadata"]
+            if isinstance(md, str):
+                md = json.loads(md)
+            score = max(0.0, min(1.0, float(row["score"])))
+            if row["strategy"] == "semantic":
+                semantic_hits.append(
+                    VectorHit(
+                        id=row["id"],
+                        text=row["text"],
+                        score=score,
+                        metadata=md,
+                        tags=list(row["tags"]) if row["tags"] else None,
+                        fact_type=row["fact_type"],
+                        occurred_at=row["occurred_at"],
+                        memory_layer=row.get("memory_layer"),
+                        retained_at=row.get("retained_at"),
+                    )
+                )
+            else:
+                keyword_hits.append(
+                    DocumentHit(
+                        document_id=row["id"],
+                        text=row["text"],
+                        score=score,
+                        metadata=md,
+                    )
+                )
+
+        return {"semantic": semantic_hits, "keyword": keyword_hits}
+
     async def list_vectors(
         self,
         bank_id: str,
@@ -433,6 +583,74 @@ class PgVectorStore:
                     (bank_id, offset, limit),
                 )
                 rows = await cur.fetchall()
+        items: list[VectorItem] = []
+        for row in rows:
+            md = row["metadata"]
+            if isinstance(md, str):
+                md = json.loads(md)
+            items.append(
+                VectorItem(
+                    id=row["id"],
+                    bank_id=row["bank_id"],
+                    vector=list(row["embedding"]),
+                    text=row["text"],
+                    metadata=md,
+                    tags=list(row["tags"]) if row["tags"] else None,
+                    fact_type=row["fact_type"],
+                    occurred_at=row["occurred_at"],
+                    memory_layer=row.get("memory_layer"),
+                    retained_at=row.get("retained_at"),
+                )
+            )
+        return items
+
+    async def list_recent_vectors(
+        self,
+        bank_id: str,
+        limit: int = 100,
+        filters: VectorFilters | None = None,
+    ) -> list[VectorItem]:
+        """Return recent vectors using Postgres indexes instead of a Python scan."""
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+
+        where = ["bank_id = %s"]
+        params: list[Any] = [bank_id]
+        if filters and filters.as_of:
+            where.append("retained_at <= %s")
+            where.append("(forgotten_at IS NULL OR forgotten_at > %s)")
+            params.extend([filters.as_of, filters.as_of])
+        else:
+            where.append("forgotten_at IS NULL")
+        if filters and filters.tags:
+            where.append("tags && %s::text[]")
+            params.append(filters.tags)
+        if filters and filters.fact_types:
+            where.append("fact_type = ANY(%s::text[])")
+            params.append(filters.fact_types)
+        if filters and filters.time_range:
+            start, end = filters.time_range
+            where.append("occurred_at >= %s")
+            where.append("occurred_at <= %s")
+            params.extend([start, end])
+
+        params.append(limit)
+        where_sql = " AND ".join(where)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT id, bank_id, embedding, text, metadata, tags, fact_type,
+                           occurred_at, memory_layer, retained_at
+                    FROM {self._table}
+                    WHERE {where_sql}
+                    ORDER BY COALESCE(occurred_at, retained_at) DESC, id
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                rows = await cur.fetchall()
+
         items: list[VectorItem] = []
         for row in rows:
             md = row["metadata"]

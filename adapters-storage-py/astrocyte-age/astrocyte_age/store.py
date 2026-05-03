@@ -1129,6 +1129,182 @@ class AgeGraphStore:
             for row in rows
         ]
 
+    async def expand_memory_links_fast(
+        self,
+        seed_memory_ids: list[str],
+        bank_id: str,
+        *,
+        params: Any,
+    ) -> list[dict[str, Any]]:
+        """Single-query link expansion over entity, semantic, and causal signals.
+
+        The portable pipeline fallback calls ``get_entity_ids_for_memories``,
+        ``query_neighbors``, and ``find_memory_links`` separately. This fast path
+        performs the same Hindsight-style scoring in one SQL query against the
+        AGE adapter's plain PostgreSQL helper tables.
+        """
+        if not seed_memory_ids:
+            return []
+        await self._ensure_schema()
+        conn = await self._conn()
+        semantic_types = list(params.semantic_link_types)
+        causal_types = list(params.causal_link_types)
+        all_link_types = semantic_types + causal_types
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    WITH
+                    seeds AS (
+                        SELECT unnest(%s::text[]) AS memory_id
+                    ),
+                    seed_entities AS (
+                        SELECT DISTINCT entity_id
+                        FROM astrocyte_age_mem_entity
+                        WHERE bank_id = %s
+                          AND memory_id = ANY(%s::text[])
+                    ),
+                    entity_overlap AS (
+                        SELECT
+                            me.memory_id,
+                            count(DISTINCT me.entity_id)::int AS entity_overlap,
+                            0.0::double precision AS semantic_total,
+                            0.0::double precision AS causal_total,
+                            ARRAY['entity_overlap']::text[] AS sources
+                        FROM astrocyte_age_mem_entity me
+                        JOIN seed_entities se ON se.entity_id = me.entity_id
+                        WHERE me.bank_id = %s
+                          AND NOT (me.memory_id = ANY(%s::text[]))
+                        GROUP BY me.memory_id
+                        ORDER BY entity_overlap DESC
+                        LIMIT %s
+                    ),
+                    link_rows AS (
+                        SELECT
+                            CASE
+                                WHEN ml.source_memory_id = ANY(%s::text[]) THEN ml.target_memory_id
+                                ELSE ml.source_memory_id
+                            END AS memory_id,
+                            ml.link_type,
+                            ml.weight
+                        FROM astrocyte_memory_links ml
+                        WHERE ml.bank_id = %s
+                          AND ml.link_type = ANY(%s::text[])
+                          AND (
+                              ml.source_memory_id = ANY(%s::text[])
+                              OR ml.target_memory_id = ANY(%s::text[])
+                          )
+                          AND NOT (
+                              ml.source_memory_id = ANY(%s::text[])
+                              AND ml.target_memory_id = ANY(%s::text[])
+                          )
+                    ),
+                    semantic_links AS (
+                        SELECT
+                            memory_id,
+                            0::int AS entity_overlap,
+                            sum(weight)::double precision AS semantic_total,
+                            0.0::double precision AS causal_total,
+                            ARRAY['semantic']::text[] AS sources
+                        FROM link_rows
+                        WHERE link_type = ANY(%s::text[])
+                          AND NOT (memory_id = ANY(%s::text[]))
+                        GROUP BY memory_id
+                    ),
+                    causal_links AS (
+                        SELECT
+                            memory_id,
+                            0::int AS entity_overlap,
+                            0.0::double precision AS semantic_total,
+                            sum(weight + 1.0)::double precision AS causal_total,
+                            ARRAY['causal']::text[] AS sources
+                        FROM link_rows
+                        WHERE link_type = ANY(%s::text[])
+                          AND NOT (memory_id = ANY(%s::text[]))
+                        GROUP BY memory_id
+                    ),
+                    combined AS (
+                        SELECT * FROM entity_overlap
+                        UNION ALL
+                        SELECT * FROM semantic_links
+                        UNION ALL
+                        SELECT * FROM causal_links
+                    ),
+                    scored AS (
+                        SELECT
+                            memory_id,
+                            sum(entity_overlap)::int AS entity_overlap,
+                            sum(semantic_total)::double precision AS semantic_total,
+                            sum(causal_total)::double precision AS causal_total,
+                            array_agg(DISTINCT source) AS sources
+                        FROM combined
+                        CROSS JOIN LATERAL unnest(sources) AS source
+                        GROUP BY memory_id
+                    )
+                    SELECT
+                        memory_id,
+                        entity_overlap,
+                        semantic_total,
+                        causal_total,
+                        sources,
+                        (
+                            %s * least(entity_overlap::double precision / 5.0, 1.0)
+                            + %s * least(semantic_total, 1.0)
+                            + %s * least(causal_total, 1.0)
+                        ) AS total_score
+                    FROM scored
+                    WHERE (
+                        %s * least(entity_overlap::double precision / 5.0, 1.0)
+                        + %s * least(semantic_total, 1.0)
+                        + %s * least(causal_total, 1.0)
+                    ) >= %s
+                    ORDER BY total_score DESC
+                    LIMIT %s
+                    """,
+                    [
+                        seed_memory_ids,
+                        bank_id,
+                        seed_memory_ids,
+                        bank_id,
+                        seed_memory_ids,
+                        int(params.per_entity_limit) * max(1, len(seed_memory_ids)),
+                        seed_memory_ids,
+                        bank_id,
+                        all_link_types,
+                        seed_memory_ids,
+                        seed_memory_ids,
+                        seed_memory_ids,
+                        seed_memory_ids,
+                        semantic_types,
+                        seed_memory_ids,
+                        causal_types,
+                        seed_memory_ids,
+                        float(params.entity_overlap_weight),
+                        float(params.semantic_weight),
+                        float(params.causal_weight),
+                        float(params.entity_overlap_weight),
+                        float(params.semantic_weight),
+                        float(params.causal_weight),
+                        float(params.activation_threshold),
+                        int(params.expansion_limit) * 2,
+                    ],
+                )
+                rows = await cur.fetchall()
+        finally:
+            await self._release(conn)
+
+        return [
+            {
+                "memory_id": row[0],
+                "entity_overlap": row[1],
+                "semantic_total": row[2],
+                "causal_total": row[3],
+                "sources": list(row[4] or []),
+                "total_score": row[5],
+            }
+            for row in rows
+        ]
+
     async def store_entity_link(self, link: EntityLink, bank_id: str) -> str:
         """Persist a single resolved entity link (M11 entity resolution)."""
         await self._ensure_schema()

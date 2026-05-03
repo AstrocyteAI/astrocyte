@@ -36,7 +36,7 @@ from astrocyte.pipeline.retrieval import (
 )
 from astrocyte.pipeline.temporal import normalize_relative_temporal_facts, temporal_metadata
 from astrocyte.testing.in_memory import InMemoryVectorStore
-from astrocyte.types import VectorItem
+from astrocyte.types import DocumentHit, VectorHit, VectorItem
 
 
 def _vec(id_: str, text: str, bank: str = "b1", *, created_at: datetime | None = None,
@@ -317,6 +317,44 @@ class TestParallelRetrieveTemporal:
         )
         # Faster decay → 7-day-old memory scored much lower.
         assert slow["temporal"][0].score > fast["temporal"][0].score
+
+    async def test_pgvector_hybrid_fast_path_populates_semantic_keyword_and_trace(self) -> None:
+        class HybridStore(InMemoryVectorStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.hybrid_called = False
+
+            async def search_hybrid_semantic_bm25(self, *_args, **_kwargs):
+                self.hybrid_called = True
+                return {
+                    "semantic": [
+                        VectorHit(id="sem", text="semantic hit", score=0.9),
+                    ],
+                    "keyword": [
+                        DocumentHit(document_id="kw", text="keyword hit", score=0.8),
+                    ],
+                }
+
+        store = HybridStore()
+        timings: dict[str, float] = {}
+        counts: dict[str, int] = {}
+
+        results = await parallel_retrieve(
+            query_vector=[1.0, 0.0],
+            query_text="keyword",
+            bank_id="b1",
+            vector_store=store,
+            document_store=store,
+            enable_temporal=False,
+            strategy_timings_ms=timings,
+            strategy_candidate_counts=counts,
+        )
+
+        assert store.hybrid_called is True
+        assert [item.id for item in results["semantic"]] == ["sem"]
+        assert [item.id for item in results["keyword"]] == ["kw"]
+        assert set(timings) == {"semantic", "keyword"}
+        assert counts == {"semantic": 1, "keyword": 1}
 
 
 # ---------------------------------------------------------------------------

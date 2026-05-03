@@ -218,6 +218,49 @@ class TestCompoundingSignals:
         assert "semantic" in by_id["entity-and-semantic"].metadata["_link_signal"]
         assert "entity_overlap" in by_id["entity-and-semantic"].metadata["_link_signal"]
 
+    @pytest.mark.asyncio
+    async def test_sql_fast_path_rows_are_hydrated_and_scored(self):
+        class FastGraphStore(InMemoryGraphStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fast_called = False
+
+            async def expand_memory_links_fast(self, seed_memory_ids, bank_id, *, params):
+                self.fast_called = True
+                assert seed_memory_ids == ["seed"]
+                assert bank_id == "b1"
+                return [
+                    {
+                        "memory_id": "fast-candidate",
+                        "entity_overlap": 2,
+                        "semantic_total": 0.9,
+                        "causal_total": 0.0,
+                        "sources": ["entity_overlap", "semantic"],
+                    }
+                ]
+
+        gs = FastGraphStore()
+        vs = InMemoryVectorStore()
+        await vs.store_vectors([
+            _vec("seed", "seed text"),
+            _vec("fast-candidate", "hydrated text", tags=["convo:X"]),
+        ])
+
+        result = await link_expansion(
+            [ScoredItem(id="seed", text="seed text", score=0.9)],
+            bank_id="b1",
+            vector_store=vs,
+            graph_store=gs,
+            params=LinkExpansionParams(activation_threshold=0.0),
+            tags=["convo:X"],
+        )
+
+        assert gs.fast_called is True
+        assert [item.id for item in result] == ["fast-candidate"]
+        assert result[0].text == "hydrated text"
+        assert result[0].metadata["_entity_overlap_count"] == 2
+        assert result[0].metadata["_semantic_weight_total"] == pytest.approx(0.9)
+
 
 # ---------------------------------------------------------------------------
 # Filtering & exclusions

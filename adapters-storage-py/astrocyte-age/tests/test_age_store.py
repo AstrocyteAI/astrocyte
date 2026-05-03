@@ -11,6 +11,10 @@ from astrocyte.types import Entity, EntityLink, MemoryEntityAssociation
 from astrocyte_age.store import AgeGraphStore
 
 
+def test_exposes_sql_link_expansion_fast_path() -> None:
+    assert hasattr(AgeGraphStore, "expand_memory_links_fast")
+
+
 @pytest.fixture
 async def store(age_dsn: str) -> AgeGraphStore:
     s = AgeGraphStore(dsn=age_dsn, graph_name="astrocyte_test", bootstrap_schema=True)

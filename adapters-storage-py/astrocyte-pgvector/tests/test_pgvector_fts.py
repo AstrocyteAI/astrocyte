@@ -184,6 +184,10 @@ class TestDocumentStoreProtocol:
         for method in ("store_document", "search_fulltext", "get_document", "health"):
             assert hasattr(PgVectorStore, method), f"Missing DocumentStore method: {method}"
 
+    def test_exposes_hybrid_recall_fast_path(self) -> None:
+        assert hasattr(PgVectorStore, "search_hybrid_semantic_bm25")
+        assert hasattr(PgVectorStore, "list_recent_vectors")
+
     async def test_fts_activates_keyword_strategy(self, store: PgVectorStore) -> None:
         """When PgVectorStore is passed as document_store, parallel_retrieve
         includes the keyword strategy in the fused result set."""

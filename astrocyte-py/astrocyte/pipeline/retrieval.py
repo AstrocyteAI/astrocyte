@@ -21,8 +21,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from astrocyte.pipeline.fusion import ScoredItem
 
@@ -61,6 +62,8 @@ async def parallel_retrieve(
     temporal_scan_cap: int = DEFAULT_TEMPORAL_SCAN_CAP,
     temporal_half_life_days: float = DEFAULT_TEMPORAL_HALF_LIFE_DAYS,
     hyde_vector: list[float] | None = None,
+    strategy_timings_ms: dict[str, float] | None = None,
+    strategy_candidate_counts: dict[str, int] | None = None,
 ) -> dict[str, list[ScoredItem]]:
     """Run parallel retrieval across all configured stores.
 
@@ -83,49 +86,101 @@ async def parallel_retrieve(
             are fused via RRF alongside the standard ``"semantic"`` strategy.
             Generate with :func:`astrocyte.pipeline.hyde.generate_hyde_vector`.
     """
-    tasks: dict[str, asyncio.Task[list[ScoredItem]]] = {}
+    tasks: dict[str, asyncio.Task[tuple[list[ScoredItem], float]]] = {}
+    hybrid_task: asyncio.Task[tuple[dict[str, list[ScoredItem]], float]] | None = None
 
-    # Always run semantic search
-    tasks["semantic"] = asyncio.create_task(_semantic_search(vector_store, query_vector, bank_id, limit, filters))
+    hybrid_search = getattr(vector_store, "search_hybrid_semantic_bm25", None)
+    use_hybrid_search = (
+        callable(hybrid_search)
+        and document_store is vector_store
+        and query_text.strip()
+        and hyde_vector is None
+    )
+
+    # PgVectorStore can answer semantic and keyword retrieval in one SQL round trip.
+    # Other adapters keep the portable per-strategy path.
+    if use_hybrid_search:
+        hybrid_task = asyncio.create_task(
+            _timed_hybrid_semantic_keyword_search(
+                vector_store, query_vector, query_text, bank_id, limit, filters,
+            )
+        )
+    else:
+        tasks["semantic"] = asyncio.create_task(
+            _timed(_semantic_search(vector_store, query_vector, bank_id, limit, filters))
+        )
 
     # HyDE (R1): second semantic pass with hypothetical-document embedding.
     # Runs concurrently with the standard semantic strategy; RRF fusion merges
     # both result sets.  No-op when hyde_vector is None (feature disabled or
     # generation failed upstream).
     if hyde_vector is not None:
-        tasks["hyde"] = asyncio.create_task(_semantic_search(vector_store, hyde_vector, bank_id, limit, filters))
+        tasks["hyde"] = asyncio.create_task(
+            _timed(_semantic_search(vector_store, hyde_vector, bank_id, limit, filters))
+        )
 
     # Graph search if store configured and entities found
     if graph_store and entity_ids:
-        tasks["graph"] = asyncio.create_task(_graph_search(graph_store, entity_ids, bank_id, limit))
+        tasks["graph"] = asyncio.create_task(_timed(_graph_search(graph_store, entity_ids, bank_id, limit)))
 
     # Full-text search if document store configured
-    if document_store:
-        tasks["keyword"] = asyncio.create_task(_keyword_search(document_store, query_text, bank_id, limit))
+    if document_store and not use_hybrid_search:
+        tasks["keyword"] = asyncio.create_task(_timed(_keyword_search(document_store, query_text, bank_id, limit)))
 
     # Temporal search if the vector store can enumerate. Capped scan keeps
     # cost bounded; rank by metadata[_created_at]/occurred_at recency decay.
     as_of = filters.as_of if filters is not None else None
     if enable_temporal and hasattr(vector_store, "list_vectors"):
         tasks["temporal"] = asyncio.create_task(
-            _temporal_search(
+            _timed(_temporal_search(
                 vector_store, bank_id, limit,
                 scan_cap=temporal_scan_cap,
                 half_life_days=temporal_half_life_days,
                 as_of=as_of,
-            )
+                filters=filters,
+            ))
         )
 
     # Wait for all strategies
     results: dict[str, list[ScoredItem]] = {}
+    if hybrid_task is not None:
+        try:
+            hybrid_results, elapsed_ms = await hybrid_task
+            for name, items in hybrid_results.items():
+                results[name] = items
+                if strategy_timings_ms is not None:
+                    strategy_timings_ms[name] = elapsed_ms
+                if strategy_candidate_counts is not None:
+                    strategy_candidate_counts[name] = len(items)
+        except Exception as exc:  # pragma: no cover — per-strategy isolation
+            logger.warning("retrieval strategy hybrid_semantic_bm25 failed: %s", exc)
+            results["semantic"] = []
+            results["keyword"] = []
+
     for name, task in tasks.items():
         try:
-            results[name] = await task
+            items, elapsed_ms = await task
+            results[name] = items
+            if strategy_timings_ms is not None:
+                strategy_timings_ms[name] = elapsed_ms
+            if strategy_candidate_counts is not None:
+                strategy_candidate_counts[name] = len(items)
         except Exception as exc:  # pragma: no cover — per-strategy isolation
             logger.warning("retrieval strategy %s failed: %s", name, exc)
             results[name] = []  # Strategy failure should not block others
+            if strategy_timings_ms is not None:
+                strategy_timings_ms[name] = 0.0
+            if strategy_candidate_counts is not None:
+                strategy_candidate_counts[name] = 0
 
     return results
+
+
+async def _timed(coro) -> tuple[list[ScoredItem], float]:
+    start = time.perf_counter()
+    result = await coro
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    return result, elapsed_ms
 
 
 async def _semantic_search(
@@ -150,6 +205,53 @@ async def _semantic_search(
         )
         for h in hits
     ]
+
+
+async def _timed_hybrid_semantic_keyword_search(
+    vector_store: VectorStore,
+    query_vector: list[float],
+    query_text: str,
+    bank_id: str,
+    limit: int,
+    filters: VectorFilters | None,
+) -> tuple[dict[str, list[ScoredItem]], float]:
+    start = time.perf_counter()
+    raw = await vector_store.search_hybrid_semantic_bm25(
+        query_vector,
+        query_text,
+        bank_id,
+        limit=limit,
+        filters=filters,
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    return _hybrid_hits_to_scored_items(raw), elapsed_ms
+
+
+def _hybrid_hits_to_scored_items(raw: dict[str, list[Any]]) -> dict[str, list[ScoredItem]]:
+    results: dict[str, list[ScoredItem]] = {"semantic": [], "keyword": []}
+    for hit in raw.get("semantic", []):
+        results["semantic"].append(
+            ScoredItem(
+                id=hit.id,
+                text=hit.text,
+                score=hit.score,
+                fact_type=hit.fact_type,
+                metadata=hit.metadata,
+                tags=hit.tags,
+                occurred_at=hit.occurred_at,
+                retained_at=getattr(hit, "retained_at", None),
+            )
+        )
+    for hit in raw.get("keyword", []):
+        results["keyword"].append(
+            ScoredItem(
+                id=hit.document_id,
+                text=hit.text,
+                score=hit.score,
+                metadata=hit.metadata,
+            )
+        )
+    return results
 
 
 async def _graph_search(
@@ -198,6 +300,7 @@ async def _temporal_search(
     scan_cap: int,
     half_life_days: float,
     as_of: datetime | None = None,
+    filters: VectorFilters | None = None,
 ) -> list[ScoredItem]:
     """Recency-ranked strategy.
 
@@ -216,18 +319,22 @@ async def _temporal_search(
     lacks timestamps, the result is an empty list and RRF ignores the
     strategy entirely.
     """
-    # Accumulate via paginated list_vectors so large banks don't blow memory.
-    scanned: list[VectorItem] = []
-    offset = 0
-    batch = min(200, scan_cap)
-    while len(scanned) < scan_cap:
-        page = await vector_store.list_vectors(bank_id, offset=offset, limit=batch)
-        if not page:
-            break
-        scanned.extend(page)
-        if len(page) < batch:
-            break  # last page
-        offset += batch
+    recent_vectors = getattr(vector_store, "list_recent_vectors", None)
+    if callable(recent_vectors):
+        scanned = await recent_vectors(bank_id, limit=scan_cap, filters=filters)
+    else:
+        # Accumulate via paginated list_vectors so large banks don't blow memory.
+        scanned = []
+        offset = 0
+        batch = min(200, scan_cap)
+        while len(scanned) < scan_cap:
+            page = await vector_store.list_vectors(bank_id, offset=offset, limit=batch)
+            if not page:
+                break
+            scanned.extend(page)
+            if len(page) < batch:
+                break  # last page
+            offset += batch
 
     if not scanned:
         return []

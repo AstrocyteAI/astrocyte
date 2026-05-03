@@ -168,6 +168,24 @@ async def link_expansion(
     seed_ids = {h.id for h in seed_hits}
     required_tags = {str(t).lower() for t in tags} if tags else set()
 
+    fast_expand = getattr(graph_store, "expand_memory_links_fast", None)
+    if callable(fast_expand):
+        try:
+            rows = await fast_expand([h.id for h in seed_hits], bank_id, params=p)
+        except Exception as exc:
+            _logger.warning("fast link expansion failed (%s); using portable fallback", exc)
+            rows = []
+        if rows:
+            fast_result = await _hydrate_candidate_scores(
+                vector_store,
+                bank_id,
+                _candidate_scores_from_rows(rows),
+                p,
+                required_tags,
+            )
+            if fast_result:
+                return fast_result
+
     candidates: dict[str, _CandidateScore] = {}
 
     # --- Signal 1: entity overlap --------------------------------------
@@ -249,15 +267,46 @@ async def link_expansion(
     if not candidates:
         return []
 
-    # --- Hydrate bodies & filter --------------------------------------
+    return await _hydrate_candidate_scores(vector_store, bank_id, list(candidates.values()), p, required_tags)
+
+
+def _candidate_scores_from_rows(rows: list[dict]) -> list[_CandidateScore]:
+    candidates: list[_CandidateScore] = []
+    for row in rows:
+        sources = row.get("sources") or []
+        if isinstance(sources, str):
+            sources = [part for part in sources.split(",") if part]
+        candidates.append(
+            _CandidateScore(
+                memory_id=str(row["memory_id"]),
+                entity_overlap=int(row.get("entity_overlap") or 0),
+                semantic_total=float(row.get("semantic_total") or 0.0),
+                causal_total=float(row.get("causal_total") or 0.0),
+                sources={str(source) for source in sources},
+            )
+        )
+    return candidates
+
+
+async def _hydrate_candidate_scores(
+    vector_store: VectorStore,
+    bank_id: str,
+    candidates: list[_CandidateScore],
+    params: LinkExpansionParams,
+    required_tags: set[str],
+) -> list[ScoredItem]:
+    """Hydrate candidate IDs from either the SQL fast path or Python fallback."""
+    if not candidates:
+        return []
+
     # Cap candidate set before fetching bodies to bound the cost.
     ranked = sorted(
-        candidates.values(),
-        key=lambda c: c.total(p),
+        candidates,
+        key=lambda c: c.total(params),
         reverse=True,
     )
-    ranked = [c for c in ranked if c.total(p) >= p.activation_threshold]
-    ranked = ranked[: p.expansion_limit * 2]  # over-fetch; tag filter cuts later
+    ranked = [c for c in ranked if c.total(params) >= params.activation_threshold]
+    ranked = ranked[: params.expansion_limit * 2]  # over-fetch; tag filter cuts later
     if not ranked:
         return []
 
@@ -284,7 +333,7 @@ async def link_expansion(
             ScoredItem(
                 id=body.id,
                 text=body.text,
-                score=cand.total(p),
+                score=cand.total(params),
                 fact_type=body.fact_type,
                 metadata=metadata,
                 tags=body.tags,
@@ -293,7 +342,7 @@ async def link_expansion(
                 retained_at=body.retained_at,
             )
         )
-        if len(out) >= p.expansion_limit:
+        if len(out) >= params.expansion_limit:
             break
 
     return out

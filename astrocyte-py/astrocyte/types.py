@@ -332,6 +332,8 @@ class RecallTrace:
     total_candidates: int | None = None
     fusion_method: str | None = None
     latency_ms: float | None = None
+    strategy_timings_ms: dict[str, float] | None = None
+    strategy_candidate_counts: dict[str, int] | None = None
     tier_used: int | None = None  # Which retrieval tier resolved the query
     layer_distribution: dict[str, int] | None = None  # {"fact": 5, "observation": 3, "model": 1}
     cache_hit: bool | None = None  # Whether recall cache was used
