@@ -326,6 +326,7 @@ class LoComoBenchmark:
         bank_id: str = "bench-locomo",
         *,
         clean_after: bool = True,
+        reset_state_before: bool = True,
         max_questions: int | None = None,
         max_questions_per_conversation: int | None = None,
         use_canonical_judge: bool = False,
@@ -345,6 +346,12 @@ class LoComoBenchmark:
             conversations: Pre-loaded conversations (alternative to data_path).
             bank_id: Dedicated bank for the benchmark.
             clean_after: Delete the bank after running.
+            reset_state_before: When ``True`` (default), TRUNCATE every
+                bench-relevant Postgres table and recreate the AGE graph
+                before the run starts.  Skipped when a checkpoint is
+                provided (resume requires existing data) or when the
+                orchestrator already reset state for a multi-benchmark run
+                (pass ``False`` from ``run_benchmarks.py``).
             max_questions: Hard cap on total questions evaluated. Applied
                 AFTER ``max_questions_per_conversation``. Uses a
                 deterministic head-slice — questions retain their original
@@ -385,6 +392,14 @@ class LoComoBenchmark:
         """
         if checkpoint is not None:
             print(f"  [LoCoMo] {checkpoint.resume_summary()}")
+
+        # Pre-run state reset: TRUNCATE every bench-relevant Postgres table
+        # so this run starts identical to every prior one.  Skipped when
+        # resuming a checkpoint (the existing data is what we're resuming
+        # against).  Skipped when DATABASE_URL is unset (in-memory tests).
+        if reset_state_before and checkpoint is None:
+            from astrocyte.eval._state_reset import reset_benchmark_state
+            await reset_benchmark_state()
 
         if conversations is None and data_path is not None:
             conversations = load_locomo_dataset(data_path)

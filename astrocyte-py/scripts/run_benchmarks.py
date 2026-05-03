@@ -445,6 +445,7 @@ async def run_longmemeval(
         result = await bench.run(
             data_path=data_path,
             bank_id="bench-longmemeval",
+            reset_state_before=False,  # orchestrator already reset at top
             max_questions=max_questions,
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
@@ -499,6 +500,7 @@ async def run_longmemeval(
         result = await bench.run(
             questions=questions,
             bank_id="bench-longmemeval",
+            reset_state_before=False,  # orchestrator already reset at top
             max_questions=max_questions,
             max_sessions=max_sessions,
             use_canonical_judge=use_canonical_judge,
@@ -621,6 +623,7 @@ async def run_locomo(
         result = await bench.run(
             data_path=data_path,
             bank_id="bench-locomo",
+            reset_state_before=False,  # orchestrator already reset at top
             max_questions=max_questions,
             max_questions_per_conversation=max_questions_per_conversation,
             use_canonical_judge=use_canonical_judge,
@@ -737,6 +740,7 @@ async def run_locomo(
         result = await bench.run(
             conversations=conversations,
             bank_id="bench-locomo",
+            reset_state_before=False,  # orchestrator already reset at top
             max_questions=max_questions,
             max_questions_per_conversation=max_questions_per_conversation,
             use_canonical_judge=use_canonical_judge,
@@ -772,7 +776,11 @@ async def run_builtin_suites(brain) -> dict:
     results = {}
 
     for suite_name in ("basic", "accuracy"):
-        result = await evaluator.run_suite(suite_name, bank_id=f"bench-{suite_name}")
+        result = await evaluator.run_suite(
+            suite_name,
+            bank_id=f"bench-{suite_name}",
+            reset_state_before=False,  # orchestrator already reset at top
+        )
         m = result.metrics
 
         print(f"\n{'=' * 60}")
@@ -946,6 +954,14 @@ async def main() -> None:
     all_results: dict = {}
     used_real_data: dict[str, bool] = {}
     wall_start = time.monotonic()
+
+    # ONE pre-run reset at the orchestrator level.  Per-benchmark
+    # reset_state_before=False below ensures parallel runs don't race on
+    # TRUNCATE / drop_graph and don't clobber each other's data mid-flight.
+    # No-op when DATABASE_URL is unset.
+    from astrocyte.eval._state_reset import reset_benchmark_state
+    print("Resetting benchmark Postgres state...")
+    await reset_benchmark_state()
 
     if "builtin" in args.benchmarks:
         all_results["builtin"] = await run_builtin_suites(brain)

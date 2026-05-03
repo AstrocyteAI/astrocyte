@@ -129,6 +129,7 @@ class LongMemEvalBenchmark:
         bank_id: str = "bench-longmemeval",
         *,
         clean_after: bool = True,
+        reset_state_before: bool = True,
         max_questions: int | None = None,
         max_sessions: int | None = None,
         use_canonical_judge: bool = False,
@@ -148,6 +149,11 @@ class LongMemEvalBenchmark:
             questions: Pre-loaded questions (alternative to data_path).
             bank_id: Dedicated bank for the benchmark.
             clean_after: Delete the bank after running.
+            reset_state_before: When ``True`` (default), TRUNCATE every
+                bench-relevant Postgres table and recreate the AGE graph
+                before the run starts.  Skipped when a checkpoint is
+                provided (resume requires existing data) or when the
+                orchestrator already reset state.
             max_questions: Limit number of questions (for quick testing).
             max_sessions: Cap the retain phase at this many unique sessions.
                           Useful for cost control on large haystacks: the
@@ -182,6 +188,13 @@ class LongMemEvalBenchmark:
         """
         if checkpoint is not None:
             print(f"  [LongMemEval] {checkpoint.resume_summary()}")
+
+        # Pre-run state reset: TRUNCATE every bench-relevant Postgres table
+        # so this run starts identical to every prior one.  Skipped when
+        # resuming a checkpoint or when DATABASE_URL is unset.
+        if reset_state_before and checkpoint is None:
+            from astrocyte.eval._state_reset import reset_benchmark_state
+            await reset_benchmark_state()
 
         if questions is None and data_path is not None:
             questions = load_longmemeval_dataset(data_path, max_questions=max_questions)

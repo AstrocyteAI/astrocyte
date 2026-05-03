@@ -222,6 +222,7 @@ class MemoryEvaluator:
         bank_id: str = "eval-test",
         *,
         clean_after: bool = True,
+        reset_state_before: bool = True,
         judge: str = "keyword",
         judge_model: str | None = None,
     ) -> EvalResult:
@@ -231,6 +232,11 @@ class MemoryEvaluator:
             suite: Suite name ("basic", "accuracy") or EvalSuite instance or YAML path.
             bank_id: Dedicated bank for evaluation (created fresh).
             clean_after: Delete the eval bank after running.
+            reset_state_before: When ``True`` (default), TRUNCATE every
+                bench-relevant Postgres table and recreate the AGE graph
+                before the run starts.  Skipped when ``DATABASE_URL`` is
+                unset (in-memory test provider) or when the orchestrator
+                already reset state for a multi-suite run.
             judge: Scoring method — "keyword" (fast, free) or "deepeval" (LLM-judged, thorough).
             judge_model: LLM model for DeepEval judge (e.g., "gpt-4o"). Uses DeepEval default if None.
         """
@@ -238,6 +244,13 @@ class MemoryEvaluator:
             eval_suite = load_suite(suite)
         else:
             eval_suite = suite
+
+        # Pre-run state reset: TRUNCATE every bench-relevant Postgres table
+        # so this run starts identical to every prior one.  No-op when
+        # DATABASE_URL is unset.
+        if reset_state_before:
+            from astrocyte.eval._state_reset import reset_benchmark_state
+            await reset_benchmark_state()
 
         start_time = time.monotonic()
 
