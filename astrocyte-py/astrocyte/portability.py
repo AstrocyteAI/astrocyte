@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,61 @@ from typing import Literal
 from astrocyte.types import MemoryHit, Metadata, RecallRequest, RecallResult, RetainRequest
 
 logger = logging.getLogger("astrocyte.portability")
+
+# ---------------------------------------------------------------------------
+# Path containment (CWE-022)
+# ---------------------------------------------------------------------------
+#
+# Path(path).resolve() canonicalises but does NOT contain — a caller can
+# pass /etc/passwd and resolve() returns it unchanged.  ``_safe_resolve``
+# validates that the resolved path stays within an explicit allow-list.
+#
+# Allow-list resolution order:
+#   1. ``allowed_roots`` kwarg passed to the public function
+#   2. ``ASTROCYTE_PORTABILITY_ROOTS`` env var (os.pathsep-joined)
+#   3. None — return resolved path unchanged (library / CLI / test usage)
+#
+# Production gateway deployments should set ``ASTROCYTE_PORTABILITY_ROOTS``
+# to opt into containment without changing call sites.
+
+_PORTABILITY_ROOTS_ENV = "ASTROCYTE_PORTABILITY_ROOTS"
+
+
+def _portability_roots() -> list[Path]:
+    """Read containment roots from the environment."""
+    raw = os.environ.get(_PORTABILITY_ROOTS_ENV, "")
+    return [Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p]
+
+
+def _safe_resolve(
+    path: str | Path,
+    *,
+    allowed_roots: list[str | Path] | None = None,
+) -> Path:
+    """Resolve ``path`` and verify it stays within an allowed root.
+
+    See module docstring for the allow-list resolution order.
+
+    Raises:
+        ValueError: If the resolved path escapes every allowed root.
+    """
+    resolved = Path(path).expanduser().resolve()
+    roots: list[Path]
+    if allowed_roots:
+        roots = [Path(r).expanduser().resolve() for r in allowed_roots]
+    else:
+        roots = _portability_roots()
+    if not roots:
+        # No containment configured — library / CLI / test usage.
+        return resolved
+    for root in roots:
+        if resolved == root or resolved.is_relative_to(root):
+            return resolved
+    raise ValueError(
+        f"Portability path escapes allowed roots: {resolved!s} "
+        f"not in {[str(r) for r in roots]}"
+    )
+
 
 # ---------------------------------------------------------------------------
 # AMA header
@@ -68,6 +124,8 @@ async def export_bank(
     include_embeddings: bool = False,
     include_entities: bool = True,
     batch_size: int = 100,
+    *,
+    allowed_roots: list[str | Path] | None = None,
 ) -> int:
     """Export a memory bank to AMA JSONL format.
 
@@ -80,11 +138,15 @@ async def export_bank(
         include_embeddings: Include vector embeddings (not portable across models).
         include_entities: Include extracted entities.
         batch_size: Number of memories per recall batch.
+        allowed_roots: Optional list of directory roots; the resolved
+            ``path`` must fall under one of them.  When ``None``, falls
+            back to ``ASTROCYTE_PORTABILITY_ROOTS`` env var, then to
+            unrestricted (library / CLI / test usage).  See ``_safe_resolve``.
 
     Returns:
         Number of memories exported.
     """
-    path = Path(path).resolve()
+    path = _safe_resolve(path, allowed_roots=allowed_roots)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # Collect all memories via recall with large limit
@@ -159,9 +221,16 @@ async def export_bank(
 # ---------------------------------------------------------------------------
 
 
-def read_ama_header(path: str | Path) -> AmaHeader:
-    """Read and validate the AMA header (first line)."""
-    path = Path(path).resolve()
+def read_ama_header(
+    path: str | Path,
+    *,
+    allowed_roots: list[str | Path] | None = None,
+) -> AmaHeader:
+    """Read and validate the AMA header (first line).
+
+    See ``export_bank`` for ``allowed_roots`` semantics.
+    """
+    path = _safe_resolve(path, allowed_roots=allowed_roots)
     with open(path, encoding="utf-8") as f:
         first_line = f.readline().strip()
     if not first_line:
@@ -186,9 +255,16 @@ def read_ama_header(path: str | Path) -> AmaHeader:
     )
 
 
-def iter_ama_memories(path: str | Path) -> list[AmaMemory]:
-    """Read all memory records from an AMA file (skips header)."""
-    path = Path(path).resolve()
+def iter_ama_memories(
+    path: str | Path,
+    *,
+    allowed_roots: list[str | Path] | None = None,
+) -> list[AmaMemory]:
+    """Read all memory records from an AMA file (skips header).
+
+    See ``export_bank`` for ``allowed_roots`` semantics.
+    """
+    path = _safe_resolve(path, allowed_roots=allowed_roots)
     memories: list[AmaMemory] = []
     with open(path, encoding="utf-8") as f:
         # Skip header
@@ -241,6 +317,8 @@ async def import_bank(
     path: str | Path,
     on_conflict: Literal["skip", "overwrite", "error"] = "skip",
     progress_fn=None,
+    *,
+    allowed_roots: list[str | Path] | None = None,
 ) -> ImportResult:
     """Import memories from an AMA file into a bank.
 
@@ -251,12 +329,13 @@ async def import_bank(
         path: Path to AMA JSONL file.
         on_conflict: How to handle memories with IDs that already exist.
         progress_fn: Optional callback(imported, total) for progress reporting.
+        allowed_roots: See ``export_bank``.
 
     Returns:
         ImportResult with counts.
     """
-    header = read_ama_header(path)
-    memories = iter_ama_memories(path)
+    header = read_ama_header(path, allowed_roots=allowed_roots)
+    memories = iter_ama_memories(path, allowed_roots=allowed_roots)
 
     imported = 0
     skipped = 0
