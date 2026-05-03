@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+from astrocyte.types import EvalMetrics
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT_PATH = _REPO_ROOT / "scripts" / "run_benchmarks.py"
 _SPEC = importlib.util.spec_from_file_location("run_benchmarks", _SCRIPT_PATH)
@@ -14,8 +16,10 @@ sys.modules["run_benchmarks"] = _RUNNER
 _SPEC.loader.exec_module(_RUNNER)
 
 
-def _metrics() -> SimpleNamespace:
-    return SimpleNamespace(
+def _metrics() -> EvalMetrics:
+    """Real EvalMetrics dataclass — _serialize_metrics uses dataclasses.fields()
+    which raises TypeError on SimpleNamespace (the previous mock shape)."""
+    return EvalMetrics(
         recall_precision=0.5,
         recall_hit_rate=0.75,
         recall_mrr=0.6,
@@ -24,9 +28,9 @@ def _metrics() -> SimpleNamespace:
         retain_latency_p95_ms=200.0,
         recall_latency_p50_ms=50.0,
         recall_latency_p95_ms=90.0,
-        reflect_accuracy=0.5,
         total_tokens_used=1234,
         total_duration_seconds=12.3,
+        reflect_accuracy=0.5,
     )
 
 
