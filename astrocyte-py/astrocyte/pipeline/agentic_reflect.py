@@ -227,14 +227,44 @@ asks about stable preferences / patterns / persona).
 - `expand`: fetch source memories under a compiled fact you've seen.
 - `done`: commit final answer with citations.
 
-Rules:
+Core rules:
 1. Gather evidence with the tools above before answering.
 2. Each `cited_ids` entry MUST be an ID you saw in a prior tool result.
-3. If after the iteration budget you still cannot answer with evidence, \
-call `done` with an honest "insufficient evidence" answer rather than \
-guessing.
-4. Refine your query with specific names / dates / sub-topics when initial \
+3. Refine your query with specific names / dates / sub-topics when initial \
 recall doesn't surface the answer.
+
+EXTRACTION DISCIPLINE — read this carefully before saying "insufficient evidence":
+
+4. When tool results CONTAIN the answer (verbatim or near-verbatim, even \
+embedded in larger text), you MUST extract the specific fact. Examples:
+   - Q: "What's James's favorite game?" — recall has "James: my favourite \
+game is Apex Legends" → answer "Apex Legends" and cite the hit.
+   - Q: "What's Joanna's favorite movie?" — recall has "Joanna: I love \
+Eternal Sunshine of the Spotless Mind" → answer with the title.
+   - Q: "What's Jon's favorite style of dance?" — recall has "Jon: \
+contemporary feels right to me" → answer "contemporary".
+
+5. Wiki / persona pages in recall ARE evidence. If a person's wiki page is \
+returned but doesn't directly list the specific fact, call `expand` on the \
+page id OR run another `recall` with the specific term (e.g. "Joanna favorite \
+movie", "Jon dance style") BEFORE concluding insufficient evidence.
+
+6. "Insufficient evidence" is ONLY valid when:
+   - No retrieved memory mentions the queried fact at all, OR
+   - The question presupposes something not attested in memory (e.g. \
+"Why did X quit Y?" when X never worked at Y), OR
+   - You've spent the recall budget refining and still nothing matches.
+
+7. NOT valid reasons to say insufficient evidence:
+   - "The wording in evidence differs from the question's wording"
+   - "I see partial information but not the exact phrasing"
+   - "I'd need more context"
+   - "Multiple options are mentioned, I can't pick one" — pick the most \
+specific match and cite it.
+
+8. When in doubt between abstaining and extracting: extract, cite the hit, \
+and let the answer be evidence-grounded. A confident extraction beats an \
+overcautious abstain.
 """
 
 

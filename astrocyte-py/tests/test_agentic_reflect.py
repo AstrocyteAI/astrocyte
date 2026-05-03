@@ -385,6 +385,43 @@ class TestAgenticLoop:
         assert "ADVERSARIAL DEFENSE" not in sys_msg.content
 
     @pytest.mark.asyncio
+    async def test_base_prompt_includes_extraction_discipline(self):
+        """The base system prompt MUST include the extraction-discipline
+        rules so the agent extracts specific facts from retrieved evidence
+        instead of reflexively saying "insufficient evidence" when
+        evidence is partial. Lock this in: 2026-05-02 LoCoMo bench
+        showed ~36 of 90 synth misses (40%) were over-cautious abstains
+        on questions where the answer WAS in recall hits (e.g. "James's
+        favorite game" with recall containing "James: my favorite game
+        is Apex Legends" yet the model returned 'insufficient evidence')."""
+        llm = _ScriptedToolLLM([
+            [("done", {"answer": "x", "cited_ids": []})],
+        ])
+
+        await agentic_reflect(
+            "q",
+            initial_hits=[],
+            recall_fn=_RecallTracker([]),
+            llm_provider=llm,
+            # No adversarial_defense — verifying base prompt content
+        )
+
+        sys_msg = next(
+            m for m in llm.calls[0]["messages"] if m.role == "system"
+        )
+        c = sys_msg.content
+        # Required content for the extraction-discipline guard
+        assert "EXTRACTION DISCIPLINE" in c, (
+            "Base prompt must contain the EXTRACTION DISCIPLINE section."
+        )
+        assert "MUST extract" in c
+        # Must enumerate INVALID reasons to abstain (the bug we saw)
+        assert "wording in evidence differs" in c.lower()
+        assert "partial information" in c.lower()
+        # Must constrain when "insufficient evidence" IS valid
+        assert "ONLY valid when" in c
+
+    @pytest.mark.asyncio
     async def test_unknown_tool_returns_error_to_model(self):
         """An unknown tool name is fed back as a structured error, then
         the model gets another turn to recover (call done in this case)."""
