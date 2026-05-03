@@ -33,12 +33,14 @@ from astrocyte.ingest.supervisor import IngestSupervisor, merge_source_health
 from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.pipeline.mental_model import MentalModelService
 from astrocyte.types import AstrocyteContext
+from astrocyte.tenancy import TenantExtension
 from astrocyte_gateway.auth import get_astrocyte_context
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
 from astrocyte_gateway.rate_limit import SlidingWindowRateLimitMiddleware, rate_limit_max_from_env
 from astrocyte_gateway.serialization import to_jsonable
 from astrocyte_gateway.tasks import start_gateway_task_worker
+from astrocyte_gateway.tenancy import default_tenant_extension, install_tenant_middleware
 
 # Bounds /health latency when the vector store (e.g. pgvector) cannot connect.
 _HEALTH_TIMEOUT_S = 8.0
@@ -154,10 +156,25 @@ def _callable_without_required_args(func: object) -> bool:
     )
 
 
-def create_app(brain: Astrocyte | None = None) -> FastAPI:
-    """Build the FastAPI app. Pass a pre-built ``brain`` for tests and overhead benchmarks."""
+def create_app(
+    brain: Astrocyte | None = None,
+    tenant_extension: TenantExtension | None = None,
+) -> FastAPI:
+    """Build the FastAPI app.
+
+    Args:
+        brain: Pre-built ``Astrocyte`` for tests and overhead benchmarks.
+        tenant_extension: Custom :class:`~astrocyte.tenancy.TenantExtension`
+            for schema-per-tenant deployments. When ``None`` (the default),
+            uses :func:`~astrocyte_gateway.tenancy.default_tenant_extension`,
+            which reads ``ASTROCYTE_DATABASE_SCHEMA`` (default ``public``)
+            and serves a single tenant. Custom extensions can map an inbound
+            request to any schema via headers / JWT / API-key lookup.
+    """
     if brain is None:
         brain = build_astrocyte()
+    if tenant_extension is None:
+        tenant_extension = default_tenant_extension()
     ingest_registry = SourceRegistry.from_sources_config(
         brain.config.sources,
         retain=retain_callable_for_astrocyte(brain),
@@ -185,6 +202,13 @@ def create_app(brain: Astrocyte | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     _configure_gateway_middleware(app)
+    # Bind active tenant schema per request — must be installed AFTER the
+    # body-size / CORS / access-context middleware so those run first, but
+    # BEFORE any endpoint handler executes. Starlette runs middleware in
+    # reverse-registration order (last-added is outermost), which means this
+    # call wraps the handler innermost — exactly what we want for the
+    # ContextVar lifecycle.
+    install_tenant_middleware(app, tenant_extension)
 
     @app.exception_handler(AccessDenied)
     async def _access_denied(_request: Request, exc: AccessDenied) -> JSONResponse:
