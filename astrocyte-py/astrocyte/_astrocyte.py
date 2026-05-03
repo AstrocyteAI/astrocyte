@@ -294,6 +294,7 @@ class Astrocyte:
         ad_cfg = self._config.adversarial_defense
         pipeline.adversarial_abstention_enabled = ad_cfg.abstention_enabled
         pipeline.adversarial_abstention_floor = ad_cfg.abstention_floor
+        pipeline.adversarial_abstention_floor_intent_only = ad_cfg.abstention_floor_intent_only
         pipeline.adversarial_premise_verification_enabled = ad_cfg.premise_verification_enabled
         pipeline.adversarial_premise_min_confidence = ad_cfg.premise_verification_min_confidence
         pipeline.adversarial_prompt_enabled = ad_cfg.adversarial_prompt_enabled

@@ -180,6 +180,17 @@ class AdversarialDefenseConfig:
 
     abstention_enabled: bool = False
     abstention_floor: float = 0.2
+    #: When ``True``, only fire the abstention floor for queries the intent
+    #: classifier could NOT confidently resolve to a well-formed intent
+    #: (i.e. ``EXPLORATORY`` and ``UNKNOWN``). Skipping well-formed intents
+    #: (FACTUAL / TEMPORAL / RELATIONAL / COMPARATIVE / PROCEDURAL) protects
+    #: legitimate single-hop and temporal queries whose top retrieval score
+    #: happens to dip below the floor — the regression we measured in
+    #: hindsight-balanced (single-hop −10pt, temporal −10pt) was driven by
+    #: this exact case. Default ``False`` keeps the legacy behaviour where
+    #: the floor fires on every query — preserves backward compatibility
+    #: for fast-recall and any deployment relying on aggressive abstention.
+    abstention_floor_intent_only: bool = False
     premise_verification_enabled: bool = False
     premise_verification_min_confidence: float = 0.6
     adversarial_prompt_enabled: bool = False

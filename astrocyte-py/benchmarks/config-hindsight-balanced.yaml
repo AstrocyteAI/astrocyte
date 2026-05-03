@@ -103,10 +103,21 @@ cross_encoder_rerank:
   force_cpu: false
 
 # Single-variable diff vs hindsight-parity:
-#   abstention floor + adversarial system-prompt rule, NO premise verification.
+#   abstention floor (intent-conditional) + adversarial system-prompt rule,
+#   NO premise verification.
+#
+# ``abstention_floor_intent_only=true`` skips the floor for queries with a
+# confident well-formed intent (FACTUAL / TEMPORAL / RELATIONAL /
+# COMPARATIVE / PROCEDURAL). The previous flat-floor experiment cratered
+# single-hop (-10pt) and temporal (-10pt) on this preset because legitimate
+# factual / temporal queries occasionally have top retrieval scores below
+# 0.2. Intent-gating recovers those points while keeping adversarial
+# defense for EXPLORATORY / UNKNOWN queries (where false-premise shapes
+# disproportionately classify).
 adversarial_defense:
   abstention_enabled: true
   abstention_floor: 0.2
+  abstention_floor_intent_only: true
   premise_verification_enabled: false
   adversarial_prompt_enabled: true
 
