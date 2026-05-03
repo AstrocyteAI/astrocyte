@@ -17,7 +17,7 @@ git tag -a v0.8.0 -m "Release v0.8.0: M5 storage adapters, M6 gateway, M7 recall
 git push origin v0.8.0
 ```
 
-The **`release.yml`** workflow (on `v*`) publishes **`astrocyte`** → **`astrocyte-pgvector`** → **`astrocyte-gateway-py`** image in order.
+The **`release.yml`** workflow (on `v*`) publishes **`astrocyte`** → **`astrocyte-postgres`** → **`astrocyte-gateway-py`** image in order.
 
 ### Local resolution before a tag exists
 

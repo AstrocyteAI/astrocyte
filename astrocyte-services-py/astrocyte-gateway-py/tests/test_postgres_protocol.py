@@ -1,8 +1,8 @@
-"""Tests for PgVectorStore protocol parity (list_vectors, memory_layer).
+"""Tests for PostgresStore protocol parity (list_vectors, memory_layer).
 
 These tests verify protocol compliance using InMemoryVectorStore as the
 reference implementation since PostgreSQL is not available in CI.
-The PgVectorStore SQL is tested structurally (schema, column presence).
+The PostgresStore SQL is tested structurally (schema, column presence).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from astrocyte.types import VectorItem
 
 _pgvector_available = True
 try:
-    from astrocyte_pgvector.store import PgVectorStore
+    from astrocyte_postgres.store import PostgresStore
 except ImportError:
     _pgvector_available = False
 
@@ -114,39 +114,39 @@ class TestMemoryLayerRoundtrip:
 
 
 # ---------------------------------------------------------------------------
-# PgVectorStore structural checks (no PostgreSQL needed)
+# PostgresStore structural checks (no PostgreSQL needed)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.skipif(not _pgvector_available, reason="pgvector deps not installed")
-class TestPgVectorStoreStructure:
+class TestPostgresStoreStructure:
     def test_has_list_vectors_method(self):
-        assert hasattr(PgVectorStore, "list_vectors")
-        sig = inspect.signature(PgVectorStore.list_vectors)
+        assert hasattr(PostgresStore, "list_vectors")
+        sig = inspect.signature(PostgresStore.list_vectors)
         params = list(sig.parameters.keys())
         assert "bank_id" in params
         assert "offset" in params
         assert "limit" in params
 
     def test_schema_includes_memory_layer(self):
-        source = inspect.getsource(PgVectorStore._ensure_schema)
+        source = inspect.getsource(PostgresStore._ensure_schema)
         assert "memory_layer" in source
 
     def test_store_vectors_includes_memory_layer(self):
-        source = inspect.getsource(PgVectorStore.store_vectors)
+        source = inspect.getsource(PostgresStore.store_vectors)
         assert "memory_layer" in source
 
     def test_search_similar_includes_memory_layer(self):
-        source = inspect.getsource(PgVectorStore.search_similar)
+        source = inspect.getsource(PostgresStore.search_similar)
         assert "memory_layer" in source
 
     def test_sql_migration_uses_configurable_vector_width(self):
         repo_root = Path(__file__).resolve().parents[3]
-        migration = repo_root / "adapters-storage-py/astrocyte-pgvector/migrations/002_astrocytes_vectors.sql"
-        migrate_script = repo_root / "adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh"
+        migration = repo_root / "adapters-storage-py/astrocyte-postgres/migrations/002_astrocytes_vectors.sql"
+        migrate_script = repo_root / "adapters-storage-py/astrocyte-postgres/scripts/migrate.sh"
 
         assert "embedding vector(:embedding_dimensions) NOT NULL" in migration.read_text()
         assert "ASTROCYTE_EMBEDDING_DIMENSIONS" in migrate_script.read_text()
 
     def test_spi_version_is_1(self):
-        assert PgVectorStore.SPI_VERSION == 1
+        assert PostgresStore.SPI_VERSION == 1

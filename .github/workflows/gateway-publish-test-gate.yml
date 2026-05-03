@@ -61,11 +61,11 @@ jobs:
         env:
           GATEWAY_EXAMPLE_MATRIX: ${{ matrix.example }}
         run: |
-          uv sync --extra dev --extra pgvector
+          uv sync --extra dev --extra postgres
           uv run python -m pytest tests/test_gateway_examples_smoke.py -v --tb=short
 
-  pgvector-integration:
-    name: pgvector integration
+  postgres-integration:
+    name: postgres integration
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -99,36 +99,36 @@ jobs:
       - name: Install psql (migrations)
         run: sudo apt-get update -y && sudo apt-get install -y postgresql-client
 
-      - name: Migrate Postgres (pgvector SQL)
-        run: adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh
+      - name: Migrate Postgres (astrocyte-postgres SQL)
+        run: adapters-storage-py/astrocyte-postgres/scripts/migrate.sh
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
 
-      - name: Test astrocyte-pgvector
-        working-directory: adapters-storage-py/astrocyte-pgvector
+      - name: Test astrocyte-postgres
+        working-directory: adapters-storage-py/astrocyte-postgres
         run: uv sync --extra dev && uv run python -m pytest
 
-      - name: Gateway E2E (HTTP + pgvector, migrated schema)
+      - name: Gateway E2E (HTTP + postgres, migrated schema)
         working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
           ASTROCYTE_GATEWAY_E2E_MIGRATED: "1"
         run: |
-          uv sync --extra dev --extra pgvector
-          uv run python -m pytest tests/test_integration_pgvector_http.py -v --tb=short
+          uv sync --extra dev --extra postgres
+          uv run python -m pytest tests/test_integration_postgres_http.py -v --tb=short
 
-      - name: Gateway example smoke (tier1-pgvector)
+      - name: Gateway example smoke (tier1-postgres)
         working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
           ASTROCYTE_GATEWAY_E2E_MIGRATED: "1"
-          GATEWAY_EXAMPLE_MATRIX: tier1-pgvector
+          GATEWAY_EXAMPLE_MATRIX: tier1-postgres
         run: |
-          uv sync --extra dev --extra pgvector
+          uv sync --extra dev --extra postgres
           uv run python -m pytest tests/test_gateway_examples_smoke.py -v --tb=short
 
-  pgvector-age-integration:
-    name: pgvector + AGE integration (combined image)
+  postgres-age-integration:
+    name: postgres + AGE integration (combined image)
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -186,13 +186,13 @@ jobs:
       - name: Install psql (migrations)
         run: sudo apt-get update -y && sudo apt-get install -y postgresql-client
 
-      - name: Migrate Postgres (pgvector SQL)
-        run: adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh
+      - name: Migrate Postgres (astrocyte-postgres SQL)
+        run: adapters-storage-py/astrocyte-postgres/scripts/migrate.sh
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
 
-      - name: Test astrocyte-pgvector (combined image)
-        working-directory: adapters-storage-py/astrocyte-pgvector
+      - name: Test astrocyte-postgres (combined image)
+        working-directory: adapters-storage-py/astrocyte-postgres
         run: uv sync --extra dev && uv run python -m pytest
 
       - name: Test astrocyte-age (combined image)
@@ -201,7 +201,7 @@ jobs:
           ASTROCYTE_AGE_TEST_DSN: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
         run: uv sync --extra dev && uv run python -m pytest
 
-      - name: Gateway E2E (HTTP + pgvector + AGE, combined image)
+      - name: Gateway E2E (HTTP + postgres + AGE, combined image)
         working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
@@ -209,5 +209,5 @@ jobs:
           ASTROCYTE_GRAPH_STORE: age
           ASTROCYTE_GATEWAY_E2E_MIGRATED: "1"
         run: |
-          uv sync --extra dev --extra pgvector --extra age
-          uv run python -m pytest tests/test_integration_pgvector_http.py -v --tb=short
+          uv sync --extra dev --extra postgres --extra age
+          uv run python -m pytest tests/test_integration_postgres_http.py -v --tb=short

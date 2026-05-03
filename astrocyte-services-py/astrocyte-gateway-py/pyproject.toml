@@ -22,11 +22,11 @@ dev = [
     "pytest>=8",
     "httpx>=0.27",
     "astrocyte[worker]",
-    "astrocyte-pgvector",
+    "astrocyte-postgres",
     "astrocyte-age",
     "psycopg[binary]>=3.1",
 ]
-pgvector = ["astrocyte-pgvector"]
+postgres = ["astrocyte-postgres"]
 age = ["astrocyte-age"]
 worker = [
     "astrocyte[worker]",
@@ -44,7 +44,7 @@ otel = [
 # `astrocyte` is not published to PyPI yet; resolve it from the sibling package when using uv.
 [tool.uv.sources]
 astrocyte = { path = "../../astrocyte-py", editable = true }
-astrocyte-pgvector = { path = "../../adapters-storage-py/astrocyte-pgvector", editable = true }
+astrocyte-postgres = { path = "../../adapters-storage-py/astrocyte-postgres", editable = true }
 astrocyte-age = { path = "../../adapters-storage-py/astrocyte-age", editable = true }
 astrocyte-ingestion-s3 = { path = "../../adapters-ingestion-py/astrocyte-ingestion-s3", editable = true }
 astrocyte-ingestion-document = { path = "../../adapters-ingestion-py/astrocyte-ingestion-document", editable = true }

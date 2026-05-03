@@ -16,14 +16,14 @@ provider_tier: storage
 
 # -- Storage backends --
 # Match benchmarks/config.yaml so LiteLLM comparisons differ only by LLM adapter.
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   embedding_dimensions: 1536
   bootstrap_schema: false
 
 graph_store: age
 
-wiki_store: pgvector
+wiki_store: postgres
 wiki_store_config:
   bootstrap_schema: false
 

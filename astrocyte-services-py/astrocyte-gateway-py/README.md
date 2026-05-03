@@ -19,7 +19,7 @@ docker run --rm -p 8080:8080 \
   ghcr.io/astrocyteai/astrocyte/astrocyte-gateway-py:latest
 ```
 
-Replace **`astrocyteai/astrocyte`** with your GitHub **`owner/repo`**. For **pgvector**, add **`DATABASE_URL`** (and use a config that sets `vector_store: pgvector`). Copy **[`examples/`](./examples/)** as a starting point.
+Replace **`astrocyteai/astrocyte`** with your GitHub **`owner/repo`**. For **pgvector**, add **`DATABASE_URL`** (and use a config that sets `vector_store: postgres`). Copy **[`examples/`](./examples/)** as a starting point.
 
 ## Run locally
 
@@ -83,9 +83,9 @@ On GitHub: **Actions → Benchmark gateway overhead → Run workflow** (manual d
 
 **Concurrent HTTP smoke (optional):** with uvicorn running (local or CI), **`scripts/smoke_gateway_load.py`** sends many parallel **`POST /v1/recall`** requests and exits **non-zero** if any response is not **200**. GitHub Actions: **Actions → Smoke test gateway HTTP → Run workflow** (starts the gateway in the job, then runs the script; checks success rate only, not latency SLOs).
 
-**PostgreSQL reference stack (pgvector + Apache AGE + durable wiki + PgQueuer):** Install the optional adapters (`uv sync --extra dev --extra pgvector --extra age --extra worker`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts the combined Postgres image + this service together. The Compose defaults select `pgvector`, `age`, `wiki_store: pgvector`, wiki compile, entity resolution, and PgQueuer-backed async tasks. For Postgres only on the host, see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md) and `adapters-storage-py/astrocyte-age/`.
+**PostgreSQL reference stack (pgvector + Apache AGE + durable wiki + PgQueuer):** Install the optional adapters (`uv sync --extra dev --extra postgres --extra age --extra worker`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts the combined Postgres image + this service together. The Compose defaults select `pgvector`, `age`, `wiki_store: postgres`, wiki compile, entity resolution, and PgQueuer-backed async tasks. For Postgres only on the host, see [`astrocyte-postgres`](../../adapters-storage-py/astrocyte-postgres/README.md) and `adapters-storage-py/astrocyte-age/`.
 
-Then set `vector_store: pgvector`, `graph_store: age`, `wiki_store: pgvector`, and `async_tasks.backend: pgqueuer` in YAML, or use the equivalent `ASTROCYTE_*` environment variables, and pass a DSN via provider config or `DATABASE_URL` / `ASTROCYTE_PG_DSN` / `ASTROCYTE_AGE_DSN`.
+Then set `vector_store: postgres`, `graph_store: age`, `wiki_store: postgres`, and `async_tasks.backend: pgqueuer` in YAML, or use the equivalent `ASTROCYTE_*` environment variables, and pass a DSN via provider config or `DATABASE_URL` / `ASTROCYTE_PG_DSN` / `ASTROCYTE_AGE_DSN`.
 
 ## Configuration
 
@@ -109,7 +109,7 @@ Then set `vector_store: pgvector`, `graph_store: age`, `wiki_store: pgvector`, a
 | `ASTROCYTE_ENTITY_RESOLUTION_ENABLED` | Enable retain-time entity resolution; requires a configured graph store. |
 | `ASTROCYTE_ASYNC_TASKS_ENABLED` / `ASTROCYTE_ASYNC_TASKS_BACKEND` | Enable durable memory tasks. The reference backend is `pgqueuer`. |
 | `ASTROCYTE_ASYNC_TASKS_INSTALL_ON_START` / `ASTROCYTE_ASYNC_TASKS_AUTO_START_WORKER` | Install PgQueuer DB objects and start the in-process worker lifecycle from the gateway. |
-| `DATABASE_URL` / `ASTROCYTE_PG_DSN` | When using **`pgvector`**, connection URI for PostgreSQL (see [`astrocyte-pgvector`](../../adapters-storage-py/astrocyte-pgvector/README.md)); can be omitted if `dsn` is set in YAML `vector_store_config`. |
+| `DATABASE_URL` / `ASTROCYTE_PG_DSN` | When using **`pgvector`**, connection URI for PostgreSQL (see [`astrocyte-postgres`](../../adapters-storage-py/astrocyte-postgres/README.md)); can be omitted if `dsn` is set in YAML `vector_store_config`. |
 | `ASTROCYTE_MAX_REQUEST_BODY_BYTES` | If set to a positive integer, reject requests whose **`Content-Length`** exceeds it (**413**). Unset = no limit (dev default). |
 | `ASTROCYTE_CORS_ORIGINS` | Comma-separated allowed origins for **browser** `fetch` (e.g. `https://app.example.com`). Unset = CORS middleware not added (same-origin / server-to-server only). |
 | `ASTROCYTE_RATE_LIMIT_PER_SECOND` | Optional **positive integer**: max requests per **1 s** rolling window **per client** (client = first **`X-Forwarded-For`** hop, else TCP peer). **`/live`**, **`/health*`** are exempt. Returns **429** with **`Retry-After: 1`**. Prefer coarse limits at Kong/APISIX/Azure APIM when exposed to the internet; use this as a backstop. Unset = no in-process limit. |
@@ -118,7 +118,7 @@ Then set `vector_store: pgvector`, `graph_store: age`, `wiki_store: pgvector`, a
 | `ASTROCYTE_LOG_LEVEL` | Default **`INFO`** when JSON logging is enabled. |
 | `ASTROCYTE_OTEL_ENABLED` | Set to **`1`** / **`true`** to load optional **`[otel]`** extras and export traces (set **`OTEL_EXPORTER_OTLP_ENDPOINT`**, **`OTEL_SERVICE_NAME`**, etc. per OpenTelemetry). |
 
-If **`ASTROCYTE_CONFIG_PATH`** is **not** set, the process uses an empty `AstrocyteConfig` plus the env overrides above and applies **dev-style** defaults (PII off, access control off), matching the previous reference behavior. Install **`astrocyte-pgvector`** (`uv sync --extra pgvector`) before selecting `pgvector` as the vector store.
+If **`ASTROCYTE_CONFIG_PATH`** is **not** set, the process uses an empty `AstrocyteConfig` plus the env overrides above and applies **dev-style** defaults (PII off, access control off), matching the previous reference behavior. Install **`astrocyte-postgres`** (`uv sync --extra postgres`) before selecting `pgvector` as the vector store.
 
 **Auth / identity (optional):** set **`ASTROCYTE_AUTH_MODE`** to `dev` (default), `api_key`, `jwt` / `jwt_hs256`, or **`jwt_oidc`** (RS256 + JWKS). For OIDC-style tokens:
 
@@ -164,7 +164,7 @@ OpenAPI docs: `/docs` when the HTTP service is running.
 
 **Poll ingest (GitHub Issues):** install **`astrocyte[poll]`** (or **`astrocyte-ingestion-github`**) and follow **[`docs/_end-user/poll-ingest-gateway.md`](../../docs/_end-user/poll-ingest-gateway.md)**.
 
-**Tests:** from **`astrocyte-services-py/astrocyte-gateway-py/`**, run **`uv sync --extra dev --extra pgvector --extra age --extra worker`** then **`uv run python -m pytest`** (use `python -m pytest` so the project venv is used). Integration against the full Postgres reference stack is in **`tests/test_integration_pgvector_http.py`** and runs in CI when **`DATABASE_URL`** points at Postgres with pgvector + Apache AGE. Set **`ASTROCYTE_GATEWAY_E2E_MIGRATED=1`** after `migrate.sh`.
+**Tests:** from **`astrocyte-services-py/astrocyte-gateway-py/`**, run **`uv sync --extra dev --extra postgres --extra age --extra worker`** then **`uv run python -m pytest`** (use `python -m pytest` so the project venv is used). Integration against the full Postgres reference stack is in **`tests/test_integration_postgres_http.py`** and runs in CI when **`DATABASE_URL`** points at Postgres with pgvector + Apache AGE. Set **`ASTROCYTE_GATEWAY_E2E_MIGRATED=1`** after `migrate.sh`.
 
 ## Docker
 
@@ -185,14 +185,14 @@ Defaults expose **API** on **8080** and **Postgres** on **5433**; override with 
 
 From the **repository root** (`astrocyte/`):
 
-**Local / CI-from-source** (`Dockerfile` — vendors `astrocyte-py` + `astrocyte-pgvector` from this checkout):
+**Local / CI-from-source** (`Dockerfile` — vendors `astrocyte-py` + `astrocyte-postgres` from this checkout):
 
 ```bash
 docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile -t astrocyte-gateway-py .
 docker run --rm -p 8080:8080 astrocyte-gateway-py
 ```
 
-**Release / PyPI-pinned** (`Dockerfile.release` — `pip install astrocyte==X astrocyte-pgvector==X` from PyPI, then this package from the tree; use the same **PEP 440** version as your git tag without `v`):
+**Release / PyPI-pinned** (`Dockerfile.release` — `pip install astrocyte==X astrocyte-postgres==X` from PyPI, then this package from the tree; use the same **PEP 440** version as your git tag without `v`):
 
 ```bash
 docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release \
@@ -203,7 +203,7 @@ docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release \
 
 Then `GET http://localhost:8080/health`.
 
-**GHCR (releases):** Pushing a version tag `v*` runs [`.github/workflows/release.yml`](../../.github/workflows/release.yml), which publishes **`astrocyte`** → **`astrocyte-pgvector`** to PyPI in order, then runs [`.github/workflows/publish-astrocyte-gateway-py-image.yml`](../../.github/workflows/publish-astrocyte-gateway-py-image.yml) to build with **`Dockerfile.release`** and push **`ghcr.io/<owner>/<repo>/astrocyte-gateway-py:<tag>`** and **`:latest`**, with **attestations**. Pull with `docker pull ghcr.io/OWNER/REPO/astrocyte-gateway-py:v1.2.3`. Branch protection: **[`BRANCH-PROTECTION.md`](./BRANCH-PROTECTION.md)**; release checklist: **[`RELEASE.md`](./RELEASE.md)**.
+**GHCR (releases):** Pushing a version tag `v*` runs [`.github/workflows/release.yml`](../../.github/workflows/release.yml), which publishes **`astrocyte`** → **`astrocyte-postgres`** to PyPI in order, then runs [`.github/workflows/publish-astrocyte-gateway-py-image.yml`](../../.github/workflows/publish-astrocyte-gateway-py-image.yml) to build with **`Dockerfile.release`** and push **`ghcr.io/<owner>/<repo>/astrocyte-gateway-py:<tag>`** and **`:latest`**, with **attestations**. Pull with `docker pull ghcr.io/OWNER/REPO/astrocyte-gateway-py:v1.2.3`. Branch protection: **[`BRANCH-PROTECTION.md`](./BRANCH-PROTECTION.md)**; release checklist: **[`RELEASE.md`](./RELEASE.md)**.
 
 ### Helm
 

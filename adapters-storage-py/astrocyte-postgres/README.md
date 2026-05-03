@@ -1,4 +1,4 @@
-# astrocyte-pgvector
+# astrocyte-postgres
 
 **PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)** implementation of the Astrocyte **`VectorStore`** and **`WikiStore`** SPIs ([`provider-spi.md`](../../docs/_plugins/provider-spi.md)).
 
@@ -7,15 +7,16 @@
 From the monorepo (with `astrocyte` available):
 
 ```bash
-cd adapters-storage-py/astrocyte-pgvector
+cd adapters-storage-py/astrocyte-postgres
 uv sync
 # or: pip install -e ../../astrocyte-py && pip install -e .
 ```
 
 Entry point names:
 
-- **`pgvector`** (group `astrocyte.vector_stores`) for raw/compiled memory vectors.
-- **`pgvector`** (group `astrocyte.wiki_stores`) for durable wiki pages/revisions/provenance.
+- **`postgres`** (group `astrocyte.vector_stores`) for raw/compiled memory vectors.
+- **`postgres`** (group `astrocyte.document_stores`) for BM25 keyword retrieval over the same table.
+- **`postgres`** (group `astrocyte.wiki_stores`) for durable wiki pages/revisions/provenance.
 
 ## PostgreSQL with Docker
 
@@ -45,7 +46,7 @@ DDL is shipped as **plain SQL** under [`migrations/`](migrations/) and applied w
 
 ```bash
 export DATABASE_URL='postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte'
-cd adapters-storage-py/astrocyte-pgvector
+cd adapters-storage-py/astrocyte-postgres
 ./scripts/migrate.sh
 ```
 
@@ -71,7 +72,7 @@ The later migrations add the Hindsight-comparable Postgres substrate around vect
 ## How this fits `astrocyte_gateway`
 
 1. **`astrocyte-py`** defines the **`VectorStore`** protocol and discovers adapters by **entry point** (`astrocyte.vector_stores`).
-2. **`astrocyte-pgvector`** registers **`pgvector` → `PgVectorStore`**. Installing this package makes the name **`pgvector`** available to **`resolve_provider()`**.
+2. **`astrocyte-postgres`** registers **`postgres` → `PostgresStore`**. Installing this package makes the name **`postgres`** available to **`resolve_provider()`**.
 3. **`astrocyte_gateway/wiring.py`** calls **`resolve_vector_store(config)`**, which loads the class from the entry point and passes **`vector_store_config`** from YAML (or env-only defaults).
 4. **`astrocyte_gateway/brain.py`** builds **`Astrocyte`** + **`PipelineOrchestrator`** with that store and your chosen **`llm_provider`** (still **`mock`** unless you configure a real LLM).
 
@@ -79,13 +80,13 @@ Example **`ASTROCYTE_CONFIG_PATH`** snippet:
 
 ```yaml
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 llm_provider: mock
 vector_store_config:
   dsn: postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte
   embedding_dimensions: 128
   bootstrap_schema: false
-wiki_store: pgvector
+wiki_store: postgres
 wiki_store_config:
   dsn: postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte
   bootstrap_schema: false
@@ -101,10 +102,10 @@ cd astrocyte-services-py/astrocyte-gateway-py && uv run astrocyte-gateway-py
 Or set only env (no YAML file):
 
 ```bash
-export ASTROCYTE_VECTOR_STORE=pgvector
+export ASTROCYTE_VECTOR_STORE=postgres
 export DATABASE_URL=postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte
 # embedding_dimensions default 128 — override via YAML if you add a file
-cd astrocyte-services-py/astrocyte-gateway-py && uv sync --extra pgvector
+cd astrocyte-services-py/astrocyte-gateway-py && uv sync --extra postgres
 ```
 
 **Note:** `vector_store_config` for dimensions is only merged from YAML today; for env-only mode, add a small YAML or extend `brain.py` to pass `ASTROCYTE_EMBEDDING_DIMENSIONS` (future improvement).

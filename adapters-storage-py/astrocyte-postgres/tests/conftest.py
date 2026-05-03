@@ -1,4 +1,4 @@
-"""Fixtures for astrocyte-pgvector integration tests."""
+"""Fixtures for astrocyte-postgres integration tests."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import psycopg
 import pytest
 from astrocyte.types import VectorItem
 
-from astrocyte_pgvector.store import PgVectorStore
+from astrocyte_postgres.store import PostgresStore
 
 DIM = 3  # small vectors for tests
 
@@ -26,9 +26,9 @@ def dsn() -> str:
 
 @pytest.fixture
 async def store(dsn: str):
-    """PgVectorStore with a unique table per test; drops it on teardown."""
+    """PostgresStore with a unique table per test; drops it on teardown."""
     table = f"test_{uuid.uuid4().hex[:12]}"
-    s = PgVectorStore(dsn=dsn, table_name=table, embedding_dimensions=DIM)
+    s = PostgresStore(dsn=dsn, table_name=table, embedding_dimensions=DIM)
     yield s
     # teardown: drop the table
     conn = await psycopg.AsyncConnection.connect(dsn)

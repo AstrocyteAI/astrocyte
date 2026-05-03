@@ -44,13 +44,13 @@ Track completion in your issue tracker or PRs as needed.
 ### 3.1 Memory backends and durability (not in-memory)
 
 - [ ] **Tier 1 adapters:** Use production **VectorStore** (and optional GraphStore / DocumentStore) per `provider-spi.md`. Avoid in-process-only stores for durable memory.
-- [ ] **PostgreSQL reference stack:** Optional **[`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md)** plus **`astrocyte-age`** and PgQueuer; **[`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml)** under **`astrocyte-services-py/`** can run API + Postgres. The default reference stack wires `vector_store: pgvector`, `graph_store: age`, `wiki_store: pgvector`, wiki compile, entity resolution, normalized temporal facts, and PgQueuer-backed async memory tasks.
+- [ ] **PostgreSQL reference stack:** Optional **[`astrocyte-postgres`](../adapters-storage-py/astrocyte-postgres/README.md)** plus **`astrocyte-age`** and PgQueuer; **[`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml)** under **`astrocyte-services-py/`** can run API + Postgres. The default reference stack wires `vector_store: postgres`, `graph_store: age`, `wiki_store: postgres`, wiki compile, entity resolution, normalized temporal facts, and PgQueuer-backed async memory tasks.
 - [ ] **Compose networking & DSN:** The API container must use a DSN with the Postgres **service hostname** (`postgres`), not a host-only URL such as `127.0.0.1:5433`. Compose sets **`DATABASE_URL`** from **`ASTROCYTE_REST_DATABASE_URL`** or builds `...@postgres:5432/...` from **`POSTGRES_*`**. For **host-side** `migrate.sh`, use **`MIGRATE_DATABASE_URL`** (or a one-off shell `DATABASE_URL`), not the in-cluster API DSN—see [`astrocyte-services-py/.env.example`](../astrocyte-services-py/.env.example).
 - [ ] **Tier 2 (optional):** If using a memory engine provider, wire **EngineProvider** and validate **capability negotiation** (`reflect`, `forget`, etc.).
 - [ ] **LLM / embeddings:** Use real **LLMProvider** (and embedding path) appropriate to latency and cost.
 - [ ] **Configuration:** Load provider entry points from **config** (YAML/env) with validation; fail fast on missing required settings in prod.
 - [ ] **Data durability:** Define **backup, restore, and RPO/RTO** for each store; test restore drills.
-- [ ] **Migrations:** If stores require schema migrations, own a **migration** process (job or init container) and versioning. For the Postgres reference stack, use the shipped **SQL** files and **`psql`** runner ([`migrate.sh`](../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh)); set **`bootstrap_schema: false`** in `vector_store_config` and `wiki_store_config` after applying migrations.
+- [ ] **Migrations:** If stores require schema migrations, own a **migration** process (job or init container) and versioning. For the Postgres reference stack, use the shipped **SQL** files and **`psql`** runner ([`migrate.sh`](../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh)); set **`bootstrap_schema: false`** in `vector_store_config` and `wiki_store_config` after applying migrations.
 
 ### 3.2 Authentication (AuthN) - do not trust client-supplied principals
 
@@ -166,7 +166,7 @@ This repository ships an optional **`astrocyte-gateway-py`** HTTP service that e
 
 ### 4.2 Current behavior (non-production defaults)
 
-- **Tier 1 pipeline** resolved from config: library/dev defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocyte-py`). The service Compose/runbook defaults use the full Postgres reference stack: `pgvector`, `age`, `wiki_store: pgvector`, and PgQueuer. Data is **not** durable when using the built-in in-memory stack.
+- **Tier 1 pipeline** resolved from config: library/dev defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocyte-py`). The service Compose/runbook defaults use the full Postgres reference stack: `pgvector`, `age`, `wiki_store: postgres`, and PgQueuer. Data is **not** durable when using the built-in in-memory stack.
 - **Access control** defaults to **off** when no config file is loaded; when you enable **`access_control`** in YAML, **`access_grants`** and **`banks.*.access`** are loaded from config and applied via **`set_access_grants`** (see §5). You still need a **deliberate** prod policy—do not rely on defaults.
 - **Identity:** **`ASTROCYTE_AUTH_MODE`** selects **`dev`** (trusts **`X-Astrocyte-Principal`** only—use only behind a trusted gateway), **`api_key`**, **`jwt_hs256`** / **`jwt`** (HS256 Bearer, `sub` → principal), or **`jwt_oidc`** (RS256 + JWKS; maps claims to **`AstrocyteContext`**). This is a **starting point** for §3.2, not a full IdP integration (no discovery document automation, per-key API-key store, or mTLS in-process).
 
@@ -193,7 +193,7 @@ Treat this as a **reference implementation** of the HTTP mapping only, not as a 
 | `ASTROCYTE_HOST` / `ASTROCYTE_PORT` | Bind address and port |
 | `ASTROCYTE_CONFIG_PATH` | Optional YAML loaded via `load_config` for policy/homeostasis; **in-memory Tier 1 pipeline is still attached** in the reference implementation |
 | `DATABASE_URL` / `ASTROCYTE_PG_DSN` | **pgvector:** PostgreSQL URI. In **Docker Compose**, the service sets **`DATABASE_URL`** for the API from **`ASTROCYTE_GATEWAY_DATABASE_URL`**, legacy **`ASTROCYTE_REST_DATABASE_URL`**, or a built-in `...@postgres:5432/...` DSN (see [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml)). Do **not** point the API container at a host-only URL (`127.0.0.1:published_port`) via a generic **`DATABASE_URL`** in `.env`. |
-| `MIGRATE_DATABASE_URL` | Optional **host-side** DSN for [`migrate.sh`](../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh) / `runbook-up.sh` (typically `127.0.0.1` + `POSTGRES_PUBLISH_PORT`). |
+| `MIGRATE_DATABASE_URL` | Optional **host-side** DSN for [`migrate.sh`](../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh) / `runbook-up.sh` (typically `127.0.0.1` + `POSTGRES_PUBLISH_PORT`). |
 
 See [`astrocyte-services-py/astrocyte-gateway-py/README.md`](../astrocyte-services-py/astrocyte-gateway-py/README.md) for run instructions, HTTP route summary (including **`GET /live`**, **`GET /health/live`**, **`GET /health`**), and Docker commands.
 
@@ -202,7 +202,7 @@ See [`astrocyte-services-py/astrocyte-gateway-py/README.md`](../astrocyte-servic
 - **Runbook (recommended for durable schema):** From [`astrocyte-services-py/`](../astrocyte-services-py/), `./scripts/runbook-up.sh` or **`make runbook`** starts Postgres, runs SQL migrations on the host port, then **`docker compose`** with the runbook overlay. Details: [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md) (Runbook, Verify, **Debugging**).
 - **Quick stack:** **`make up`** or `docker compose up --build` uses in-container bootstrap DDL unless you add the runbook file; for HNSW / migration-owned DDL, use the runbook path.
 - **Health checks:** **`GET /live`** (or **`GET /health/live`**) confirms the process only; **`GET /health`** checks **`Astrocyte.health()`** (with **pgvector**, a real DB round-trip). If `/live` succeeds and `/health` fails or times out, inspect **`docker compose logs astrocyte-gateway-py`**, **`printenv DATABASE_URL`** inside the API container, and the **Debugging** section of [`astrocyte-services-py/README.md`](../astrocyte-services-py/README.md).
-- **Implementation note:** The **`astrocyte-pgvector`** adapter uses **psycopg 3** async pools with **`register_vector_async`** and explicit transaction boundaries in pool `configure` callbacks (`provider-spi.md` §7.1).
+- **Implementation note:** The **`astrocyte-postgres`** adapter uses **psycopg 3** async pools with **`register_vector_async`** and explicit transaction boundaries in pool `configure` callbacks (`provider-spi.md` §7.1).
 
 ### 4.6 Path to production for `astrocyte-gateway-py`
 
@@ -212,7 +212,7 @@ Align **`astrocyte-gateway-py`** with §3: real backends, verified AuthN, AuthZ 
 
 ## 5. Repository-specific follow-ups (`astrocyte-gateway-py`)
 
-- [x] **Brain wiring:** `build_astrocyte()` in `astrocyte_gateway/brain.py` loads `AstrocyteConfig` and calls `build_tier1_pipeline()` in `astrocyte_gateway/wiring.py`, which resolves **`vector_store`**, **`llm_provider`**, and optional graph/document stores via **`astrocyte._discovery.resolve_provider`** (entry points or `package.module:Class`). Built-in names ship in **`astrocyte-py`** `pyproject.toml` (`in_memory`, `mock`). A PostgreSQL **`pgvector`** adapter lives in **[`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md)** (optional **`pgvector`** extra on `astrocyte-gateway-py`).
+- [x] **Brain wiring:** `build_astrocyte()` in `astrocyte_gateway/brain.py` loads `AstrocyteConfig` and calls `build_tier1_pipeline()` in `astrocyte_gateway/wiring.py`, which resolves **`vector_store`**, **`llm_provider`**, and optional graph/document stores via **`astrocyte._discovery.resolve_provider`** (entry points or `package.module:Class`). Built-in names ship in **`astrocyte-py`** `pyproject.toml` (`in_memory`, `mock`). A PostgreSQL **`pgvector`** adapter lives in **[`astrocyte-postgres`](../adapters-storage-py/astrocyte-postgres/README.md)** (optional **`pgvector`** extra on `astrocyte-gateway-py`).
 - [x] **Health routes:** **`GET /live`** and **`GET /health/live`** (liveness); **`GET /health`** (readiness / dependency check with bounded timeout). Documented in [`astrocyte-gateway-py/README.md`](../astrocyte-services-py/astrocyte-gateway-py/README.md).
 - [x] **pgvector + psycopg async:** Pool **`configure`** uses **`register_vector_async`**, commits after `configure`, and registers vector types only when the **`vector`** extension is present (see `provider-spi.md` §7.1).
 - [x] **Grants from config:** When **`access_control.enabled`**, grants are loaded from YAML (**`access_grants`** and **`banks.*.access`**) via **`access_grants_for_astrocyte()`** in **`astrocyte-py`** and **`set_access_grants()`** in **`astrocyte_gateway/brain.py`** — see `identity-and-external-policy.md` §8. **Not done here:** grants from a **database** or **external PDP** (still your integration or future work).

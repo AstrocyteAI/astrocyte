@@ -46,10 +46,10 @@ The reference self-hosted stack is:
 - `astrocyte-gateway-py` for REST, OpenAPI, MCP-compatible deployment, health, and auth.
 - PostgreSQL with pgvector and Apache AGE in the same container image.
 - SQL tables for durable memory records, banks, wiki pages, wiki revisions, provenance, and async task state.
-- `astrocyte-pgvector` for dense retrieval and compiled-page search projections.
+- `astrocyte-postgres` for dense retrieval and compiled-page search projections.
 - `astrocyte-age` for graph traversal projections over pages, entities, and cited memories.
 - Optional `DocumentStore` for BM25 when a lexical backend is configured.
-- `wiki_store: pgvector` and `wiki_compile.auto_start` for durable background compilation in the gateway lifecycle. `wiki_store: in_memory` is test/demo-only.
+- `wiki_store: postgres` and `wiki_compile.auto_start` for durable background compilation in the gateway lifecycle. `wiki_store: in_memory` is test/demo-only.
 - Benchmark reports from LoCoMo and LongMemEval before making external accuracy claims.
 
 ## Database Comparison
@@ -61,7 +61,7 @@ Astrocyte should copy the operational lesson while preserving its SPIs:
 | Concern | Hindsight pattern | Astrocyte reference stack |
 |---|---|---|
 | Durable truth | PostgreSQL tables | PostgreSQL tables |
-| Dense retrieval | pgvector | `astrocyte-pgvector` |
+| Dense retrieval | pgvector | `astrocyte-postgres` |
 | Graph retrieval | SQL entity/link tables | `astrocyte-age` projection, with SQL still owning truth |
 | Async queue | PostgreSQL rows claimed by workers | PgQueuer jobs carrying the Astrocyte `MemoryTask` payload |
 | Memory isolation | Banks / tenant schema support | Banks + `AstrocyteContext` + access grants |

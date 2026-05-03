@@ -4,7 +4,7 @@ Optional packages implementing Astrocyte storage protocols (see `astrocyte.provi
 
 | Package | Protocol | Backend |
 |---------|----------|---------|
-| [astrocyte-pgvector](./astrocyte-pgvector/) | `VectorStore` (+ optional `DocumentStore`) | [PostgreSQL](https://www.postgresql.org/) + [pgvector](https://github.com/pgvector/pgvector) |
+| [astrocyte-postgres](./astrocyte-postgres/) | `VectorStore` (+ optional `DocumentStore`) | [PostgreSQL](https://www.postgresql.org/) + [pgvector](https://github.com/pgvector/pgvector) |
 | [astrocyte-qdrant](./astrocyte-qdrant/) | `VectorStore` | [Qdrant](https://qdrant.tech/) |
 | [astrocyte-neo4j](./astrocyte-neo4j/) | `GraphStore` | [Neo4j](https://neo4j.com/) |
 | [astrocyte-elasticsearch](./astrocyte-elasticsearch/) | `DocumentStore` | [Elasticsearch](https://www.elastic.co/) |

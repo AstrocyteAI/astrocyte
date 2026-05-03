@@ -2,7 +2,7 @@
 
 This document defines how Astrocyte is distributed, how providers plug in at both tiers, how optional **memory export sinks**, outbound transport, and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier model and the read vs export split, see `architecture.md` §2 and `storage-and-data-planes.md`. For SPI definitions, see `provider-spi.md`. For warehouse / lakehouse export design, see `memory-export-sink.md`. For credential gateways and proxy wiring, see `outbound-transport.md`. For identity wiring and external PDP integration, see `identity-and-external-policy.md`.
 
-**Current release line (`v0.9.x`, latest patch `0.9.1`):** Tier 1 storage adapters under `adapters-storage-py/` (including **`astrocyte-pgvector`** and **`astrocyte-age`**), optional **`astrocyte-gateway-py`**, optional **`recall_authority`** ([ADR-004](/design/adr/adr-004-recall-authority/)), ingest connectors (Kafka, Redis streams, GitHub poll), and the M8–M11 pre-GA intelligence surface. Release history: [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) in the repository root.
+**Current release line (`v0.9.x`, latest patch `0.9.1`):** Tier 1 storage adapters under `adapters-storage-py/` (including **`astrocyte-postgres`** and **`astrocyte-age`**), optional **`astrocyte-gateway-py`**, optional **`recall_authority`** ([ADR-004](/design/adr/adr-004-recall-authority/)), ingest connectors (Kafka, Redis streams, GitHub poll), and the M8–M11 pre-GA intelligence surface. Release history: [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) in the repository root.
 
 ---
 
@@ -28,7 +28,7 @@ Astrocyte follows an **open-core** distribution model with a two-tier provider a
 
 | Stage | Stack | Cost |
 |---|---|---|
-| Getting started | `astrocyte` + `astrocyte-pgvector` + built-in `openai` provider | Free (+ LLM API costs) |
+| Getting started | `astrocyte` + `astrocyte-postgres` + built-in `openai` provider | Free (+ LLM API costs) |
 | Add graph retrieval | + `astrocyte-neo4j` | Free |
 | Want a managed engine | Planned Tier 2 provider such as `astrocyte-mem0` | Free (+ Mem0 cloud costs) |
 | Want best-in-class | Planned `astrocyte-mystique` | Paid |
@@ -40,7 +40,7 @@ Astrocyte follows an **open-core** distribution model with a two-tier provider a
 ```mermaid
 flowchart TB
   CORE["astrocyte - core framework"]
-  T1["Tier 1: astrocyte-pgvector, -neo4j, -qdrant, …"]
+  T1["Tier 1: astrocyte-postgres, -neo4j, -qdrant, …"]
   T2["Tier 2: astrocyte-mem0, -zep, -mystique, …"]
   LLM["LLM: astrocyte-llm-litellm, -openai, -anthropic, …"]
   TR["Optional: astrocyte-transport-*"]
@@ -103,12 +103,12 @@ astrocyte-py/                         # Python implementation (open source)
 
 ### 2.2 Tier 1 retrieval providers
 
-Monorepo layout: optional packages live under **`adapters-storage-py/`** (for example **`adapters-storage-py/astrocyte-pgvector/`**).
+Monorepo layout: optional packages live under **`adapters-storage-py/`** (for example **`adapters-storage-py/astrocyte-postgres/`**).
 
 ```
-adapters-storage-py/astrocyte-pgvector/       # Vector + optional full-text via PostgreSQL
-├── astrocyte_pgvector/
-│   ├── __init__.py                    # PgVectorStore (implements VectorStore)
+adapters-storage-py/astrocyte-postgres/       # Vector + optional full-text via PostgreSQL
+├── astrocyte_postgres/
+│   ├── __init__.py                    # PostgresStore (implements VectorStore)
 │   ├── fulltext.py                    # Optional: PgDocumentStore (tsvector BM25)
 │   └── migrations/                    # Alembic migrations for required tables
 ├── pyproject.toml
@@ -164,7 +164,7 @@ astrocyte-transport-onecli/           # Example: OneCLI-oriented HTTP/proxy wiri
 ├── pyproject.toml
 ```
 
-Naming: **`astrocyte-transport-{name}`** - distinct from memory providers (`astrocyte-pgvector`, `astrocyte-mem0`) so packages are recognizable as **network path** plugins, not storage or engines. See `outbound-transport.md`.
+Naming: **`astrocyte-transport-{name}`** - distinct from memory providers (`astrocyte-postgres`, `astrocyte-mem0`) so packages are recognizable as **network path** plugins, not storage or engines. See `outbound-transport.md`.
 
 ### 2.6 Memory export sink plugins (optional)
 
@@ -197,12 +197,12 @@ Providers register using Python's standard entry point mechanism (`importlib.met
 ### 3.1 Tier 1: Retrieval providers
 
 ```toml
-# adapters-storage-py/astrocyte-pgvector/pyproject.toml
+# adapters-storage-py/astrocyte-postgres/pyproject.toml
 [project.entry-points."astrocyte.vector_stores"]
-pgvector = "astrocyte_pgvector:PgVectorStore"
+pgvector = "astrocyte_postgres:PostgresStore"
 
 [project.entry-points."astrocyte.document_stores"]
-pgvector = "astrocyte_pgvector.fulltext:PgDocumentStore"
+pgvector = "astrocyte_postgres.fulltext:PgDocumentStore"
 ```
 
 ```toml
@@ -277,7 +277,7 @@ opa = "astrocyte_access_policy_opa:OPAAccessPolicyProvider"
 ```yaml
 # Tier 1 - references storage entry points
 provider_tier: storage
-vector_store: pgvector          # → astrocyte.vector_stores:pgvector
+vector_store: postgres          # → astrocyte.vector_stores:postgres
 graph_store: neo4j              # → astrocyte.graph_stores:neo4j
 llm_provider: openai            # → astrocyte.llm_providers:openai
 
@@ -566,7 +566,7 @@ DTOs use `dataclass` with default values for all optional fields. New fields are
 
 | Provider | Type | astrocyte version | SPI version | Status |
 |---|---|---|---|---|
-| astrocyte-pgvector | VectorStore | >=0.1 | VS 1 | Official |
+| astrocyte-postgres | VectorStore | >=0.1 | VS 1 | Official |
 | astrocyte-neo4j | GraphStore | >=0.1 | GS 1 | Official |
 | astrocyte-qdrant | VectorStore | >=0.1 | VS 1 | Official |
 | astrocyte-age | GraphStore | >=0.8 | GS 1 | Official |
@@ -583,13 +583,13 @@ DTOs use `dataclass` with default values for all optional fields. New fields are
 ### Tier 1: DIY with your own databases (fully open source)
 
 ```bash
-pip install astrocyte astrocyte-pgvector
+pip install astrocyte astrocyte-postgres
 ```
 
 ```yaml
 profile: personal
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: postgresql://localhost/memories
 llm_provider: openai
@@ -600,13 +600,13 @@ llm_provider_config:
 ### Tier 1: With graph retrieval
 
 ```bash
-pip install astrocyte astrocyte-pgvector astrocyte-neo4j astrocyte-llm-litellm
+pip install astrocyte astrocyte-postgres astrocyte-neo4j astrocyte-llm-litellm
 ```
 
 ```yaml
 profile: research
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: postgresql://localhost/memories
 graph_store: neo4j
@@ -623,13 +623,13 @@ llm_provider_config:
 Use `astrocyte-llm-litellm` when you want Anthropic, Bedrock, Vertex, Azure, Ollama, or another LiteLLM-supported endpoint behind the same Astrocyte LLMProvider SPI.
 
 ```bash
-pip install astrocyte astrocyte-pgvector astrocyte-llm-litellm
+pip install astrocyte astrocyte-postgres astrocyte-llm-litellm
 ```
 
 ```yaml
 profile: coding
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: postgresql://localhost/memories
 llm_provider: litellm
@@ -641,13 +641,13 @@ llm_provider_config:
 ### Tier 1: Enterprise with AWS Bedrock
 
 ```bash
-pip install astrocyte astrocyte-pgvector astrocyte-llm-litellm
+pip install astrocyte astrocyte-postgres astrocyte-llm-litellm
 ```
 
 ```yaml
 profile: support
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: postgresql://rds-host/memories
 llm_provider: litellm
@@ -659,13 +659,13 @@ llm_provider_config:
 ### Tier 1: Fully local (air-gapped / privacy-sensitive)
 
 ```bash
-pip install astrocyte astrocyte-pgvector
+pip install astrocyte astrocyte-postgres
 ```
 
 ```yaml
 profile: personal
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: postgresql://localhost/memories
 llm_provider: openai                         # OpenAI-compatible API
@@ -726,13 +726,13 @@ llm_provider_config:
 
 ### For Tier 1 retrieval providers
 
-1. **Name your package `astrocyte-{database}`** (e.g., `astrocyte-pgvector`, `astrocyte-neo4j`).
+1. **Name your package `astrocyte-{database}`** (e.g., `astrocyte-postgres`, `astrocyte-neo4j`).
 2. **Register the entry point** under the appropriate group: `astrocyte.vector_stores`, `astrocyte.graph_stores`, or `astrocyte.document_stores`.
 3. **Implement only the storage protocol.** You handle CRUD operations. The pipeline handles intelligence.
 4. **Run the conformance test suite** for your protocol type.
 5. **Handle your own connections.** Accept connection config in `__init__`, manage pools, handle reconnection.
 6. **Respect the async contract.** Use proper async I/O (asyncpg, httpx, etc.).
-7. **A single package may implement multiple protocols.** For example, `astrocyte-pgvector` can implement both `VectorStore` (pgvector) and `DocumentStore` (tsvector BM25) and register both entry points.
+7. **A single package may implement multiple protocols.** For example, `astrocyte-postgres` can implement both `VectorStore` (pgvector) and `DocumentStore` (tsvector BM25) and register both entry points.
 
 ### For Tier 2 memory engine providers
 

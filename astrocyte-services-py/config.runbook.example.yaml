@@ -4,9 +4,9 @@
 # Copy and edit if you need different providers or dimensions.
 
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 graph_store: age
-wiki_store: pgvector
+wiki_store: postgres
 llm_provider: mock
 
 vector_store_config:

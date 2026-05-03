@@ -99,7 +99,7 @@ bench-db-start:
 	echo "  [bench-db] Applying pgvector HNSW migrations (vector($(BENCH_EMBEDDING_DIMENSIONS)))"; \
 	ASTROCYTE_EMBEDDING_DIMENSIONS=$(BENCH_EMBEDDING_DIMENSIONS) \
 		DATABASE_URL="$(BENCH_DATABASE_URL)" \
-		../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh; \
+		../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh; \
 	actual=$$(PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL)" -Atc "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'astrocyte_vectors'::regclass AND a.attname = 'embedding'"); \
 	if [ "$$actual" != "vector($(BENCH_EMBEDDING_DIMENSIONS))" ]; then \
 		echo "  [bench-db] ERROR: astrocyte_vectors.embedding is $$actual, expected vector($(BENCH_EMBEDDING_DIMENSIONS))."; \

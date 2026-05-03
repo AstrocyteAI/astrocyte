@@ -1,6 +1,6 @@
-"""Integration tests for PgVectorStore as DocumentStore (pg_tsvector FTS).
+"""Integration tests for PostgresStore as DocumentStore (pg_tsvector FTS).
 
-These tests verify that PgVectorStore satisfies the DocumentStore protocol:
+These tests verify that PostgresStore satisfies the DocumentStore protocol:
 - search_fulltext returns ranked results via ts_rank on the text_fts column
 - store_document is a no-op (data already stored by store_vectors)
 - get_document retrieves memories as Document objects
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from astrocyte.types import Document
 
-from astrocyte_pgvector.store import PgVectorStore
+from astrocyte_postgres.store import PostgresStore
 from tests.conftest import DIM, make_item
 
 # ---------------------------------------------------------------------------
@@ -23,7 +23,7 @@ from tests.conftest import DIM, make_item
 
 
 class TestSearchFulltext:
-    async def test_returns_matching_memories(self, store: PgVectorStore) -> None:
+    async def test_returns_matching_memories(self, store: PostgresStore) -> None:
         """Memories whose text matches the query are returned."""
         await store.store_vectors([
             make_item("m1", text="Alice went to the coffee shop on Tuesday"),
@@ -38,7 +38,7 @@ class TestSearchFulltext:
         assert "m2" in ids
         assert "m3" not in ids
 
-    async def test_returns_empty_for_no_match(self, store: PgVectorStore) -> None:
+    async def test_returns_empty_for_no_match(self, store: PostgresStore) -> None:
         await store.store_vectors([
             make_item("m1", text="Alice loves hiking in the mountains"),
         ])
@@ -46,7 +46,7 @@ class TestSearchFulltext:
         hits = await store.search_fulltext("quantum computing", "bank-1", limit=10)
         assert hits == []
 
-    async def test_results_ordered_by_relevance(self, store: PgVectorStore) -> None:
+    async def test_results_ordered_by_relevance(self, store: PostgresStore) -> None:
         """Memory with more query-term occurrences ranks higher."""
         await store.store_vectors([
             make_item("low",  text="coffee mentioned once"),
@@ -57,7 +57,7 @@ class TestSearchFulltext:
         assert len(hits) == 2
         assert hits[0].document_id == "high"
 
-    async def test_respects_bank_isolation(self, store: PgVectorStore) -> None:
+    async def test_respects_bank_isolation(self, store: PostgresStore) -> None:
         """FTS does not cross bank boundaries."""
         await store.store_vectors([
             make_item("m1", bank_id="bank-a", text="unique term xyzzy appears here"),
@@ -70,7 +70,7 @@ class TestSearchFulltext:
         assert {h.document_id for h in hits_a} == {"m1"}
         assert {h.document_id for h in hits_b} == {"m2"}
 
-    async def test_forgotten_memories_excluded(self, store: PgVectorStore) -> None:
+    async def test_forgotten_memories_excluded(self, store: PostgresStore) -> None:
         """Soft-deleted memories must not appear in FTS results."""
         await store.store_vectors([
             make_item("alive", text="coffee is great"),
@@ -83,12 +83,12 @@ class TestSearchFulltext:
         assert "alive" in ids
         assert "dead" not in ids
 
-    async def test_empty_query_returns_empty(self, store: PgVectorStore) -> None:
+    async def test_empty_query_returns_empty(self, store: PostgresStore) -> None:
         await store.store_vectors([make_item("m1", text="some content")])
         assert await store.search_fulltext("", "bank-1") == []
         assert await store.search_fulltext("   ", "bank-1") == []
 
-    async def test_hit_shape(self, store: PgVectorStore) -> None:
+    async def test_hit_shape(self, store: PostgresStore) -> None:
         """Each DocumentHit has the required fields."""
         await store.store_vectors([
             make_item("m1", text="Alice attended the conference", metadata={"source": "chat"}),
@@ -102,7 +102,7 @@ class TestSearchFulltext:
         assert isinstance(h.score, float) and h.score > 0
         assert h.metadata == {"source": "chat"}
 
-    async def test_tags_filter(self, store: PgVectorStore) -> None:
+    async def test_tags_filter(self, store: PostgresStore) -> None:
         """DocumentFilters.tags restricts FTS to tagged memories."""
         from astrocyte.types import DocumentFilters
 
@@ -126,12 +126,12 @@ class TestSearchFulltext:
 
 
 class TestStoreDocument:
-    async def test_returns_document_id(self, store: PgVectorStore) -> None:
+    async def test_returns_document_id(self, store: PostgresStore) -> None:
         doc = Document(id="doc-1", text="hello world")
         result = await store.store_document(doc, "bank-1")
         assert result == "doc-1"
 
-    async def test_idempotent_noop(self, store: PgVectorStore) -> None:
+    async def test_idempotent_noop(self, store: PostgresStore) -> None:
         """Calling store_document multiple times must not raise."""
         doc = Document(id="doc-2", text="repeated content")
         await store.store_document(doc, "bank-1")
@@ -144,11 +144,11 @@ class TestStoreDocument:
 
 
 class TestGetDocument:
-    async def test_returns_none_for_missing(self, store: PgVectorStore) -> None:
+    async def test_returns_none_for_missing(self, store: PostgresStore) -> None:
         result = await store.get_document("nonexistent", "bank-1")
         assert result is None
 
-    async def test_returns_document_for_stored_memory(self, store: PgVectorStore) -> None:
+    async def test_returns_document_for_stored_memory(self, store: PostgresStore) -> None:
         await store.store_vectors([
             make_item("m1", text="Alice's birthday party", metadata={"year": 2025}),
         ])
@@ -159,14 +159,14 @@ class TestGetDocument:
         assert "birthday" in doc.text
         assert doc.metadata == {"year": 2025}
 
-    async def test_bank_isolation(self, store: PgVectorStore) -> None:
+    async def test_bank_isolation(self, store: PostgresStore) -> None:
         """get_document must not return memories from a different bank."""
         await store.store_vectors([make_item("m1", bank_id="bank-a", text="content")])
 
         assert await store.get_document("m1", "bank-b") is None
         assert await store.get_document("m1", "bank-a") is not None
 
-    async def test_forgotten_memory_returns_none(self, store: PgVectorStore) -> None:
+    async def test_forgotten_memory_returns_none(self, store: PostgresStore) -> None:
         await store.store_vectors([make_item("m1", text="to be forgotten")])
         await store.delete(["m1"], "bank-1")
 
@@ -180,16 +180,16 @@ class TestGetDocument:
 
 class TestDocumentStoreProtocol:
     def test_has_all_protocol_methods(self) -> None:
-        """PgVectorStore must expose every method in the DocumentStore protocol."""
+        """PostgresStore must expose every method in the DocumentStore protocol."""
         for method in ("store_document", "search_fulltext", "get_document", "health"):
-            assert hasattr(PgVectorStore, method), f"Missing DocumentStore method: {method}"
+            assert hasattr(PostgresStore, method), f"Missing DocumentStore method: {method}"
 
     def test_exposes_hybrid_recall_fast_path(self) -> None:
-        assert hasattr(PgVectorStore, "search_hybrid_semantic_bm25")
-        assert hasattr(PgVectorStore, "list_recent_vectors")
+        assert hasattr(PostgresStore, "search_hybrid_semantic_bm25")
+        assert hasattr(PostgresStore, "list_recent_vectors")
 
-    async def test_fts_activates_keyword_strategy(self, store: PgVectorStore) -> None:
-        """When PgVectorStore is passed as document_store, parallel_retrieve
+    async def test_fts_activates_keyword_strategy(self, store: PostgresStore) -> None:
+        """When PostgresStore is passed as document_store, parallel_retrieve
         includes the keyword strategy in the fused result set."""
         from astrocyte.pipeline.retrieval import parallel_retrieve
 
@@ -205,7 +205,7 @@ class TestDocumentStoreProtocol:
             query_text="jazz music",
             bank_id="bank-1",
             vector_store=store,
-            document_store=store,   # <-- PgVectorStore as DocumentStore
+            document_store=store,   # <-- PostgresStore as DocumentStore
             graph_store=None,
             limit=10,
         )
@@ -214,6 +214,6 @@ class TestDocumentStoreProtocol:
         # Flatten all strategies and check that the keyword strategy contributed m1.
         ids = {item.id for items in result.values() for item in items}
         assert "m1" in ids, (
-            "parallel_retrieve with PgVectorStore as document_store must activate "
+            "parallel_retrieve with PostgresStore as document_store must activate "
             "the keyword strategy and return the lexical match."
         )

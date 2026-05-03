@@ -386,7 +386,7 @@ On recall, graph traversal automatically follows entity links. A query for "Calv
 
 ```yaml
 # astrocyte.yaml — default v1.0.0 stack
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: postgresql://localhost/memories  # same instance
 

@@ -269,7 +269,7 @@ This roadmap organizes the v1.0.0 path into milestones, ordered by dependency an
    - Keyword retrieval for hybrid recall
    - Index lifecycle management
 
-3. **Vector stores** — **`astrocyte-pgvector`** (PostgreSQL + pgvector), **`astrocyte-qdrant`** (Qdrant); both under `adapters-storage-py/`
+3. **Vector stores** — **`astrocyte-postgres`** (PostgreSQL + pgvector), **`astrocyte-qdrant`** (Qdrant); both under `adapters-storage-py/`
    - Implement `VectorStore` SPI (pgvector may also expose document-oriented helpers where applicable)
    - Payload / collection management per backend
 
@@ -277,7 +277,7 @@ This roadmap organizes the v1.0.0 path into milestones, ordered by dependency an
 
 - [x] Each adapter has integration tests exercising the `VectorStore` / `GraphStore` / `DocumentStore` API (see each package’s `tests/`; optional: authors may also run shared suites from `astrocyte.testing`)
 - [x] Hybrid recall (vector + graph + document) produces fused results — core E2E: `tests/test_m5_hybrid_recall_e2e.py`, `tests/test_astrocyte_tier1.py` (in-memory); production adapters validated in `adapters-storage-ci.yml`
-- [x] Each adapter ships as a separate PyPI package (`astrocyte-pgvector`, `astrocyte-qdrant`, `astrocyte-neo4j`, `astrocyte-elasticsearch`)
+- [x] Each adapter ships as a separate PyPI package (`astrocyte-postgres`, `astrocyte-qdrant`, `astrocyte-neo4j`, `astrocyte-elasticsearch`)
 - [x] Integration tests run against containerized instances in CI (`.github/workflows/adapters-storage-ci.yml`; pgvector also covered from root `ci.yml`)
 - [x] README with quick-start — `adapters-storage-py/README.md` plus per-adapter READMEs
 
@@ -369,7 +369,7 @@ Gateway **plugin** integration (Kong, APISIX, Azure API Management, and similar)
 1. **`VectorItem` + `VectorFilters` type changes** — `retained_at: datetime`, `forgotten_at: datetime | None`, `as_of: datetime | None` on filters
 2. **`brain.history(bank_id, start, end)`** — returns memories retained and forgotten in a date range
 3. **Soft-delete semantics for `forget()`** — default mode writes `forgotten_at`; hard delete available via flag
-4. **`astrocyte-pgvector` + `astrocyte-age` adapter updates** — implement `as_of` filter in SQL queries
+4. **`astrocyte-postgres` + `astrocyte-age` adapter updates** — implement `as_of` filter in SQL queries
 5. **`as_of` on REST gateway** — `/v1/recall` accepts `as_of` ISO timestamp parameter
 
 ### Acceptance Criteria
@@ -411,7 +411,7 @@ Gateway **plugin** integration (Kong, APISIX, Azure API Management, and similar)
 
 **Design**: Retain-time pipeline stage. After fact extraction: extract named entities from the incoming content → query `GraphStore` for existing entity candidates → for each candidate above similarity threshold, call LLM to confirm with evidence quote → if confirmed, write `EntityLink(link_type="alias_of", entity_a, entity_b, evidence, confidence)` to graph. On recall, graph-enhanced retrieval automatically traverses entity links.
 
-**Default graph store**: `astrocyte-age` (Apache AGE on PostgreSQL) — same instance as `astrocyte-pgvector`, zero additional operational burden. Neo4j remains available as an alternative.
+**Default graph store**: `astrocyte-age` (Apache AGE on PostgreSQL) — same instance as `astrocyte-postgres`, zero additional operational burden. Neo4j remains available as an alternative.
 
 ### Deliverables
 
@@ -428,7 +428,7 @@ Gateway **plugin** integration (Kong, APISIX, Azure API Management, and similar)
 - [ ] `EntityLink` written to graph with evidence quote, not just cosine score
 - [ ] Disabled by default; `entity_resolution: enabled: true` in config activates
 - [ ] `astrocyte-age` passes `GraphStore` SPI contract tests
-- [ ] `astrocyte-age` + `astrocyte-pgvector` work against the same PostgreSQL instance
+- [ ] `astrocyte-age` + `astrocyte-postgres` work against the same PostgreSQL instance
 - [ ] Docker Compose updated with AGE-enabled PostgreSQL image
 
 ---
@@ -555,7 +555,7 @@ Protocols and abstract surfaces that third-party code implements or calls — in
 - Optional manual federated hits via `RecallRequest.external_context`
 
 ### v0.8.0 — Production storage (M5) + standalone gateway (M6) + structured recall authority (M7)
-- **M5 — adapters:** Neo4j (`astrocyte-neo4j`), Elasticsearch (`astrocyte-elasticsearch`), Qdrant (`astrocyte-qdrant`), PostgreSQL/pgvector (`astrocyte-pgvector`) — packages under `adapters-storage-py/`; hybrid recall validated end-to-end (vector + graph + document)
+- **M5 — adapters:** Neo4j (`astrocyte-neo4j`), Elasticsearch (`astrocyte-elasticsearch`), Qdrant (`astrocyte-qdrant`), PostgreSQL/pgvector (`astrocyte-postgres`) — packages under `adapters-storage-py/`; hybrid recall validated end-to-end (vector + graph + document)
 - **M6 — gateway:** FastAPI **`astrocyte-gateway-py`** (implemented in repo): Tier 1 REST, JWT/OIDC → `AstrocyteContext`, webhook ingest, health/admin, Docker/Compose/Helm, GHCR — **§ M6**
 - **M7 — precedence:** Optional `astrocyte.yaml` `recall_authority:` (ADR-004); labeled `authority_context` for recall/reflect; **not** the default recall path — full spec **§ M7**
 

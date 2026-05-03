@@ -37,7 +37,7 @@ Used when `provider_tier: storage`.
 ```yaml
 # Example: pgvector + Neo4j hybrid
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: ${DATABASE_URL}
   embedding_dimensions: 1536
@@ -645,7 +645,7 @@ barriers:
 ```yaml
 profile: personal
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: ${DATABASE_URL}
 

@@ -21,19 +21,19 @@ benchmark_preset:
     observation_weight: 0.15
     agentic_reflect_allowed: true
 
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   embedding_dimensions: 1536
   bootstrap_schema: false
 
-document_store: pgvector
+document_store: postgres
 document_store_config:
   embedding_dimensions: 1536
   bootstrap_schema: false
 
 graph_store: age
 
-wiki_store: pgvector
+wiki_store: postgres
 wiki_store_config:
   bootstrap_schema: false
 

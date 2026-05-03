@@ -2,7 +2,7 @@
 
 Astrocyte ships **separate PyPI packages** per backend. They implement the Tier 1 SPIs in `astrocyte.provider` (`GraphStore`, `DocumentStore`, `VectorStore`).
 
-**In this repository:** [`adapters-storage-py/`](../../adapters-storage-py/README.md) packages include **`astrocyte-pgvector`** (PostgreSQL + pgvector), **`astrocyte-qdrant`**, **`astrocyte-neo4j`**, and **`astrocyte-elasticsearch`** — each with its own `pyproject.toml` and published image or wheel workflows as applicable.
+**In this repository:** [`adapters-storage-py/`](../../adapters-storage-py/README.md) packages include **`astrocyte-postgres`** (PostgreSQL + pgvector), **`astrocyte-qdrant`**, **`astrocyte-neo4j`**, and **`astrocyte-elasticsearch`** — each with its own `pyproject.toml` and published image or wheel workflows as applicable.
 
 ## Conformance
 

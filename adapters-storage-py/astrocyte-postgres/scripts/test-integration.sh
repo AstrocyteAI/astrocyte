@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run astrocyte-pgvector integration tests against a disposable PostgreSQL + pgvector container.
+# Run astrocyte-postgres integration tests against a disposable PostgreSQL + pgvector container.
 #
 # Usage:
 #   ./scripts/test-integration.sh            # start container, run tests, stop container
@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-CONTAINER_NAME="astrocyte-pgvector-test"
+CONTAINER_NAME="astrocyte-postgres-test"
 PG_PORT="${PG_TEST_PORT:-5434}"
 PG_USER="test"
 PG_PASS="test"

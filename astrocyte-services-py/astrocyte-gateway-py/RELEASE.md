@@ -15,7 +15,7 @@
 
 1. Ensure **`main`** is green (including gateway matrix + pgvector jobs) and **`CHANGELOG.md`** lists **`v0.8.0`** (see root **`RELEASING.md`**).
 2. Tag from the repo root, e.g. `git tag -a v0.8.0 -m "Release v0.8.0" && git push origin v0.8.0`.
-3. Open **Actions → Release** ([`release.yml`](../../.github/workflows/release.yml)) and confirm the run succeeds: PyPI **`astrocyte`** → **`astrocyte-pgvector`**, then gateway image build + push.
+3. Open **Actions → Release** ([`release.yml`](../../.github/workflows/release.yml)) and confirm the run succeeds: PyPI **`astrocyte`** → **`astrocyte-postgres`**, then gateway image build + push.
 4. In **Packages** (org or repo), open **`astrocyte-gateway-py`**, set **visibility** (public for OSS pulls without auth), and verify tags **`v0.8.0`** and **`latest`**.
 
 ## Smoke-pull

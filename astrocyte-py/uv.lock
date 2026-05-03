@@ -240,7 +240,7 @@ dev = [
     { name = "astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-kafka" },
     { name = "astrocyte-ingestion-redis" },
-    { name = "astrocyte-pgvector" },
+    { name = "astrocyte-postgres" },
     { name = "deepeval" },
     { name = "fastapi" },
     { name = "fastmcp" },
@@ -302,7 +302,7 @@ requires-dist = [
     { name = "astrocyte-ingestion-redis", marker = "extra == 'all'", editable = "../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'dev'", editable = "../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'stream'", editable = "../adapters-ingestion-py/astrocyte-ingestion-redis" },
-    { name = "astrocyte-pgvector", marker = "extra == 'dev'", editable = "../adapters-storage-py/astrocyte-pgvector" },
+    { name = "astrocyte-postgres", marker = "extra == 'dev'", editable = "../adapters-storage-py/astrocyte-postgres" },
     { name = "deepeval", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0" },
@@ -418,8 +418,8 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "astrocyte-pgvector"
-source = { editable = "../adapters-storage-py/astrocyte-pgvector" }
+name = "astrocyte-postgres"
+source = { editable = "../adapters-storage-py/astrocyte-postgres" }
 dependencies = [
     { name = "astrocyte" },
     { name = "pgvector" },

@@ -1,6 +1,6 @@
 """VectorStore + DocumentStore backed by PostgreSQL with the pgvector extension.
 
-``PgVectorStore`` satisfies both the ``VectorStore`` *and* ``DocumentStore``
+``PostgresStore`` satisfies both the ``VectorStore`` *and* ``DocumentStore``
 protocols.  The same ``astrocyte_vectors`` table that stores embeddings also
 carries a ``text_fts tsvector`` column (GIN-indexed, maintained by a trigger)
 so that ``search_fulltext`` runs BM25-style ``ts_rank`` without a separate
@@ -51,7 +51,7 @@ def _split_metadata_list(value: object) -> list[str]:
     return [part for part in value.split("|") if part]
 
 
-class PgVectorStore:
+class PostgresStore:
     """Tier 1 vector store using `pgvector` cosine distance search."""
 
     SPI_VERSION: ClassVar[int] = 1
@@ -67,7 +67,7 @@ class PgVectorStore:
         self._dsn = dsn or os.environ.get("DATABASE_URL") or os.environ.get("ASTROCYTE_PG_DSN")
         if not self._dsn:
             raise ValueError(
-                "PgVectorStore requires `dsn` in vector_store_config or DATABASE_URL / ASTROCYTE_PG_DSN",
+                "PostgresStore requires `dsn` in vector_store_config or DATABASE_URL / ASTROCYTE_PG_DSN",
             )
         self._table = _sanitize_table(table_name)
         self._dim = int(embedding_dimensions)
@@ -698,7 +698,7 @@ class PgVectorStore:
                 await self._pool.close()
                 self._pool = None
 
-    async def __aenter__(self) -> "PgVectorStore":
+    async def __aenter__(self) -> "PostgresStore":
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -715,7 +715,7 @@ class PgVectorStore:
             return HealthStatus(healthy=False, message=f"pgvector unhealthy: {e!s}")
 
     # ── DocumentStore protocol ────────────────────────────────────────────────
-    # PgVectorStore satisfies DocumentStore so the recall pipeline can fuse
+    # PostgresStore satisfies DocumentStore so the recall pipeline can fuse
     # lexical (BM25-style ts_rank) hits alongside semantic (cosine) hits via
     # RRF — exactly the vector+lexical fusion Hindsight uses.  The text is
     # already stored in astrocyte_vectors at retain time; DocumentStore methods
@@ -726,7 +726,7 @@ class PgVectorStore:
 
         The tsvector trigger keeps text_fts in sync automatically.  This
         method exists to satisfy the DocumentStore protocol so that callers
-        (e.g. PipelineOrchestrator) can treat PgVectorStore as a
+        (e.g. PipelineOrchestrator) can treat PostgresStore as a
         DocumentStore without a separate code path.
         """
         return document.id

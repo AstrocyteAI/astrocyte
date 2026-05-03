@@ -33,7 +33,7 @@ jobs:
       id-token: write
       attestations: write
       packages: write
-    uses: ./.github/workflows/publish-astrocyte-pgvector.yml
+    uses: ./.github/workflows/publish-astrocyte-postgres.yml
     secrets: inherit
 
   publish-age:

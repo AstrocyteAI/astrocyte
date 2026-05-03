@@ -4,8 +4,8 @@ Optional Python packages beside the core [`astrocyte-py`](../astrocyte-py/) libr
 
 | Package | Role |
 |---------|------|
-| [`astrocyte-gateway-py/`](astrocyte-gateway-py/README.md) | Standalone **HTTP gateway** (`astrocyte.yaml` + optional `mip.yaml`). **CLI:** `astrocyte-gateway-py`. **Python module:** `astrocyte_gateway`. Optional **`[pgvector]`** and **`[age]`** extras install [`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/README.md) and `astrocyte-age` for the reference Postgres memory stack. |
-| [`adapters-storage-py/astrocyte-pgvector/`](../adapters-storage-py/astrocyte-pgvector/README.md) | **`pgvector`** [`VectorStore`](../docs/_plugins/provider-spi.md) for PostgreSQL + [pgvector](https://github.com/pgvector/pgvector). **Schema:** SQL under [`migrations/`](../adapters-storage-py/astrocyte-pgvector/migrations/) + [`migrate.sh`](../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh) (`psql`, no Python migrator). |
+| [`astrocyte-gateway-py/`](astrocyte-gateway-py/README.md) | Standalone **HTTP gateway** (`astrocyte.yaml` + optional `mip.yaml`). **CLI:** `astrocyte-gateway-py`. **Python module:** `astrocyte_gateway`. Optional **`[pgvector]`** and **`[age]`** extras install [`astrocyte-postgres`](../adapters-storage-py/astrocyte-postgres/README.md) and `astrocyte-age` for the reference Postgres memory stack. |
+| [`adapters-storage-py/astrocyte-postgres/`](../adapters-storage-py/astrocyte-postgres/README.md) | **`pgvector`** [`VectorStore`](../docs/_plugins/provider-spi.md) for PostgreSQL + [pgvector](https://github.com/pgvector/pgvector). **Schema:** SQL under [`migrations/`](../adapters-storage-py/astrocyte-postgres/migrations/) + [`migrate.sh`](../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh) (`psql`, no Python migrator). |
 
 **Docker:** [`docker-compose.yml`](docker-compose.yml) in this directory runs **Postgres with pgvector + Apache AGE + `astrocyte-gateway-py`**. Copy **[`.env.example`](.env.example)** to `.env` to override Postgres credentials, ports, and REST settings. Run from here: `docker compose up --build`, or from the repo root: `docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build`. Details: [`astrocyte-gateway-py/README.md`](astrocyte-gateway-py/README.md).
 
@@ -29,7 +29,7 @@ From the **repository root**:
 ./astrocyte-services-py/scripts/runbook-up.sh
 ```
 
-This script: starts **Postgres**, waits until it accepts connections, runs [`adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh`](../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh) against **`127.0.0.1:${POSTGRES_PUBLISH_PORT}`**, then brings up **`docker-compose.yml` + [`docker-compose.runbook.yml`](docker-compose.runbook.yml)**. Requires **`psql`** on your PATH and Postgres **15+** (for concurrent index creation in [`003_indexes.sql`](../adapters-storage-py/astrocyte-pgvector/migrations/003_indexes.sql)).
+This script: starts **Postgres**, waits until it accepts connections, runs [`adapters-storage-py/astrocyte-postgres/scripts/migrate.sh`](../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh) against **`127.0.0.1:${POSTGRES_PUBLISH_PORT}`**, then brings up **`docker-compose.yml` + [`docker-compose.runbook.yml`](docker-compose.runbook.yml)**. Requires **`psql`** on your PATH and Postgres **15+** (for concurrent index creation in [`003_indexes.sql`](../adapters-storage-py/astrocyte-postgres/migrations/003_indexes.sql)).
 
 If the password cannot be used in a constructed URL, set **`MIGRATE_DATABASE_URL`** in `.env` (see [`.env.example`](.env.example)).
 
@@ -52,7 +52,7 @@ If the password cannot be used in a constructed URL, set **`MIGRATE_DATABASE_URL
 If you prefer not to use [`scripts/runbook-up.sh`](scripts/runbook-up.sh):
 
 1. `docker compose up -d postgres` and wait until **healthy** (Compose does not run host-side `migrate.sh`; Postgres must be listening on the host port before migrations).
-2. `export DATABASE_URL=postgresql://USER:PASS@127.0.0.1:POSTGRES_PUBLISH_PORT/DB` then `../adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh`
+2. `export DATABASE_URL=postgresql://USER:PASS@127.0.0.1:POSTGRES_PUBLISH_PORT/DB` then `../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh`
 3. `docker compose -f docker-compose.yml -f docker-compose.runbook.yml up --build`
 
 Or from the repository root:

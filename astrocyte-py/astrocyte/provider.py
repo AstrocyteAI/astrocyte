@@ -6,8 +6,8 @@ by Astrocyte's runtime type check (``isinstance(obj, VectorStore)`` etc.).
 
 Built-in implementations:
 - In-memory test doubles: ``astrocyte.testing.in_memory``
-- PostgreSQL + pgvector: ``astrocyte_pgvector.store.PgVectorStore``
-- Optional wheels (repo ``adapters-storage-py/``): ``astrocyte-pgvector``, ``astrocyte-qdrant``, ``astrocyte-neo4j``, ``astrocyte-elasticsearch``
+- PostgreSQL + pgvector: ``astrocyte_postgres.store.PostgresStore``
+- Optional wheels (repo ``adapters-storage-py/``): ``astrocyte-postgres``, ``astrocyte-qdrant``, ``astrocyte-neo4j``, ``astrocyte-elasticsearch``
 
 Each protocol has a SPI_VERSION ClassVar for compatibility checking.
 All methods are async except capabilities() and transport methods.
@@ -70,7 +70,7 @@ class VectorStore(Protocol):
     to verify your class satisfies this contract at registration time —
     no inheritance required, just implement every method below.
 
-    See ``astrocyte_pgvector.store.PgVectorStore`` for a production example,
+    See ``astrocyte_postgres.store.PostgresStore`` for a production example,
     or ``astrocyte.testing.in_memory.InMemoryVectorStore`` for a minimal reference.
     """
 

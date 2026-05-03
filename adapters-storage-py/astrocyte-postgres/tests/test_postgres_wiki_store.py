@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 
 from astrocyte.types import WikiPage
 
-from astrocyte_pgvector.wiki_store import PgWikiStore
+from astrocyte_postgres.wiki_store import PostgresWikiStore
 
 
 async def test_pg_wiki_store_roundtrip(dsn: str) -> None:
-    store = PgWikiStore(dsn=dsn)
+    store = PostgresWikiStore(dsn=dsn)
     page = WikiPage(
         page_id="person:alice",
         bank_id="bank-1",
@@ -43,7 +43,7 @@ async def test_pg_wiki_store_roundtrip(dsn: str) -> None:
 
 
 async def test_pg_wiki_store_increments_revision(dsn: str) -> None:
-    store = PgWikiStore(dsn=dsn)
+    store = PostgresWikiStore(dsn=dsn)
     base = WikiPage(
         page_id="topic:deployments",
         bank_id="bank-1",

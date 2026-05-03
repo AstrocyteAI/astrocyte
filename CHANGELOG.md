@@ -25,7 +25,7 @@ A substantial release covering retrieval-quality improvements (HyDE, observation
 - **Hindsight-informed reference stack** (`pipeline/hindsight.py`): retrieval pipeline preset that mirrors the Hindsight paper's offline-augmentation pattern. Default for LoCoMo benchmark runs.
 - **PgQueuer-backed memory task worker** (`pipeline/tasks.py`): out-of-band background work (compile, lifecycle sweeps) backed by Postgres queues; eliminates the in-process work loop.
 - **Concurrent retain phase** (eval): token-bucket rate limiter on LongMemEval retain, ~7× speedup.
-- **Configurable HNSW vector schema** (`adapters-storage-py/astrocyte-pgvector/`): operators can tune `m` / `ef_construction` per bank.
+- **Configurable HNSW vector schema** (`adapters-storage-py/astrocyte-postgres/`): operators can tune `m` / `ef_construction` per bank.
 - **Postgres reference stack parity**: `docker/postgres-age-pgvector/` ships a single image with both extensions; matches what the published `astrocyte-postgres` image bundles.
 
 ### Fixed
@@ -53,7 +53,7 @@ A substantial release covering retrieval-quality improvements (HyDE, observation
 
 ### Fixed
 
-- **All adapter packages** (`astrocyte-pgvector`, `astrocyte-qdrant`, `astrocyte-neo4j`, `astrocyte-elasticsearch`, `astrocyte-ingestion-*`, `astrocyte-llm-litellm`): dependency was `astrocyte>=0.7.0,<0.9`, causing `ResolutionImpossible` when installing alongside `astrocyte==0.9.0`. Widened to `<2`.
+- **All adapter packages** (`astrocyte-postgres`, `astrocyte-qdrant`, `astrocyte-neo4j`, `astrocyte-elasticsearch`, `astrocyte-ingestion-*`, `astrocyte-llm-litellm`): dependency was `astrocyte>=0.7.0,<0.9`, causing `ResolutionImpossible` when installing alongside `astrocyte==0.9.0`. Widened to `<2`.
 
 ## [0.9.0] — 2026-04-25 (M8–M11 — wiki compile, time travel, gap analysis, entity resolution)
 
@@ -123,7 +123,7 @@ This release bundles **M5** (production storage providers), **M6** (standalone H
 
 ### Added
 
-- **M5 — Storage adapters** (separate PyPI packages under `adapters-storage-py/`): **`astrocyte-pgvector`**, **`astrocyte-qdrant`**, **`astrocyte-neo4j`**, **`astrocyte-elasticsearch`** implementing Tier 1 `VectorStore` / `GraphStore` / `DocumentStore`; CI and publish workflows.
+- **M5 — Storage adapters** (separate PyPI packages under `adapters-storage-py/`): **`astrocyte-postgres`**, **`astrocyte-qdrant`**, **`astrocyte-neo4j`**, **`astrocyte-elasticsearch`** implementing Tier 1 `VectorStore` / `GraphStore` / `DocumentStore`; CI and publish workflows.
 - **M6 — `astrocyte-gateway-py`**: FastAPI REST (`/v1/retain`, `/v1/recall`, `/v1/reflect`, `/v1/forget`), webhook ingest, health (`/health`, `/health/ingest`), optional admin routes, JWT/OIDC/`api_key`/`dev` auth → `AstrocyteContext`, Docker/Compose/Helm, GHCR image workflow.
 - **M7 — Structured recall authority**: optional `recall_authority:` in config (`RecallAuthorityConfig`), `RecallResult.authority_context`, optional reflect injection; see ADR-004 and `built-in-pipeline.md`.
 - **M4.1 — Federated / proxy recall**: `sources:` with `type: proxy`, remote JSON merge with local RRF (`astrocyte.recall.proxy`); OAuth helpers, tiered retrieval integration, observability hooks — see prior `[Unreleased]` notes in git history for detail.
@@ -133,7 +133,7 @@ This release bundles **M5** (production storage providers), **M6** (standalone H
 ### Notes
 
 - **SPI contract tests** for vector stores remain the reference for adapter authors (`astrocyte-py/tests/test_spi_vector_store_contract.py`).
-- Release: tag **`v0.8.0`** at repo root → **`release.yml`** publishes **`astrocyte`** → **`astrocyte-pgvector`** → gateway image; see **`RELEASING.md`**.
+- Release: tag **`v0.8.0`** at repo root → **`release.yml`** publishes **`astrocyte`** → **`astrocyte-postgres`** → gateway image; see **`RELEASING.md`**.
 
 ## [0.7.0] — 2026-04-11 (M4 external data sources — library ingest)
 

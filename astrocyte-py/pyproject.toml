@@ -95,7 +95,7 @@ dev = [
     "snowballstemmer>=2.2",
     "pgqueuer>=0.26.3",
     # Storage adapters — needed for benchmark runs against the real stack
-    "astrocyte-pgvector>=0.8.0,<2",
+    "astrocyte-postgres>=0.8.0,<2",
     "astrocyte-age>=0.8.0,<2",
 ]
 all = [
@@ -137,7 +137,7 @@ packages = ["astrocyte"]
 "astrocyte/pipeline/extraction_builtin.yaml" = "astrocyte/pipeline/extraction_builtin.yaml"
 
 [tool.uv.sources]
-astrocyte-pgvector = { path = "../adapters-storage-py/astrocyte-pgvector", editable = true }
+astrocyte-postgres = { path = "../adapters-storage-py/astrocyte-postgres", editable = true }
 astrocyte-age = { path = "../adapters-storage-py/astrocyte-age", editable = true }
 astrocyte-ingestion-kafka = { path = "../adapters-ingestion-py/astrocyte-ingestion-kafka", editable = true }
 astrocyte-ingestion-redis = { path = "../adapters-ingestion-py/astrocyte-ingestion-redis", editable = true }

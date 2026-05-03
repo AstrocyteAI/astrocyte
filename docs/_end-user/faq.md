@@ -143,11 +143,11 @@ Only if you configure a persistent storage backend (pgvector, Qdrant, Neo4j, Ela
 
 ### How do I migrate from in-memory to PostgreSQL?
 
-1. Install the adapter: `pip install astrocyte-pgvector`
+1. Install the adapter: `pip install astrocyte-postgres`
 2. Update `astrocyte.yaml`:
 
 ```yaml
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: postgresql://localhost:5432/astrocyte
 ```

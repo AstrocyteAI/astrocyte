@@ -560,7 +560,7 @@ When a caller does `brain.recall("What do we know about Calvin?")`, they don't k
 # astrocyte.yaml - Tier 1 example
 # provider_tier: storage - legacy keyword for Tier 1 (Retrieval SPI + built-in pipeline), not blob storage
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: postgresql://localhost/memories
 graph_store: neo4j                    # optional
@@ -592,7 +592,7 @@ A framework that is just a protocol definition + entry points will be skipped. T
 
 ### 7.1 Intelligence value (built-in pipeline)
 
-Users get a **fully functional memory system** with just `astrocyte + astrocyte-pgvector`:
+Users get a **fully functional memory system** with just `astrocyte + astrocyte-postgres`:
 
 | Capability | Built-in pipeline (free) |
 |---|---|
@@ -680,7 +680,7 @@ These capabilities exist at the **framework layer** — they apply regardless of
 | Use-case profiles | `astrocyte` | Apache 2.0 |
 | OTel instrumentation | `astrocyte` | Apache 2.0 |
 | **Retrieval providers (Tier 1)** | | |
-| pgvector adapter | `astrocyte-pgvector` | Apache 2.0 |
+| pgvector adapter | `astrocyte-postgres` | Apache 2.0 |
 | Apache AGE graph adapter (default graph store, v1.0.0) | `astrocyte-age` | Apache 2.0 |
 | Pinecone adapter | `astrocyte-pinecone` | Planned |
 | Qdrant adapter | `astrocyte-qdrant` | Apache 2.0 |
@@ -716,8 +716,8 @@ The two-tier architecture creates a natural upgrade path:
 
 | Stage | Stack | Cost |
 |---|---|---|
-| Getting started | `astrocyte` + `astrocyte-pgvector` | Free |
-| Add graph (v1.0.0) | `astrocyte` + `astrocyte-pgvector` + `astrocyte-age` (same PostgreSQL) | Free |
+| Getting started | `astrocyte` + `astrocyte-postgres` | Free |
+| Add graph (v1.0.0) | `astrocyte` + `astrocyte-postgres` + `astrocyte-age` (same PostgreSQL) | Free |
 | Want better retrieval | `astrocyte` + `astrocyte-mystique` | Paid |
 
 **The third-option bar** — what the free tier passes from v1.0.0 onward:

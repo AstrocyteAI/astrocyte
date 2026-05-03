@@ -158,7 +158,7 @@ This section names **which folders** own **AuthZ wiring** in [`astrocyte-py`](..
 | **Calling `set_access_grants()` at process startup** | **`astrocyte-services-py/astrocyte-gateway-py`** — **`astrocyte_gateway/brain.py`** (`build_astrocyte()`): after **`Astrocyte(config)`** and **`set_pipeline(...)`**, apply grants from the loaded config. |
 | **Trusted `principal` on each HTTP request** (production) | **`astrocyte-gateway-py`** — FastAPI dependencies / middleware: map verified JWT, API key, mTLS identity to **`AstrocyteContext`**, not an unauthenticated client header alone. |
 
-**Not here:** [`astrocyte-pgvector`](../adapters-storage-py/astrocyte-pgvector/) — it implements **VectorStore** only; it does not participate in access grants.
+**Not here:** [`astrocyte-postgres`](../adapters-storage-py/astrocyte-postgres/) — it implements **VectorStore** only; it does not participate in access grants.
 
 ### 8.2 External PDP (`AccessPolicyProvider`)
 
@@ -168,7 +168,7 @@ This section names **which folders** own **AuthZ wiring** in [`astrocyte-py`](..
 | **Vendor-specific client** (OPA REST, Cerbos SDK, Casbin `Enforcer`, etc.) | **Separate optional packages** — e.g. **`astrocyte-access-policy-opa`**, **`astrocyte-access-policy-cerbos`** (see §5). Keeps **`astrocyte`** free of third-party PDP SDKs. |
 | **Instantiate adapter + attach to `Astrocyte`** | **`astrocyte-services-py/astrocyte-gateway-py`** — **`brain.py`** (or equivalent factory): resolve provider via config entry point / env, same pattern as **`vector_store`** in **`astrocyte_gateway/wiring.py`**. |
 
-**Not here:** **`astrocyte-pgvector`** — unchanged; storage adapters are not AuthZ layers.
+**Not here:** **`astrocyte-postgres`** — unchanged; storage adapters are not AuthZ layers.
 
 ### 8.3 Summary table
 

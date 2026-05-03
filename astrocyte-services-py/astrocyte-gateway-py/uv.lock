@@ -219,7 +219,7 @@ requires-dist = [
     { name = "astrocyte-ingestion-redis", marker = "extra == 'all'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'dev'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'stream'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
-    { name = "astrocyte-pgvector", marker = "extra == 'dev'", editable = "../../adapters-storage-py/astrocyte-pgvector" },
+    { name = "astrocyte-postgres", marker = "extra == 'dev'", editable = "../../adapters-storage-py/astrocyte-postgres" },
     { name = "deepeval", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0" },
@@ -299,7 +299,7 @@ age = [
 dev = [
     { name = "astrocyte", extra = ["worker"] },
     { name = "astrocyte-age" },
-    { name = "astrocyte-pgvector" },
+    { name = "astrocyte-postgres" },
     { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pytest" },
@@ -313,8 +313,8 @@ otel = [
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "opentelemetry-sdk" },
 ]
-pgvector = [
-    { name = "astrocyte-pgvector" },
+postgres = [
+    { name = "astrocyte-postgres" },
 ]
 s3 = [
     { name = "astrocyte-ingestion-s3" },
@@ -333,8 +333,8 @@ requires-dist = [
     { name = "astrocyte-age", marker = "extra == 'dev'", editable = "../../adapters-storage-py/astrocyte-age" },
     { name = "astrocyte-ingestion-document", marker = "extra == 'document'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-document" },
     { name = "astrocyte-ingestion-s3", marker = "extra == 's3'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-s3" },
-    { name = "astrocyte-pgvector", marker = "extra == 'dev'", editable = "../../adapters-storage-py/astrocyte-pgvector" },
-    { name = "astrocyte-pgvector", marker = "extra == 'pgvector'", editable = "../../adapters-storage-py/astrocyte-pgvector" },
+    { name = "astrocyte-postgres", marker = "extra == 'dev'", editable = "../../adapters-storage-py/astrocyte-postgres" },
+    { name = "astrocyte-postgres", marker = "extra == 'postgres'", editable = "../../adapters-storage-py/astrocyte-postgres" },
     { name = "cryptography", specifier = ">=42" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
@@ -348,7 +348,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
-provides-extras = ["dev", "pgvector", "age", "worker", "s3", "document", "otel"]
+provides-extras = ["dev", "postgres", "age", "worker", "s3", "document", "otel"]
 
 [[package]]
 name = "astrocyte-ingestion-document"
@@ -398,8 +398,8 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "astrocyte-pgvector"
-source = { editable = "../../adapters-storage-py/astrocyte-pgvector" }
+name = "astrocyte-postgres"
+source = { editable = "../../adapters-storage-py/astrocyte-postgres" }
 dependencies = [
     { name = "astrocyte" },
     { name = "pgvector" },

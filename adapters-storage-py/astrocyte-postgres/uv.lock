@@ -36,7 +36,7 @@ requires-dist = [
     { name = "astrocyte-ingestion-redis", marker = "extra == 'all'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'dev'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
     { name = "astrocyte-ingestion-redis", marker = "extra == 'stream'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-redis" },
-    { name = "astrocyte-pgvector", marker = "extra == 'dev'", editable = "." },
+    { name = "astrocyte-postgres", marker = "extra == 'dev'", editable = "." },
     { name = "deepeval", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0" },
@@ -78,7 +78,7 @@ requires-dist = [
 provides-extras = ["all", "dev", "eval", "gateway", "mcp", "openai", "otel", "poll", "prometheus", "rerank", "stream", "worker"]
 
 [[package]]
-name = "astrocyte-pgvector"
+name = "astrocyte-postgres"
 source = { editable = "." }
 dependencies = [
     { name = "astrocyte" },

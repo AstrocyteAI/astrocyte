@@ -41,9 +41,9 @@ Recommended default for production and Hindsight-comparable deployments. One Pos
 ### Install
 
 ```bash
-pip install astrocyte-pgvector
+pip install astrocyte-postgres
 # or from source:
-cd adapters-storage-py/astrocyte-pgvector && pip install -e .
+cd adapters-storage-py/astrocyte-postgres && pip install -e .
 ```
 
 ### Run PostgreSQL
@@ -61,9 +61,9 @@ The Compose stack uses the repository's combined Postgres image with `pgvector` 
 
 ```yaml
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 graph_store: age
-wiki_store: pgvector
+wiki_store: postgres
 llm_provider: mock
 vector_store_config:
   dsn: ${DATABASE_URL}
@@ -110,7 +110,7 @@ For production, disable `bootstrap_schema` and run migrations explicitly:
 ```bash
 export DATABASE_URL='postgresql://astrocyte:astrocyte@127.0.0.1:5433/astrocyte'
 export ASTROCYTE_EMBEDDING_DIMENSIONS=1536  # match your embedding model
-cd adapters-storage-py/astrocyte-pgvector
+cd adapters-storage-py/astrocyte-postgres
 ./scripts/migrate.sh
 ```
 
@@ -329,7 +329,7 @@ Combine vector, graph, and document stores for richer retrieval. Results are fus
 provider_tier: storage
 
 # Semantic search
-vector_store: pgvector
+vector_store: postgres
 vector_store_config:
   dsn: ${DATABASE_URL}
   embedding_dimensions: 1536
@@ -367,8 +367,8 @@ Recall automatically queries all configured stores and fuses results. No additio
 | **Managed options** | Any managed Postgres | Qdrant Cloud | Neo4j Aura | Elastic Cloud |
 | **Best for** | Default choice; existing Postgres | Dedicated vector DB; large scale | Relationship-heavy domains | Keyword recall alongside semantic |
 | **Persistence** | SQL (full ACID) | On-disk snapshots | On-disk | Lucene segments |
-| **Python package** | `astrocyte-pgvector` | `astrocyte-qdrant` | `astrocyte-neo4j` | `astrocyte-elasticsearch` |
-| **Config key** | `vector_store: pgvector` | `vector_store: qdrant` | `graph_store: neo4j` | `document_store: elasticsearch` |
+| **Python package** | `astrocyte-postgres` | `astrocyte-qdrant` | `astrocyte-neo4j` | `astrocyte-elasticsearch` |
+| **Config key** | `vector_store: postgres` | `vector_store: qdrant` | `graph_store: neo4j` | `document_store: elasticsearch` |
 
 ---
 

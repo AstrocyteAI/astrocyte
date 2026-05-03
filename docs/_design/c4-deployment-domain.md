@@ -401,7 +401,7 @@ Current `astrocyte.yml` covers internal concerns only. v1.0.0 adds three new top
 ```yaml
 # --- Existing (unchanged) ---
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 # ... (all existing config)
 
 # --- New: External Sources ---
@@ -860,7 +860,7 @@ Secondary ports define how Astrocyte calls out to infrastructure. These are defi
 
 | Port (Protocol) | Current Adapters | Status |
 |---|---|---|
-| **VectorStore** | `astrocyte_pgvector.PgVectorStore`, `InMemoryVectorStore` (testing) | Production-ready |
+| **VectorStore** | `astrocyte_postgres.PostgresStore`, `InMemoryVectorStore` (testing) | Production-ready |
 | **GraphStore** | `astrocyte_neo4j.Neo4jGraphStore`, `InMemoryGraphStore` (testing) | Production-ready |
 | **DocumentStore** | `astrocyte_elasticsearch.ElasticsearchDocumentStore`, `InMemoryDocumentStore` (testing) | Production-ready |
 | **LLMProvider** | `OpenAIProvider` (`providers/openai.py`) | Production-ready |
@@ -891,7 +891,7 @@ Primary Adapters (driving):
   astrocyte/mcp.py                         -> MCP tool server
 
 Secondary Adapters (driven):
-  astrocyte_pgvector/store.py              -> PgVectorStore (PostgreSQL + pgvector)
+  astrocyte_postgres/store.py              -> PostgresStore (PostgreSQL + pgvector)
   astrocyte/providers/openai.py            -> OpenAIProvider (LLM + embedding)
   astrocyte/testing/in_memory.py           -> InMemory{Vector,Graph,Document}Store (test doubles)
   astrocyte_kafka/consumer.py               -> KafkaIngestSource (planned)
@@ -914,7 +914,7 @@ astrocyte/              (core package -- no infrastructure imports)
   integrations/         depends on: _astrocyte (inward dependency, correct)
   config.py             depends on: types
 
-astrocyte_pgvector/     (separate package -- adapter)
+astrocyte_postgres/     (separate package -- adapter)
   depends on: astrocyte.provider.VectorStore, astrocyte.types
 
 astrocyte_neo4j/        (shipped v0.8.0 -- separate package)
@@ -939,7 +939,7 @@ Four new optional sections are added to `AstrocyteConfig`. All default to `None`
 ```yaml
 # --- Existing (unchanged) ---
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 homeostasis:
   rate_limits:
     retain_per_minute: 120
@@ -1154,7 +1154,7 @@ The existing architecture documents reference a Rust strategy for performance-cr
 
 | Package | Purpose | License | Notes |
 |---|---|---|---|
-| `astrocyte-pgvector` | PostgreSQL + pgvector vector store | MIT | Already exists |
+| `astrocyte-postgres` | PostgreSQL + pgvector vector store | MIT | Already exists |
 | `astrocyte-neo4j` | Neo4j graph store | MIT | Shipped v0.8.0 |
 | `astrocyte-elasticsearch` | Elasticsearch document store | MIT | Shipped v0.8.0 |
 | `astrocyte-falkordb` | FalkorDB graph store (Redis-based) | MIT | Post-v1.0.0 |

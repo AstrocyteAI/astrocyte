@@ -1,7 +1,7 @@
-# Tier 1 + pgvector — set DATABASE_URL or ASTROCYTE_PG_DSN in the environment.
+# Tier 1 + astrocyte-postgres adapter — set DATABASE_URL or ASTROCYTE_PG_DSN in the environment.
 # For migration-owned DDL (HNSW, etc.), use astrocyte-services-py runbook + config.runbook.example.yaml instead.
 provider_tier: storage
-vector_store: pgvector
+vector_store: postgres
 llm_provider: mock
 
 vector_store_config:

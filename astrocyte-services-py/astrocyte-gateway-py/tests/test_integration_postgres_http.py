@@ -21,7 +21,7 @@ def test_gateway_retain_recall_health_pgvector(monkeypatch: pytest.MonkeyPatch, 
 
     Local: set ``bootstrap_schema: true`` (no prior ``migrate.sh``).
 
-    CI (after ``adapters-storage-py/astrocyte-pgvector/scripts/migrate.sh``): set
+    CI (after ``adapters-storage-py/astrocyte-postgres/scripts/migrate.sh``): set
     ``ASTROCYTE_GATEWAY_E2E_MIGRATED=1`` so the app does not run DDL at runtime.
     """
     migrated = os.environ.get("ASTROCYTE_GATEWAY_E2E_MIGRATED", "").strip().lower() in (
@@ -68,7 +68,7 @@ access_control:
         encoding="utf-8",
     )
     monkeypatch.setenv("ASTROCYTE_CONFIG_PATH", str(cfg))
-    # PgVectorStore reads DATABASE_URL from environment
+    # PostgresStore reads DATABASE_URL from environment
     _skip_if_age_unavailable(os.environ["DATABASE_URL"])
     from astrocyte_gateway.app import create_app
 

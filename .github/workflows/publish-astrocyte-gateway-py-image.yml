@@ -1,8 +1,8 @@
 # Build + test gate, then push the multi-arch astrocyte-gateway-py image to GHCR (version tag).
 # Gateway test gate lives in `gateway-publish-test-gate.yml` (shared with `ci.yml`).
 #
-# Invoked by `release.yml` after PyPI publishes (`publish.yml` → `publish-astrocyte-pgvector.yml`).
-# Image uses `Dockerfile.release` (astrocyte + astrocyte-pgvector from PyPI at this tag’s version).
+# Invoked by `release.yml` after PyPI publishes (`publish.yml` → `publish-astrocyte-postgres.yml`).
+# Image uses `Dockerfile.release` (astrocyte + astrocyte-postgres from PyPI at this tag’s version).
 name: Publish astrocyte-gateway-py image to GHCR
 
 on:
@@ -61,14 +61,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Wait for astrocyte, astrocyte-pgvector and astrocyte-age on PyPI
+      - name: Wait for astrocyte, astrocyte-postgres and astrocyte-age on PyPI
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           # Poll via pip download — checks the simple index, the same path pip uses
           # at Docker build time. The JSON API can return 200 before the simple index
           # propagates to all CDN nodes, so JSON-only checks are unreliable here.
-          for pkg in astrocyte astrocyte-pgvector astrocyte-age; do
+          for pkg in astrocyte astrocyte-postgres astrocyte-age; do
             echo "Waiting for ${pkg}==${VERSION} to be pip-downloadable..."
             for i in $(seq 1 40); do
               if pip download "${pkg}==${VERSION}" --no-deps -q -d /tmp/pypi-check; then

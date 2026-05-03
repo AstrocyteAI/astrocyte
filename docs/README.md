@@ -85,7 +85,7 @@ Release notes: [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main
 |---------|----------|------|
 | [`astrocyte`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-py/README.md) | Python | Core library (PyPI) |
 | [`astrocyte-gateway-py`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-services-py/astrocyte-gateway-py/README.md) | Python | Optional REST gateway |
-| [`astrocyte-pgvector`](https://github.com/AstrocyteAI/astrocyte/blob/main/adapters-storage-py/astrocyte-pgvector/README.md) | Python | PostgreSQL + pgvector adapter (VectorStore) |
+| [`astrocyte-postgres`](https://github.com/AstrocyteAI/astrocyte/blob/main/adapters-storage-py/astrocyte-postgres/README.md) | Python | PostgreSQL + pgvector adapter (VectorStore) |
 | [`astrocyte-age`](https://github.com/AstrocyteAI/astrocyte/blob/main/adapters-storage-py/astrocyte-age/README.md) | Python | Apache AGE adapter (GraphStore) — shares PostgreSQL instance with pgvector |
 | [`astrocyte-rs`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-rs/README.md) | Rust | Planned native crate; currently a contract stub |
 

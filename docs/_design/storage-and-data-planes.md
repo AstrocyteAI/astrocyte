@@ -28,7 +28,7 @@ The default self-hosted Astrocyte stack uses one PostgreSQL deployment for sever
 
 | Role | Storage surface | Why |
 |---|---|---|
-| Durable memory records | SQL tables behind `astrocyte-pgvector` | Bank-scoped retained text, metadata, tags, timestamps, and lifecycle state. |
+| Durable memory records | SQL tables behind `astrocyte-postgres` | Bank-scoped retained text, metadata, tags, timestamps, and lifecycle state. |
 | Dense retrieval | pgvector indexes | Fast semantic search over raw memories and compiled wiki pages. |
 | Durable wiki pages | SQL wiki tables | Source of truth for page identity, current revision, revision history, provenance, links, and lint state. |
 | Graph traversal | Apache AGE projection | Bounded page/entity/memory expansion for graph-enhanced recall. |

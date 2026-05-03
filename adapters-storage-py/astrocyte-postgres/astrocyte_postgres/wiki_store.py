@@ -15,7 +15,7 @@ from psycopg.types.json import Json
 from psycopg_pool import AsyncConnectionPool
 
 
-class PgWikiStore:
+class PostgresWikiStore:
     """Durable WikiStore using the reference Astrocyte Postgres schema."""
 
     SPI_VERSION: ClassVar[int] = 1
@@ -30,7 +30,7 @@ class PgWikiStore:
         self._dsn = dsn or os.environ.get("DATABASE_URL") or os.environ.get("ASTROCYTE_PG_DSN")
         if not self._dsn:
             raise ValueError(
-                "PgWikiStore requires `dsn` in wiki_store_config or DATABASE_URL / ASTROCYTE_PG_DSN",
+                "PostgresWikiStore requires `dsn` in wiki_store_config or DATABASE_URL / ASTROCYTE_PG_DSN",
             )
         self._bootstrap_schema = bool(bootstrap_schema)
         self._pool: AsyncConnectionPool | None = None

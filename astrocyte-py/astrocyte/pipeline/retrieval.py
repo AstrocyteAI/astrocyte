@@ -97,7 +97,7 @@ async def parallel_retrieve(
         and hyde_vector is None
     )
 
-    # PgVectorStore can answer semantic and keyword retrieval in one SQL round trip.
+    # PostgresStore can answer semantic and keyword retrieval in one SQL round trip.
     # Other adapters keep the portable per-strategy path.
     if use_hybrid_search:
         hybrid_task = asyncio.create_task(
