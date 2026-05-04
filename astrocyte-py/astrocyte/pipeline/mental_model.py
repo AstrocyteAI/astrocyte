@@ -1,35 +1,59 @@
-"""Mental model service backed by the existing WikiStore abstraction."""
+"""Mental model service — first-class facade over :class:`MentalModelStore`.
+
+Curated, refreshable saved-reflect summaries — the durable artifacts that
+outlive any single recall and serve as the authoritative summary when the
+recall pipeline elects to use the compiled layer.
+
+History
+-------
+
+This service originally piggybacked on :class:`WikiStore`, distinguishing
+mental models from wiki pages by ``kind="concept"`` and a
+``metadata["_mental_model"] = True`` discriminator. That pattern overloaded
+the wiki layer's lifecycle (revisions, lint issues, cross_links) for a
+fundamentally different concept and required undocumented metadata-key
+conventions. v1.x cut to a dedicated :class:`MentalModelStore` SPI with its
+own table — this service now takes a store via dependency injection and is
+agnostic to the underlying implementation.
+
+The :class:`MentalModel` dataclass lives in :mod:`astrocyte.types` so the
+SPI and consumer modules share a single source of truth; it's re-exported
+from this module for backward compatibility with callers that import it
+from :mod:`astrocyte.pipeline.mental_model`.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import replace
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from astrocyte.types import WikiPage
+# Re-export so existing ``from astrocyte.pipeline.mental_model import MentalModel``
+# imports keep working after the dataclass moved to ``astrocyte.types``.
+from astrocyte.types import MentalModel
 
+if TYPE_CHECKING:
+    from astrocyte.provider import MentalModelStore
 
-@dataclass(frozen=True)
-class MentalModel:
-    model_id: str
-    bank_id: str
-    title: str
-    content: str
-    scope: str
-    source_ids: list[str]
-    revision: int
-    refreshed_at: datetime
+__all__ = ["MentalModel", "MentalModelService"]
 
 
 class MentalModelService:
-    """First-class facade for curated saved-reflect summaries.
+    """First-class facade over a :class:`MentalModelStore`.
 
-    The storage substrate is WikiStore so Astrocyte does not fork another
-    persistence model; mental models are distinguished by ``kind="concept"``
-    and ``metadata["_mental_model"] = True``.
+    All persistence behaviour (revision bumping, history archival, soft-
+    delete, scope filtering) is delegated to the configured store. This
+    service is the user-facing API surface — gateway endpoints and any
+    in-process caller should use it rather than invoking the store
+    directly.
+
+    The store can be any :class:`~astrocyte.provider.MentalModelStore`
+    implementation: ``InMemoryMentalModelStore`` for tests,
+    ``PostgresMentalModelStore`` for production.
     """
 
-    def __init__(self, wiki_store) -> None:
-        self._wiki_store = wiki_store
+    def __init__(self, store: "MentalModelStore") -> None:
+        self._store = store
 
     async def create(
         self,
@@ -41,32 +65,41 @@ class MentalModelService:
         scope: str = "bank",
         source_ids: list[str] | None = None,
     ) -> MentalModel:
-        page = WikiPage(
-            page_id=model_id,
+        """Create or refresh a mental model.
+
+        Upsert semantics — calling create with an existing ``model_id``
+        bumps the revision and archives the prior version. Use
+        :meth:`refresh` when you specifically want to fail on missing.
+        """
+        # ``revision`` and ``refreshed_at`` are placeholders the store
+        # overwrites — pass anything valid here.
+        draft = MentalModel(
+            model_id=model_id,
             bank_id=bank_id,
-            kind="concept",
             title=title,
             content=content,
             scope=scope,
             source_ids=list(source_ids or []),
-            cross_links=[],
-            revision=1,
-            revised_at=datetime.now(UTC),
-            metadata={"_mental_model": True, "_freshness": "fresh"},
+            revision=0,
+            refreshed_at=datetime.now(UTC),
         )
-        await self._wiki_store.upsert_page(page, bank_id)
-        stored = await self._wiki_store.get_page(model_id, bank_id)
-        return _from_page(stored or page)
+        await self._store.upsert(draft, bank_id)
+        stored = await self._store.get(model_id, bank_id)
+        # If the store implementation returns ``None`` between upsert and
+        # get (e.g. eventual consistency, hypothetical race), fall back to
+        # the draft we sent — at least the caller sees the data they wrote.
+        return stored or draft
 
-    async def list(self, bank_id: str, *, scope: str | None = None) -> list[MentalModel]:
-        pages = await self._wiki_store.list_pages(bank_id, scope=scope, kind="concept")
-        return [_from_page(page) for page in pages if (page.metadata or {}).get("_mental_model") is True]
+    async def list(
+        self,
+        bank_id: str,
+        *,
+        scope: str | None = None,
+    ) -> list[MentalModel]:
+        return await self._store.list(bank_id, scope=scope)
 
     async def get(self, bank_id: str, model_id: str) -> MentalModel | None:
-        page = await self._wiki_store.get_page(model_id, bank_id)
-        if page is None or (page.metadata or {}).get("_mental_model") is not True:
-            return None
-        return _from_page(page)
+        return await self._store.get(model_id, bank_id)
 
     async def refresh(
         self,
@@ -76,39 +109,27 @@ class MentalModelService:
         content: str,
         source_ids: list[str] | None = None,
     ) -> MentalModel | None:
-        page = await self._wiki_store.get_page(model_id, bank_id)
-        if page is None or (page.metadata or {}).get("_mental_model") is not True:
+        """Refresh an EXISTING mental model. Returns ``None`` if missing.
+
+        Distinct from :meth:`create` in that it requires the model to
+        already exist — protects against silent creation on typo'd IDs.
+        Source IDs default to the existing set (use :meth:`create` to
+        replace with an empty list).
+        """
+        existing = await self._store.get(model_id, bank_id)
+        if existing is None:
             return None
-        refreshed = WikiPage(
-            page_id=page.page_id,
-            bank_id=page.bank_id,
-            kind=page.kind,
-            title=page.title,
-            content=content,
-            scope=page.scope,
-            source_ids=list(source_ids if source_ids is not None else page.source_ids),
-            cross_links=page.cross_links,
-            revision=page.revision,
-            revised_at=datetime.now(UTC),
-            tags=page.tags,
-            metadata={**(page.metadata or {}), "_freshness": "fresh"},
+        next_sources = (
+            list(source_ids) if source_ids is not None else list(existing.source_ids)
         )
-        await self._wiki_store.upsert_page(refreshed, bank_id)
-        stored = await self._wiki_store.get_page(model_id, bank_id)
-        return _from_page(stored or refreshed)
+        draft = replace(
+            existing,
+            content=content,
+            source_ids=next_sources,
+            refreshed_at=datetime.now(UTC),
+        )
+        await self._store.upsert(draft, bank_id)
+        return await self._store.get(model_id, bank_id)
 
     async def delete(self, bank_id: str, model_id: str) -> bool:
-        return bool(await self._wiki_store.delete_page(model_id, bank_id))
-
-
-def _from_page(page: WikiPage) -> MentalModel:
-    return MentalModel(
-        model_id=page.page_id,
-        bank_id=page.bank_id,
-        title=page.title,
-        content=page.content,
-        scope=page.scope,
-        source_ids=page.source_ids,
-        revision=page.revision,
-        refreshed_at=page.revised_at,
-    )
+        return await self._store.delete(model_id, bank_id)

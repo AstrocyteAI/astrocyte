@@ -124,6 +124,10 @@ class Astrocyte:
         self._wiki_store: object | None = None
         # M8 W4: async compile queue (optional; enables automatic threshold triggering)
         self._compile_queue: object | None = None
+        # M9: mental-model store (optional; enables /v1/mental-models endpoints).
+        # First-class replacement for the prior wiki-piggyback (kind="concept" +
+        # metadata["_mental_model"] = True) — see provider.MentalModelStore docs.
+        self._mental_model_store: object | None = None
 
     @property
     def config(self) -> AstrocyteConfig:
@@ -201,6 +205,21 @@ class Astrocyte:
 
         check_spi_version(wiki_store, "WikiStore")
         self._wiki_store = wiki_store
+
+    def set_mental_model_store(self, store: object) -> None:
+        """Set the :class:`~astrocyte.provider.MentalModelStore` provider. Optional.
+
+        When configured, the gateway's ``/v1/mental-models`` endpoints
+        (and any in-process consumer) route reads/writes through this
+        store instead of erroring with HTTP 501. Cuts the prior
+        wiki-piggyback path (``kind="concept"`` + metadata discriminator)
+        — mental models now live in their own
+        ``astrocyte_mental_models`` table with proper revision history.
+        """
+        from astrocyte.provider import check_spi_version
+
+        check_spi_version(store, "MentalModelStore")
+        self._mental_model_store = store
 
     def set_compile_queue(self, queue: object) -> None:
         """Set the async compile queue (M8 W4 threshold trigger). Optional.

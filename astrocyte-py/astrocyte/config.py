@@ -694,6 +694,10 @@ class AstrocyteConfig:
     document_store_config: dict[str, str | int | float | bool | None] | None = None
     wiki_store: str | None = None
     wiki_store_config: dict[str, str | int | float | bool | None] | None = None
+    # M9 first-class mental-model storage (replaces wiki-piggyback path).
+    # Optional — when unset, /v1/mental-models endpoints raise 501.
+    mental_model_store: str | None = None
+    mental_model_store_config: dict[str, str | int | float | bool | None] | None = None
 
     # LLM
     llm_provider: str | None = None
@@ -1066,6 +1070,8 @@ _SCALAR_CONFIG_FIELDS = (
     "document_store_config",
     "wiki_store",
     "wiki_store_config",
+    "mental_model_store",
+    "mental_model_store_config",
     "llm_provider",
     "llm_provider_config",
     "embedding_provider",

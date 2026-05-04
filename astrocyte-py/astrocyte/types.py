@@ -1034,6 +1034,46 @@ class WikiPageHit:
     bank_id: str
 
 
+@dataclass(frozen=True)
+class MentalModel:
+    """A first-class curated saved-reflect summary.
+
+    Mental models are durable, refreshable artifacts — the "Caroline
+    prefers async updates" / "Project X status: blocked on review" rows
+    that outlive any single recall and serve as authoritative summaries
+    when the recall pipeline elects to use the compiled layer.
+
+    Stored in the dedicated :class:`~astrocyte.provider.MentalModelStore`
+    SPI (formerly piggybacked on :class:`WikiStore` with
+    ``kind="concept"`` + ``metadata["_mental_model"] = True``; that
+    discriminator pattern was an architecture smell that we cut to a
+    proper table in v1.x — see ``docs/_plugins/benchmark-presets.md``).
+
+    Attributes:
+        model_id: Stable identifier within the bank (e.g.
+            ``"model:alice-prefs"``).
+        bank_id: Tenant-scoped bank identifier.
+        title: Human-readable display title.
+        content: The summary body, typically markdown.
+        scope: Scope key — ``"bank"`` for bank-wide models, or a
+            specific tag like ``"person:alice"`` to scope to a topic.
+        source_ids: Raw memory IDs that contributed to this summary
+            (provenance — enables refresh-on-forget).
+        revision: Monotonically increasing version number, starts at 1.
+            Bumped by ``MentalModelStore.upsert`` on each refresh.
+        refreshed_at: Timestamp of the most recent refresh.
+    """
+
+    model_id: str
+    bank_id: str
+    title: str
+    content: str
+    scope: str
+    source_ids: list[str]
+    revision: int
+    refreshed_at: datetime
+
+
 @dataclass
 class CompileScope:
     """A resolved compile scope — either from a tag or a DBSCAN cluster label."""

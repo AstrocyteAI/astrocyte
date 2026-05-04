@@ -27,6 +27,7 @@ from astrocyte.types import (
     LLMCapabilities,
     MemoryEntityAssociation,
     MemoryHit,
+    MentalModel,
     Message,
     RecallRequest,
     RecallResult,
@@ -764,6 +765,83 @@ class InMemoryWikiStore:
     def revision_history(self, page_id: str, bank_id: str) -> list[WikiPage]:
         """Return past revisions for a page (oldest first). Testing helper."""
         return list(self._history.get(bank_id, {}).get(page_id, []))
+
+
+# ---------------------------------------------------------------------------
+# In-Memory Mental Model Store (M9 — first-class, replaces wiki piggyback)
+# ---------------------------------------------------------------------------
+
+
+class InMemoryMentalModelStore:
+    """Fully functional in-memory mental-model store for testing.
+
+    Mirrors :class:`InMemoryWikiStore`'s shape but for the dedicated
+    :class:`~astrocyte.provider.MentalModelStore` SPI. Holds the current
+    revision of each model plus a history list of past revisions.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    def __init__(self) -> None:
+        # bank_id → {model_id → MentalModel} (current revisions)
+        self._models: dict[str, dict[str, "MentalModel"]] = {}
+        # bank_id → {model_id → list[MentalModel]} (past revisions, oldest first)
+        self._history: dict[str, dict[str, list["MentalModel"]]] = {}
+
+    async def upsert(self, model: "MentalModel", bank_id: str) -> int:
+        from dataclasses import replace as _replace
+        from datetime import UTC, datetime
+
+        if bank_id not in self._models:
+            self._models[bank_id] = {}
+            self._history[bank_id] = {}
+
+        existing = self._models[bank_id].get(model.model_id)
+        new_revision = (existing.revision + 1) if existing is not None else 1
+        if existing is not None:
+            # Archive the prior current-revision before replacing.
+            self._history[bank_id].setdefault(model.model_id, []).append(existing)
+
+        # Store always assigns revision + refreshed_at (callers don't need
+        # to fill these in).
+        stamped = _replace(
+            model,
+            bank_id=bank_id,
+            revision=new_revision,
+            refreshed_at=datetime.now(UTC),
+        )
+        self._models[bank_id][model.model_id] = stamped
+        return new_revision
+
+    async def get(self, model_id: str, bank_id: str) -> "MentalModel | None":
+        return self._models.get(bank_id, {}).get(model_id)
+
+    async def list(
+        self,
+        bank_id: str,
+        *,
+        scope: str | None = None,
+    ) -> list["MentalModel"]:
+        models = list(self._models.get(bank_id, {}).values())
+        if scope is not None:
+            models = [m for m in models if m.scope == scope]
+        return models
+
+    async def delete(self, model_id: str, bank_id: str) -> bool:
+        bank_models = self._models.get(bank_id, {})
+        if model_id not in bank_models:
+            return False
+        del bank_models[model_id]
+        # Keep history for audit; tests can call ``revision_history()`` to
+        # observe past revisions even after delete.
+        return True
+
+    async def health(self) -> HealthStatus:
+        return HealthStatus(healthy=True, message="in-memory mental model store")
+
+    def revision_history(self, model_id: str, bank_id: str) -> list["MentalModel"]:
+        """Return past revisions for a model (oldest first). Testing helper."""
+        return list(self._history.get(bank_id, {}).get(model_id, []))
 
 
 # ---------------------------------------------------------------------------

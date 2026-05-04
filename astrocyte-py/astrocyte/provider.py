@@ -40,6 +40,7 @@ if TYPE_CHECKING:
         LLMCapabilities,
         MemoryEntityAssociation,
         MemoryLink,
+        MentalModel,
         Message,
         RecallRequest,
         RecallResult,
@@ -448,6 +449,86 @@ class WikiStore(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Tier 1: Mental Model Store (first-class — see Hindsight comparison)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class MentalModelStore(Protocol):
+    """SPI for first-class mental-model storage.
+
+    Mental models are curated, refreshable saved-reflect summaries — the
+    "Caroline prefers async updates" / "Project X status: blocked on
+    review" durable artifacts that live longer than any single recall.
+
+    Previously these piggybacked on :class:`WikiStore` via
+    ``kind="concept"`` + ``metadata["_mental_model"] = True``, which
+    overloaded the wiki layer's lifecycle (revisions, lint issues,
+    cross_links) for a fundamentally different concept. This SPI breaks
+    them out into their own table with their own lifecycle and version
+    history.
+
+    See ``astrocyte.testing.in_memory.InMemoryMentalModelStore`` for a
+    reference and ``astrocyte_postgres.PostgresMentalModelStore`` for the
+    production-grade implementation.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    async def upsert(self, model: "MentalModel", bank_id: str) -> int:
+        """Create or refresh a mental model. Upsert semantics — if a
+        model with the same ``model_id`` exists in this bank, the
+        revision is incremented and the new content replaces the
+        current; the previous revision is archived (not deleted).
+
+        Args:
+            model: The mental model to store. ``revision`` and
+                ``refreshed_at`` are assigned by the store.
+            bank_id: Tenant-scoped bank identifier.
+
+        Returns:
+            The new revision number.
+        """
+        pass
+
+    async def get(self, model_id: str, bank_id: str) -> "MentalModel | None":
+        """Retrieve the current revision of a mental model.
+
+        Returns ``None`` if the model doesn't exist or has been deleted.
+        """
+        pass
+
+    async def list(
+        self,
+        bank_id: str,
+        *,
+        scope: str | None = None,
+    ) -> list["MentalModel"]:
+        """List current-revision mental models in a bank.
+
+        Args:
+            bank_id: Tenant-scoped bank identifier.
+            scope: If set, return only models with matching scope
+                (e.g. ``"person:alice"``, or the default ``"bank"``).
+        """
+        pass
+
+    async def delete(self, model_id: str, bank_id: str) -> bool:
+        """Soft-delete a mental model.
+
+        Returns ``True`` if the model was found and deleted, ``False`` if
+        it didn't exist or was already deleted. Implementations may keep
+        the row for audit (deleted_at timestamp) or hard-delete; either
+        is acceptable as long as ``get`` returns ``None`` afterward.
+        """
+        pass
+
+    async def health(self) -> HealthStatus:
+        """Check storage connectivity."""
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Tier 2: Engine Provider
 # ---------------------------------------------------------------------------
 
@@ -609,6 +690,7 @@ _SUPPORTED_VERSIONS: dict[str, set[int]] = {
     "GraphStore": {1},
     "DocumentStore": {1},
     "WikiStore": {1},
+    "MentalModelStore": {1},
     "EngineProvider": {1},
     "LLMProvider": {1},
     "OutboundTransportProvider": {1},
