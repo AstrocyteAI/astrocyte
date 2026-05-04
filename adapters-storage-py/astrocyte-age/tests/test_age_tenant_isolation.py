@@ -200,5 +200,5 @@ class TestAgeIsolation:
                     async with conn.transaction():
                         await conn.execute("SELECT ag_catalog.drop_graph(%s, true)", [graph])
                 except Exception:
-                    pass
+                    pass  # best-effort cleanup — graph may already be gone from a prior test run
                 await conn.commit()

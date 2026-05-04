@@ -127,12 +127,16 @@ class TestSoftDelete:
     async def test_delete_returns_true_for_existing(self, store):
         s, bank = store
         await s.upsert(_draft("m1", bank), bank)
-        assert await s.delete("m1", bank) is True
+        # Hoist the await out of the assert so the delete still runs under
+        # `python -O` (which strips assertions).
+        deleted = await s.delete("m1", bank)
+        assert deleted is True
 
     @pytest.mark.asyncio
     async def test_delete_returns_false_for_missing(self, store):
         s, bank = store
-        assert await s.delete("never-existed", bank) is False
+        deleted = await s.delete("never-existed", bank)
+        assert deleted is False
 
     @pytest.mark.asyncio
     async def test_get_returns_none_after_delete(self, store):
@@ -155,8 +159,10 @@ class TestSoftDelete:
     async def test_delete_returns_false_on_double_delete(self, store):
         s, bank = store
         await s.upsert(_draft("m1", bank), bank)
-        assert await s.delete("m1", bank) is True
-        assert await s.delete("m1", bank) is False  # already gone
+        first = await s.delete("m1", bank)
+        assert first is True
+        second = await s.delete("m1", bank)
+        assert second is False  # already gone
 
     @pytest.mark.asyncio
     async def test_upsert_after_delete_revives_with_revision_1(self, store, dsn):

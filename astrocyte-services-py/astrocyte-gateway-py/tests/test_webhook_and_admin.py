@@ -87,7 +87,8 @@ def test_webhook_demo_source_stores(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_custom_webhook_ingest_error_is_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
-    import astrocyte_gateway.app as app_mod
+    from astrocyte_gateway.app import SourceRegistry as AppSourceRegistry
+    from astrocyte_gateway.app import create_app
 
     class FakeBrain:
         config = AstrocyteConfig(
@@ -123,12 +124,12 @@ def test_custom_webhook_ingest_error_is_sanitized(monkeypatch: pytest.MonkeyPatc
     registry.register(FailingWebhookSource())
 
     monkeypatch.setattr(
-        app_mod.SourceRegistry,
+        AppSourceRegistry,
         "from_sources_config",
         classmethod(lambda cls, sources, retain=None: registry),
     )
 
-    client = TestClient(app_mod.create_app(FakeBrain()))
+    client = TestClient(create_app(FakeBrain()))
     response = client.post("/v1/ingest/webhook/custom", content=b"{}")
 
     assert response.status_code == 400
