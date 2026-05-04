@@ -1,13 +1,18 @@
-# Release image: install astrocyte + astrocyte-pgvector + astrocyte-age from PyPI at an exact
+# Release image: install astrocyte + astrocyte-postgres + astrocyte-age from PyPI at an exact
 # version (matching the git tag), then install this package from the copied source tree.
 # Build from repo root:
 #
 #   docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release \
-#     --build-arg ASTROCYTE_VERSION=0.8.0 \
-#     --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.8.0 \
-#     -t astrocyte-gateway-py:0.8.0 .
+#     --build-arg ASTROCYTE_VERSION=0.11.0 \
+#     --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.11.0 \
+#     -t astrocyte-gateway-py:0.11.0 .
 #
 # CI should only run this after wheels for that version exist on PyPI.
+#
+# Note: ``astrocyte-postgres`` is the post-rename name of the previous
+# ``astrocyte-pgvector`` package (renamed in v0.11.0). For pre-v0.11.0
+# releases, ``astrocyte-pgvector`` is on PyPI but not ``astrocyte-postgres``;
+# this Dockerfile only supports v0.11.0+ release builds.
 
 FROM python:3.11-slim AS builder
 
@@ -26,7 +31,7 @@ RUN test -n "${ASTROCYTE_VERSION}" || (echo "ASTROCYTE_VERSION is required (PEP 
 
 RUN python -m venv /venv \
     && /venv/bin/pip install --upgrade pip \
-    && /venv/bin/pip install "astrocyte==${ASTROCYTE_VERSION}" "astrocyte-pgvector==${ASTROCYTE_VERSION}" "astrocyte-age==${ASTROCYTE_VERSION}" \
+    && /venv/bin/pip install "astrocyte==${ASTROCYTE_VERSION}" "astrocyte-postgres==${ASTROCYTE_VERSION}" "astrocyte-age==${ASTROCYTE_VERSION}" \
     && /venv/bin/pip install /build/astrocyte-gateway-py \
     && rm -rf /build
 
