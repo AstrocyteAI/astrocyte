@@ -64,7 +64,18 @@ agentic_reflect:
   enabled: false
 
 cross_encoder_rerank:
-  enabled: false
+  # Tier-1 #1 from the post-rerank-fault-analysis plan.  49% of failures on
+  # the previous run had the right memory in the candidate pool but ranked
+  # below the synthesis cut.  Always-on CE on the top-12 should lift those
+  # without paying latency for a deeper rerank.  ``top_k: 12`` matches
+  # ``benchmark_preset.low.candidate_limit: 12`` so the CE reranks exactly
+  # the synthesis pool — no over-fetch.  The ``adversarial_defense`` below stays on
+  # (abstention floor + adversarial system prompt) to preserve the 0.71
+  # adversarial score that previous CE-on presets blew up to 0.37.
+  enabled: true
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_k: 12
+  force_cpu: false
 
 adversarial_defense:
   abstention_enabled: true

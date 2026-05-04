@@ -73,6 +73,77 @@ The matrix made several limitations explicit. None blocks v1, all are worth purs
   gap is not a single preset choice; it is a long roadmap of investments
   documented in the matrix
 
+## Why abstention_floor was dropped (post-mortem)
+
+The `adversarial_defense.abstention_floor` knob had two failed iterations
+before we removed it from `hindsight-balanced`. Documenting both so this
+isn't re-litigated.
+
+### Iteration 1: flat 0.2 floor on `hindsight-balanced`
+
+Hypothesis: a score-floor short-circuit would lift adversarial accuracy
+without harming the bundle's wins on other categories.
+
+| Preset | Overall | adversarial | single-hop | temporal |
+|---|---|---|---|---|
+| hindsight-parity (no floor) | 50.5% | 0.366 | 0.854 | 0.439 |
+| hindsight-balanced (flat 0.2 floor) | **49.0%** ⚠ | 0.488 (+12pt) | 0.756 (−10pt) | 0.341 (−10pt) |
+| fast-recall (flat 0.2 floor + simpler stack) | **51.5%** | **0.707** | 0.780 | 0.415 |
+
+The flat floor recovered ~12 adversarial points but dropped 10pt on
+single-hop AND 10pt on temporal. Net regression. The mechanism: legitimate
+single-hop and temporal queries occasionally have top retrieval scores
+below 0.2 (paraphrasing distance, embedding noise), and the flat floor
+short-circuits them to "insufficient evidence" before the LLM gets a
+chance.
+
+### Iteration 2: intent-conditional floor (`abstention_floor_intent_only`)
+
+Hypothesis: the existing query-intent classifier could distinguish
+adversarial from legitimate questions, so we could fire the floor only
+for non-well-formed intents.
+
+Result: **47.0% overall** (worse than flat floor). The logs showed `0`
+floor fires across the entire 200-question bench. Reason: every LoCoMo
+question parses as a well-formed intent (FACTUAL/TEMPORAL/etc.) because
+the intent classifier was designed for retrieval-bias selection, not
+adversarial detection. The gate effectively disabled the floor entirely,
+making `hindsight-balanced` functionally equivalent to `hindsight-parity`
+EXCEPT that `adversarial_prompt_enabled: true` competed with the
+extraction-discipline prompt rules — synthesis quality dropped (3 → 13
+"recall hit, synth miss" cases) without any compensating gain.
+
+### Iteration 3 (considered, NOT built): adversarial-shape detector
+
+We sampled 446 real LoCoMo cat-5 (adversarial) questions and tested 14
+candidate presupposition patterns. Empirical recall was **3.8%**: only 17
+of 446 adversarial questions had detectable presupposition triggers (e.g.
+"after X was promoted", "X's [business/store]", "overcome his injury").
+The other 96% are lexically indistinguishable from legitimate factual
+questions — the adversarial signal lives in **retrieval scores**, not
+**query text**. A 3.8% recall ceiling means even a perfect detector
+moves the bench by < 1pt. Not built.
+
+### Conclusion
+
+LoCoMo's adversarial accuracy is fundamentally a **retrieval-scoring
+trade-off**, not a query-classification problem. fast-recall achieves
+0.707 adversarial because the simpler stack (no agentic-reflect) means
+the abstention floor doesn't compete with a multi-iteration synthesis
+loop — when the floor fires, there's no second-chance reasoning to
+override it. hindsight-balanced removed the floor entirely; its
+adversarial accuracy is governed purely by the agentic loop + extraction
+discipline + adversarial system-prompt rules.
+
+If you want to revisit this in v1.x, the right axes are:
+
+- **Multi-signal score gate** (top-1 + top-K mean + score variance)
+  rather than a flat threshold
+- **BM25 with proper IDF normalization** (Hindsight uses this; we don't)
+  to improve baseline retrieval signal so the floor isn't needed
+- **Abstention-rule injection in the agentic-reflect prompt** at the
+  `done` tool boundary, not as a pre-LLM short-circuit
+
 ## How to bench against the matrix
 
 Use the named presets via Make:
