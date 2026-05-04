@@ -310,6 +310,9 @@ class Astrocyte:
             pipeline.link_expansion_params = None
 
         # Adversarial-defense layer.
+        # M9 BM25-IDF wiring — opt-in flag plumbed through to ``parallel_retrieve``.
+        pipeline.bm25_idf_enabled = self._config.bm25_idf.enabled
+
         ad_cfg = self._config.adversarial_defense
         pipeline.adversarial_abstention_enabled = ad_cfg.abstention_enabled
         pipeline.adversarial_abstention_floor = ad_cfg.abstention_floor

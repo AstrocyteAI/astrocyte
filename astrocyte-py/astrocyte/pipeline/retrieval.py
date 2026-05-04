@@ -64,6 +64,7 @@ async def parallel_retrieve(
     hyde_vector: list[float] | None = None,
     strategy_timings_ms: dict[str, float] | None = None,
     strategy_candidate_counts: dict[str, int] | None = None,
+    use_bm25_idf: bool = False,
 ) -> dict[str, list[ScoredItem]]:
     """Run parallel retrieval across all configured stores.
 
@@ -85,6 +86,12 @@ async def parallel_retrieve(
             strategy runs semantic search with this vector and its results
             are fused via RRF alongside the standard ``"semantic"`` strategy.
             Generate with :func:`astrocyte.pipeline.hyde.generate_hyde_vector`.
+        use_bm25_idf: When ``True`` AND the document store advertises
+            ``search_fulltext_bm25`` (PostgresStore via migration 013),
+            route the keyword strategy through the BM25-with-IDF
+            materialized-view path instead of the classic ``ts_rank_cd``
+            path. Skips the hybrid CTE (which uses ts_rank_cd) — keyword
+            and semantic run as separate strategies. Default ``False``.
     """
     tasks: dict[str, asyncio.Task[tuple[list[ScoredItem], float]]] = {}
     hybrid_task: asyncio.Task[tuple[dict[str, list[ScoredItem]], float]] | None = None
@@ -95,6 +102,10 @@ async def parallel_retrieve(
         and document_store is vector_store
         and query_text.strip()
         and hyde_vector is None
+        # BM25-IDF requires its own keyword path (the materialized-view
+        # query). When enabled, skip the hybrid CTE so keyword goes
+        # through ``_keyword_search`` → ``search_fulltext_bm25``.
+        and not use_bm25_idf
     )
 
     # PostgresStore can answer semantic and keyword retrieval in one SQL round trip.
@@ -125,7 +136,9 @@ async def parallel_retrieve(
 
     # Full-text search if document store configured
     if document_store and not use_hybrid_search:
-        tasks["keyword"] = asyncio.create_task(_timed(_keyword_search(document_store, query_text, bank_id, limit)))
+        tasks["keyword"] = asyncio.create_task(
+            _timed(_keyword_search(document_store, query_text, bank_id, limit, use_bm25_idf=use_bm25_idf))
+        )
 
     # Temporal search if the vector store can enumerate. Capped scan keeps
     # cost bounded; rank by metadata[_created_at]/occurred_at recency decay.
@@ -310,9 +323,26 @@ async def _keyword_search(
     query_text: str,
     bank_id: str,
     limit: int,
+    *,
+    use_bm25_idf: bool = False,
 ) -> list[ScoredItem]:
-    """BM25 full-text search."""
-    hits = await document_store.search_fulltext(query_text, bank_id, limit=limit)
+    """Full-text search.
+
+    Routes through :meth:`PostgresStore.search_fulltext_bm25` (proper BM25
+    with corpus IDF + length normalisation) when ``use_bm25_idf=True`` AND
+    the store advertises that method; otherwise falls through to the
+    classic :meth:`DocumentStore.search_fulltext` (``ts_rank_cd``).
+
+    Stores that don't expose ``search_fulltext_bm25`` (in_memory,
+    elasticsearch adapter, etc.) silently use the classic path even when
+    the flag is on — the flag is "use BM25-IDF if available," not "fail
+    if unavailable."
+    """
+    bm25_method = getattr(document_store, "search_fulltext_bm25", None)
+    if use_bm25_idf and callable(bm25_method):
+        hits = await bm25_method(query_text, bank_id, limit=limit)
+    else:
+        hits = await document_store.search_fulltext(query_text, bank_id, limit=limit)
     return [
         ScoredItem(
             id=h.document_id,

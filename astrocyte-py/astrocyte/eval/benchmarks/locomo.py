@@ -834,6 +834,26 @@ class LoComoBenchmark:
         # Phase boundary: persona-compile finished, eval begins.
         metrics_collector.set_phase("eval")
 
+        # M9 BM25-IDF: refresh the materialized views before eval starts so
+        # newly-retained memories are visible to the keyword strategy. The
+        # views aren't auto-refreshed on retain — production deployments
+        # schedule this externally; for the bench, the retain→eval boundary
+        # is the obvious refresh point. ``getattr`` keeps this a no-op when
+        # the document store doesn't expose the helper (in_memory, etc.).
+        for store_attr in ("document_store", "vector_store"):
+            pipeline = self.brain._pipeline
+            store = getattr(pipeline, store_attr, None) if pipeline is not None else None
+            refresh = getattr(store, "refresh_bm25_views", None)
+            if callable(refresh):
+                print(f"  [LoCoMo] Refreshing BM25 / IDF materialized views ({store_attr})...")
+                try:
+                    await refresh()
+                except Exception as exc:  # pragma: no cover — defensive
+                    logging.getLogger("astrocyte.eval").warning(
+                        "BM25 view refresh failed (%s); recall will use stale views", exc,
+                    )
+                break
+
         print(f"  [LoCoMo] Evaluating {total_q} questions (concurrency={eval_concurrency})...")
         eval_phase_start = time.monotonic()
 

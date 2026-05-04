@@ -112,6 +112,15 @@ adversarial_defense:
   premise_verification_enabled: false
   adversarial_prompt_enabled: true
 
+# M9 BM25 with corpus IDF + length normalisation. Routes the keyword
+# strategy through the materialized-view path (migration 013) instead of
+# the classic ts_rank_cd. Expected lift on multi-hop / open-domain
+# questions where rare proper nouns / dates make the difference.
+# Requires migration 013 + post-retain refresh (LoCoMo bench harness
+# triggers refresh_bm25_views automatically at the retain→eval boundary).
+bm25_idf:
+  enabled: true
+
 structured_fact_extraction:
   enabled: true
   extraction_mode: verbatim

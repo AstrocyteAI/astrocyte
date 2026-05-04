@@ -112,6 +112,24 @@ class RecallCacheConfig:
 
 
 @dataclass
+class Bm25IdfConfig:
+    """BM25-with-IDF full-text recall (M9).
+
+    When enabled, the recall pipeline routes its keyword strategy through
+    :meth:`PostgresStore.search_fulltext_bm25` instead of the classic
+    ``ts_rank_cd`` path. Requires migration 013 (the materialized views) to
+    be applied AND :meth:`PostgresStore.refresh_bm25_views` to have run at
+    least once after ingest — otherwise the views are empty and every
+    keyword recall returns no hits.
+
+    Off by default — opt-in only after the deployment has wired up a
+    refresh schedule. See :doc:`/_plugins/bm25-idf` for the operator guide.
+    """
+
+    enabled: bool = False
+
+
+@dataclass
 class BenchmarkBudgetConfig:
     """Named benchmark budget for Hindsight-parity preset routing."""
 
@@ -723,6 +741,7 @@ class AstrocyteConfig:
 
     # Phase 2 innovations
     recall_cache: RecallCacheConfig = field(default_factory=RecallCacheConfig)
+    bm25_idf: Bm25IdfConfig = field(default_factory=Bm25IdfConfig)
     tiered_retrieval: TieredRetrievalConfig = field(default_factory=TieredRetrievalConfig)
     cross_encoder_rerank: CrossEncoderRerankConfig = field(default_factory=CrossEncoderRerankConfig)
     spreading_activation: SpreadingActivationConfig = field(default_factory=SpreadingActivationConfig)
@@ -1087,6 +1106,7 @@ _SIMPLE_SECTION_MAP: dict[str, type] = {
     "defaults": DefaultsConfig,
     "mcp": McpConfig,
     "recall_cache": RecallCacheConfig,
+    "bm25_idf": Bm25IdfConfig,
     "tiered_retrieval": TieredRetrievalConfig,
     "cross_encoder_rerank": CrossEncoderRerankConfig,
     "spreading_activation": SpreadingActivationConfig,

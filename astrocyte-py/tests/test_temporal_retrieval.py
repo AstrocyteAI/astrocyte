@@ -420,6 +420,72 @@ class TestParallelRetrieveTemporal:
         assert "semantic" in timings and "keyword" in timings
         assert counts == {"semantic": 1, "keyword": 1}
 
+    async def test_use_bm25_idf_routes_to_search_fulltext_bm25(self) -> None:
+        """When ``use_bm25_idf=True`` AND the store advertises
+        ``search_fulltext_bm25``, the keyword strategy must call THAT
+        method, not the classic ``search_fulltext``. Stores without the
+        method silently fall through to the classic path."""
+
+        class Bm25Store(InMemoryVectorStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.classic_called = False
+                self.bm25_called = False
+
+            async def search_fulltext(self, *_args, **_kwargs):
+                self.classic_called = True
+                return [DocumentHit(document_id="classic", text="x", score=0.5)]
+
+            async def search_fulltext_bm25(self, *_args, **_kwargs):
+                self.bm25_called = True
+                return [DocumentHit(document_id="bm25", text="x", score=0.9)]
+
+        store = Bm25Store()
+
+        # Path A: use_bm25_idf=True → bm25 method called, classic NOT called.
+        # Skip the hybrid path by passing a separate document_store and a
+        # zero query_vector — it's the simplest way to force per-strategy.
+        results = await parallel_retrieve(
+            query_vector=[1.0, 0.0],
+            query_text="anything",
+            bank_id="b1",
+            vector_store=InMemoryVectorStore(),  # different instance — no hybrid
+            document_store=store,
+            enable_temporal=False,
+            use_bm25_idf=True,
+        )
+        assert store.bm25_called is True
+        assert store.classic_called is False
+        assert [item.id for item in results["keyword"]] == ["bm25"]
+
+    async def test_use_bm25_idf_falls_through_for_stores_without_method(self) -> None:
+        """Stores that don't expose ``search_fulltext_bm25`` (in_memory,
+        elasticsearch, etc.) must use ``search_fulltext`` even when the
+        flag is on — the flag is best-effort, not strict."""
+
+        class ClassicOnlyStore(InMemoryVectorStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.classic_called = False
+
+            async def search_fulltext(self, *_args, **_kwargs):
+                self.classic_called = True
+                return [DocumentHit(document_id="classic", text="x", score=0.5)]
+            # NO search_fulltext_bm25 — use_bm25_idf must fall through.
+
+        store = ClassicOnlyStore()
+        results = await parallel_retrieve(
+            query_vector=[1.0, 0.0],
+            query_text="anything",
+            bank_id="b1",
+            vector_store=InMemoryVectorStore(),
+            document_store=store,
+            enable_temporal=False,
+            use_bm25_idf=True,
+        )
+        assert store.classic_called is True
+        assert [item.id for item in results["keyword"]] == ["classic"]
+
     async def test_hybrid_failure_isolates_per_strategy_fallback_failure(self) -> None:
         """If the hybrid CTE fails AND one of the two fallback strategies
         ALSO fails (e.g. semantic-search hits the same DB error), the

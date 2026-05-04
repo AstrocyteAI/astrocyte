@@ -264,6 +264,12 @@ class PipelineOrchestrator:
         self.enable_temporal_retrieval = enable_temporal_retrieval
         self.temporal_scan_cap = temporal_scan_cap
         self.temporal_half_life_days = temporal_half_life_days
+        # M9 BM25-IDF keyword strategy. When True (and the document store
+        # advertises ``search_fulltext_bm25``), the keyword leg routes
+        # through the materialized-view path with corpus IDF + length
+        # normalisation instead of the classic ``ts_rank_cd``. Wired by
+        # ``Astrocyte.set_pipeline`` from ``bm25_idf.enabled`` config.
+        self.bm25_idf_enabled: bool = False
         # Intent-aware recall: heuristic query classifier biases RRF
         # weights per strategy. Conservative (always fuses all strategies
         # even under bias), so enabling is safe — a misclassification
@@ -1582,6 +1588,7 @@ class PipelineOrchestrator:
             hyde_vector=hyde_vec,
             strategy_timings_ms=strategy_timings_ms,
             strategy_candidate_counts=strategy_candidate_counts,
+            use_bm25_idf=self.bm25_idf_enabled,
         )
         query_plan = build_query_plan(request.query)
         if (
@@ -1734,6 +1741,7 @@ class PipelineOrchestrator:
                         enable_temporal=self.enable_temporal_retrieval,
                         temporal_scan_cap=self.temporal_scan_cap,
                         temporal_half_life_days=effective_half_life,
+                        use_bm25_idf=self.bm25_idf_enabled,
                     )
                     sq_intent = (
                         classify_query_intent(sq).intent
