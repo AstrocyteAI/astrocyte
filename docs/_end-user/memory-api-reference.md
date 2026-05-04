@@ -1081,6 +1081,8 @@ async def export_bank(
     *,
     include_embeddings: bool = False,
     include_entities: bool = True,
+    allowed_roots: list[str] | None = None,
+    allow_uncontained: bool = False,
     context: AstrocyteContext | None = None,
 ) -> int:
 ```
@@ -1092,14 +1094,18 @@ async def import_bank(
     path: str,
     *,
     on_conflict: str = "skip",
+    allowed_roots: list[str] | None = None,
+    allow_uncontained: bool = False,
     context: AstrocyteContext | None = None,
     progress_fn: Any = None,
 ) -> ImportResult:
 ```
 
+`allowed_roots` and `allow_uncontained` propagate to the path containment check. By default (no roots configured and `allow_uncontained=False`), both functions raise `ValueError` rather than silently writing to arbitrary paths — set `ASTROCYTE_PORTABILITY_ROOTS`, pass `allowed_roots=[<dir>]`, or set `allow_uncontained=True` for trusted internal callers. See [`memory-portability.md` §0](/design/memory-portability/) for the full security model.
+
 ### REST equivalents
 
-The standalone gateway reads and writes paths on the server filesystem:
+The standalone gateway reads and writes paths on the server filesystem. The gateway always requires `ASTROCYTE_PORTABILITY_ROOTS` to be configured — when unset, the endpoints return HTTP 422 with the operator hint listing the three opt-in mechanisms.
 
 ```bash
 curl -X POST https://gateway.example.com/v1/export \

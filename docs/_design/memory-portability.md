@@ -6,14 +6,15 @@ Astrocyte owns the DTO layer across all providers. This means it can define a **
 
 ## 0. Path-traversal containment (CWE-022)
 
-`export_bank`, `import_bank`, `read_ama_header`, and `iter_ama_memories` all accept a path argument. Path canonicalization (`Path(path).resolve()`) **does not** by itself prevent path traversal — a caller can pass `/etc/passwd` and `resolve()` returns it unchanged. To contain reads/writes to a known set of directories, the helper `_safe_resolve()` validates that the resolved path stays within an explicit allow-list before any file I/O occurs.
+`export_bank`, `import_bank`, `read_ama_header`, and `iter_ama_memories` all accept a path argument. Path canonicalization (`Path(path).resolve()`) **does not** by itself prevent path traversal — a caller can pass `/etc/passwd` and `resolve()` returns it unchanged. To contain reads/writes to a known set of directories, the helper `_safe_resolve()` validates that the resolved path stays within an explicit allow-list before any file I/O occurs. Null bytes and ASCII control characters are also rejected up front (resolve() doesn't strip them).
 
-There are two opt-in mechanisms, in order of precedence:
+The function **fails closed**: every call must opt into one of three modes, in order of precedence:
 
-1. Pass `allowed_roots=[...]` (a list of directory paths) as a kwarg to the export/import function. Useful in library / SDK code where the allow-list is part of the call site.
-2. Set the `ASTROCYTE_PORTABILITY_ROOTS` environment variable to one or more directories joined by the OS path separator (`:` on Unix, `;` on Windows). Useful in gateway / production deployments where the allow-list is a deployment concern, not a per-call concern.
+1. **Per-call allow-list:** pass `allowed_roots=[...]` (a list of directory paths) as a kwarg to the export/import function. Useful in library / SDK code where the allow-list is part of the call site.
+2. **Process-wide allow-list:** set the `ASTROCYTE_PORTABILITY_ROOTS` environment variable to one or more directories joined by the OS path separator (`:` on Unix, `;` on Windows). Useful in gateway / production deployments where the allow-list is a deployment concern, not a per-call concern.
+3. **Explicit uncontained mode:** pass `allow_uncontained=True` as a kwarg. Reserved for trusted internal callers that genuinely need to accept any path (e.g. an in-process SDK call where the path comes from developer-controlled code). The decision is audit-able at every call site.
 
-When neither is set, `_safe_resolve()` returns the resolved path unchanged. This preserves library / CLI / test usage where path containment is not a security concern.
+When **none** of the three is provided, `_safe_resolve()` raises `ValueError` before any file I/O. This eliminates the silent "no containment" gap that previously allowed untrusted HTTP input on the gateway to flow into `open()` when `ASTROCYTE_PORTABILITY_ROOTS` happened to be unset.
 
 **Production recommendation:**
 
@@ -25,7 +26,7 @@ ASTROCYTE_PORTABILITY_ROOTS=/var/lib/astrocyte/exports
 ASTROCYTE_PORTABILITY_ROOTS=/var/lib/astrocyte/exports:/srv/imports
 ```
 
-Set this on the gateway process so any path the API forwards into `export_bank` / `import_bank` must fall under one of the listed roots; otherwise the function raises before any file I/O occurs.
+Set this on the gateway process so any path the API forwards into `export_bank` / `import_bank` must fall under one of the listed roots. The gateway never passes `allow_uncontained=True`, so missing/misconfigured `ASTROCYTE_PORTABILITY_ROOTS` causes `/v1/export` and `/v1/import` to return **HTTP 422** with the operator hint *"Portability path containment is required. Provide one of: allowed_roots=..., ASTROCYTE_PORTABILITY_ROOTS env var, or allow_uncontained=True"* — failing closed instead of silently writing arbitrary paths.
 
 ---
 
