@@ -247,13 +247,20 @@ bench-baseline-gate:
 		--results $(RESULTS_DIR)/latest.json
 
 # Smoke test — in-memory providers, no API key needed.
-# Uses the real LoCoMo dataset (all 200q) so the regression gate in CI
-# covers all five categories. With the mock provider this runs in ~25s.
+# Uses the real LoCoMo dataset with category-stratified sampling so the
+# regression gate covers all five categories (multi-hop, temporal,
+# open-domain, single-hop, adversarial) without paying for the full
+# 1986-question run. With ``--max-questions-per-conversation 5`` we get
+# ceil(5/5)=1 question per category per conversation × 10 conversations
+# = ~50 questions, every category represented. With the mock provider
+# this runs in well under a minute. Bump the per-conv number if a
+# regression slips through this sample.
 bench-smoke: fetch-locomo
 	uv run python scripts/run_benchmarks.py \
 		--provider test \
 		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data
+		--locomo-path $(LOCOMO_DIR)/data \
+		--max-questions-per-conversation 5
 
 # ---------------------------------------------------------------------------
 # CodeQL
