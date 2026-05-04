@@ -387,14 +387,25 @@ def create_app(
             raise HTTPException(status_code=501, detail="mental models require a configured wiki_store")
         return MentalModelService(wiki_store)
 
+    # Mental-models + observations endpoints take ``ctx`` and route through
+    # ``brain._policy.check_access`` for symmetry with /v1/recall, /v1/retain,
+    # /v1/reflect, /v1/forget. When ``access_control.enabled = False`` (the
+    # default), check_access is a no-op — same effective behaviour as before.
+    # When operators turn access control on, these endpoints enforce the same
+    # bank-level RBAC as the rest of the API instead of silently bypassing it.
+
     @app.post("/v1/mental-models")
-    async def create_mental_model(body: dict[str, Any]) -> dict[str, Any]:
+    async def create_mental_model(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
         bank_id = body.get("bank_id")
         model_id = body.get("model_id")
         title = body.get("title")
         content = body.get("content")
         if not all(isinstance(value, str) for value in (bank_id, model_id, title, content)):
             raise HTTPException(status_code=400, detail="bank_id, model_id, title, and content are required strings")
+        brain._policy.check_access(bank_id, "write", ctx)
         model = await _mental_models().create(
             bank_id=bank_id,
             model_id=model_id,
@@ -406,22 +417,37 @@ def create_app(
         return to_jsonable(model)
 
     @app.get("/v1/mental-models")
-    async def list_mental_models(bank_id: str, scope: str | None = None) -> dict[str, Any]:
+    async def list_mental_models(
+        bank_id: str,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+        scope: str | None = None,
+    ) -> dict[str, Any]:
+        brain._policy.check_access(bank_id, "read", ctx)
         return {"models": to_jsonable(await _mental_models().list(bank_id, scope=scope))}
 
     @app.get("/v1/mental-models/{model_id}")
-    async def get_mental_model(model_id: str, bank_id: str) -> dict[str, Any]:
+    async def get_mental_model(
+        model_id: str,
+        bank_id: str,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        brain._policy.check_access(bank_id, "read", ctx)
         model = await _mental_models().get(bank_id, model_id)
         if model is None:
             raise HTTPException(status_code=404, detail="mental model not found")
         return to_jsonable(model)
 
     @app.post("/v1/mental-models/{model_id}/refresh")
-    async def refresh_mental_model(model_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def refresh_mental_model(
+        model_id: str,
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
         bank_id = body.get("bank_id")
         content = body.get("content")
         if not isinstance(bank_id, str) or not isinstance(content, str):
             raise HTTPException(status_code=400, detail="bank_id and content are required strings")
+        brain._policy.check_access(bank_id, "write", ctx)
         model = await _mental_models().refresh(
             bank_id=bank_id,
             model_id=model_id,
@@ -433,15 +459,30 @@ def create_app(
         return to_jsonable(model)
 
     @app.delete("/v1/mental-models/{model_id}")
-    async def delete_mental_model(model_id: str, bank_id: str) -> dict[str, Any]:
+    async def delete_mental_model(
+        model_id: str,
+        bank_id: str,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        # Use the ``forget`` permission to mirror /v1/forget — deleting a
+        # mental model is destructive and should require the same right as
+        # forgetting raw memories.
+        brain._policy.check_access(bank_id, "forget", ctx)
         return {"deleted": await _mental_models().delete(bank_id, model_id)}
 
     @app.post("/v1/observations/invalidate")
-    async def invalidate_observations(body: dict[str, Any]) -> dict[str, Any]:
+    async def invalidate_observations(
+        body: dict[str, Any],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
         bank_id = body.get("bank_id")
         source_ids = body.get("source_ids")
         if not isinstance(bank_id, str) or not isinstance(source_ids, list):
             raise HTTPException(status_code=400, detail="bank_id and source_ids are required")
+        # Invalidating observations cascades into deleting derived rows —
+        # same destructive shape as /v1/forget, so guard with ``forget``
+        # permission rather than ``write``.
+        brain._policy.check_access(bank_id, "forget", ctx)
         pipeline = getattr(brain, "_pipeline", None)
         consolidator = getattr(pipeline, "_observation_consolidator", None)
         vector_store = getattr(pipeline, "vector_store", None)
