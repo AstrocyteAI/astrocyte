@@ -769,3 +769,4 @@ llm_provider_config:
 - [Agent framework middleware](agent-framework-middleware/) — integration patterns for 17+ agent frameworks
 - [Storage backend setup](/end-user/storage-backend-setup/) — operator guide for configuring storage adapters
 - [Configuration reference](/end-user/configuration-reference/) — full `astrocyte.yaml` schema
+- [CocoIndex integration roadmap](/design/cocoindex-integration/) — composing Astrocyte's read-side memory with CocoIndex's build-side data freshness; phase-by-phase plan
