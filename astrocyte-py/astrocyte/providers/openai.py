@@ -76,7 +76,14 @@ class OpenAIProvider:
                     max_keepalive_connections=20,
                     keepalive_expiry=30.0,
                 ),
-                timeout=httpx.Timeout(connect=5.0, read=600.0, write=600.0, pool=600.0),
+                # Read timeout was 600s historically — far too long when an
+                # HTTP/2 stream stalls (no RST/FIN, just no bytes). Such
+                # stalls block for the full timeout × ``max_retries`` (≈30min
+                # per stuck call) and silently murder benchmark wall-clock.
+                # OpenAI completions normally take 5-30s; 90s is generous
+                # while still failing fast on stuck streams. ``max_retries=3``
+                # below handles transient stalls.
+                timeout=httpx.Timeout(connect=5.0, read=90.0, write=90.0, pool=90.0),
             )
         except ImportError:
             # h2 not installed — let the OpenAI SDK use its default HTTP/1.1
