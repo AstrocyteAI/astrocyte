@@ -16,6 +16,18 @@ from astrocyte.portability import (
 from astrocyte.testing.in_memory import InMemoryEngineProvider
 
 
+@pytest.fixture(autouse=True)
+def _portability_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Confine portability paths to the per-test ``tmp_path``.
+
+    ``_safe_resolve`` requires explicit containment when neither
+    ``allowed_roots`` nor this env var is set. Setting it here once
+    per test keeps the test bodies focused on portability behaviour
+    rather than path-injection plumbing.
+    """
+    monkeypatch.setenv("ASTROCYTE_PORTABILITY_ROOTS", str(tmp_path))
+
+
 def _make_brain() -> tuple[Astrocyte, InMemoryEngineProvider]:
     config = AstrocyteConfig()
     config.provider = "test"
@@ -212,6 +224,48 @@ class TestImportProgress:
 # ---------------------------------------------------------------------------
 # Hooks
 # ---------------------------------------------------------------------------
+
+
+class TestPathContainment:
+    """Lock the CWE-022 security model — uncontained paths must opt in."""
+
+    async def test_export_refuses_uncontained_by_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Override the autouse fixture: simulate a deployment with no
+        # ASTROCYTE_PORTABILITY_ROOTS configured.
+        monkeypatch.delenv("ASTROCYTE_PORTABILITY_ROOTS", raising=False)
+        brain, _ = _make_brain()
+        await brain.retain("content", bank_id="b1")
+        with pytest.raises(ValueError, match="containment is required"):
+            await brain.export_bank("b1", str(tmp_path / "out.jsonl"))
+
+    async def test_export_allows_uncontained_when_opted_in(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.delenv("ASTROCYTE_PORTABILITY_ROOTS", raising=False)
+        brain, _ = _make_brain()
+        await brain.retain("content", bank_id="b1")
+        # Trusted internal caller explicitly opts out of containment.
+        count = await brain.export_bank(
+            "b1", str(tmp_path / "out.jsonl"), allow_uncontained=True
+        )
+        assert count >= 1
+
+    async def test_export_rejects_path_outside_allowed_root(self, tmp_path: Path):
+        brain, _ = _make_brain()
+        await brain.retain("content", bank_id="b1")
+        # Try to escape the configured root.
+        with pytest.raises(ValueError, match="escapes allowed roots"):
+            await brain.export_bank(
+                "b1", "/tmp/escape.jsonl", allowed_roots=[str(tmp_path)]
+            )
+
+    async def test_export_rejects_null_byte_in_path(self, tmp_path: Path):
+        brain, _ = _make_brain()
+        await brain.retain("content", bank_id="b1")
+        with pytest.raises(ValueError, match="illegal control character"):
+            await brain.export_bank("b1", str(tmp_path / "evil\x00.jsonl"))
 
 
 class TestPortabilityHooks:

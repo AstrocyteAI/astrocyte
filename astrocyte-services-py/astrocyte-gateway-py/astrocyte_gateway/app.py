@@ -788,6 +788,11 @@ def create_app(
                 include_entities=include_entities,
                 context=ctx,
             )
+        except ValueError as exc:
+            # Path containment failures (CWE-022) and AMA validation errors
+            # surface as ValueError from astrocyte.portability — return 422
+            # so operators see "set ASTROCYTE_PORTABILITY_ROOTS" hint.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             if "ConfigError" in type(exc).__name__ or "AccessDenied" in type(exc).__name__:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -821,6 +826,11 @@ def create_app(
                 on_conflict=on_conflict,
                 context=ctx,
             )
+        except ValueError as exc:
+            # Path containment failures (CWE-022) and AMA validation errors
+            # surface as ValueError from astrocyte.portability — return 422
+            # so operators see "set ASTROCYTE_PORTABILITY_ROOTS" hint.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             if "ConfigError" in type(exc).__name__ or "AccessDenied" in type(exc).__name__:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc

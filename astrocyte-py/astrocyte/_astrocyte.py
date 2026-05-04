@@ -294,7 +294,6 @@ class Astrocyte:
         ad_cfg = self._config.adversarial_defense
         pipeline.adversarial_abstention_enabled = ad_cfg.abstention_enabled
         pipeline.adversarial_abstention_floor = ad_cfg.abstention_floor
-        pipeline.adversarial_abstention_floor_intent_only = ad_cfg.abstention_floor_intent_only
         pipeline.adversarial_premise_verification_enabled = ad_cfg.premise_verification_enabled
         pipeline.adversarial_premise_min_confidence = ad_cfg.premise_verification_min_confidence
         pipeline.adversarial_prompt_enabled = ad_cfg.adversarial_prompt_enabled
@@ -1541,9 +1540,17 @@ class Astrocyte:
         *,
         include_embeddings: bool = False,
         include_entities: bool = True,
+        allowed_roots: list[str] | None = None,
+        allow_uncontained: bool = False,
         context: AstrocyteContext | None = None,
     ) -> int:
         """Export a memory bank to AMA (Astrocyte Memory Archive) JSONL format.
+
+        ``allowed_roots`` / ``allow_uncontained`` propagate to the path
+        containment check in ``astrocyte.portability``. By default
+        (no roots configured and ``allow_uncontained=False``), the
+        export refuses to run — set ``ASTROCYTE_PORTABILITY_ROOTS``,
+        pass ``allowed_roots=[<dir>]``, or set ``allow_uncontained=True``.
 
         Returns the number of memories exported.
         """
@@ -1558,6 +1565,8 @@ class Astrocyte:
             provider_name=self._provider_name,
             include_embeddings=include_embeddings,
             include_entities=include_entities,
+            allowed_roots=allowed_roots,
+            allow_uncontained=allow_uncontained,
         )
         await self._hook_manager.fire("on_export", bank_id=bank_id, data={"memory_count": count, "path": path})
         return count
@@ -1568,10 +1577,14 @@ class Astrocyte:
         path: str,
         *,
         on_conflict: str = "skip",
+        allowed_roots: list[str] | None = None,
+        allow_uncontained: bool = False,
         context: AstrocyteContext | None = None,
         progress_fn: Any = None,
     ) -> Any:
         """Import memories from an AMA JSONL file into a bank.
+
+        See ``export_bank`` for ``allowed_roots`` / ``allow_uncontained`` semantics.
 
         Returns an ImportResult with imported/skipped/errors counts.
         """
@@ -1586,6 +1599,8 @@ class Astrocyte:
             path=path,
             on_conflict=on_conflict,
             progress_fn=progress_fn,
+            allowed_roots=allowed_roots,
+            allow_uncontained=allow_uncontained,
         )
         await self._hook_manager.fire(
             "on_import",

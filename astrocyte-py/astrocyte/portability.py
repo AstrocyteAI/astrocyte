@@ -32,12 +32,27 @@ logger = logging.getLogger("astrocyte.portability")
 # Allow-list resolution order:
 #   1. ``allowed_roots`` kwarg passed to the public function
 #   2. ``ASTROCYTE_PORTABILITY_ROOTS`` env var (os.pathsep-joined)
-#   3. None — return resolved path unchanged (library / CLI / test usage)
 #
-# Production gateway deployments should set ``ASTROCYTE_PORTABILITY_ROOTS``
-# to opt into containment without changing call sites.
+# When neither (1) nor (2) is configured, ``_safe_resolve`` REFUSES to
+# return a path unless the caller has explicitly opted into uncontained
+# mode via ``allow_uncontained=True``.  This eliminates the silent
+# "no containment" gap that CodeQL CWE-022 (py/path-injection) flags
+# and forces every caller to make a conscious security decision.
+#
+# Recommended usage:
+#   * Server / gateway code: set ``ASTROCYTE_PORTABILITY_ROOTS`` and
+#     leave ``allow_uncontained=False``.  Untrusted HTTP input cannot
+#     escape the configured roots.
+#   * Library / CLI / unit tests with caller-controlled paths: pass
+#     ``allowed_roots=[<known dir>]`` explicitly.
+#   * Trusted internal call sites that genuinely need any path: pass
+#     ``allow_uncontained=True`` to make the decision audit-able.
 
 _PORTABILITY_ROOTS_ENV = "ASTROCYTE_PORTABILITY_ROOTS"
+
+# Null byte and ASCII control characters never have a legitimate place in
+# a filesystem path. Reject them up front; resolve() does NOT strip them.
+_ILLEGAL_PATH_CHAR_ORDS = frozenset(range(0x00, 0x20)) | {0x7F}
 
 
 def _portability_roots() -> list[Path]:
@@ -50,22 +65,38 @@ def _safe_resolve(
     path: str | Path,
     *,
     allowed_roots: list[str | Path] | None = None,
+    allow_uncontained: bool = False,
 ) -> Path:
     """Resolve ``path`` and verify it stays within an allowed root.
 
-    See module docstring for the allow-list resolution order.
+    See module docstring for the allow-list resolution order and the
+    ``allow_uncontained`` opt-in semantics.
 
     Raises:
-        ValueError: If the resolved path escapes every allowed root.
+        ValueError: If the path contains illegal control characters,
+            escapes every allowed root, or no containment is configured
+            and the caller did not pass ``allow_uncontained=True``.
     """
-    resolved = Path(path).expanduser().resolve()
+    path_str = os.fspath(path)
+    if any(ord(c) in _ILLEGAL_PATH_CHAR_ORDS for c in path_str):
+        raise ValueError(
+            f"Portability path contains illegal control character: {path_str!r}"
+        )
+    resolved = Path(path_str).expanduser().resolve()
     roots: list[Path]
     if allowed_roots:
         roots = [Path(r).expanduser().resolve() for r in allowed_roots]
     else:
         roots = _portability_roots()
     if not roots:
-        # No containment configured — library / CLI / test usage.
+        if not allow_uncontained:
+            raise ValueError(
+                "Portability path containment is required. Provide one of:\n"
+                "  - allowed_roots=[<dir>, ...] kwarg, OR\n"
+                f"  - {_PORTABILITY_ROOTS_ENV} environment variable "
+                "(os.pathsep-joined directories), OR\n"
+                "  - allow_uncontained=True for trusted internal callers."
+            )
         return resolved
     for root in roots:
         if resolved == root or resolved.is_relative_to(root):
@@ -126,6 +157,7 @@ async def export_bank(
     batch_size: int = 100,
     *,
     allowed_roots: list[str | Path] | None = None,
+    allow_uncontained: bool = False,
 ) -> int:
     """Export a memory bank to AMA JSONL format.
 
@@ -140,13 +172,16 @@ async def export_bank(
         batch_size: Number of memories per recall batch.
         allowed_roots: Optional list of directory roots; the resolved
             ``path`` must fall under one of them.  When ``None``, falls
-            back to ``ASTROCYTE_PORTABILITY_ROOTS`` env var, then to
-            unrestricted (library / CLI / test usage).  See ``_safe_resolve``.
+            back to ``ASTROCYTE_PORTABILITY_ROOTS`` env var.
+        allow_uncontained: When True, skip path containment if neither
+            ``allowed_roots`` nor the env var is set.  Use only for
+            trusted internal callers — the default ``False`` raises if
+            no containment is configured.  See ``_safe_resolve``.
 
     Returns:
         Number of memories exported.
     """
-    path = _safe_resolve(path, allowed_roots=allowed_roots)
+    path = _safe_resolve(path, allowed_roots=allowed_roots, allow_uncontained=allow_uncontained)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # Collect all memories via recall with large limit
@@ -225,12 +260,13 @@ def read_ama_header(
     path: str | Path,
     *,
     allowed_roots: list[str | Path] | None = None,
+    allow_uncontained: bool = False,
 ) -> AmaHeader:
     """Read and validate the AMA header (first line).
 
-    See ``export_bank`` for ``allowed_roots`` semantics.
+    See ``export_bank`` for ``allowed_roots`` and ``allow_uncontained`` semantics.
     """
-    path = _safe_resolve(path, allowed_roots=allowed_roots)
+    path = _safe_resolve(path, allowed_roots=allowed_roots, allow_uncontained=allow_uncontained)
     with open(path, encoding="utf-8") as f:
         first_line = f.readline().strip()
     if not first_line:
@@ -259,12 +295,13 @@ def iter_ama_memories(
     path: str | Path,
     *,
     allowed_roots: list[str | Path] | None = None,
+    allow_uncontained: bool = False,
 ) -> list[AmaMemory]:
     """Read all memory records from an AMA file (skips header).
 
-    See ``export_bank`` for ``allowed_roots`` semantics.
+    See ``export_bank`` for ``allowed_roots`` and ``allow_uncontained`` semantics.
     """
-    path = _safe_resolve(path, allowed_roots=allowed_roots)
+    path = _safe_resolve(path, allowed_roots=allowed_roots, allow_uncontained=allow_uncontained)
     memories: list[AmaMemory] = []
     with open(path, encoding="utf-8") as f:
         # Skip header
@@ -319,6 +356,7 @@ async def import_bank(
     progress_fn=None,
     *,
     allowed_roots: list[str | Path] | None = None,
+    allow_uncontained: bool = False,
 ) -> ImportResult:
     """Import memories from an AMA file into a bank.
 
@@ -330,12 +368,13 @@ async def import_bank(
         on_conflict: How to handle memories with IDs that already exist.
         progress_fn: Optional callback(imported, total) for progress reporting.
         allowed_roots: See ``export_bank``.
+        allow_uncontained: See ``export_bank``.
 
     Returns:
         ImportResult with counts.
     """
-    header = read_ama_header(path, allowed_roots=allowed_roots)
-    memories = iter_ama_memories(path, allowed_roots=allowed_roots)
+    header = read_ama_header(path, allowed_roots=allowed_roots, allow_uncontained=allow_uncontained)
+    memories = iter_ama_memories(path, allowed_roots=allowed_roots, allow_uncontained=allow_uncontained)
 
     imported = 0
     skipped = 0
