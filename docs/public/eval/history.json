@@ -770,5 +770,53 @@
     "config_snapshot": {
       "judge": "keyword"
     }
+  },
+  {
+    "suite": "basic",
+    "provider": "pipeline",
+    "provider_tier": "storage",
+    "timestamp": "2026-05-04T07:44:03.089029+00:00",
+    "metrics": {
+      "recall_precision": 0.11000000000000001,
+      "recall_hit_rate": 1.0,
+      "recall_mrr": 0.9333333333333333,
+      "recall_ndcg": 0.9350344905534754,
+      "retain_latency_p50_ms": 231.68325100000686,
+      "retain_latency_p95_ms": 1540.6325842500003,
+      "recall_latency_p50_ms": 1217.5166950000005,
+      "recall_latency_p95_ms": 1863.876800049995,
+      "total_tokens_used": 7285,
+      "total_duration_seconds": 21.025949920999977,
+      "reflect_accuracy": 1.0,
+      "reflect_completeness": null,
+      "reflect_hallucination_rate": null,
+      "reflect_latency_p50_ms": 2388.7495719999947,
+      "reflect_latency_p95_ms": 3247.701986799987,
+      "recall_coverage": null,
+      "recall_reflect_gap": null,
+      "abstention_rate_adversarial": null,
+      "tokens_by_phase": null,
+      "api_calls_total": null,
+      "api_calls_by_endpoint": null,
+      "cost_total_usd": null,
+      "cost_per_question_usd": null,
+      "retain_latency_p99_ms": null,
+      "recall_latency_p99_ms": null,
+      "reflect_latency_p99_ms": null,
+      "e2e_per_question_p50_ms": null,
+      "e2e_per_question_p95_ms": null,
+      "error_count_by_type": null,
+      "openai_retry_count": null,
+      "failed_retain_count": null,
+      "cascade_decisions": null,
+      "entities_resolved_count": null,
+      "entities_created_count": null,
+      "composite_score_distribution": null,
+      "wiki_pages_total": null,
+      "wiki_pages_per_persona": null
+    },
+    "config_snapshot": {
+      "judge": "keyword"
+    }
   }
 ]
