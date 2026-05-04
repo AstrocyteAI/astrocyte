@@ -35,21 +35,11 @@ The library alone does **not** start an HTTP server. See the [architecture overv
 </TabItem>
 <TabItem label="Standalone Gateway">
 
-Run Astrocyte as a **REST API** (`astrocyte-gateway-py`) with Docker Compose. Agents call `/v1/retain`, `/v1/recall`, `/v1/reflect` over HTTP.
+Run Astrocyte as a **REST API** (`astrocyte-gateway-py`) with Docker Compose. Agents call `/v1/retain`, `/v1/recall`, `/v1/reflect` over HTTP. No repo clone needed — pull the published images from GHCR.
 
 **Best for:** multi-agent deployments, microservice architectures, teams that want a shared memory service.
 
-<Tabs syncKey="gateway-setup">
-<TabItem label="Pre-built images">
-
-No repo clone needed. Pull the pre-built images from GHCR and start with a single compose file.
-
-```bash
-docker pull ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:latest
-docker pull ghcr.io/astrocyteai/astrocyte/astrocyte-gateway-py:latest
-```
-
-Save this as `docker-compose.yml` and add your API key:
+Save this as `docker-compose.yml` in any directory:
 
 ```yaml
 services:
@@ -80,58 +70,44 @@ services:
         condition: service_healthy
 ```
 
+Start it:
+
 ```bash
 OPENAI_API_KEY=sk-... docker compose up
 ```
 
-</TabItem>
-<TabItem label="From source">
-
-Clone the repo and build locally — picks up any local changes.
+Exercise the API end-to-end:
 
 ```bash
-cd astrocyte-services-py
-cp .env.example .env        # edit ports / secrets as needed
-docker compose up --build
-```
+# 1. Health check (also confirms the DB is reachable)
+curl http://127.0.0.1:8080/health
 
-From the repo root (alternative):
-
-```bash
-docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build
-```
-
-For production-shaped migrations and HNSW indexes:
-
-```bash
-./astrocyte-services-py/scripts/runbook-up.sh
-```
-
-</TabItem>
-</Tabs>
-
-Verify it's running:
-
-```bash
-curl http://127.0.0.1:8080/health   # health check (includes DB)
-curl http://127.0.0.1:8080/docs     # OpenAPI explorer
-```
-
-Call the API:
-
-```bash
-# Retain a memory
+# 2. Retain a memory
 curl -X POST http://127.0.0.1:8080/v1/retain \
   -H "Content-Type: application/json" \
   -d '{"content": "Calvin prefers dark mode.", "bank_id": "user-123"}'
 
-# Recall memories
+# 3. Recall it
 curl -X POST http://127.0.0.1:8080/v1/recall \
   -H "Content-Type: application/json" \
   -d '{"query": "What theme does Calvin prefer?", "bank_id": "user-123"}'
 ```
 
+The retain/recall/reflect triple is just the entry point. The full surface is browsable at <http://127.0.0.1:8080/docs>:
+
+- **Memory lifecycle:** `/v1/forget`, `/v1/history`, `/v1/compile`
+- **Mental models:** `/v1/mental-models[/{id}]` (CRUD), `/v1/mental-models/{id}/refresh`
+- **Knowledge graph:** `/v1/graph/search`, `/v1/graph/neighbors`
+- **Governance & compliance:** `/v1/dsar/forget_principal`, `/v1/audit`, `/v1/admin/banks/{id}/hold` (legal holds)
+- **Portability:** `/v1/export`, `/v1/import` (AMA archives)
+- **Ingestion:** `/v1/ingest/webhook/{source_id}`
+- **Ops:** `/v1/admin/lifecycle`, `/v1/admin/banks/health`
+
 See [Production-grade HTTP service](production-grade-http-service/) for auth, TLS, rate limits, and observability.
+
+:::tip[Hacking on the gateway?]
+Clone the repo and use the bundled `astrocyte-services-py/docker-compose.yml` with `docker compose up --build` — same defaults, picks up local changes. For production-shaped migrations and HNSW indexes, run `astrocyte-services-py/scripts/runbook-up.sh`.
+:::
 
 </TabItem>
 <TabItem label="Gateway Plugin">
