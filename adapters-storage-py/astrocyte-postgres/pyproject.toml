@@ -25,6 +25,15 @@ dev = [
 
 [project.entry-points."astrocyte.vector_stores"]
 postgres = "astrocyte_postgres.store:PostgresStore"
+# Backwards-compat alias — was the original entry-point name for this
+# adapter, kept registered so downstream composes / configs / docs that
+# predate the rename keep booting. Removing the alias caused
+# `astrocyte.errors.ConfigError: Vector store 'pgvector' not found` at
+# gateway boot for any consumer that hadn't migrated. Resolve to the same
+# class as `postgres` — both names are interchangeable. Safe to remove at
+# the next major version once consumers have had a release window to
+# migrate to the canonical `postgres` name.
+pgvector = "astrocyte_postgres.store:PostgresStore"
 
 [project.entry-points."astrocyte.document_stores"]
 postgres = "astrocyte_postgres.store:PostgresStore"

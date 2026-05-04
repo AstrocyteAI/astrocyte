@@ -30,9 +30,13 @@ services:
     ports:
       - "${ASTROCYTE_HTTP_PUBLISH_PORT:-8080}:${ASTROCYTE_PORT:-8080}"
     environment:
-      ASTROCYTE_VECTOR_STORE: ${ASTROCYTE_VECTOR_STORE:-pgvector}
+      # Entry-point names registered by adapters-storage-py/astrocyte-postgres
+      # are `postgres` for both vector and wiki stores. `pgvector` is kept as
+      # a backwards-compat alias on the vector store; the wiki store has no
+      # alias, so the canonical `postgres` is required there.
+      ASTROCYTE_VECTOR_STORE: ${ASTROCYTE_VECTOR_STORE:-postgres}
       ASTROCYTE_GRAPH_STORE: ${ASTROCYTE_GRAPH_STORE:-age}
-      ASTROCYTE_WIKI_STORE: ${ASTROCYTE_WIKI_STORE:-pgvector}
+      ASTROCYTE_WIKI_STORE: ${ASTROCYTE_WIKI_STORE:-postgres}
       ASTROCYTE_WIKI_COMPILE_ENABLED: ${ASTROCYTE_WIKI_COMPILE_ENABLED:-true}
       ASTROCYTE_WIKI_COMPILE_AUTO_START: ${ASTROCYTE_WIKI_COMPILE_AUTO_START:-true}
       ASTROCYTE_ENTITY_RESOLUTION_ENABLED: ${ASTROCYTE_ENTITY_RESOLUTION_ENABLED:-true}
