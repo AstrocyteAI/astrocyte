@@ -32,16 +32,34 @@ def dsn() -> str:
     return url
 
 
+def _migration_embedding_dimensions() -> int:
+    """Return the embedding-dim that ``scripts/migrate.sh`` used.
+
+    Mirrors migrate.sh's default-resolution chain
+    (``ASTROCYTE_EMBEDDING_DIMENSIONS`` → ``EMBEDDING_DIMENSIONS`` → ``128``)
+    so the test's vector width always matches the dim baked into the
+    ``embedding vector(N)`` column at migration time. The actual values
+    in the test vectors are zeros — only the WIDTH matters.
+    """
+    raw = (
+        os.environ.get("ASTROCYTE_EMBEDDING_DIMENSIONS")
+        or os.environ.get("EMBEDDING_DIMENSIONS")
+        or "128"
+    )
+    return int(raw)
+
+
 @pytest.fixture
 async def seeded_store(dsn: str):
     """Build a store, seed a small bank with predictable corpus, refresh
     the BM25 views once, then yield."""
     bank = f"bm25-bank-{uuid.uuid4().hex[:8]}"
-    store = PostgresStore(dsn=dsn, bootstrap_schema=False, embedding_dimensions=1536)
+    dim = _migration_embedding_dimensions()
+    store = PostgresStore(dsn=dsn, bootstrap_schema=False, embedding_dimensions=dim)
 
     # Use a constant vector to dodge embedding generation — semantic
     # ranking isn't what we're testing here.
-    zero = [0.0] * 1536
+    zero = [0.0] * dim
 
     # Corpus design (10 docs in this bank):
     #   - 3 docs talk about "Zaragoza" (rare proper noun → high IDF)
@@ -166,8 +184,9 @@ class TestRefreshBm25Views:
     @pytest.mark.asyncio
     async def test_new_memories_invisible_until_refresh(self, dsn: str):
         bank = f"refresh-bank-{uuid.uuid4().hex[:8]}"
-        store = PostgresStore(dsn=dsn, bootstrap_schema=False, embedding_dimensions=1536)
-        zero = [0.0] * 1536
+        dim = _migration_embedding_dimensions()
+        store = PostgresStore(dsn=dsn, bootstrap_schema=False, embedding_dimensions=dim)
+        zero = [0.0] * dim
 
         try:
             # Seed + refresh — baseline visible.
