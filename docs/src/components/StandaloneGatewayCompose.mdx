@@ -1,0 +1,66 @@
+{/*
+  Shared "Standalone Gateway" quick-start snippet.
+
+  Imported by:
+  - docs/src/content/docs/index.mdx               (homepage, hand-tracked)
+  - docs/_end-user/quick-start.mdx                (synced to
+    docs/src/content/docs/end-user/quick-start.mdx by docs/scripts/sync-docs.mjs)
+
+  Both pages frame this with their own intro/outro paragraphs and TabItem
+  wrappers; only the compose YAML, the `docker compose up` command, and the
+  retain/recall curl examples live here.
+
+  Edit this file when you change the smoke flow — both pages stay in sync.
+*/}
+
+Save as `docker-compose.yml` — no repo clone needed, images are pulled from GHCR:
+
+```yaml
+services:
+  postgres:
+    image: ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:latest
+    environment:
+      POSTGRES_USER: astrocyte
+      POSTGRES_PASSWORD: astrocyte
+      POSTGRES_DB: astrocyte
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astrocyte"]
+      interval: 3s
+      retries: 5
+
+  gateway:
+    image: ghcr.io/astrocyteai/astrocyte/astrocyte-gateway-py:latest
+    environment:
+      DATABASE_URL: postgresql://astrocyte:astrocyte@postgres:5432/astrocyte
+      ASTROCYTE_VECTOR_STORE: postgres
+      ASTROCYTE_GRAPH_STORE: age
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    ports: ["8080:8080"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+```
+
+Start it:
+
+```bash
+OPENAI_API_KEY=sk-... docker compose up
+```
+
+Exercise the API end-to-end:
+
+```bash
+# 1. Health check (also confirms the DB is reachable)
+curl http://127.0.0.1:8080/health
+
+# 2. Retain a memory
+curl -X POST http://127.0.0.1:8080/v1/retain \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Calvin prefers dark mode.", "bank_id": "user-123"}'
+
+# 3. Recall it
+curl -X POST http://127.0.0.1:8080/v1/recall \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What theme does Calvin prefer?", "bank_id": "user-123"}'
+```

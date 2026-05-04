@@ -29,6 +29,8 @@ hero:
 
 import { Card, CardGrid, Code, LinkCard, Tabs, TabItem } from "@astrojs/starlight/components";
 import PypiInstall from "../../components/PypiInstall.astro";
+import StandaloneGatewayCompose from "../../components/StandaloneGatewayCompose.mdx";
+import LibraryQuickStart from "../../components/LibraryQuickStart.mdx";
 
 <div class="landing">
 
@@ -60,14 +62,7 @@ import PypiInstall from "../../components/PypiInstall.astro";
         </TabItem>
       </Tabs>
 
-```python
-from astrocyte import Astrocyte
-
-brain = Astrocyte.from_config("astrocyte.yaml")
-
-await brain.retain("Calvin prefers dark mode", bank_id="user-123")
-hits = await brain.recall("What are Calvin's preferences?", bank_id="user-123")
-```
+      <LibraryQuickStart />
     </TabItem>
     <TabItem label="Standalone Gateway">
       <p class="quickstart-note">
@@ -76,26 +71,10 @@ hits = await brain.recall("What are Calvin's preferences?", bank_id="user-123")
         Best for multi-agent deployments and shared memory services.
       </p>
 
-```bash
-cd astrocyte-services-py
-cp .env.example .env        # edit ports / secrets as needed
-docker compose up --build
-```
-
-```bash
-# Retain a memory
-curl -X POST http://127.0.0.1:8080/v1/retain \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Calvin prefers dark mode.", "bank_id": "user-123"}'
-
-# Recall memories
-curl -X POST http://127.0.0.1:8080/v1/recall \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What theme does Calvin prefer?", "bank_id": "user-123"}'
-```
+      <StandaloneGatewayCompose />
 
       <p class="quickstart-note">
-        See <a href="end-user/production-grade-http-service/">Production-grade HTTP service</a> for auth, TLS, and observability.
+        More endpoints — mental models, graph search, governance, portability — in the <a href="end-user/quick-start/#standalone-gateway">full quick-start</a>. See <a href="end-user/production-grade-http-service/">Production-grade HTTP service</a> for auth, TLS, and observability.
       </p>
     </TabItem>
     <TabItem label="Gateway Plugin">

@@ -1,0 +1,21 @@
+{/*
+  Shared "Library (in-process)" smoke test — the canonical Astrocyte hello-world.
+
+  Imported by:
+  - docs/src/content/docs/index.mdx               (homepage, hand-tracked)
+  - docs/_end-user/quick-start.mdx                (synced to
+    docs/src/content/docs/end-user/quick-start.mdx by docs/scripts/sync-docs.mjs)
+
+  Both pages frame this with their own intro/install/outro paragraphs. Only
+  the four Python lines that actually call retain + recall live here so the
+  example doesn't drift between the homepage teaser and the full quick-start.
+*/}
+
+```python
+from astrocyte import Astrocyte
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+
+await brain.retain("Calvin prefers dark mode.", bank_id="user-123")
+hits = await brain.recall("What theme does Calvin prefer?", bank_id="user-123")
+```
