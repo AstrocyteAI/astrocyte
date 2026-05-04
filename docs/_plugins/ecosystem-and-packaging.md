@@ -198,11 +198,25 @@ Providers register using Python's standard entry point mechanism (`importlib.met
 
 ```toml
 # adapters-storage-py/astrocyte-postgres/pyproject.toml
+# A single Postgres adapter implements five SPI protocols, registered as
+# the same key across five entry-point groups so MIP-routed config keys
+# resolve to the right protocol per call site.
 [project.entry-points."astrocyte.vector_stores"]
-pgvector = "astrocyte_postgres:PostgresStore"
+postgres = "astrocyte_postgres.store:PostgresStore"
 
+# PostgresStore satisfies DocumentStore via pg_tsvector + GIN + BM25 —
+# same class as VectorStore; no separate fulltext module.
 [project.entry-points."astrocyte.document_stores"]
-pgvector = "astrocyte_postgres.fulltext:PgDocumentStore"
+postgres = "astrocyte_postgres.store:PostgresStore"
+
+[project.entry-points."astrocyte.wiki_stores"]
+postgres = "astrocyte_postgres.wiki_store:PostgresWikiStore"
+
+[project.entry-points."astrocyte.mental_model_stores"]
+postgres = "astrocyte_postgres.mental_model_store:PostgresMentalModelStore"
+
+[project.entry-points."astrocyte.source_stores"]
+postgres = "astrocyte_postgres.source_store:PostgresSourceStore"
 ```
 
 ```toml

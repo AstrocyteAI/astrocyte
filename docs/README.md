@@ -59,7 +59,9 @@ Astrocyte is **not** an LLM gateway and **not** an agent runtime. It does not de
 
 ## Current release
 
-**v0.9.1** is the current patch release. **v0.9.0** completed the pre-GA feature surface for M8–M11: wiki compile, time travel, gap analysis, entity resolution, and the Apache AGE graph adapter. **v1.0.0** GA will be declared after the `v0.9.x` eval gates pass. See [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
+**v0.11.0** is the current minor release. It introduces schema-per-tenant isolation across PostgreSQL and AGE, mental models as a first-class SPI, observation scope and invalidation, intent-driven reflect routing, and the four-preset benchmark ablation matrix. The Postgres adapter has been renamed (`astrocyte-pgvector` → `astrocyte-postgres`); migration is a single `pip uninstall astrocyte-pgvector && pip install astrocyte-postgres`.
+
+The v0.9.x line shipped the pre-GA feature surface (wiki compile, time travel, gap analysis, entity resolution, AGE graph adapter); v0.10.x added retrieval quality (HyDE, observation consolidation, multi-query gating, adversarial defense, agentic reflect, fact-level causal links, link expansion). **v1.0.0** GA will be declared after the v0.11.x eval gates in [`benchmarks/gates-baseline.json`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-py/benchmarks/gates-baseline.json) and [`gates-hindsight-informed.json`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-py/benchmarks/gates-hindsight-informed.json) pass.
 
 Release notes: [CHANGELOG.md](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md)
 

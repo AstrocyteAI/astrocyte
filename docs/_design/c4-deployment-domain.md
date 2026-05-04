@@ -449,8 +449,8 @@ deployment:
 |---|---|---|
 | pgvector IVFFlat degrades at >5M vectors per table | p95 search latency increases from ~10ms to ~50ms | HNSW index (higher memory, better recall); table-per-bank partitioning |
 | Embedding API is on critical path for retain + recall | Single point of latency (~100ms per call) | Batch embedding, local embedding model fallback, embedding cache for identical queries |
-| No graph store production implementation | Entity-aware recall unavailable | Prioritize Neo4j or FalkorDB adapter in v1.0.0 |
-| No document store production implementation | BM25/keyword search unavailable | Prioritize Elasticsearch adapter in v1.0.0 |
+| Graph store coverage limited to AGE | Some users want Neo4j-native deployments | `astrocyte-neo4j` adapter scaffold lands in v1.0.0; AGE remains the reference for the combined Postgres stack |
+| Document store coverage limited to Postgres pg_tsvector | Hybrid recall ships out of the box; some users want Elasticsearch sidecar | `astrocyte-postgres` `PostgresStore` ships pg_tsvector + GIN + BM25 (v0.10.0+), satisfying `DocumentStore` from the same connection pool as `VectorStore`; an Elasticsearch adapter is on the v1.0.0 roadmap for users who already operate ES |
 | Single-process extraction pipeline | Ingest throughput capped at ~100 docs/sec | Worker pool + message queue for horizontal scaling |
 | Callers must supply identity for AuthZ | Adapters pass context through, but apps still map IdP/session → `AstrocyteContext` | Document patterns per framework; optional helpers / Phase 2 auto-extraction (ADR-002) |
 
@@ -861,8 +861,10 @@ Secondary ports define how Astrocyte calls out to infrastructure. These are defi
 | Port (Protocol) | Current Adapters | Status |
 |---|---|---|
 | **VectorStore** | `astrocyte_postgres.PostgresStore`, `InMemoryVectorStore` (testing) | Production-ready |
-| **GraphStore** | `astrocyte_neo4j.Neo4jGraphStore`, `InMemoryGraphStore` (testing) | Production-ready |
-| **DocumentStore** | `astrocyte_elasticsearch.ElasticsearchDocumentStore`, `InMemoryDocumentStore` (testing) | Production-ready |
+| **GraphStore** | `astrocyte_age.AgeGraphStore`, `InMemoryGraphStore` (testing); `astrocyte_neo4j.Neo4jGraphStore` (planned) | Production-ready (AGE shipped in v0.9.0; Neo4j scaffold in v1.0.0) |
+| **DocumentStore** | `astrocyte_postgres.PostgresStore` (pg_tsvector + GIN + BM25 — same class as VectorStore), `InMemoryDocumentStore` (testing); `astrocyte_elasticsearch.ElasticsearchDocumentStore` (planned) | Production-ready (Postgres path shipped in v0.10.0) |
+| **WikiStore** | `astrocyte_postgres.PostgresWikiStore`, `InMemoryWikiStore` (testing) | Production-ready (v0.9.0+) |
+| **MentalModelStore** | `astrocyte_postgres.PostgresMentalModelStore`, `InMemoryMentalModelStore` (testing) | Production-ready (v0.11.0+) |
 | **LLMProvider** | `OpenAIProvider` (`providers/openai.py`) | Production-ready |
 | **EmbeddingProvider** | Shared with `LLMProvider.embed()` | Production-ready via OpenAI |
 
@@ -891,12 +893,16 @@ Primary Adapters (driving):
   astrocyte/mcp.py                         -> MCP tool server
 
 Secondary Adapters (driven):
-  astrocyte_postgres/store.py              -> PostgresStore (PostgreSQL + pgvector)
+  astrocyte_postgres/store.py              -> PostgresStore (VectorStore + DocumentStore — pg_tsvector/GIN/BM25, v0.10.0+)
+  astrocyte_postgres/wiki_store.py         -> PostgresWikiStore (v0.9.0+)
+  astrocyte_postgres/mental_model_store.py -> PostgresMentalModelStore (v0.11.0+)
+  astrocyte_postgres/source_store.py       -> PostgresSourceStore (v0.11.0+)
+  astrocyte_age/store.py                   -> AgeGraphStore (Apache AGE, v0.9.0+)
   astrocyte/providers/openai.py            -> OpenAIProvider (LLM + embedding)
   astrocyte/testing/in_memory.py           -> InMemory{Vector,Graph,Document}Store (test doubles)
-  astrocyte_kafka/consumer.py               -> KafkaIngestSource (planned)
-  astrocyte_neo4j/store.py                  -> Neo4jGraphStore (shipped v0.8.0)
-  astrocyte_elasticsearch/store.py          -> ElasticsearchDocumentStore (shipped v0.8.0)
+  astrocyte_kafka/consumer.py              -> KafkaIngestSource (planned)
+  astrocyte_neo4j/store.py                 -> Neo4jGraphStore (planned v1.0.0)
+  astrocyte_elasticsearch/store.py         -> ElasticsearchDocumentStore (planned)
 ```
 
 #### 2.5 Dependency Direction

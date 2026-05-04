@@ -6,7 +6,7 @@ This page is the **planning catalog** for the series. Daily tutorials are being 
 
 Each day adds **one** focused tutorial or example: runnable demos, integration patterns, and production-minded snippets. The catalog below is the **backlog** — daily tutorials will be chosen from this list and linked here as they ship.
 
-**Stack context:** The **v0.9.x** line includes Tier 1 storage adapters, optional **`astrocyte-gateway-py`**, optional **`recall_authority`**, ingest connectors (Kafka, Redis, GitHub poll), and M8–M11 features such as wiki compile, time travel, gap analysis, and entity resolution. See [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
+**Stack context:** The **v0.11.x** line builds on the v0.9.x feature surface (wiki compile, time travel, gap analysis, entity resolution, AGE graph adapter) and the v0.10.x retrieval-quality work (HyDE, observation consolidation, agentic reflect, fact-level causal links, link expansion). v0.11.x adds schema-per-tenant isolation, mental models as a first-class SPI, intent-driven reflect routing, and the four-preset benchmark ablation matrix. Tier 1 storage adapters (`astrocyte-postgres`, `astrocyte-age`, etc.), optional **`astrocyte-gateway-py`**, optional **`recall_authority`**, and ingest connectors (Kafka, Redis, GitHub poll) all ship out of the box. See [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) for release notes.
 
 ## What to expect
 

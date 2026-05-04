@@ -277,7 +277,9 @@ These capabilities constitute the complete answer to the four diagnostic tests i
 **Shipping order:**
 - **v0.8.x** — connector and gateway integration track
 - **v0.9.0** — M8–M11: LLM wiki compile, time travel, gap analysis, and entity resolution
-- **v1.0.0** — GA declaration after the v0.9.x eval gates pass
+- **v0.10.x** — retrieval quality: HyDE, observation consolidation, multi-query gating, adversarial defense, agentic reflect, fact-level causal links, link expansion
+- **v0.11.x** — multi-tenancy and intent: schema-per-tenant isolation, mental models as a first-class SPI, observation scope/invalidation, intent-driven reflect routing, four-preset benchmark ablation matrix, package rename (`astrocyte-pgvector` → `astrocyte-postgres`)
+- **v1.0.0** — GA declaration after the v0.11.x eval gates in [`benchmarks/gates-baseline.json`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-py/benchmarks/gates-baseline.json) and [`gates-hindsight-informed.json`](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-py/benchmarks/gates-hindsight-informed.json) pass
 
 The open-core split for this phase:
 

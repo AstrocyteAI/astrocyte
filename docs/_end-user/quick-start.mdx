@@ -70,7 +70,7 @@ services:
     image: ghcr.io/astrocyteai/astrocyte/astrocyte-gateway-py:latest
     environment:
       DATABASE_URL: postgresql://astrocyte:astrocyte@postgres:5432/astrocyte
-      ASTROCYTE_VECTOR_STORE: pgvector
+      ASTROCYTE_VECTOR_STORE: postgres
       ASTROCYTE_GRAPH_STORE: age
       OPENAI_API_KEY: ${OPENAI_API_KEY}
     ports:

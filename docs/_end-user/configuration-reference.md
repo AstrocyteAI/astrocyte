@@ -27,11 +27,11 @@ Used when `provider_tier: storage`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `vector_store` | string \| null | `null` | Vector store provider: `in_memory`, `pgvector`, `qdrant`, etc. |
+| `vector_store` | string \| null | `null` | Vector store provider: `in_memory`, `postgres`, `qdrant`, etc. |
 | `vector_store_config` | dict \| null | `null` | Provider-specific settings (connection URL, dimensions, etc.) |
-| `graph_store` | string \| null | `null` | Graph store provider: `neo4j`, etc. |
+| `graph_store` | string \| null | `null` | Graph store provider: `age`, `neo4j`, etc. |
 | `graph_store_config` | dict \| null | `null` | Provider-specific settings |
-| `document_store` | string \| null | `null` | Document store provider: `elasticsearch`, etc. |
+| `document_store` | string \| null | `null` | Document store provider: `postgres` (pg_tsvector + GIN + BM25, same adapter as `vector_store: postgres`), `elasticsearch`, etc. |
 | `document_store_config` | dict \| null | `null` | Provider-specific settings |
 
 ```yaml

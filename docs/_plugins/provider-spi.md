@@ -982,14 +982,15 @@ caller → brain.recall(query, budget)
 
 1. **Create a package** named `astrocyte-{database}` (e.g., `astrocyte-postgres`, `astrocyte-neo4j`).
 2. **Implement one or more protocols**: `VectorStore` (required for vector DBs), `GraphStore` (for graph DBs), `DocumentStore` (for full-text search).
-3. **Register via entry point** in `pyproject.toml`:
+3. **Register via entry point** in `pyproject.toml`. The entry-point key (e.g. `postgres`) is what users put in `astrocyte.yaml`'s `vector_store:` field:
    ```toml
    [project.entry-points."astrocyte.vector_stores"]
-   pgvector = "astrocyte_postgres:PostgresStore"
+   postgres = "astrocyte_postgres.store:PostgresStore"
 
    [project.entry-points."astrocyte.graph_stores"]
    neo4j = "astrocyte_neo4j:Neo4jGraphStore"
    ```
+   A single class implementing multiple protocols (e.g. `PostgresStore` satisfies both `VectorStore` and `DocumentStore`) registers under the same key across multiple entry-point groups.
 4. **Handle your own connection management.** Accept connection config via `__init__`, manage pools, handle reconnection.
 5. **Async PostgreSQL + pgvector (when applicable):** If you use **psycopg 3** `AsyncConnection` with the [**pgvector**](https://github.com/pgvector/pgvector) Python package, use **`register_vector_async`** in pool `configure` callbacks—not the sync **`register_vector`**, which leaves coroutines unawaited on async connections. With default transaction settings, end `configure` with **`await conn.commit()`** so the pool does not discard connections left **`INTRANS`**. Register vector adapters only after the **`vector`** extension exists (migration order or `CREATE EXTENSION` before first vector I/O). Reference: [`astrocyte-postgres`](../adapters-storage-py/astrocyte-postgres/README.md).
 6. **Keep it simple.** You are implementing CRUD operations, not a memory engine. Let the pipeline handle the intelligence.
