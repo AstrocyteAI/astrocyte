@@ -220,11 +220,22 @@ class Astrocyte:
         wiki-piggyback path (``kind="concept"`` + metadata discriminator)
         — mental models now live in their own
         ``astrocyte_mental_models`` table with proper revision history.
+
+        Also wires the agentic reflect loop so ``search_mental_models``
+        becomes available as a tool — the highest-quality tier in the
+        hierarchical retrieval order. Idempotent: if a pipeline is
+        already attached, the service is pushed onto it; otherwise
+        ``set_pipeline`` will pick up the store and build the service
+        when it runs.
         """
         from astrocyte.provider import check_spi_version
 
         check_spi_version(store, "MentalModelStore")
         self._mental_model_store = store
+        if self._pipeline is not None:
+            from astrocyte.pipeline.mental_model import MentalModelService
+
+            self._pipeline.mental_model_service = MentalModelService(store)
 
     def set_source_store(self, store: object) -> None:
         """Set the :class:`~astrocyte.provider.SourceStore` provider. Optional.
@@ -271,6 +282,17 @@ class Astrocyte:
 
         pipeline.extraction_profiles = merged_extraction_profiles(self._config)
         pipeline.recall_authority = self._config.recall_authority
+
+        # If a mental-model store was set BEFORE the pipeline was
+        # attached, push the service through now so ``search_mental_models``
+        # is wired into the agentic reflect loop.  The reverse direction
+        # (store set after pipeline) is handled in ``set_mental_model_store``.
+        if self._mental_model_store is not None:
+            from astrocyte.pipeline.mental_model import MentalModelService
+
+            pipeline.mental_model_service = MentalModelService(
+                self._mental_model_store,  # type: ignore[arg-type]
+            )
 
         # Cross-encoder reranker (Hindsight parity) — only loaded when the
         # operator opts in via config. Lazy load: deferring the model load
@@ -336,6 +358,18 @@ class Astrocyte:
         # Adversarial-defense layer.
         # M9 BM25-IDF wiring — opt-in flag plumbed through to ``parallel_retrieve``.
         pipeline.bm25_idf_enabled = self._config.bm25_idf.enabled
+
+        # M10 source-aware retain + recall. The store handle and the three
+        # behavioural flags are kept independently configurable so a
+        # deployment can enable provenance ingest without paying for the
+        # recall-side chunk expansion (which only helps multi-hop / split-
+        # evidence questions and adds one DB roundtrip per top-K hit).
+        sar_cfg = self._config.source_aware_retrieval
+        pipeline.source_store = self._source_store
+        pipeline.source_retain_provenance = sar_cfg.retain_provenance
+        pipeline.source_chunk_expansion = sar_cfg.chunk_expansion
+        pipeline.source_expansion_score_multiplier = sar_cfg.expansion_score_multiplier
+        pipeline.source_expansion_max_per_hit = sar_cfg.expansion_max_per_hit
 
         ad_cfg = self._config.adversarial_defense
         pipeline.adversarial_abstention_enabled = ad_cfg.abstention_enabled

@@ -247,6 +247,7 @@ async def _semantic_search(
             tags=h.tags,
             occurred_at=h.occurred_at,
             retained_at=getattr(h, "retained_at", None),
+            chunk_id=getattr(h, "chunk_id", None),
         )
         for h in hits
     ]
@@ -285,6 +286,7 @@ def _hybrid_hits_to_scored_items(raw: dict[str, list[Any]]) -> dict[str, list[Sc
                 tags=hit.tags,
                 occurred_at=hit.occurred_at,
                 retained_at=getattr(hit, "retained_at", None),
+                chunk_id=getattr(hit, "chunk_id", None),
             )
         )
     for hit in raw.get("keyword", []):
@@ -429,6 +431,7 @@ async def _temporal_search(
             memory_layer=item.memory_layer,
             occurred_at=item.occurred_at,
             retained_at=getattr(item, "retained_at", None),
+            chunk_id=getattr(item, "chunk_id", None),
         )
         for score, item in top
     ]

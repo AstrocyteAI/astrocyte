@@ -164,6 +164,7 @@ def basic_rerank(
                 tags=item.tags,
                 memory_layer=item.memory_layer,
                 retained_at=item.retained_at,
+                chunk_id=getattr(item, "chunk_id", None),
             )
             for item, item_terms in item_terms_by_item
         ),
@@ -218,6 +219,7 @@ def cross_encoder_like_rerank(
                 tags=item.tags,
                 memory_layer=item.memory_layer,
                 retained_at=item.retained_at,
+                chunk_id=getattr(item, "chunk_id", None),
             )
         )
 
@@ -310,6 +312,7 @@ def apply_context_diversity(items: list[ScoredItem], query: str) -> list[ScoredI
                 memory_layer=item.memory_layer,
                 occurred_at=item.occurred_at,
                 retained_at=item.retained_at,
+                chunk_id=getattr(item, "chunk_id", None),
             )
         )
     return sorted(diversified, key=lambda item: item.score, reverse=True)

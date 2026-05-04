@@ -115,6 +115,7 @@ class InMemoryVectorStore:
                 occurred_at=item.occurred_at,
                 memory_layer=item.memory_layer,
                 retained_at=item.retained_at,  # M9
+                chunk_id=item.chunk_id,  # M10
             )
             for sim, item in results[:limit]
         ]
@@ -126,6 +127,39 @@ class InMemoryVectorStore:
                 del self._vectors[vid]
                 count += 1
         return count
+
+    async def get_by_chunk_ids(
+        self, chunk_ids: list[str], bank_id: str,
+    ) -> list[VectorHit]:
+        """M10 chunk expansion: return all vectors whose ``chunk_id`` is in the list.
+
+        Used by the recall pipeline's chunk-expansion stage when
+        ``source_aware_retrieval.chunk_expansion`` is on. Score is set
+        to ``1.0`` (the caller applies the expansion multiplier);
+        ``chunk_id`` round-trips so callers can group results by source.
+        """
+        if not chunk_ids:
+            return []
+        wanted = set(chunk_ids)
+        hits: list[VectorHit] = []
+        for item in self._vectors.values():
+            if item.bank_id != bank_id:
+                continue
+            if item.chunk_id is None or item.chunk_id not in wanted:
+                continue
+            hits.append(VectorHit(
+                id=item.id,
+                text=item.text,
+                score=1.0,
+                metadata=item.metadata,
+                tags=item.tags,
+                fact_type=item.fact_type,
+                occurred_at=item.occurred_at,
+                memory_layer=item.memory_layer,
+                retained_at=item.retained_at,
+                chunk_id=item.chunk_id,
+            ))
+        return hits
 
     async def list_vectors(
         self,

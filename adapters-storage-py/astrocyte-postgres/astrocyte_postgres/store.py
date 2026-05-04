@@ -208,9 +208,21 @@ class PostgresStore:
                         occurred_at TIMESTAMPTZ,
                         memory_layer TEXT,
                         retained_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        forgotten_at TIMESTAMPTZ
+                        forgotten_at TIMESTAMPTZ,
+                        chunk_id TEXT
                     )
                     """
+                )
+                # M10: ensure ``chunk_id`` exists even on tables bootstrapped
+                # before this column was added to the CREATE TABLE above.
+                # Mirrors the ALTER in migration 014; idempotent so it's
+                # safe on every _ensure_schema call.
+                await conn.execute(
+                    f"ALTER TABLE {vectors} ADD COLUMN IF NOT EXISTS chunk_id TEXT"
+                )
+                await conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {self._table}_chunk_idx "
+                    f"ON {vectors} (chunk_id) WHERE chunk_id IS NOT NULL"
                 )
                 # Mirrors 003_indexes.sql. Index names stay UNqualified —
                 # Postgres puts them in the same schema as the indexed table
@@ -405,9 +417,9 @@ class PostgresStore:
                         INSERT INTO {self._fq()}
                             (
                                 id, bank_id, embedding, text, metadata, tags, fact_type,
-                                occurred_at, memory_layer, retained_at, forgotten_at
+                                occurred_at, memory_layer, retained_at, chunk_id, forgotten_at
                             )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)
                         ON CONFLICT (id) DO UPDATE SET
                             bank_id = EXCLUDED.bank_id,
                             embedding = EXCLUDED.embedding,
@@ -418,6 +430,7 @@ class PostgresStore:
                             occurred_at = EXCLUDED.occurred_at,
                             memory_layer = EXCLUDED.memory_layer,
                             retained_at = EXCLUDED.retained_at,
+                            chunk_id = EXCLUDED.chunk_id,
                             forgotten_at = NULL
                         """,
                         (
@@ -431,6 +444,7 @@ class PostgresStore:
                             item.occurred_at,
                             item.memory_layer,
                             item.retained_at or datetime.now(UTC),
+                            item.chunk_id,  # M10 backreference; nullable, no migration risk
                         ),
                     )
                     await self._upsert_temporal_facts(cur, item)
@@ -505,6 +519,7 @@ class PostgresStore:
         # Cosine distance `<=>`; map to a 0–1-ish score via (1 - distance).
         sql = f"""
             SELECT id, text, metadata, tags, fact_type, occurred_at, memory_layer, retained_at,
+                   chunk_id,
                    (1 - (embedding <=> %s::vector))::float AS score
             FROM {self._fq()}
             WHERE {where_sql}
@@ -538,6 +553,7 @@ class PostgresStore:
                     occurred_at=row["occurred_at"],
                     memory_layer=row.get("memory_layer"),
                     retained_at=row.get("retained_at"),
+                    chunk_id=row.get("chunk_id"),
                 )
             )
         return hits
@@ -602,7 +618,7 @@ class PostgresStore:
                 SELECT
                     'semantic'::text AS strategy,
                     id, text, metadata, tags, fact_type, occurred_at,
-                    memory_layer, retained_at,
+                    memory_layer, retained_at, chunk_id,
                     (1 - (embedding <=> %s::vector))::float AS score
                 FROM {self._fq()}
                 WHERE {semantic_sql}
@@ -613,7 +629,7 @@ class PostgresStore:
                 SELECT
                     'keyword'::text AS strategy,
                     id, text, metadata, tags, fact_type, occurred_at,
-                    memory_layer, retained_at,
+                    memory_layer, retained_at, chunk_id,
                     ts_rank_cd(text_fts, plainto_tsquery('english', %s), 1)::float AS score
                 FROM {self._fq()}
                 WHERE {keyword_sql}
@@ -658,6 +674,7 @@ class PostgresStore:
                         occurred_at=row["occurred_at"],
                         memory_layer=row.get("memory_layer"),
                         retained_at=row.get("retained_at"),
+                        chunk_id=row.get("chunk_id"),
                     )
                 )
             else:
@@ -802,6 +819,50 @@ class PostgresStore:
                     (bank_id, ids),
                 )
                 return cur.rowcount or 0
+
+    async def get_by_chunk_ids(
+        self, chunk_ids: list[str], bank_id: str,
+    ) -> list[VectorHit]:
+        """M10 chunk expansion: return all live vectors whose ``chunk_id``
+        is in ``chunk_ids``. Used by the recall pipeline to fan out from a
+        seed hit to its sibling-chunk vectors. Score is set to ``1.0`` —
+        the caller multiplies by ``expansion_score_multiplier`` so the
+        per-strategy fusion can compose this with intent-aware weights.
+        """
+        if not chunk_ids:
+            return []
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        sql = f"""
+            SELECT id, text, metadata, tags, fact_type, occurred_at, memory_layer,
+                   retained_at, chunk_id
+            FROM {self._fq()}
+            WHERE bank_id = %s
+              AND chunk_id = ANY(%s::text[])
+              AND forgotten_at IS NULL
+        """
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, (bank_id, list(chunk_ids)))
+                rows = await cur.fetchall()
+        hits: list[VectorHit] = []
+        for row in rows:
+            md = row["metadata"]
+            if isinstance(md, str):
+                md = json.loads(md)
+            hits.append(VectorHit(
+                id=row["id"],
+                text=row["text"],
+                score=1.0,
+                metadata=md,
+                tags=list(row["tags"]) if row["tags"] else None,
+                fact_type=row["fact_type"],
+                occurred_at=row["occurred_at"],
+                memory_layer=row.get("memory_layer"),
+                retained_at=row.get("retained_at"),
+                chunk_id=row.get("chunk_id"),
+            ))
+        return hits
 
     async def close(self) -> None:
         """Close the connection pool. Safe to call multiple times."""

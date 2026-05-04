@@ -1,0 +1,143 @@
+# Fast-recall + M10 source-aware retrieval benchmark configuration.
+#
+# Purpose:
+# - Same recall stack as ``config-fast-recall.yaml`` PLUS the M10
+#   provenance + chunk-expansion stage. Used to measure whether
+#   surfacing sibling chunks of a hit moves LoCoMo numbers vs the
+#   identical pipeline without chunk expansion.
+# - retain_provenance + chunk_expansion both ON to exercise the full
+#   M10 surface; compare against config-fast-recall.yaml for the
+#   identical-pipeline baseline.
+
+profile: research
+
+provider_tier: storage
+
+benchmark_preset:
+  name: fast-recall
+  version: 1
+  budget: low
+  low:
+    candidate_limit: 12
+    graph_expansion_limit: 12
+    rerank_top_k: 12
+    max_tokens: 2048
+    observation_weight: 0.0
+    agentic_reflect_allowed: false
+
+vector_store: postgres
+vector_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+document_store: postgres
+document_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+# M10 source-aware retain + recall.  Postgres source-store backed by
+# migration 014 (astrocyte_source_documents + astrocyte_source_chunks +
+# the chunk_id column on astrocyte_vectors).
+source_store: postgres
+source_store_config: {}
+
+source_aware_retrieval:
+  retain_provenance: true
+  chunk_expansion: true
+  expansion_score_multiplier: 0.5
+  expansion_max_per_hit: 4
+
+graph_store: age
+
+entity_resolution:
+  enabled: true
+  enable_llm_disambiguation: false
+  canonical_resolution: true
+
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  install_on_start: true
+  auto_start_worker: true
+
+wiki_compile:
+  enabled: false
+  auto_start: false
+
+spreading_activation:
+  enabled: true
+  expansion_limit: 12
+
+semantic_link_graph:
+  enabled: true
+  top_k: 3
+  similarity_threshold: 0.75
+
+causal_links:
+  enabled: false
+
+agentic_reflect:
+  enabled: false
+
+cross_encoder_rerank:
+  # Tier-1 #1 from the post-rerank-fault-analysis plan.  49% of failures on
+  # the previous run had the right memory in the candidate pool but ranked
+  # below the synthesis cut.  Always-on CE on the top-12 should lift those
+  # without paying latency for a deeper rerank.  ``top_k: 12`` matches
+  # ``benchmark_preset.low.candidate_limit: 12`` so the CE reranks exactly
+  # the synthesis pool — no over-fetch.  The ``adversarial_defense`` below stays on
+  # (abstention floor + adversarial system prompt) to preserve the 0.71
+  # adversarial score that previous CE-on presets blew up to 0.37.
+  enabled: true
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_k: 12
+  force_cpu: false
+
+adversarial_defense:
+  abstention_enabled: true
+  abstention_floor: 0.2
+  premise_verification_enabled: false
+  adversarial_prompt_enabled: true
+
+structured_fact_extraction:
+  enabled: true
+  extraction_mode: verbatim
+  max_facts_per_call: 30
+  chunk_strategy: paragraph
+
+query_analyzer:
+  enabled: true
+  allow_llm_fallback: false
+
+llm_provider: openai
+llm_provider_config:
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
+  embedding_model: text-embedding-3-small
+
+barriers:
+  pii:
+    mode: disabled
+  validation:
+    reject_empty_content: true
+
+homeostasis:
+  recall_max_tokens: 2048
+  reflect_max_tokens: 4096
+  rate_limits:
+    retain_per_minute: 500
+    recall_per_minute: 500
+    reflect_per_minute: 200
+
+signal_quality:
+  dedup:
+    enabled: false
+  noisy_bank:
+    enabled: false
+
+escalation:
+  degraded_mode: error
+
+observability:
+  otel_enabled: false
+  prometheus_enabled: false

@@ -30,6 +30,7 @@ class ScoredItem:
     memory_layer: str | None = None  # "fact", "observation", "model"
     occurred_at: datetime | None = None
     retained_at: datetime | None = None  # M9: wall-clock time item was stored
+    chunk_id: str | None = None  # M10: source-chunk backreference
 
 
 def rrf_fusion(
@@ -76,6 +77,7 @@ def rrf_fusion(
                 memory_layer=item.memory_layer,
                 occurred_at=item.occurred_at,
                 retained_at=item.retained_at,
+                chunk_id=getattr(item, "chunk_id", None),
             )
         )
 
@@ -142,6 +144,7 @@ def weighted_rrf_fusion(
             memory_layer=items[iid].memory_layer,
             occurred_at=items[iid].occurred_at,
             retained_at=items[iid].retained_at,
+            chunk_id=getattr(items[iid], "chunk_id", None),
         )
         for iid in sorted_ids
     ]
@@ -179,6 +182,7 @@ def layer_weighted_rrf_fusion(
             memory_layer=item.memory_layer,
             occurred_at=item.occurred_at,
             retained_at=item.retained_at,
+            chunk_id=getattr(item, "chunk_id", None),
         )
         for item in fused
     ]
@@ -207,6 +211,7 @@ def memory_hits_as_scored(hits: list[MemoryHit]) -> list[ScoredItem]:
                 memory_layer=h.memory_layer,
                 occurred_at=h.occurred_at,
                 retained_at=getattr(h, "retained_at", None),
+                chunk_id=getattr(h, "chunk_id", None),
             )
         )
     return out

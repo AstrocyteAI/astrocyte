@@ -50,6 +50,12 @@ class VectorItem:
     occurred_at: datetime | None = None
     memory_layer: str | None = None  # "fact", "observation", "model" — memory hierarchy
     retained_at: datetime | None = None  # UTC wall-clock when this item was stored (M9)
+    #: Optional backreference to the originating ``SourceChunk.id`` (M10).
+    #: When set, the vector store persists it onto ``astrocyte_vectors.chunk_id``
+    #: so recall can resolve provenance (`document_id`, `source_uri`) and
+    #: trigger chunk-level expansion. Nullable for backward compat — vectors
+    #: ingested without a SourceStore retain stamp ``None``.
+    chunk_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.text:
@@ -77,6 +83,11 @@ class VectorHit:
     occurred_at: datetime | None = None
     memory_layer: str | None = None  # "fact", "observation", "model"
     retained_at: datetime | None = None  # UTC timestamp when item was retained (M9)
+    #: M10: backreference to the originating ``SourceChunk.id``. When set,
+    #: callers can resolve provenance via ``SourceStore.get_chunk(chunk_id)
+    #: → SourceStore.get_document(chunk.document_id)`` to surface citations.
+    #: ``None`` for legacy vectors retained without a SourceStore.
+    chunk_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.score < 0.0:
@@ -324,6 +335,7 @@ class MemoryHit:
     memory_layer: str | None = None  # "fact", "observation", "model"
     utility_score: float | None = None  # 0.0 – 1.0 composite utility
     retained_at: datetime | None = None  # UTC timestamp when item was retained (M9)
+    chunk_id: str | None = None  # M10: source-chunk backreference (when source_store is wired)
 
 
 @dataclass

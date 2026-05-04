@@ -130,6 +130,40 @@ class Bm25IdfConfig:
 
 
 @dataclass
+class SourceAwareRetrievalConfig:
+    """Source-aware retain + recall (M10).
+
+    Two switches with independent risk profiles:
+
+    - ``retain_provenance`` is cheap and almost-free: when a SourceStore is
+      configured AND this flag is on, retain creates one SourceDocument
+      and N SourceChunk rows per ingestion call and stamps each
+      ``VectorItem.chunk_id`` with the matching chunk's id. Costs one
+      extra DB roundtrip per retain. Required for any provenance feature
+      downstream (citations, chunk expansion) but not sufficient — the
+      SourceStore also has to be wired in YAML.
+    - ``chunk_expansion`` is the recall-side bet: when on, the recall
+      pipeline fetches sibling chunks of each top-K vector hit from the
+      SourceStore and merges them into the candidate set with a
+      configurable score multiplier. Helps multi-hop / split-evidence
+      questions where the answer key is in chunk N±1 of a chunk that
+      hit. Adds one DB roundtrip per top-K hit. **Off by default** —
+      enable in benchmark configs and measure before flipping in prod.
+
+    ``expansion_score_multiplier`` controls how much weight expanded
+    chunks get relative to the seed hit. ``1.0`` keeps them at parity
+    (often too aggressive); ``0.5`` is a conservative starting point.
+    ``expansion_max_per_hit`` caps fan-out so a long document doesn't
+    flood the candidate pool.
+    """
+
+    retain_provenance: bool = False
+    chunk_expansion: bool = False
+    expansion_score_multiplier: float = 0.5
+    expansion_max_per_hit: int = 4
+
+
+@dataclass
 class BenchmarkBudgetConfig:
     """Named benchmark budget for Hindsight-parity preset routing."""
 
@@ -746,6 +780,9 @@ class AstrocyteConfig:
     # Phase 2 innovations
     recall_cache: RecallCacheConfig = field(default_factory=RecallCacheConfig)
     bm25_idf: Bm25IdfConfig = field(default_factory=Bm25IdfConfig)
+    source_aware_retrieval: SourceAwareRetrievalConfig = field(
+        default_factory=SourceAwareRetrievalConfig,
+    )
     tiered_retrieval: TieredRetrievalConfig = field(default_factory=TieredRetrievalConfig)
     cross_encoder_rerank: CrossEncoderRerankConfig = field(default_factory=CrossEncoderRerankConfig)
     spreading_activation: SpreadingActivationConfig = field(default_factory=SpreadingActivationConfig)
@@ -1113,6 +1150,7 @@ _SIMPLE_SECTION_MAP: dict[str, type] = {
     "mcp": McpConfig,
     "recall_cache": RecallCacheConfig,
     "bm25_idf": Bm25IdfConfig,
+    "source_aware_retrieval": SourceAwareRetrievalConfig,
     "tiered_retrieval": TieredRetrievalConfig,
     "cross_encoder_rerank": CrossEncoderRerankConfig,
     "spreading_activation": SpreadingActivationConfig,

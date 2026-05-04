@@ -6,6 +6,7 @@ Async (coordinates I/O stages). See docs/_design/built-in-pipeline.md.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -270,6 +271,15 @@ class PipelineOrchestrator:
         # normalisation instead of the classic ``ts_rank_cd``. Wired by
         # ``Astrocyte.set_pipeline`` from ``bm25_idf.enabled`` config.
         self.bm25_idf_enabled: bool = False
+        #: M10 source-aware retain + recall. ``source_store`` is the
+        #: SourceStore instance (or ``None``); the three flags below
+        #: control behaviour. All wired by ``Astrocyte.set_pipeline`` from
+        #: the ``source_aware_retrieval`` config block.
+        self.source_store: object | None = None
+        self.source_retain_provenance: bool = False
+        self.source_chunk_expansion: bool = False
+        self.source_expansion_score_multiplier: float = 0.5
+        self.source_expansion_max_per_hit: int = 4
         # Intent-aware recall: heuristic query classifier biases RRF
         # weights per strategy. Conservative (always fuses all strategies
         # even under bias), so enabling is safe — a misclassification
@@ -399,6 +409,15 @@ class PipelineOrchestrator:
         else:
             self._observation_consolidator = None
         self._background_tasks: set[asyncio.Task[None]] = set()
+
+        # Mental-model service — wires the agentic reflect loop to the
+        # configured ``MentalModelStore`` (typically ``PostgresMentalModelStore``).
+        # ``None`` when no store is configured; ``set_mental_model_service``
+        # is called from ``Astrocyte.set_pipeline`` when a store is present.
+        # When set, the agent gets ``search_mental_models`` as a tool —
+        # the highest-quality tier in the hierarchical priority order
+        # (mental_models → observations → recall → expand → done).
+        self.mental_model_service: object | None = None
 
     @property
     def tokens_used(self) -> int:
@@ -767,6 +786,173 @@ class PipelineOrchestrator:
             except Exception as exc:
                 _logger.warning("entity resolution failed during retain: %s", exc)
 
+    async def _provision_source_provenance(
+        self,
+        request: RetainRequest,
+        prepared_text: str,
+        chunks: list[str],
+    ) -> list[str | None]:
+        """Stamp the (document, chunks) pair into the SourceStore.
+
+        Returns the per-chunk ``chunk_id`` list, parallel to ``chunks``.
+        On failure (or when the SourceStore is not configured / the flag
+        is off), returns ``[None] * len(chunks)`` so retain continues
+        with anonymous vectors — provenance must never break ingest.
+
+        The document id is deterministic (SHA-256 of the prepared text,
+        prefixed with ``doc:``) so the same input ingested twice resolves
+        to the same SourceDocument and the dedup probe is hit. Chunk ids
+        are ``{document_id}:{i}`` for the same reason.
+        """
+        n = len(chunks)
+        empty: list[str | None] = [None] * n
+        if self.source_store is None or not self.source_retain_provenance:
+            return empty
+
+        # Late import: keeps the module import-cost low and avoids a hard
+        # dependency on the M10 types from the orchestrator's surface area.
+        from astrocyte.types import SourceChunk, SourceDocument
+
+        try:
+            doc_hash = hashlib.sha256(prepared_text.encode("utf-8")).hexdigest()
+            doc_id_default = f"doc:{doc_hash[:16]}"
+            document = SourceDocument(
+                id=doc_id_default,
+                bank_id=request.bank_id,
+                title=None,
+                source_uri=request.source,
+                content_hash=doc_hash,
+                content_type=request.content_type,
+                metadata=None,
+            )
+            # store_document is idempotent on (bank_id, content_hash); the
+            # returned id may differ from doc_id_default if a prior live
+            # row with the same hash already exists.
+            stored_doc_id = await self.source_store.store_document(document)  # type: ignore[union-attr]
+
+            source_chunks: list[SourceChunk] = []
+            for i, chunk_text_str in enumerate(chunks):
+                chunk_hash = hashlib.sha256(chunk_text_str.encode("utf-8")).hexdigest()
+                source_chunks.append(SourceChunk(
+                    id=f"{stored_doc_id}:{i}",
+                    bank_id=request.bank_id,
+                    document_id=stored_doc_id,
+                    chunk_index=i,
+                    text=chunk_text_str,
+                    content_hash=chunk_hash,
+                    metadata=None,
+                ))
+            chunk_ids = await self.source_store.store_chunks(source_chunks)  # type: ignore[union-attr]
+            if len(chunk_ids) != n:
+                # Should not happen for well-behaved adapters; defend
+                # against shape mismatch by falling back rather than
+                # silently misaligning chunk_ids onto VectorItems.
+                _logger.warning(
+                    "source_store.store_chunks returned %d ids, expected %d — falling back",
+                    len(chunk_ids), n,
+                )
+                return empty
+            return list(chunk_ids)
+        except Exception as exc:
+            # Defensive: provenance is best-effort. Log and degrade to
+            # anonymous vectors so a SourceStore outage doesn't break ingest.
+            _logger.warning("source-aware retain failed; continuing without provenance: %s", exc)
+            return empty
+
+    async def _expand_via_sibling_chunks(
+        self,
+        fused: list,
+        bank_id: str,
+    ) -> list:
+        """M10: extend ``fused`` with vectors from sibling chunks of each top-K hit.
+
+        Walks the top-K hits, asks the SourceStore for the sibling chunks
+        of each hit's ``chunk_id`` (capped at ``expansion_max_per_hit``),
+        then asks the vector store for the vectors backing those chunks.
+        Each expanded hit's score is multiplied by
+        ``expansion_score_multiplier`` so the seed hits stay ranked
+        higher (the multiplier is < 1.0 by default).
+
+        Returns the merged list, sorted by score descending. Existing
+        memory ids are NOT duplicated — siblings whose vector is already
+        in ``fused`` are skipped.
+        """
+        if not fused:
+            return fused
+        store = self.source_store
+        if store is None:
+            return fused
+
+        # 1. Collect (chunk_id, doc_id?) for the top-K seeds. We process
+        # only the top ``source_expansion_max_per_hit * 4`` because the
+        # multiplier already shrinks tail-hit gains and we want to keep
+        # the per-recall fan-out bounded.
+        seed_cap = max(1, self.source_expansion_max_per_hit * 4)
+        seed_chunk_ids = [
+            getattr(h, "chunk_id", None)
+            for h in fused[:seed_cap]
+            if getattr(h, "chunk_id", None)
+        ]
+        if not seed_chunk_ids:
+            return fused
+
+        # 2. Resolve each seed chunk → its document, then list siblings
+        # of that document. Run lookups in parallel; tolerate failures.
+        async def _siblings_for(chunk_id: str) -> list[str]:
+            try:
+                chunk = await store.get_chunk(chunk_id, bank_id)  # type: ignore[union-attr]
+                if chunk is None:
+                    return []
+                siblings = await store.list_chunks(chunk.document_id, bank_id)  # type: ignore[union-attr]
+                # Drop the seed chunk itself; cap at expansion_max_per_hit.
+                ids = [
+                    c.id for c in siblings
+                    if c.id != chunk_id
+                ][: self.source_expansion_max_per_hit]
+                return ids
+            except Exception as exc:
+                _logger.debug("source_store sibling lookup failed for %s: %s", chunk_id, exc)
+                return []
+
+        sibling_lists = await asyncio.gather(*(_siblings_for(cid) for cid in seed_chunk_ids))
+        sibling_chunk_ids: set[str] = set()
+        for ids in sibling_lists:
+            sibling_chunk_ids.update(ids)
+        # Drop any chunk_ids already represented in ``fused`` so we don't
+        # re-rank the same memory twice.
+        already_present = {
+            getattr(h, "chunk_id", None) for h in fused if getattr(h, "chunk_id", None)
+        }
+        sibling_chunk_ids -= already_present
+        if not sibling_chunk_ids:
+            return fused
+
+        # 3. Pull the sibling vectors. The vector store returns score=1.0;
+        # we apply the configured multiplier so seeds stay ranked higher.
+        try:
+            sibling_hits = await self.vector_store.get_by_chunk_ids(  # type: ignore[attr-defined]
+                list(sibling_chunk_ids), bank_id,
+            )
+        except Exception as exc:
+            _logger.warning("vector_store.get_by_chunk_ids failed; skipping chunk expansion: %s", exc)
+            return fused
+
+        if not sibling_hits:
+            return fused
+
+        existing_ids = {getattr(h, "id", None) for h in fused}
+        boost = self.source_expansion_score_multiplier
+        for sh in sibling_hits:
+            if sh.id in existing_ids:
+                continue
+            sh.score = max(0.0, min(1.0, sh.score * boost))
+            fused.append(sh)
+
+        # Re-sort: seeds keep their fused score, expansions slot in by
+        # the boosted score. The downstream rerank stage gets the final say.
+        fused.sort(key=lambda h: getattr(h, "score", 0.0), reverse=True)
+        return fused
+
     async def retain(self, request: RetainRequest) -> RetainResult:
         """Retain pipeline: normalize → chunk → extract entities → embed → store."""
         # 0–1. Raw → normalizer → profile metadata/tags (M3 extraction chain)
@@ -913,10 +1099,19 @@ class PipelineOrchestrator:
             "_created_at", datetime.now(timezone.utc).isoformat(),
         )
 
+        # 3b. M10: persist source-document + chunk provenance, get back per-chunk
+        # ``chunk_id``s that we'll stamp onto each VectorItem so recall can
+        # later resolve "which document/chunk did this memory come from".
+        # Returns ``[None] * len(chunks)`` when source_store is not configured
+        # or the flag is off — fully backward-compatible.
+        chunk_ids = await self._provision_source_provenance(
+            request, prepared.text, chunks,
+        )
+
         # 4. Store vectors
         memory_ids: list[str] = []
         items: list[VectorItem] = []
-        for chunk, embedding in zip(chunks, embeddings):
+        for chunk, embedding, chunk_id in zip(chunks, embeddings, chunk_ids):
             mem_id = uuid.uuid4().hex[:16]
             memory_ids.append(mem_id)
             items.append(
@@ -930,6 +1125,7 @@ class PipelineOrchestrator:
                     fact_type=prepared.fact_type,
                     occurred_at=request.occurred_at,
                     retained_at=datetime.now(timezone.utc),  # M9: wall-clock store time
+                    chunk_id=chunk_id,  # M10: source-chunk backreference
                 )
             )
 
@@ -1331,9 +1527,14 @@ class PipelineOrchestrator:
                 chunk_metadata["_mip.pipeline_version"] = int(mip_pipeline.version)
             chunk_metadata.setdefault("_created_at", datetime.now(timezone.utc).isoformat())
 
+            # M10 source-aware retain — same helper as the single-retain path.
+            chunk_ids = await self._provision_source_provenance(
+                request, prepared.text, chunks,
+            )
+
             memory_ids: list[str] = []
             items: list[VectorItem] = []
-            for chunk, embedding in zip(chunks, embeddings, strict=False):
+            for chunk, embedding, chunk_id in zip(chunks, embeddings, chunk_ids, strict=False):
                 mem_id = uuid.uuid4().hex[:16]
                 memory_ids.append(mem_id)
                 items.append(
@@ -1347,6 +1548,7 @@ class PipelineOrchestrator:
                         fact_type=prepared.fact_type,
                         occurred_at=request.occurred_at,
                         retained_at=datetime.now(timezone.utc),
+                        chunk_id=chunk_id,  # M10: source-chunk backreference
                     )
                 )
 
@@ -1768,6 +1970,20 @@ class PipelineOrchestrator:
                 if non_empty:
                     fused = rrf_fusion([fused, *non_empty], k=self.rrf_k)
 
+        # 4b. M10 chunk expansion — for each top-K hit with a chunk_id,
+        # fetch sibling chunks (other vectors from the same SourceDocument)
+        # and merge them into the candidate pool. Helps multi-hop / split-
+        # evidence questions where the answer key is in chunk N±1 of a
+        # chunk that hit. No-op when source_store is unwired or the flag
+        # is off, or when the vector store doesn't expose
+        # ``get_by_chunk_ids`` (older adapters degrade gracefully).
+        if (
+            self.source_chunk_expansion
+            and self.source_store is not None
+            and hasattr(self.vector_store, "get_by_chunk_ids")
+        ):
+            fused = await self._expand_via_sibling_chunks(fused, request.bank_id)
+
         # 5. Reranking — apply per-bank MIP RerankSpec when a rule targets this bank (P3)
         # (bank_pipeline already resolved above for temporal half-life override)
         mip_rerank = bank_pipeline.rerank if bank_pipeline is not None else None
@@ -1798,6 +2014,7 @@ class PipelineOrchestrator:
                 bank_id=request.bank_id,
                 occurred_at=getattr(item, "occurred_at", None),
                 retained_at=getattr(item, "retained_at", None),  # M9
+                chunk_id=getattr(item, "chunk_id", None),  # M10
             )
             for item in trimmed
         ]
@@ -2287,12 +2504,51 @@ class PipelineOrchestrator:
                 # Drop the seed itself so the model sees only NEW evidence.
                 return [h for h in expanded if h.memory_id != memory_id]
 
+            # ``search_mental_models`` tool — top of the hierarchy.
+            # Forwards to ``MentalModelStore.list(bank_id, scope=...)``,
+            # converts each MentalModel to a MemoryHit so the agent can
+            # cite ``model_id`` like any other ``memory_id``.  Returns
+            # all models in scope (no semantic ranking — mental models
+            # are usually a handful per bank, the LLM picks).
+            mental_models_fn = None
+            if self.mental_model_service is not None:
+                async def _loop_mental_models(
+                    query: str, scope: str | None,
+                ) -> list[MemoryHit]:
+                    try:
+                        models = await self.mental_model_service.list(  # type: ignore[union-attr]
+                            request.bank_id, scope=scope,
+                        )
+                    except Exception as exc:
+                        _logger.warning(
+                            "agentic_reflect.mental_models list failed (%s)", exc,
+                        )
+                        return []
+                    return [
+                        MemoryHit(
+                            text=f"# {m.title}\n\n{m.content}",
+                            score=1.0,
+                            fact_type="mental_model",
+                            metadata={
+                                "scope": m.scope,
+                                "revision": m.revision,
+                                "refreshed_at": m.refreshed_at.isoformat(),
+                            },
+                            memory_id=m.model_id,
+                            bank_id=m.bank_id,
+                            memory_layer="mental_model",
+                        )
+                        for m in models
+                    ]
+                mental_models_fn = _loop_mental_models
+
             return await agentic_reflect(
                 request.query,
                 initial_hits=recall_result.hits,
                 recall_fn=_loop_recall,
                 observations_fn=observations_fn,
                 expand_fn=_loop_expand,
+                mental_models_fn=mental_models_fn,
                 llm_provider=self.llm_provider,
                 params=self.agentic_reflect_params,
                 final_synthesize_fn=synthesize,

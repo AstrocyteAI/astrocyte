@@ -126,6 +126,14 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
         ws_cls = resolve_provider(config.wiki_store, "wiki_stores")
         wiki_store = ws_cls(**(config.wiki_store_config or {}))
 
+    # M10 source-aware retain + recall: load the SourceStore adapter
+    # (typically PostgresSourceStore) so retain stamps chunk_id and
+    # chunk-expansion can fan out from a hit to its sibling chunks.
+    source_store = None
+    if config.source_store:
+        ss_cls = resolve_provider(config.source_store, "source_stores")
+        source_store = ss_cls(**(config.source_store_config or {}))
+
     document_store = None
     if config.document_store:
         ds_cls = resolve_provider(config.document_store, "document_stores")
@@ -171,6 +179,8 @@ def _build_pipeline_brain(config_path: str, *, enable_multi_query_expansion: boo
         final_rerank_mode=os.environ.get("ASTROCYTE_BENCHMARK_RERANK_MODE", "llm_pairwise"),
         final_rerank_keep_n=8,
     )
+    if source_store is not None:
+        brain.set_source_store(source_store)
     brain.set_pipeline(pipeline)
     if wiki_store is not None:
         brain.set_wiki_store(wiki_store)
