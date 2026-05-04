@@ -10,6 +10,7 @@ from astrocyte.config import AstrocyteConfig, access_grants_for_astrocyte, load_
 from astrocyte_gateway.wiring import (
     build_tier1_pipeline,
     resolve_mental_model_store,
+    resolve_source_store,
     resolve_wiki_store,
 )
 
@@ -51,6 +52,8 @@ def _load_astrocyte_config() -> AstrocyteConfig:
         config.document_store = v
     if v := os.environ.get("ASTROCYTE_WIKI_STORE"):
         config.wiki_store = v
+    if v := os.environ.get("ASTROCYTE_SOURCE_STORE"):
+        config.source_store = v
     if (v := _env_bool("ASTROCYTE_WIKI_COMPILE_ENABLED")) is not None:
         config.wiki_compile.enabled = v
     if (v := _env_bool("ASTROCYTE_WIKI_COMPILE_AUTO_START")) is not None:
@@ -105,6 +108,9 @@ def build_astrocyte() -> Astrocyte:
     mental_model_store = resolve_mental_model_store(config)
     if mental_model_store is not None:
         brain.set_mental_model_store(mental_model_store)
+    source_store = resolve_source_store(config)
+    if source_store is not None:
+        brain.set_source_store(source_store)
     if config.access_control.enabled:
         brain.set_access_grants(access_grants_for_astrocyte(config))
     return brain

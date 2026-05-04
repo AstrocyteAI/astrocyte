@@ -35,6 +35,8 @@ from astrocyte.types import (
     ReflectResult,
     RetainRequest,
     RetainResult,
+    SourceChunk,
+    SourceDocument,
     TokenUsage,
     VectorFilters,
     VectorHit,
@@ -842,6 +844,162 @@ class InMemoryMentalModelStore:
     def revision_history(self, model_id: str, bank_id: str) -> list["MentalModel"]:
         """Return past revisions for a model (oldest first). Testing helper."""
         return list(self._history.get(bank_id, {}).get(model_id, []))
+
+
+# ---------------------------------------------------------------------------
+# In-Memory Source Store (M10 — documents + chunks normalisation)
+# ---------------------------------------------------------------------------
+
+
+class InMemorySourceStore:
+    """Fully functional in-memory source-document store for testing.
+
+    Mirrors the :class:`~astrocyte.provider.SourceStore` SPI: document
+    create/get/list/delete + bulk-chunk insert with content_hash dedup.
+    Soft-deletes match the Postgres adapter's lifecycle (deleted_at on
+    documents; cascade-by-store-eviction on chunks).
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    def __init__(self) -> None:
+        # bank_id → {document_id → SourceDocument}
+        self._docs: dict[str, dict[str, "SourceDocument"]] = {}
+        # bank_id → {chunk_id → SourceChunk}
+        self._chunks: dict[str, dict[str, "SourceChunk"]] = {}
+        # bank_id → {(content_hash) → document_id} for fast dedup lookup
+        self._doc_hash_index: dict[str, dict[str, str]] = {}
+        # bank_id → {(content_hash) → chunk_id} for fast dedup lookup
+        self._chunk_hash_index: dict[str, dict[str, str]] = {}
+
+    async def store_document(self, document: "SourceDocument") -> str:
+        from dataclasses import replace as _replace
+        from datetime import UTC
+        from datetime import datetime as _dt
+
+        bank_id = document.bank_id
+        self._docs.setdefault(bank_id, {})
+        self._doc_hash_index.setdefault(bank_id, {})
+
+        # Dedup by content_hash when set.
+        if document.content_hash:
+            existing_id = self._doc_hash_index[bank_id].get(document.content_hash)
+            if existing_id is not None and existing_id in self._docs[bank_id]:
+                return existing_id
+
+        # Stamp created_at if not provided (store owns this field).
+        stamped = _replace(
+            document,
+            created_at=document.created_at or _dt.now(UTC),
+        )
+        self._docs[bank_id][document.id] = stamped
+        if document.content_hash:
+            self._doc_hash_index[bank_id][document.content_hash] = document.id
+        return document.id
+
+    async def get_document(
+        self,
+        document_id: str,
+        bank_id: str,
+    ) -> "SourceDocument | None":
+        return self._docs.get(bank_id, {}).get(document_id)
+
+    async def find_document_by_hash(
+        self,
+        content_hash: str,
+        bank_id: str,
+    ) -> "SourceDocument | None":
+        doc_id = self._doc_hash_index.get(bank_id, {}).get(content_hash)
+        if doc_id is None:
+            return None
+        return self._docs.get(bank_id, {}).get(doc_id)
+
+    async def list_documents(
+        self,
+        bank_id: str,
+        *,
+        limit: int = 100,
+    ) -> list["SourceDocument"]:
+        docs = list(self._docs.get(bank_id, {}).values())
+        # Newest-first by created_at; tolerate Nones via a fallback.
+        from datetime import UTC
+        from datetime import datetime as _dt
+        docs.sort(key=lambda d: d.created_at or _dt.fromtimestamp(0, UTC), reverse=True)
+        return docs[:limit]
+
+    async def delete_document(self, document_id: str, bank_id: str) -> bool:
+        bank_docs = self._docs.get(bank_id, {})
+        doc = bank_docs.pop(document_id, None)
+        if doc is None:
+            return False
+        # Drop the hash-index entry too so a follow-up re-store doesn't
+        # silently dedup against the deleted row.
+        if doc.content_hash:
+            self._doc_hash_index.get(bank_id, {}).pop(doc.content_hash, None)
+        # Cascade: drop all chunks of this document.
+        bank_chunks = self._chunks.get(bank_id, {})
+        to_drop = [cid for cid, chunk in bank_chunks.items() if chunk.document_id == document_id]
+        for cid in to_drop:
+            chunk = bank_chunks.pop(cid)
+            if chunk.content_hash:
+                self._chunk_hash_index.get(bank_id, {}).pop(chunk.content_hash, None)
+        return True
+
+    async def store_chunks(self, chunks: list["SourceChunk"]) -> list[str]:
+        from dataclasses import replace as _replace
+        from datetime import UTC
+        from datetime import datetime as _dt
+
+        ids: list[str] = []
+        for chunk in chunks:
+            bank_id = chunk.bank_id
+            self._chunks.setdefault(bank_id, {})
+            self._chunk_hash_index.setdefault(bank_id, {})
+
+            # Dedup by content_hash when set.
+            if chunk.content_hash:
+                existing = self._chunk_hash_index[bank_id].get(chunk.content_hash)
+                if existing is not None and existing in self._chunks[bank_id]:
+                    ids.append(existing)
+                    continue
+
+            stamped = _replace(
+                chunk,
+                created_at=chunk.created_at or _dt.now(UTC),
+            )
+            self._chunks[bank_id][chunk.id] = stamped
+            if chunk.content_hash:
+                self._chunk_hash_index[bank_id][chunk.content_hash] = chunk.id
+            ids.append(chunk.id)
+        return ids
+
+    async def get_chunk(self, chunk_id: str, bank_id: str) -> "SourceChunk | None":
+        return self._chunks.get(bank_id, {}).get(chunk_id)
+
+    async def list_chunks(
+        self,
+        document_id: str,
+        bank_id: str,
+    ) -> list["SourceChunk"]:
+        chunks = [
+            c for c in self._chunks.get(bank_id, {}).values()
+            if c.document_id == document_id
+        ]
+        chunks.sort(key=lambda c: c.chunk_index)
+        return chunks
+
+    async def find_chunk_by_hash(
+        self,
+        content_hash: str,
+        bank_id: str,
+    ) -> "SourceChunk | None":
+        chunk_id = self._chunk_hash_index.get(bank_id, {}).get(content_hash)
+        if chunk_id is None:
+            return None
+        return self._chunks.get(bank_id, {}).get(chunk_id)
+
+    async def health(self) -> HealthStatus:
+        return HealthStatus(healthy=True, message="in-memory source store")
 
 
 # ---------------------------------------------------------------------------

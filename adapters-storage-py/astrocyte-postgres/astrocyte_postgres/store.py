@@ -314,6 +314,13 @@ class PostgresStore:
                 # against a real ``astrocyte_vectors`` table, then call
                 # ``store.refresh_bm25_views()`` to populate them.
                 #
+                # 014_source_documents.sql is intentionally NOT mirrored here —
+                # the source-document/chunk hierarchy is owned by
+                # ``astrocyte_postgres.source_store.PostgresSourceStore``, which
+                # has its own ``_ensure_schema()``. The ``chunk_id`` column on
+                # ``astrocyte_vectors`` is added there too (as a backreference);
+                # it's optional and the bootstrap-only path leaves it absent.
+                #
                 # Mirrors 008_entities_temporal.sql (temporal_facts table only;
                 # the entity_* tables in 008 are owned by the entity-resolution
                 # adapter, not this store).

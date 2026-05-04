@@ -716,6 +716,10 @@ class AstrocyteConfig:
     # Optional — when unset, /v1/mental-models endpoints raise 501.
     mental_model_store: str | None = None
     mental_model_store_config: dict[str, str | int | float | bool | None] | None = None
+    # M10 source-document / chunk store (provenance hierarchy). Optional —
+    # when unset, vectors remain anonymous flat rows (backward compatible).
+    source_store: str | None = None
+    source_store_config: dict[str, str | int | float | bool | None] | None = None
 
     # LLM
     llm_provider: str | None = None
@@ -1091,6 +1095,8 @@ _SCALAR_CONFIG_FIELDS = (
     "wiki_store_config",
     "mental_model_store",
     "mental_model_store_config",
+    "source_store",
+    "source_store_config",
     "llm_provider",
     "llm_provider_config",
     "embedding_provider",

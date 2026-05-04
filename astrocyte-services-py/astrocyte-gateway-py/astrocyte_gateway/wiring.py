@@ -15,6 +15,7 @@ from astrocyte.provider import (
     GraphStore,
     LLMProvider,
     MentalModelStore,
+    SourceStore,
     VectorStore,
     WikiStore,
 )
@@ -115,6 +116,27 @@ def resolve_mental_model_store(config: AstrocyteConfig) -> MentalModelStore | No
         raise ConfigError(f"Mental model store {name!r} not found. ({e})") from e
     return _instantiate(
         cls, _cfg_dict(config.mental_model_store_config), f"mental_model_store {name!r}",
+    )
+
+
+def resolve_source_store(config: AstrocyteConfig) -> SourceStore | None:
+    """Resolve the configured first-class :class:`SourceStore`, if any.
+
+    Default: ``None`` — when unset, source-aware retain becomes a no-op
+    and vectors retain today's anonymous flat-row contract. Set
+    ``source_store: postgres`` (or any other registered SPI implementation)
+    in YAML to enable provenance tracking through the
+    ``SourceDocument → SourceChunk → VectorItem`` hierarchy.
+    """
+    name = config.source_store or os.environ.get("ASTROCYTE_SOURCE_STORE")
+    if not name:
+        return None
+    try:
+        cls = resolve_provider(name, "source_stores")
+    except LookupError as e:
+        raise ConfigError(f"Source store {name!r} not found. ({e})") from e
+    return _instantiate(
+        cls, _cfg_dict(config.source_store_config), f"source_store {name!r}",
     )
 
 

@@ -128,6 +128,11 @@ class Astrocyte:
         # First-class replacement for the prior wiki-piggyback (kind="concept" +
         # metadata["_mental_model"] = True) — see provider.MentalModelStore docs.
         self._mental_model_store: object | None = None
+        # M10: source-document / chunk store (optional; enables source-aware
+        # retain to preserve provenance back to the originating document and
+        # chunk). Deployments without a SourceStore work exactly as before —
+        # vectors stay anonymous flat rows.
+        self._source_store: object | None = None
 
     @property
     def config(self) -> AstrocyteConfig:
@@ -220,6 +225,25 @@ class Astrocyte:
 
         check_spi_version(store, "MentalModelStore")
         self._mental_model_store = store
+
+    def set_source_store(self, store: object) -> None:
+        """Set the :class:`~astrocyte.provider.SourceStore` provider. Optional.
+
+        When configured, ingestion paths can persist
+        :class:`~astrocyte.types.SourceDocument` and
+        :class:`~astrocyte.types.SourceChunk` rows alongside vectors so memory
+        retains a backreference to its originating document. Deployments
+        without a SourceStore continue to work — vectors remain anonymous
+        flat rows with ``chunk_id = NULL``.
+
+        Args:
+            store: Any object satisfying the
+                :class:`~astrocyte.provider.SourceStore` protocol.
+        """
+        from astrocyte.provider import check_spi_version
+
+        check_spi_version(store, "SourceStore")
+        self._source_store = store
 
     def set_compile_queue(self, queue: object) -> None:
         """Set the async compile queue (M8 W4 threshold trigger). Optional.

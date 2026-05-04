@@ -48,6 +48,8 @@ if TYPE_CHECKING:
         ReflectResult,
         RetainRequest,
         RetainResult,
+        SourceChunk,
+        SourceDocument,
         ToolDefinition,
         TransportCapabilities,
         VectorFilters,
@@ -529,6 +531,110 @@ class MentalModelStore(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Tier 1: Source Store (M10 — documents + chunks normalisation)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class SourceStore(Protocol):
+    """SPI for source-document and chunk storage.
+
+    Backs the three-layer hierarchy ``SourceDocument → SourceChunk →
+    VectorItem`` so retained memories can preserve provenance back to
+    the originating document. Optional: deployments without a SourceStore
+    keep using the prior flat-vectors retain path.
+
+    See ``astrocyte.testing.in_memory.InMemorySourceStore`` for a
+    reference and ``astrocyte_postgres.PostgresSourceStore`` for the
+    production-grade implementation.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    async def store_document(self, document: "SourceDocument") -> str:
+        """Create or update a source document.
+
+        Returns the stored ``document.id``. Implementations should treat
+        ``content_hash`` as the dedup key when set: a second call with
+        the same ``(bank_id, content_hash)`` should NOT create a
+        duplicate row, but instead return the existing id.
+        """
+        pass
+
+    async def get_document(
+        self,
+        document_id: str,
+        bank_id: str,
+    ) -> "SourceDocument | None":
+        """Retrieve a source document by id. Returns ``None`` if missing
+        or soft-deleted."""
+        pass
+
+    async def find_document_by_hash(
+        self,
+        content_hash: str,
+        bank_id: str,
+    ) -> "SourceDocument | None":
+        """Look up an existing document by its content hash for dedup
+        before re-ingest."""
+        pass
+
+    async def list_documents(
+        self,
+        bank_id: str,
+        *,
+        limit: int = 100,
+    ) -> list["SourceDocument"]:
+        """List source documents in a bank, newest first."""
+        pass
+
+    async def delete_document(self, document_id: str, bank_id: str) -> bool:
+        """Soft-delete a document. Cascades to its chunks via the
+        underlying schema. Does NOT cascade to vectors that reference
+        the chunks (those use their own ``forgotten_at`` lifecycle and
+        keep their text — the source is just no longer linkable).
+
+        Returns ``True`` if the document was found and deleted,
+        ``False`` if it didn't exist or was already deleted.
+        """
+        pass
+
+    async def store_chunks(self, chunks: list["SourceChunk"]) -> list[str]:
+        """Bulk-insert chunks. Returns their ids in input order.
+
+        Dedup: a chunk with a ``(bank_id, content_hash)`` pair that
+        already exists must NOT create a duplicate; the returned id
+        should be the existing chunk's id.
+        """
+        pass
+
+    async def get_chunk(self, chunk_id: str, bank_id: str) -> "SourceChunk | None":
+        """Retrieve a chunk by id. Returns ``None`` if missing."""
+        pass
+
+    async def list_chunks(
+        self,
+        document_id: str,
+        bank_id: str,
+    ) -> list["SourceChunk"]:
+        """List all chunks of a document, ordered by ``chunk_index``."""
+        pass
+
+    async def find_chunk_by_hash(
+        self,
+        content_hash: str,
+        bank_id: str,
+    ) -> "SourceChunk | None":
+        """Lookup an existing chunk by its content hash for dedup
+        before re-storing."""
+        pass
+
+    async def health(self) -> HealthStatus:
+        """Check storage connectivity."""
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Tier 2: Engine Provider
 # ---------------------------------------------------------------------------
 
@@ -691,6 +797,7 @@ _SUPPORTED_VERSIONS: dict[str, set[int]] = {
     "DocumentStore": {1},
     "WikiStore": {1},
     "MentalModelStore": {1},
+    "SourceStore": {1},
     "EngineProvider": {1},
     "LLMProvider": {1},
     "OutboundTransportProvider": {1},

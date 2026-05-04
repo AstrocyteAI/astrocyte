@@ -13,6 +13,7 @@ ENTRY_POINT_GROUPS = {
     "document_stores": "astrocyte.document_stores",
     "wiki_stores": "astrocyte.wiki_stores",
     "mental_model_stores": "astrocyte.mental_model_stores",
+    "source_stores": "astrocyte.source_stores",
     "engine_providers": "astrocyte.engine_providers",
     "llm_providers": "astrocyte.llm_providers",
     "outbound_transports": "astrocyte.outbound_transports",
