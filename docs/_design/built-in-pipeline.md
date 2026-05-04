@@ -145,6 +145,16 @@ pipeline:
     top_n: 20
 ```
 
+#### Cross-encoder reranker — pool-size matching
+
+`pipeline/cross_encoder_rerank.py` ships the production rerank path (default model: `cross-encoder/ms-marco-MiniLM-L-6-v2`, also Hindsight's default). When tuning, the most common operator footgun is **mismatched pool sizes between fusion output and `top_k`**:
+
+- `cross_encoder_rerank.top_k` should be **≥ the candidate pool that fusion delivers to the reranker**. If `top_k = 12` but fusion produces 30 candidates, you discard 18 already-paid-for retrieval results before the reranker even sees them.
+- For benchmark presets the cleanest pattern is to align the three knobs: `benchmark_preset.<budget>.candidate_limit == benchmark_preset.<budget>.rerank_top_k == cross_encoder_rerank.top_k`. The `config-fast-recall.yaml` and `config-hindsight-parity.yaml` presets follow this convention.
+- For production deployments where over-fetch is cheap (Postgres + HNSW), set `top_k` slightly **higher** than `candidate_limit` so the reranker has headroom to promote a candidate that fusion under-ranked.
+
+Cross-encoder cost scales linearly with `top_k`; the quality plateau is typically reached around `top_k = 30` on LoCoMo-shaped queries. Above that, latency dominates without accuracy gain.
+
 ### 3.1 Query-intent classifier (v0.11.0+)
 
 `pipeline/query_intent.py:classify_query_intent()` runs at the top of recall and reflect, returning a `QueryIntentResult(intent, confidence)`. Seven categories:
@@ -315,22 +325,23 @@ This table captures what users get at each tier, helping them make informed upgr
 |---|---|---|
 | **Chunking** | Sentence/paragraph splitting | Sophisticated content-aware chunking |
 | **Entity extraction** | LLM-based extraction (LLM provider SPI) when graph store + profile allow; **spaCy** is optional for **PII policy** scanning, not the default retain-path NER | Multi-pass LLM with normalization and canonical resolution |
-| **Embedding** | Standard models via LLM SPI | Tuned HNSW with partial indexes per fact type |
-| **Semantic retrieval** | Vector similarity search | Vector similarity with optimized ef_search tuning |
-| **Graph retrieval** | Basic neighbor traversal (depth 2) | Spreading activation with configurable decay |
-| **Keyword retrieval** | BM25 via DocumentStore | Native BM25 integrated with vector search |
-| **Temporal retrieval** | Post-fusion date filtering | Temporal proximity weighting, temporal link expansion |
-| **Fusion** | Standard RRF (k=60) | Tuned RRF + cross-encoder reranking |
-| **Reranking** | Optional flashrank or LLM | Native cross-encoder, always-on |
-| **Reflect** | Single-pass LLM synthesis | Agentic multi-turn with tool use (lookup, recall, learn, expand) |
+| **Embedding + indexes** | Standard models via LLM SPI; **HNSW with partial indexes per `(bank_id, fact_type)`** ([`postgres-native fast paths in pipeline/recall.py`](#); shipped v0.11.0) | Tuned HNSW with custom ef_search per query class |
+| **Semantic retrieval** | Vector similarity search; UNION ALL across fact-types so the planner picks the partial index per arm | Vector similarity with optimized ef_search tuning + custom rank fusion |
+| **Graph retrieval** | Basic neighbor traversal (depth 2); causal links + semantic kNN graph available as opt-in (`causal_links.enabled`, `semantic_link_graph.enabled`) | Spreading activation with configurable decay + canonical-entity-resolved expansion |
+| **Keyword retrieval** | **Native BM25 via `astrocyte-postgres` `text_fts` (tsvector) + GIN + `search_fulltext_bm25`** — same connection pool as VectorStore; no separate Elasticsearch sidecar required (shipped v0.10.0) | Native BM25 integrated with vector search and engine-tuned scoring |
+| **Temporal retrieval** | Post-fusion date filtering; query analyzer extracts date ranges (regex-based, opt-in via `query_analyzer.enabled`) | Temporal proximity weighting, temporal link expansion, multilingual dateparser |
+| **Fusion** | Standard RRF (k=60); intent-aware weights via `pipeline/query_intent.py` | Tuned RRF + cross-encoder reranking with engine-specific score combiners |
+| **Reranking** | Cross-encoder rerank shipped (`pipeline/cross_encoder_rerank.py`, default `cross-encoder/ms-marco-MiniLM-L-6-v2`); enabled via `cross_encoder_rerank.enabled` | Always-on, with engine-tuned cross-encoder + score combiners |
+| **Reflect** | Single-pass LLM synthesis OR agentic multi-turn (`pipeline/agentic_reflect.py`, opt-in via `agentic_reflect.enabled`); intent-driven prompt-variant routing (v0.11.0+) | Agentic multi-turn with tool use (lookup, recall, learn, expand), engine-tuned prompts |
 | **Dispositions** | Basic prompt guidance (limited) | Native personality modulation (skepticism, literalism, empathy) |
-| **Consolidation** | Dedup + archive by age; **opt-in: observation consolidation** (post-retain LLM pass, create/update/delete) | Quality-based loss functions, full observation formation, mental models |
-| **Entity resolution** | LLM-extracted entities + exact-match dedup | Canonical resolution with co-occurrence tracking, alias management |
-| **Scale** | Single process | Multi-tenant, distributed, production-grade |
-| **Temporal links** | Not supported | Temporal proximity links between memories |
-| **Observations** | **Opt-in**: `enable_observation_consolidation=True` — fire-and-forget LLM pass synthesizes deduplicated observations with `proof_count` tracking; boosted in recall via weighted RRF (weight=1.5) and reranking | Synthesized knowledge consolidated from raw facts |
+| **Consolidation** | Dedup + archive by age; **opt-in: observation consolidation** (post-retain LLM pass, create/update/delete); **scope-bound + invalidatable** (v0.11.0+) | Quality-based loss functions, full observation formation, mental models |
+| **Mental models** | **First-class SPI** (`MentalModelStore`); shipped v0.11.0+; `astrocyte-postgres` reference adapter; REST `/v1/mental-models` | Native, with engine-tuned compilation prompts and disposition-aware compilation |
+| **Entity resolution** | LLM-extracted entities + exact-match dedup; canonical resolution path with `EntityLink` evidence (M11) | Canonical resolution with co-occurrence tracking, alias management, gleaning passes |
+| **Scale** | Single process per tenant; schema-per-tenant isolation (v0.11.0+) | Multi-tenant, distributed, production-grade engine |
+| **Temporal links** | Opt-in via `causal_links.enabled` (v0.10.0+) | Temporal proximity links between memories with engine-tuned decay |
+| **Observations** | **Opt-in**: `enable_observation_consolidation=True` — fire-and-forget LLM pass synthesizes deduplicated observations with `proof_count` tracking; boosted in recall via weighted RRF (weight=1.5) and reranking; scope-bound + invalidatable (v0.11.0+) | Synthesized knowledge consolidated from raw facts with engine-tuned dedup |
 
-The built-in pipeline is **good enough** to build real products. Mystique is **materially better** in every dimension - particularly reflect (agentic vs single-pass), fusion (tuned vs standard), and consolidation (full observation layer vs opt-in post-retain pass).
+The built-in pipeline is **good enough** to build real products and now ships much of what was previously in the Mystique-only column (HNSW partial indexes per fact-type, native BM25, cross-encoder rerank, agentic reflect, mental models, observation scope/invalidation). Mystique remains **materially better** on the dimensions that depend on engine-tuned heuristics — disposition modulation, gleaning passes for entity extraction, multilingual temporal handling, distributed multi-tenant scale.
 
 ---
 

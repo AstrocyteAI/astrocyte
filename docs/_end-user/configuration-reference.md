@@ -228,6 +228,29 @@ Progressive retrieval strategy — tries cheaper/faster tiers first.
 
 ---
 
+## adversarial_defense
+
+Defenses against adversarial / false-premise / prompt-injection-shaped queries. All knobs default to off so the framework stays accuracy-first; opt in selectively per preset. See [`benchmark-presets.md`](/plugins/benchmark-presets/) for measured impact per knob and the post-mortem on which combinations help vs hurt.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `abstention_enabled` | bool | `false` | When `true`, recall short-circuits to a stable "insufficient evidence" reply if the top semantic score falls below `abstention_floor`. |
+| `abstention_floor` | float | `0.2` | Score threshold below which `abstention_enabled` fires. Lower values trigger more aggressively. |
+| `abstention_floor_intent_only` | bool | `false` | When `true`, only fire the abstention floor for queries the intent classifier returns as `EXPLORATORY` or `UNKNOWN` (i.e. NOT a confidently well-formed `FACTUAL` / `TEMPORAL` / `RELATIONAL` / `COMPARATIVE` / `PROCEDURAL` query). Empirically the flat floor cratered single-hop (-10pp) and temporal (-10pp) on `config-hindsight-balanced` because legitimate factual / temporal queries occasionally have top scores below 0.2; intent-gating recovers those points while keeping the adversarial floor for query shapes where false-premise actually hides. See `pipeline/query_intent.py` for the classifier. |
+| `premise_verification_enabled` | bool | `false` | When `true`, decompose multi-claim queries into atomic premises and LLM-verify each before retrieval. Adds one LLM call per query; can interfere with rate limits at high concurrency. |
+| `adversarial_prompt_enabled` | bool | `false` | When `true`, prepend an adversarial-defense rule to the synthesis system prompt ("if the question's premise is false, say so explicitly"). Cheap defense-in-depth — no extra LLM calls. |
+
+```yaml
+adversarial_defense:
+  abstention_enabled: true
+  abstention_floor: 0.2
+  abstention_floor_intent_only: true   # v0.11.0+
+  premise_verification_enabled: false
+  adversarial_prompt_enabled: true
+```
+
+---
+
 ## recall_authority
 
 Structured truth precedence — labels fused hits for synthesis.

@@ -281,8 +281,8 @@ With wiki: recall runs a **two-tier search**:
 
 ```
 query_vector = embed(query)
-compiled_hits = pgvector.search(memory_layer="compiled")
-raw_hits = pgvector.search(raw memories)
+compiled_hits = vector_store.search(memory_layer="compiled")
+raw_hits = vector_store.search(raw memories)
 lexical_hits = document_store.search_fulltext(query)
 hydrated_pages = sql.fetch_pages(compiled_hits.page_ids)
 graph_expansion = age.expand(top hydrated pages/entities, bounded)
