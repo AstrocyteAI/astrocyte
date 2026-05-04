@@ -356,6 +356,103 @@ class TestParallelRetrieveTemporal:
         assert set(timings) == {"semantic", "keyword"}
         assert counts == {"semantic": 1, "keyword": 1}
 
+    async def test_hybrid_failure_falls_back_to_per_strategy(self) -> None:
+        """When the hybrid CTE throws, parallel_retrieve MUST fall back to
+        running semantic + keyword as separate strategies — NOT clobber
+        both to []. A single transient DB hiccup (pool exhaustion,
+        deadlock, lock-wait timeout) on the hybrid path otherwise turns
+        into a total recall failure for the entire question.
+
+        Regression for the P0 bug from the architecture review: the prior
+        ``except Exception`` block set ``results['semantic'] = []`` and
+        ``results['keyword'] = []`` directly.
+        """
+
+        class HybridFailsStore(InMemoryVectorStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.hybrid_attempted = False
+                self.semantic_fallback_called = False
+                self.keyword_fallback_called = False
+                # Seed one vector for the semantic fallback to find.
+                # Use sync-friendly setup (no await in __init__).
+
+            async def search_hybrid_semantic_bm25(self, *_args, **_kwargs):
+                self.hybrid_attempted = True
+                raise RuntimeError("simulated transient pool error")
+
+            async def search_similar(self, query_vector, bank_id, **kwargs):
+                self.semantic_fallback_called = True
+                return [
+                    VectorHit(id="fallback-sem", text="recovered semantic hit", score=0.7),
+                ]
+
+            async def search_fulltext(self, query, bank_id, **kwargs):
+                self.keyword_fallback_called = True
+                return [
+                    DocumentHit(document_id="fallback-kw", text="recovered keyword hit", score=0.6),
+                ]
+
+        store = HybridFailsStore()
+        timings: dict[str, float] = {}
+        counts: dict[str, int] = {}
+
+        results = await parallel_retrieve(
+            query_vector=[1.0, 0.0],
+            query_text="recover",
+            bank_id="b1",
+            vector_store=store,
+            document_store=store,
+            enable_temporal=False,
+            strategy_timings_ms=timings,
+            strategy_candidate_counts=counts,
+        )
+
+        # Hybrid was attempted (and failed).
+        assert store.hybrid_attempted is True
+        # Both fallback paths fired.
+        assert store.semantic_fallback_called is True
+        assert store.keyword_fallback_called is True
+        # CRITICAL: results are populated from the fallback, NOT empty.
+        assert [item.id for item in results["semantic"]] == ["fallback-sem"]
+        assert [item.id for item in results["keyword"]] == ["fallback-kw"]
+        # Timings reflect the fallback execution (not the failed hybrid time).
+        assert "semantic" in timings and "keyword" in timings
+        assert counts == {"semantic": 1, "keyword": 1}
+
+    async def test_hybrid_failure_isolates_per_strategy_fallback_failure(self) -> None:
+        """If the hybrid CTE fails AND one of the two fallback strategies
+        ALSO fails (e.g. semantic-search hits the same DB error), the
+        OTHER fallback must still flow through. Per-strategy isolation
+        all the way down."""
+
+        class HybridFailsStore(InMemoryVectorStore):
+            async def search_hybrid_semantic_bm25(self, *_args, **_kwargs):
+                raise RuntimeError("hybrid CTE died")
+
+            async def search_similar(self, query_vector, bank_id, **kwargs):
+                # Semantic fallback also fails — simulating a deeper outage.
+                raise RuntimeError("semantic also down")
+
+            async def search_fulltext(self, query, bank_id, **kwargs):
+                # Keyword fallback succeeds.
+                return [DocumentHit(document_id="kw-survived", text="x", score=0.5)]
+
+        store = HybridFailsStore()
+        results = await parallel_retrieve(
+            query_vector=[1.0, 0.0],
+            query_text="survive",
+            bank_id="b1",
+            vector_store=store,
+            document_store=store,
+            enable_temporal=False,
+        )
+
+        # Semantic fallback failed → empty list (isolated, not exception).
+        assert results["semantic"] == []
+        # Keyword fallback succeeded → results survive (wrapped as ScoredItem).
+        assert [item.id for item in results["keyword"]] == ["kw-survived"]
+
 
 # ---------------------------------------------------------------------------
 # RRF fusion — temporal can outvote semantic distractors

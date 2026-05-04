@@ -152,10 +152,42 @@ async def parallel_retrieve(
                     strategy_timings_ms[name] = elapsed_ms
                 if strategy_candidate_counts is not None:
                     strategy_candidate_counts[name] = len(items)
-        except Exception as exc:  # pragma: no cover — per-strategy isolation
-            logger.warning("retrieval strategy hybrid_semantic_bm25 failed: %s", exc)
-            results["semantic"] = []
-            results["keyword"] = []
+        except Exception as exc:
+            # Hybrid CTE failed (transient pool error, deadlock, lock-wait,
+            # OOM, etc.). DON'T clobber semantic + keyword to [] — that
+            # turns one transient DB hiccup into a recall failure for the
+            # entire question. Fall back to running the same two strategies
+            # as separate per-store calls (the portable path other adapters
+            # use). Each fallback is isolated, so if e.g. semantic succeeds
+            # but keyword fails, semantic still flows through.
+            logger.warning(
+                "retrieval strategy hybrid_semantic_bm25 failed (%s); "
+                "falling back to per-strategy semantic + keyword",
+                exc,
+            )
+            sem_task = asyncio.create_task(
+                _timed(_semantic_search(vector_store, query_vector, bank_id, limit, filters))
+            )
+            kw_task = asyncio.create_task(
+                _timed(_keyword_search(document_store, query_text, bank_id, limit))
+            )
+            for name, fallback_task in (("semantic", sem_task), ("keyword", kw_task)):
+                try:
+                    items, fallback_ms = await fallback_task
+                    results[name] = items
+                    if strategy_timings_ms is not None:
+                        strategy_timings_ms[name] = fallback_ms
+                    if strategy_candidate_counts is not None:
+                        strategy_candidate_counts[name] = len(items)
+                except Exception as inner_exc:
+                    logger.warning(
+                        "fallback strategy %s also failed: %s", name, inner_exc,
+                    )
+                    results[name] = []
+                    if strategy_timings_ms is not None:
+                        strategy_timings_ms[name] = 0.0
+                    if strategy_candidate_counts is not None:
+                        strategy_candidate_counts[name] = 0
 
     for name, task in tasks.items():
         try:

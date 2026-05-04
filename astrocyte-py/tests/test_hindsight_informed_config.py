@@ -63,7 +63,11 @@ def test_named_benchmark_presets_parse(monkeypatch) -> None:
             "sfe": True,
             "semantic_links": True,
             "agentic": False,
-            "cross_encoder": False,
+            # CE turned on for fast-recall as part of the post-rerank-fault
+            # analysis (commits up to 95b297b) — top_k=12 matches the low-budget
+            # candidate_limit so it reranks exactly the synthesis pool with no
+            # over-fetch latency penalty.
+            "cross_encoder": True,
         },
         "config-hindsight-parity.yaml": {
             "sfe": True,
