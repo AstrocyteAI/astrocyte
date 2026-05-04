@@ -93,7 +93,7 @@ curl -X POST http://127.0.0.1:8080/v1/recall \
   -d '{"query": "What theme does Calvin prefer?", "bank_id": "user-123"}'
 ```
 
-The retain/recall/reflect triple is just the entry point. The full surface is browsable at <http://127.0.0.1:8080/docs>:
+The retain/recall/reflect triple is just the entry point. The full surface is browsable at [`/docs`](http://127.0.0.1:8080/docs) on the running gateway:
 
 - **Memory lifecycle:** `/v1/forget`, `/v1/history`, `/v1/compile`
 - **Mental models:** `/v1/mental-models[/{id}]` (CRUD), `/v1/mental-models/{id}/refresh`
