@@ -20,6 +20,8 @@ Six behaviors locked in:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from astrocyte.pipeline.agentic_reflect import (
@@ -221,6 +223,79 @@ class TestAgenticLoop:
 
         offered = llm.calls[0]["tool_names"]
         assert "search_observations" not in offered
+
+    @pytest.mark.asyncio
+    async def test_mental_models_tool_offered_when_callback_provided(self):
+        """``search_mental_models`` is in the tool list iff
+        ``mental_models_fn`` is non-None.  Tool order matters: it's the
+        FIRST tool in the priority hierarchy (mental_models → observations
+        → recall → expand → done)."""
+        llm = _ScriptedToolLLM([
+            [("done", {"answer": "x", "cited_ids": []})],
+        ])
+
+        async def mm_fn(q: str, scope: str | None) -> list[MemoryHit]:
+            return []
+
+        await agentic_reflect(
+            "q", initial_hits=[],
+            recall_fn=_RecallTracker([]),
+            mental_models_fn=mm_fn,
+            llm_provider=llm,
+        )
+
+        offered = llm.calls[0]["tool_names"]
+        assert "search_mental_models" in offered
+        assert "recall" in offered
+        assert "done" in offered
+        # Priority order: mental_models is offered before recall.
+        assert offered.index("search_mental_models") < offered.index("recall")
+
+    @pytest.mark.asyncio
+    async def test_mental_models_tool_not_offered_when_callback_absent(self):
+        llm = _ScriptedToolLLM([
+            [("done", {"answer": "x", "cited_ids": []})],
+        ])
+
+        await agentic_reflect(
+            "q", initial_hits=[],
+            recall_fn=_RecallTracker([]),
+            llm_provider=llm,
+        )
+
+        offered = llm.calls[0]["tool_names"]
+        assert "search_mental_models" not in offered
+
+    @pytest.mark.asyncio
+    async def test_mental_models_tool_routes_query_and_scope(self):
+        """The model picks search_mental_models → the loop forwards
+        (query, scope) to mental_models_fn; results join the evidence pool
+        and become citable."""
+        llm = _ScriptedToolLLM([
+            [(
+                "search_mental_models",
+                {"reason": "stable preference", "query": "alice prefs", "scope": "person:alice"},
+            )],
+            [("done", {"answer": "Alice prefers async.", "cited_ids": ["mm-1"]})],
+        ])
+
+        mm_calls: list[tuple[str, str | None]] = []
+
+        async def mm_fn(query: str, scope: str | None) -> list[MemoryHit]:
+            mm_calls.append((query, scope))
+            return [_hit("mm-1", "Alice prefers async communication.")]
+
+        result = await agentic_reflect(
+            "q",
+            initial_hits=[],
+            recall_fn=_RecallTracker([]),
+            mental_models_fn=mm_fn,
+            llm_provider=llm,
+        )
+
+        assert mm_calls == [("alice prefs", "person:alice")]
+        assert result.answer == "Alice prefers async."
+        assert "mm-1" in {h.memory_id for h in (result.sources or [])}
 
     @pytest.mark.asyncio
     async def test_expand_tool_routes_to_expand_fn(self):
@@ -443,3 +518,103 @@ class TestAgenticLoop:
         last_messages = llm.calls[1]["messages"]
         tool_msgs = [m for m in last_messages if m.role == "tool"]
         assert any("unknown tool" in str(m.content) for m in tool_msgs)
+
+
+# ---------------------------------------------------------------------------
+# Temporal-resolution surfacing
+# ---------------------------------------------------------------------------
+
+
+class TestResolvedTemporalSurfacing:
+    """``_format_hits_for_tool_response`` must surface the pre-computed
+    ``resolved_date`` / ``temporal_phrase`` fields to the agent so it
+    quotes the canonical date instead of redoing relative arithmetic.
+
+    The bug this guards: a memory with text "Caroline: yesterday I went
+    to the LGBTQ support group" and metadata {"resolved_date": "2023-05-07",
+    "temporal_phrase": "yesterday"} surfaces only `text` to the agent,
+    which then redoes "yesterday" against an assumed reference and lands
+    on a different date.
+    """
+
+    def test_resolved_temporal_field_appears_in_payload(self):
+        from astrocyte.pipeline.agentic_reflect import _format_hits_for_tool_response
+
+        hit = MemoryHit(
+            text="Caroline: yesterday I went to the LGBTQ support group.",
+            score=0.8,
+            memory_id="m-locomo-c1-s3-t14",
+            metadata={
+                "temporal_anchor": "2023-05-08",
+                "temporal_phrase": "yesterday",
+                "resolved_date": "2023-05-07",
+                "date_granularity": "day",
+            },
+        )
+        payload_str = _format_hits_for_tool_response([hit])
+        payload = json.loads(payload_str)
+        assert len(payload) == 1
+        entry = payload[0]
+        assert entry["id"] == "m-locomo-c1-s3-t14"
+        assert "resolved_temporal" in entry
+        rt = entry["resolved_temporal"]
+        assert rt["anchor_date"] == "2023-05-08"
+        assert rt["items"] == [
+            {"phrase": "yesterday", "resolved_date": "2023-05-07", "granularity": "day"}
+        ]
+
+    def test_resolved_temporal_omitted_when_absent(self):
+        from astrocyte.pipeline.agentic_reflect import _format_hits_for_tool_response
+
+        hit = MemoryHit(text="Plain text, no temporal facts.", score=0.5, memory_id="m1")
+        payload = json.loads(_format_hits_for_tool_response([hit]))
+        assert "resolved_temporal" not in payload[0]
+
+    def test_resolved_temporal_omitted_when_only_one_side_present(self):
+        """Half-populated temporal metadata (phrase without resolved_date,
+        or vice versa) is treated as missing — never partial output."""
+        from astrocyte.pipeline.agentic_reflect import _format_hits_for_tool_response
+
+        hit_phrase_only = MemoryHit(
+            text="x", score=0.5, memory_id="m1",
+            metadata={"temporal_phrase": "yesterday"},
+        )
+        hit_date_only = MemoryHit(
+            text="x", score=0.5, memory_id="m2",
+            metadata={"resolved_date": "2023-05-07"},
+        )
+        for hit in (hit_phrase_only, hit_date_only):
+            payload = json.loads(_format_hits_for_tool_response([hit]))
+            assert "resolved_temporal" not in payload[0]
+
+    def test_multi_phrase_pipe_joined_metadata_round_trips_to_lists(self):
+        """temporal_metadata() joins multiple phrases per session with ``|``;
+        the formatter must split them back into a parallel list."""
+        from astrocyte.pipeline.agentic_reflect import _format_hits_for_tool_response
+
+        hit = MemoryHit(
+            text="...", score=0.5, memory_id="m1",
+            metadata={
+                "temporal_anchor": "2023-05-08",
+                "temporal_phrase": "yesterday|last week",
+                "resolved_date": "2023-05-07|2023-05-01",
+                "date_granularity": "day|week",
+            },
+        )
+        payload = json.loads(_format_hits_for_tool_response([hit]))
+        items = payload[0]["resolved_temporal"]["items"]
+        assert items == [
+            {"phrase": "yesterday", "resolved_date": "2023-05-07", "granularity": "day"},
+            {"phrase": "last week", "resolved_date": "2023-05-01", "granularity": "week"},
+        ]
+
+    def test_system_prompt_documents_resolved_temporal_field(self):
+        """The agent must be told to USE resolved_temporal verbatim
+        instead of redoing arithmetic from raw text."""
+        from astrocyte.pipeline.agentic_reflect import _build_system_prompt
+
+        prompt = _build_system_prompt(adversarial_defense=False)
+        assert "resolved_temporal" in prompt
+        assert "USE THE DATES FROM THAT FIELD VERBATIM" in prompt
+        # And the off-by-one warning is explicit.
+        assert "off-by-one" in prompt

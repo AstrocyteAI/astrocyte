@@ -86,6 +86,36 @@ class AgenticReflectParams:
 # ---------------------------------------------------------------------------
 
 
+_TOOL_SEARCH_MENTAL_MODELS = ToolDefinition(
+    name="search_mental_models",
+    description=(
+        "Search the bank's curated mental models — durable, refreshable summaries "
+        "of stable preferences / personas / concepts (e.g. 'Alice prefers async "
+        "communication' or 'Project X status: blocked on review'). Highest-quality "
+        "tier when the question is about a stable summary or persona; cite the "
+        "model_id like any other memory_id. If `search_mental_models` returns "
+        "nothing relevant, fall through to `search_observations` and `recall`."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": "Brief explanation of why a mental-model lookup fits the question.",
+            },
+            "query": {
+                "type": "string",
+                "description": "Free-text query — used for ranking when the store doesn't already filter by scope.",
+            },
+            "scope": {
+                "type": "string",
+                "description": "Optional scope filter (e.g. 'bank' for bank-wide models, 'person:alice' for a person-specific scope). Omit to list all models.",
+            },
+        },
+        "required": ["reason", "query"],
+    },
+)
+
 _TOOL_RECALL = ToolDefinition(
     name="recall",
     description=(
@@ -220,11 +250,17 @@ _SYSTEM_PROMPT = """\
 You are an evidence-gathering memory agent. Answer the user's question using \
 ONLY tool results — never invent facts.
 
-Available tools:
-- `search_observations`: consolidated knowledge (try first when the question \
-asks about stable preferences / patterns / persona).
-- `recall`: raw memories for ground-truth facts (always available).
-- `expand`: fetch source memories under a compiled fact you've seen.
+Available tools (priority order — try the higher-quality tiers first):
+- `search_mental_models`: curated, refreshable summaries of stable \
+preferences / personas / concepts (highest quality — try first when the \
+question asks about a person's stable beliefs / preferences / status).
+- `search_observations`: consolidated knowledge auto-synthesized from raw \
+memories (try second for stable patterns when no mental model fits).
+- `recall`: raw memories for ground-truth facts (always available, fall back \
+here when the higher tiers return nothing relevant).
+- `expand`: fetch source memories under a compiled fact / mental model / \
+wiki page you've seen — useful when the distilled summary loses verbatim \
+context.
 - `done`: commit final answer with citations.
 
 Core rules:
@@ -265,6 +301,25 @@ specific match and cite it.
 8. When in doubt between abstaining and extracting: extract, cite the hit, \
 and let the answer be evidence-grounded. A confident extraction beats an \
 overcautious abstain.
+
+TEMPORAL RESOLUTION — read this when the question asks "when did X happen?":
+
+9. If a memory in the tool result has a `resolved_temporal` field, USE THE \
+DATES FROM THAT FIELD VERBATIM. Each entry maps a relative phrase \
+(`"yesterday"`, `"last week"`) to the canonical `resolved_date` computed \
+at retain time from the session's authoritative timestamp. DO NOT redo the \
+arithmetic from the raw text — you will get off-by-one errors when the \
+session anchor differs from your assumed `now()`.
+
+   Example: memory text "Caroline: yesterday I went to the support group" \
+with `resolved_temporal.items = [{"phrase": "yesterday", "resolved_date": \
+"2023-05-07", "granularity": "day"}]` → answer "May 7, 2023". Do not \
+recompute "yesterday" against any other reference date.
+
+10. Only fall back to raw-text arithmetic when `resolved_temporal` is \
+absent. If both an absolute date in the text AND a `resolved_temporal` \
+entry exist, prefer the absolute date — `resolved_temporal` is for \
+relative phrases only.
 """
 
 
@@ -318,6 +373,12 @@ def _build_system_prompt(*, adversarial_defense: bool = False) -> str:
 RecallFn = Callable[[str, int], Awaitable[list[MemoryHit]]]
 ObservationsFn = Callable[[str, int], Awaitable[list[MemoryHit]]] | None
 ExpandFn = Callable[[str, int], Awaitable[list[MemoryHit]]] | None
+# (query, scope_or_None) -> list[MemoryHit].  Scope is the optional second
+# argument from the tool call; the orchestrator forwards it to
+# ``MentalModelStore.list(bank_id, scope=scope)``.  No max_results: mental
+# models are usually a handful per bank — return all in scope and trust the
+# LLM to pick.
+MentalModelsFn = Callable[[str, str | None], Awaitable[list[MemoryHit]]] | None
 
 
 @dataclass
@@ -345,18 +406,67 @@ def _add_hits(state: _AgentState, hits: list[MemoryHit], cap: int) -> int:
     return added
 
 
+def _resolved_temporal_for_hit(meta: dict | None) -> dict[str, list[dict[str, str]]] | None:
+    """Pull the pre-computed temporal facts from a MemoryHit's metadata.
+
+    ``temporal_metadata()`` writes ``temporal_phrase`` / ``resolved_date`` /
+    ``date_granularity`` as ``|``-joined strings at retain time, anchored to
+    the session's authoritative ``date_time``.  Without surfacing these to
+    the agent, the LLM does its own arithmetic from the raw text (e.g.
+    seeing "yesterday" and subtracting one day from a misread anchor) and
+    drifts off-by-one.
+
+    Returns a compact dict with parallel lists, one entry per resolved
+    phrase, so the agent can quote the canonical resolved date verbatim.
+    Returns ``None`` when no temporal metadata is present.
+    """
+    if not meta:
+        return None
+    phrases = meta.get("temporal_phrase")
+    resolved = meta.get("resolved_date")
+    if not isinstance(phrases, str) or not isinstance(resolved, str):
+        return None
+    granularities = meta.get("date_granularity")
+    anchor = meta.get("temporal_anchor")
+    p_list = phrases.split("|")
+    r_list = resolved.split("|")
+    g_list = granularities.split("|") if isinstance(granularities, str) else []
+    if not p_list or not r_list or len(p_list) != len(r_list):
+        return None
+    items: list[dict[str, str]] = []
+    for i, (phrase, date) in enumerate(zip(p_list, r_list)):
+        item = {"phrase": phrase, "resolved_date": date}
+        if i < len(g_list) and g_list[i]:
+            item["granularity"] = g_list[i]
+        items.append(item)
+    out: dict[str, list[dict[str, str]] | str] = {"items": items}
+    if isinstance(anchor, str) and anchor:
+        out["anchor_date"] = anchor
+    return out  # type: ignore[return-value]
+
+
 def _format_hits_for_tool_response(hits: list[MemoryHit]) -> str:
-    """Render hits as a compact JSON array the LLM can consume."""
+    """Render hits as a compact JSON array the LLM can consume.
+
+    Includes a ``resolved_temporal`` block whenever the memory's metadata
+    carries pre-computed temporal facts.  This lets the agent quote the
+    canonical resolved date instead of doing its own off-by-one arithmetic
+    from raw "yesterday" / "last week" text.
+    """
     payload = []
     for h in hits:
         text = (h.text or "").strip()
         if len(text) > 600:
             text = text[:597] + "..."
-        payload.append({
+        entry: dict[str, object] = {
             "id": h.memory_id,
             "text": text,
             "score": round(h.score, 4) if h.score else 0.0,
-        })
+        }
+        resolved = _resolved_temporal_for_hit(h.metadata)
+        if resolved is not None:
+            entry["resolved_temporal"] = resolved
+        payload.append(entry)
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -368,6 +478,7 @@ async def agentic_reflect(
     llm_provider,
     observations_fn: ObservationsFn = None,
     expand_fn: ExpandFn = None,
+    mental_models_fn: MentalModelsFn = None,
     params: AgenticReflectParams | None = None,
     final_synthesize_fn: Callable[..., Awaitable[ReflectResult]] | None = None,
     final_synthesize_kwargs: dict[str, Any] | None = None,
@@ -385,6 +496,13 @@ async def agentic_reflect(
             tool is enabled. Callable ``(query, max_results)``.
         expand_fn: Optional. When provided, the ``expand`` tool is
             enabled. Callable ``(memory_id, max_sources)``.
+        mental_models_fn: Optional. When provided, the
+            ``search_mental_models`` tool is enabled. Callable
+            ``(query, scope) -> [MemoryHit]`` — orchestrator typically
+            forwards to ``MentalModelStore.list(bank_id, scope=scope)``
+            and converts each :class:`MentalModel` to a ``MemoryHit``.
+            The mental-model tier sits ABOVE ``search_observations`` in
+            the agent's priority order; see the system prompt.
         params: Loop tuning. Defaults match Hindsight.
         final_synthesize_fn / final_synthesize_kwargs: Fallback path
             when the loop hits its iteration cap or the provider lacks
@@ -393,10 +511,14 @@ async def agentic_reflect(
     p = params or AgenticReflectParams()
 
     # Build the tool list from optional capabilities; recall + done are
-    # always present.
-    tools: list[ToolDefinition] = [_TOOL_RECALL]
+    # always present.  Tool ordering matches the priority guidance in the
+    # system prompt: mental_models → observations → recall → expand → done.
+    tools: list[ToolDefinition] = []
+    if mental_models_fn is not None:
+        tools.append(_TOOL_SEARCH_MENTAL_MODELS)
     if observations_fn is not None:
         tools.append(_TOOL_SEARCH_OBSERVATIONS)
+    tools.append(_TOOL_RECALL)
     if expand_fn is not None:
         tools.append(_TOOL_EXPAND)
     tools.append(_TOOL_DONE)
@@ -520,6 +642,34 @@ async def agentic_reflect(
                     new_hits = await observations_fn(sub_q, max_results)
                 except Exception as exc:
                     _logger.warning("agentic_reflect.observations failed (%s)", exc)
+                    new_hits = []
+                _add_hits(state, new_hits, p.max_evidence_pool_size)
+                state.conversation.append(
+                    Message(
+                        role="tool",
+                        tool_call_id=tc.id,
+                        name=name,
+                        content=_format_hits_for_tool_response(new_hits),
+                    )
+                )
+                continue
+
+            if name == "search_mental_models" and mental_models_fn is not None:
+                # ``query`` is forwarded for traceability; the underlying
+                # store doesn't currently rank by query (mental models are
+                # usually a handful per bank — return all in scope and let
+                # the LLM pick).  ``scope`` filters at the SPI level.
+                sub_q = str(args.get("query") or query).strip() or query
+                scope_arg_raw = args.get("scope")
+                scope_arg = (
+                    str(scope_arg_raw).strip() or None
+                    if isinstance(scope_arg_raw, str)
+                    else None
+                )
+                try:
+                    new_hits = await mental_models_fn(sub_q, scope_arg)
+                except Exception as exc:
+                    _logger.warning("agentic_reflect.mental_models failed (%s)", exc)
                     new_hits = []
                 _add_hits(state, new_hits, p.max_evidence_pool_size)
                 state.conversation.append(
