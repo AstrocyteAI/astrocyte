@@ -4,6 +4,31 @@ Astrocyte owns the DTO layer across all providers. This means it can define a **
 
 ---
 
+## 0. Path-traversal containment (CWE-022)
+
+`export_bank`, `import_bank`, `read_ama_header`, and `iter_ama_memories` all accept a path argument. Path canonicalization (`Path(path).resolve()`) **does not** by itself prevent path traversal — a caller can pass `/etc/passwd` and `resolve()` returns it unchanged. To contain reads/writes to a known set of directories, the helper `_safe_resolve()` validates that the resolved path stays within an explicit allow-list before any file I/O occurs.
+
+There are two opt-in mechanisms, in order of precedence:
+
+1. Pass `allowed_roots=[...]` (a list of directory paths) as a kwarg to the export/import function. Useful in library / SDK code where the allow-list is part of the call site.
+2. Set the `ASTROCYTE_PORTABILITY_ROOTS` environment variable to one or more directories joined by the OS path separator (`:` on Unix, `;` on Windows). Useful in gateway / production deployments where the allow-list is a deployment concern, not a per-call concern.
+
+When neither is set, `_safe_resolve()` returns the resolved path unchanged. This preserves library / CLI / test usage where path containment is not a security concern.
+
+**Production recommendation:**
+
+```bash
+# Single root
+ASTROCYTE_PORTABILITY_ROOTS=/var/lib/astrocyte/exports
+
+# Multiple roots (Unix path-separator)
+ASTROCYTE_PORTABILITY_ROOTS=/var/lib/astrocyte/exports:/srv/imports
+```
+
+Set this on the gateway process so any path the API forwards into `export_bank` / `import_bank` must fall under one of the listed roots; otherwise the function raises before any file I/O occurs.
+
+---
+
 ## 1. The problem
 
 Users who start with Mem0 and want to upgrade to Mystique face a wall: memories are locked in the provider's internal format. There's no standard way to export from one system and import into another.

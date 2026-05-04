@@ -432,6 +432,19 @@ class RecallResult:
     trace: RecallTrace | None = None      # Optional diagnostic info
 
 @dataclass
+class RecallTrace:
+    strategies_used: list[str] | None     # Strategies that contributed candidates
+    total_candidates: int | None          # Total candidates pre-fusion
+    fusion_method: str | None             # "rrf", etc.
+    latency_ms: float | None              # End-to-end recall latency
+    strategy_timings_ms: dict[str, float] | None  # Per-strategy latency
+    strategy_candidate_counts: dict[str, int] | None  # Per-strategy counts
+    tier_used: int | None                 # Retrieval tier that resolved the query
+    layer_distribution: dict[str, int] | None  # Hits by memory_layer
+    cache_hit: bool | None                # Recall cache satisfied without retrieval
+    wiki_tier_used: bool | None           # Wiki tier (M8 W5) resolved the query
+
+@dataclass
 class MemoryHit:
     text: str
     score: float                          # 0.0 - 1.0 relevance

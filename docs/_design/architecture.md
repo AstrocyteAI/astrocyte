@@ -584,6 +584,12 @@ provider_config:
 
 The public API (`retain()`, `recall()`, `reflect()`) is identical regardless of tier or storage backend. Callers code against one surface. The framework and providers handle the rest.
 
+### 6.5 Build-side composition (CocoIndex)
+
+Astrocyte is a **read-side** framework — agents call `retain` / `recall` / `reflect` against accumulated state. It is not a build-side data-indexing framework. For users with continuously-changing source data (codebases, Slack, PDFs, S3) that needs to be re-processed when the source changes, [CocoIndex](https://github.com/cocoindex-io/cocoindex) is the complementary build-side framework: declarative targets, fingerprint memoization, incremental re-processing. Both projects can write to the same Postgres + pgvector + AGE substrate; the integration story is composition, not absorption.
+
+See [`cocoindex-integration.md`](cocoindex-integration.md) for the four-phase roadmap covering parallel writers (Phase 0, already works), an upstream `astrocyte` target connector for CocoIndex (Phase 1), adoption of four CocoIndex pipeline patterns inside Astrocyte (Phase 2 — per-component update stats, push-source LiveMapFeed, stable-path retain trace, fingerprint memoization), and the speculative inverse direction (Phase 3).
+
 ---
 
 ## 7. What makes the framework load-bearing

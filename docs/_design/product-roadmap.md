@@ -703,6 +703,9 @@ Ships the complete third-option implementation surface: wiki compile, time trave
 **2. Research track (R1–R5)**
 Runs after the M8–M11 feature surface, before and after v1.0.0 GA as quality work warrants. Five research phases target fundamental benchmark accuracy barriers; each has its own eval gate. See § Research track.
 
+**3. Ecosystem composition (CocoIndex)**
+Astrocyte is read-side; CocoIndex is build-side. The four-phase integration roadmap in [`cocoindex-integration.md`](cocoindex-integration.md) covers (0) parallel writers to the same Postgres (already works, doc-only); (1) an upstream `astrocyte` target connector for CocoIndex apps; (2) adoption of four CocoIndex pipeline patterns inside Astrocyte (per-component update stats, push-source LiveMapFeed, stable-path retain trace, fingerprint memoization); (3) speculative inverse direction. Phases 0+1 are scheduled alongside v1.0.0 GA work; Phase 2 items are sequenced by impact ÷ effort and can ship independently.
+
 **3. v1.0.0 GA — validation and stabilization**
 Required for GA:
 

@@ -145,6 +145,28 @@ pipeline:
     top_n: 20
 ```
 
+### 3.1 Query-intent classifier (v0.11.0+)
+
+`pipeline/query_intent.py:classify_query_intent()` runs at the top of recall and reflect, returning a `QueryIntentResult(intent, confidence)`. Seven categories:
+
+| Category | Trigger shape | Retrieval consequence |
+|---|---|---|
+| `FACTUAL` | "what / who / when / where / how many" — single-fact lookup | Semantic-heavy; small candidate pool. Reranker matters more than fusion weight. |
+| `TEMPORAL` | "when / recently / last week / before / after" | Boost the temporal retrieval arm + apply date-range filters extracted by the analyzer. |
+| `RELATIONAL` | "how does X relate to Y", "connection between" | Boost graph traversal arm; entity-id resolution is critical. |
+| `COMPARATIVE` | "X vs Y", "difference between", "better than" | Multi-entity recall; spreading activation against both anchors. |
+| `PROCEDURAL` | "how to / steps / procedure" | Semantic does well; observation tier especially valuable when consolidation has compressed how-to-style memories. |
+| `EXPLORATORY` | "tell me about / what about / summary of" | All strategies; aggressive over-fetch into rerank; observations and mental models surface here. |
+| `UNKNOWN` | No confident signal | **Do not bias weights.** Fall back to the default multi-strategy blend. |
+
+The classifier is **regex-based and deterministic** — no LLM call. Confidence scores are pattern-weight sums; `UNKNOWN` is returned when no pattern fires above threshold.
+
+#### Reflect prompt-variant routing
+
+Astrocyte's reflect path uses the intent result to pick a prompt variant from `pipeline/reflect.py:PROMPT_REGISTRY` via `_auto_prompt_variant()`. This replaces the v0.10.x regex-on-the-query heuristics with a single classifier output that drives multiple downstream decisions (retrieval blend, prompt variant, abstention behavior).
+
+When `adversarial_defense.abstention_floor_intent_only: true` is set (e.g. `config-hindsight-balanced.yaml`), the score-floor abstention only fires for `EXPLORATORY` and `UNKNOWN` queries — well-formed factual / temporal / relational / comparative / procedural queries pass through even with low retrieval scores, since the floor was empirically harming legitimate single-hop / temporal questions whose top retrieval score happened to dip below threshold. See [`benchmark-presets.md`](/plugins/benchmark-presets/) for the post-mortem.
+
 ---
 
 ## 4. Reflect pipeline
@@ -231,6 +253,36 @@ additional corroborating memory, capped at `+0.10`.
 **Cost**: one embedding + one LLM call per retain call, fire-and-forget (no
 latency added to retain response). At 500 tokens input / 50 tokens output,
 this is ~$0.003 per retain at gpt-4o-mini pricing.
+
+#### Scope and invalidation (v0.11.0+)
+
+Observations are **scope-bound** — every observation declares which subset of the
+bank it summarizes — and **explicitly invalidatable** when the underlying
+memories change. This replaces the v0.10.x "let observations drift" hazard.
+
+A scope is one of:
+
+- `bank` — the whole bank; consolidator considers all retained memories. Default.
+- `tag:<name>` — only memories carrying the named tag.
+- `entity:<id>` — only memories referencing a specific resolved entity (M11).
+
+Scope is computed at consolidation time via `pipeline/observation.py:observation_scope()`
+and stored alongside the observation. When a consolidator pass runs, it filters
+its candidate set by scope before composing — so a `tag:billing` observation
+never gets contaminated by `tag:auth` memories, even if both live in the same
+bank.
+
+Invalidation runs through `ObservationConsolidator.invalidate_sources(source_ids, bank_id, vector_store)`,
+which is exposed at the gateway as `POST /v1/observations/invalidate`. When raw
+memories are forgotten or updated, callers fire this endpoint to mark every
+observation whose `_obs_source_ids` overlaps the changed set as invalid; the
+next consolidation pass replaces them. This endpoint requires the `forget`
+permission (not `write`) — invalidation deletes derived rows.
+
+The same scope + invalidation primitives back the v0.11.0 mental-model layer
+(M9). See [`mental-models.md`](/plugins/mental-models/) for the SPI shape and
+[`memory-api-reference.md`](/end-user/memory-api-reference/#mental-models--m9)
+for the public API.
 
 ### Configuration
 

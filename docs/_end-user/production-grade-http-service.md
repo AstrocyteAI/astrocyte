@@ -194,6 +194,16 @@ Treat this as a **reference implementation** of the HTTP mapping only, not as a 
 | `ASTROCYTE_CONFIG_PATH` | Optional YAML loaded via `load_config` for policy/homeostasis; **in-memory Tier 1 pipeline is still attached** in the reference implementation |
 | `DATABASE_URL` / `ASTROCYTE_PG_DSN` | **pgvector:** PostgreSQL URI. In **Docker Compose**, the service sets **`DATABASE_URL`** for the API from **`ASTROCYTE_GATEWAY_DATABASE_URL`**, legacy **`ASTROCYTE_REST_DATABASE_URL`**, or a built-in `...@postgres:5432/...` DSN (see [`docker-compose.yml`](../astrocyte-services-py/docker-compose.yml)). Do **not** point the API container at a host-only URL (`127.0.0.1:published_port`) via a generic **`DATABASE_URL`** in `.env`. |
 | `MIGRATE_DATABASE_URL` | Optional **host-side** DSN for [`migrate.sh`](../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh) / `runbook-up.sh` (typically `127.0.0.1` + `POSTGRES_PUBLISH_PORT`). |
+| `ASTROCYTE_PORTABILITY_ROOTS` | OS path-separator-joined directories that `export_bank` / `import_bank` are allowed to read/write. When unset, no containment is applied (suitable for library / CLI / test use). **Production gateways should set this** — e.g. `ASTROCYTE_PORTABILITY_ROOTS=/var/lib/astrocyte/exports` — so any path the API forwards into the AMA helpers must fall under one of the listed roots (CWE-022). See [`memory-portability.md`](/design/memory-portability/) §0. |
+
+### Sanitized error responses (CWE-209)
+
+Authentication and DSAR endpoints return **stable error identifiers** rather than raw exception text. Two specific contracts:
+
+- **`/v1/*` 401 from tenant-binding middleware:** body is exactly `{"error": "authentication_failed"}` — no `detail` field, no `str(exc)` leak. Full exception text is captured in the gateway's WARNING-level log via `exc_info=True` for operators (`astrocyte_gateway/tenancy.py`).
+- **`/v1/dsar/forget_principal` per-bank failures:** the response body's `details[]` entries use `"error": "internal_error"` rather than the raw exception text. Cerebro's DSAR retry logic does not depend on the message string — it retries unconditionally on non-zero error count — so this is a non-breaking change for callers (`astrocyte_gateway/app.py`).
+
+Operators retain full visibility through structured logs (set `ASTROCYTE_LOG_FORMAT=json` per §3.3); unauthenticated and cross-tenant callers no longer see raw text that might leak schema names, JWK config, token internals, or internal SQL state.
 
 See [`astrocyte-services-py/astrocyte-gateway-py/README.md`](../astrocyte-services-py/astrocyte-gateway-py/README.md) for run instructions, HTTP route summary (including **`GET /live`**, **`GET /health/live`**, **`GET /health`**), and Docker commands.
 

@@ -154,6 +154,7 @@ const topicItems = {
         { label: "Presentation layer & multimodal", link: "/design/presentation-layer-and-multimodal-services/" },
         { label: "Event hooks", link: "/design/event-hooks/" },
         { label: "Memory export sink", link: "/design/memory-export-sink/" },
+        { label: "CocoIndex integration roadmap", link: "/design/cocoindex-integration/" },
         { label: "Use-case profiles", link: "/design/use-case-profiles/" },
       ],
     },

@@ -181,6 +181,23 @@ async def recall(
 | `trace` | `RecallTrace \| None` | Diagnostic trace of the recall pipeline. |
 | `authority_context` | `str \| None` | Authority resolution context, if applicable. |
 
+### RecallTrace
+
+`RecallTrace` is the per-query diagnostic surface — what strategies ran, how long each took, and which tier resolved the query. Useful for benchmark analysis, latency debugging, and observability dashboards.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `strategies_used` | `list[str] \| None` | Ordered list of strategies that contributed candidates (e.g. `["semantic", "keyword", "graph", "temporal"]`). |
+| `total_candidates` | `int \| None` | Total candidates seen across all strategies, pre-fusion. |
+| `fusion_method` | `str \| None` | `"rrf"` for reciprocal-rank fusion; future fusion algorithms set their own label. |
+| `latency_ms` | `float \| None` | End-to-end recall latency, in milliseconds. |
+| `strategy_timings_ms` | `dict[str, float] \| None` | Per-strategy latency breakdown — useful when one arm dominates the budget. |
+| `strategy_candidate_counts` | `dict[str, int] \| None` | Per-strategy candidate count contributed to fusion. |
+| `tier_used` | `int \| None` | Which retrieval tier resolved the query (`1` for cache, `2` for fast path, etc.). |
+| `layer_distribution` | `dict[str, int] \| None` | Hit count by memory layer — e.g. `{"fact": 5, "observation": 3, "model": 1}`. Visible when observation consolidation or mental models are enabled. |
+| `cache_hit` | `bool \| None` | `True` when the recall cache satisfied the query without running retrieval strategies. |
+| `wiki_tier_used` | `bool \| None` | `True` when the wiki tier (M8 W5) resolved the query (compiled wiki page surfaced before raw recall). |
+
 ### MemoryHit
 
 | Field | Type | Description |
@@ -788,6 +805,105 @@ curl -X POST https://gateway.example.com/v1/compile \
   -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
   -d '{"bank_id": "engineering", "scope": "deployment"}'
 ```
+
+---
+
+## Mental models — M9
+
+Mental models are **curated, scope-bound summaries** persisted as a first-class
+SPI alongside raw memories, observations, and wiki pages. Hindsight inspired
+the layer; Astrocyte's M9 ships them with explicit revision history, scope keys
+(`bank` / `tag:<name>` / `entity:<id>`), and source-id provenance so revisions
+trace back to the underlying memories.
+
+Use them when you have a stable "what does this user generally believe / want /
+prefer about X" answer that the agentic-reflect loop should consult **before**
+falling back to raw recall. Open-domain questions ("Would Alice still pursue
+counseling after the move?") synthesize faster against a mental-model summary
+than they do against the raw memory pool.
+
+The Postgres reference adapter (`astrocyte-postgres`) ships
+`PostgresMentalModelStore` registered under the `astrocyte.mental_model_stores`
+entry-point group; configure with `mental_model_store: postgres` in
+`astrocyte.yaml`. See [`provider-spi.md`](/plugins/provider-spi/) for the SPI
+shape and [`mental-models.md`](/plugins/mental-models/) for storage detail.
+
+### Python — set the store
+
+```python
+from astrocyte import Astrocyte
+
+brain = Astrocyte.from_config("astrocyte.yaml")
+# brain.set_mental_model_store(...) is wired automatically when
+# `mental_model_store: postgres` is set in config; you can also pass
+# a custom MentalModelStore implementation directly.
+```
+
+### REST — create
+
+```bash
+curl -X POST https://gateway.example.com/v1/mental-models \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{
+    "bank_id": "user-alice",
+    "model_id": "preferences-v1",
+    "title": "Alice's preferences",
+    "content": "Alice prefers async communication, dark mode, and Python over Go.",
+    "scope": "bank",
+    "source_ids": ["mem-1", "mem-2", "mem-3"]
+  }'
+```
+
+`scope` is one of `"bank"` (default — applies to the whole bank),
+`"tag:<name>"`, or `"entity:<id>"`. `source_ids` is an optional list of memory
+IDs the model summarizes; they are persisted as provenance and used by
+observation-style invalidation when the underlying memories change.
+
+### REST — list / get / refresh / delete
+
+```bash
+# List all models in a bank (optionally filtered by scope)
+curl -G https://gateway.example.com/v1/mental-models \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  --data-urlencode "bank_id=user-alice" \
+  --data-urlencode "scope=tag:preferences"
+
+# Get one
+curl https://gateway.example.com/v1/mental-models/preferences-v1?bank_id=user-alice \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN"
+
+# Refresh — creates a new revision, preserves history
+curl -X POST https://gateway.example.com/v1/mental-models/preferences-v1/refresh \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{
+    "bank_id": "user-alice",
+    "content": "Updated: Alice now prefers Slack over email.",
+    "source_ids": ["mem-7", "mem-8"]
+  }'
+
+# Delete (requires ``forget`` permission, not ``write`` — destructive)
+curl -X DELETE https://gateway.example.com/v1/mental-models/preferences-v1?bank_id=user-alice \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN"
+```
+
+### Observation invalidation companion
+
+Mental models share the same scope+invalidation model as observations. When the
+memories that produced a mental model are updated or forgotten, you can
+explicitly invalidate dependent observations through:
+
+```bash
+curl -X POST https://gateway.example.com/v1/observations/invalidate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{"bank_id": "user-alice", "source_ids": ["mem-1", "mem-2"]}'
+```
+
+Like `/v1/forget` and `/v1/mental-models/{id}` (delete), this endpoint
+requires the `forget` permission rather than `write` — the operation is
+destructive of derived rows.
 
 ---
 

@@ -409,7 +409,41 @@ A head-slice (`--max-questions 200`) draws all 200 questions from the first one 
 
 **Parallel execution:** When both `longmemeval` and `locomo` are requested (e.g. `bench-full`), they run concurrently via `asyncio.gather()`. Each uses its own bank ID so there is no state conflict.
 
-### 7.4 CI integration
+#### State reset between runs
+
+Bench targets depend on `bench-db-start`, which spins up a disposable Postgres container (`astrocyte-bench-pg` on port 5433). The container persists across runs by default for speed; `make bench-db-reset` (alias for `bench-db-stop && bench-db-start`) recreates it from scratch when the schema or extensions need to change.
+
+For data-level reset between runs (without recreating the container), every benchmark `run()` method calls `astrocyte/eval/_state_reset.py` at start of execution. The helper:
+
+- TRUNCATEs every bench-relevant table (vectors, banks, wiki pages, entity tables, temporal facts, PgQueuer queue) in FK-safe order
+- Drops and recreates the AGE graph (`astrocyte`)
+- Skips tables that don't exist (deployments without wiki layer, AGE-not-installed, etc.) — best-effort cleanup
+- Is a no-op when `DATABASE_URL` is unset (the in-memory test path)
+
+Without this reset, leftover state from prior runs silently corrupts scores: stale wiki pages dominate `_try_wiki_tier`, accumulated entity aliases mis-resolve canonical IDs, and orphaned PgQueuer compile tasks race the recall path. The orchestrator (`scripts/run_benchmarks.py`) does ONE reset at the top and passes `reset_state_before=False` to each individual benchmark so `asyncio.gather`'d parallel runs (`bench-full`) don't race on TRUNCATE / `drop_graph`.
+
+### 7.4 Preset ablation matrix
+
+Astrocyte ships **five named bench presets** under `astrocyte-py/benchmarks/`, each toggling a coherent set of pipeline features so the bench can attribute score deltas to specific design choices rather than a tangle of co-changes:
+
+| Preset | Config file | What it toggles |
+|---|---|---|
+| `baseline` | `config-baseline.yaml` | Minimal pipeline — vector + keyword recall only, no agentic reflect, no causal links, no semantic kNN, no abstention. The bottom of the matrix. |
+| `fast-recall` | `config-fast-recall.yaml` | Adds query analyzer, structured fact extraction, observation consolidation, intent-conditional adversarial defense; keeps cross-encoder rerank and agentic reflect off. Currently the highest-overall preset on LoCoMo (n=200). |
+| `hindsight-parity` | `config-hindsight-parity.yaml` | Cross-encoder rerank ON, agentic reflect ON, causal links ON, semantic kNN ON, query analyzer OFF. Approximates Hindsight's documented stack. |
+| `hindsight-balanced` | `config-hindsight-balanced.yaml` | Single-variable diff vs. parity: adds the intent-conditional abstention floor + adversarial system-prompt rule, no premise verification. |
+| `quality-max` | `config-quality-max.yaml` | All quality features on simultaneously (multi-query expansion, premise verification, agentic reflect, cross-encoder rerank). Trades latency and cost for accuracy. |
+
+`make bench-compare` runs the full matrix sequentially against the same dataset and emits one results file per preset:
+
+```bash
+doppler run -- make bench-compare
+# emits benchmark-results/results-matrix-<preset>.json
+```
+
+See [`benchmark-presets.md`](/plugins/benchmark-presets/) for the live results matrix, per-category scores, the post-mortem on why `quality-max` underperformed, and the rationale behind each preset's specific knob settings.
+
+### 7.5 CI integration
 
 The GitHub Actions workflow (`.github/workflows/benchmarks.yml`) runs benchmarks weekly and on manual dispatch. It uses `--canonical-judge` and compares results against `benchmarks/baselines-openai.json` (falling back to `baselines-test-provider.json` if no real-provider baseline exists yet). The `bench-smoke` job runs on every PR using the mock provider and `baselines-test-provider.json`.
 
