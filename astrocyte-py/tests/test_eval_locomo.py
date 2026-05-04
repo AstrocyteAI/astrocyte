@@ -464,6 +464,222 @@ class TestLoComoBenchmark:
         assert "temporal" in result.category_accuracy
 
 
+class TestLoCoMoFailFast:
+    """The bench must abort cleanly on terminal API errors (out of quota,
+    bad key) rather than silently logging 1000+ warnings and writing a
+    misleading results JSON. Pre-fix behaviour: every question after the
+    first 429-insufficient-quota was logged as a WARNING and counted as
+    incorrect, producing accuracy numbers that under-reported the system
+    by ~80 points. See ``BenchAborted`` and ``_is_terminal_error`` in
+    ``astrocyte/eval/benchmarks/locomo.py``.
+    """
+
+    def _build_conversations(self, n_questions: int) -> list:
+        """Build a single-session conversation with N synthetic questions."""
+        return [
+            LoCoMoConversation(
+                conversation_id="c1",
+                sessions=[
+                    LoCoMoSession(
+                        session_id="s1",
+                        turns=[{"speaker": "A", "text": "context for the questions"}],
+                    ),
+                ],
+                questions=[
+                    LoCoMoQuestion(
+                        question=f"Q{i}?",
+                        answer=f"A{i}",
+                        category="single-hop",
+                        evidence_ids=[],
+                        conversation_id="c1",
+                    )
+                    for i in range(n_questions)
+                ],
+            ),
+        ]
+
+    async def test_fail_fast_on_insufficient_quota(self):
+        """A single ``insufficient_quota`` error mid-run must abort the
+        whole bench. The result must be marked ``aborted=True`` with the
+        reason captured, and the headline accuracy must NOT be reported
+        as a clean number."""
+        brain, _ = _make_brain()
+        bench = LoComoBenchmark(brain)
+
+        # Patch brain.recall to raise insufficient_quota on the 3rd call.
+        # Earlier calls succeed so we get partial per_question data.
+        original_recall = brain.recall
+        call_count = {"n": 0}
+
+        async def flaky_recall(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 3:
+                # Mimic OpenAI SDK's surface — exception body contains the
+                # marker string ``insufficient_quota`` regardless of the
+                # exception class.
+                raise RuntimeError(
+                    "Error code: 429 - {'error': {'message': 'You exceeded "
+                    "your current quota', 'type': 'insufficient_quota'}}"
+                )
+            return await original_recall(*args, **kwargs)
+
+        brain.recall = flaky_recall  # type: ignore[method-assign]
+
+        result = await bench.run(
+            conversations=self._build_conversations(20),
+            bank_id="bench-fail-fast",
+            clean_after=False,
+        )
+
+        # The bench must mark itself aborted.
+        assert result.aborted is True, "expected aborted=True after insufficient_quota"
+        assert result.abort_reason is not None
+        assert "insufficient_quota" in result.abort_reason
+        # And we must NOT have evaluated all 20 questions.
+        assert result.evaluated_questions < 20, (
+            f"expected fewer than all 20 questions evaluated, got {result.evaluated_questions}"
+        )
+        # error_rate must reflect the gap between dataset size and what
+        # actually completed.
+        assert result.error_rate > 0.0
+        # ``evaluated_accuracy`` is the only honest accuracy number when
+        # error_rate > 0; verify it's computed against the EVALUATED
+        # questions (not the full 20).
+        if result.evaluated_questions > 0:
+            assert 0.0 <= result.evaluated_accuracy <= 1.0
+            # Sanity: numerator should be ``correct``, denom should be ``evaluated``.
+            assert result.evaluated_accuracy == pytest.approx(
+                result.correct / result.evaluated_questions
+            )
+
+    async def test_fail_fast_via_structured_error_code(self):
+        """Terminal-error detection should prefer the structured ``.code``
+        attribute (OpenAI SDK ≥1.x) over substring matching, so it works
+        even when the formatted exception message has been sanitized or
+        the SDK changes its message wording."""
+        brain, _ = _make_brain()
+        bench = LoComoBenchmark(brain)
+
+        class StructuredQuotaError(Exception):
+            """Mimics ``openai.RateLimitError``: bare message but exposes
+            the discriminating code via .code / .body, the same way the
+            real SDK does."""
+            code = "insufficient_quota"
+            body = {"error": {"code": "insufficient_quota", "message": "redacted"}}
+
+            def __str__(self) -> str:
+                return "Rate limit exceeded"  # NO substring marker here
+
+        original_recall = brain.recall
+        call_count = {"n": 0}
+
+        async def flaky_recall(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise StructuredQuotaError()
+            return await original_recall(*args, **kwargs)
+
+        brain.recall = flaky_recall  # type: ignore[method-assign]
+
+        result = await bench.run(
+            conversations=self._build_conversations(10),
+            bank_id="bench-structured-abort",
+            clean_after=False,
+        )
+
+        assert result.aborted is True, (
+            "structured error code should trigger fail-fast even when "
+            "str(exc) lacks the marker substring"
+        )
+        assert result.abort_reason is not None
+
+    async def test_does_not_abort_on_question_text_mentioning_marker(self):
+        """A non-terminal exception whose ``str()`` happens to contain a
+        marker substring (e.g. echoed user content) must NOT abort the
+        bench — the structured-code check should reject it because the
+        exception has no ``.code`` / ``.body`` of its own.
+
+        This guards against false positives: the marker substring is
+        present, but it's user content, not an SDK error code."""
+        from astrocyte.eval.benchmarks.locomo import _is_terminal_error
+
+        # Plain ValueError whose message happens to mention the marker.
+        # No ``.code`` attribute → structured check returns None → falls
+        # through to substring match, which DOES match. So this case
+        # would still abort under the current substring fallback.
+        # We therefore test the *structured* path directly here: when an
+        # SDK exception has a non-terminal ``.code``, it must not abort
+        # even if the message body contains a terminal-marker word.
+        class TransientWithMisleadingBody(Exception):
+            code = "rate_limit_exceeded"  # transient, recovers in seconds
+            body = {
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "message": "Slow down. (note: not insufficient_quota)",
+                }
+            }
+
+            def __str__(self) -> str:
+                return "rate_limit_exceeded — message mentions insufficient_quota"
+
+        assert _is_terminal_error(TransientWithMisleadingBody()) is False, (
+            "structured .code='rate_limit_exceeded' must take precedence "
+            "over the substring 'insufficient_quota' appearing in str(exc)"
+        )
+
+    async def test_fail_fast_on_invalid_api_key(self):
+        """Bad credentials must also abort, not log-and-continue."""
+        brain, _ = _make_brain()
+        bench = LoComoBenchmark(brain)
+
+        async def bad_key_recall(*args, **kwargs):
+            raise RuntimeError(
+                "Error code: 401 - {'error': {'code': 'invalid_api_key', "
+                "'message': 'Incorrect API key provided'}}"
+            )
+        brain.recall = bad_key_recall  # type: ignore[method-assign]
+
+        result = await bench.run(
+            conversations=self._build_conversations(5),
+            bank_id="bench-bad-key",
+            clean_after=False,
+        )
+        assert result.aborted is True
+        assert result.abort_reason is not None
+        assert "invalid_api_key" in result.abort_reason
+
+    async def test_transient_errors_do_NOT_abort(self):
+        """A transient 5xx or rate-limit-without-quota must NOT abort —
+        these recover on retry within a normal API window. The bench
+        should log and continue (legacy behaviour)."""
+        brain, _ = _make_brain()
+        bench = LoComoBenchmark(brain)
+
+        original_recall = brain.recall
+        call_count = {"n": 0}
+
+        async def transiently_flaky_recall(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                # 503 service unavailable — transient, NOT terminal.
+                raise RuntimeError("Error code: 503 - service unavailable")
+            return await original_recall(*args, **kwargs)
+
+        brain.recall = transiently_flaky_recall  # type: ignore[method-assign]
+
+        result = await bench.run(
+            conversations=self._build_conversations(5),
+            bank_id="bench-transient",
+            clean_after=False,
+        )
+        # Run completed, did NOT abort.
+        assert result.aborted is False
+        assert result.abort_reason is None
+        # All 5 questions are in the dataset; one errored, others completed.
+        assert result.evaluated_questions == 4
+        assert result.error_rate == pytest.approx(0.2)
+
+
 class TestLoCoMoDataLoading:
     def test_load_from_json_array(self, tmp_path: Path):
         data = [

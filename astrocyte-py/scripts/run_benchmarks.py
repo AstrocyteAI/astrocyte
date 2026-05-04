@@ -381,6 +381,20 @@ def _serialize_result(
             "canonical_f1_by_category",
             {},
         )
+    # Honest accuracy reporting (LoCoMo only — these fields don't exist
+    # on the LongMemEval result type yet). ``evaluated_accuracy`` is the
+    # only headline number that's meaningful when ``error_rate > 0`` —
+    # ``overall_accuracy`` divides by total dataset size and silently
+    # under-reports performance in runs with eval errors. ``aborted``
+    # surfaces whether the run hit a terminal API error mid-flight; if
+    # True, every other number on this object is a partial-run snapshot
+    # and should not be published.
+    if hasattr(result, "evaluated_accuracy"):
+        data["evaluated_accuracy"] = result.evaluated_accuracy
+        data["evaluated_questions"] = result.evaluated_questions
+        data["error_rate"] = result.error_rate
+        data["aborted"] = result.aborted
+        data["abort_reason"] = result.abort_reason
     return data
 
 
@@ -389,7 +403,14 @@ def _print_result(result, benchmark_name: str) -> None:
     print(f"\n{'=' * 60}")
     print(f"  {benchmark_name}")
     print(f"{'=' * 60}")
-    print(f"  Overall accuracy:  {result.overall_accuracy:.1%}")
+    if getattr(result, "aborted", False):
+        print(f"  ⚠️  ABORTED: {result.abort_reason}")
+        print("  Numbers below are PARTIAL — do not publish or compare.")
+    if hasattr(result, "evaluated_accuracy"):
+        print(f"  Evaluated accuracy: {result.evaluated_accuracy:.1%} ({result.correct}/{result.evaluated_questions})")
+        if result.error_rate > 0:
+            print(f"  Error rate:        {result.error_rate:.1%} ({result.total_questions - result.evaluated_questions} of {result.total_questions} errored)")
+    print(f"  Overall accuracy:  {result.overall_accuracy:.1%} (legacy: correct/total — under-reports on error)")
     print(f"  Questions:         {result.correct}/{result.total_questions}")
     print()
     print("  Category breakdown:")
@@ -1124,6 +1145,22 @@ async def main() -> None:
 
     await brain.stop_background_tasks()
     await _stop_benchmark_task_worker(benchmark_task_worker)
+
+    # Exit non-zero if any benchmark aborted on a terminal API error
+    # (insufficient_quota, invalid_api_key, etc.). Partial results are
+    # still written above for postmortem, but the run must NOT be treated
+    # as success — otherwise CI goes green on a credential / billing
+    # failure. See ``BenchAborted`` in eval/benchmarks/locomo.py.
+    aborted_benches = [
+        k for k, v in all_results.items()
+        if isinstance(v, dict) and v.get("aborted")
+    ]
+    if aborted_benches:
+        for k in aborted_benches:
+            reason = all_results[k].get("abort_reason", "(no reason recorded)")
+            print(f"\n  ABORTED: {k} — {reason}")
+        print("  Partial results were written but the run is being marked failed.")
+        sys.exit(2)
 
     # Exit non-zero if a real dataset benchmark had 0% accuracy (likely broken).
     # Only check benchmarks that actually loaded real data (synthetic tests may

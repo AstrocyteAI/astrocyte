@@ -44,6 +44,91 @@ from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult,
 ANSWER_OVERLAP_THRESHOLD = 0.3
 
 
+class BenchAborted(RuntimeError):
+    """Raised by ``_eval_one`` when a terminal error makes the bench
+    unrecoverable — e.g. ``insufficient_quota`` (account out of credits)
+    or ``invalid_api_key``. Bubbles up through ``asyncio.gather`` and
+    aborts the run so we don't accrue 1000+ silent ``WARNING`` lines and
+    write a corrupted results JSON.
+
+    The bench harness should catch this and exit with non-zero status.
+    """
+
+
+# Strict-match set of OpenAI-style error codes that mean the bench cannot
+# recover this run. Matched against the SDK's structured ``.code`` /
+# ``.body['error']['code']`` attributes when available — the safe path,
+# since these are stable identifiers (not localized prose) and won't
+# false-positive on question text that happens to mention them.
+_TERMINAL_ERROR_CODES: frozenset[str] = frozenset({
+    "insufficient_quota",
+    "invalid_api_key",
+    "account_deactivated",
+    "billing_hard_limit_reached",
+})
+
+# Fallback substring markers for providers that don't expose structured
+# error codes (older OpenAI SDKs, third-party adapters). Compared against
+# ``str(exc).lower()``. Kept narrow: the discriminator strings here are
+# specific enough that a question echoing them in a traceback is unlikely.
+_TERMINAL_ERROR_MARKERS: tuple[str, ...] = (
+    "insufficient_quota",
+    "invalid_api_key",
+    "incorrect api key",
+    "account_deactivated",
+    "account is deactivated",
+    "billing_hard_limit_reached",
+    "you exceeded your current quota",
+)
+
+
+def _structured_error_code(exc: BaseException) -> str | None:
+    """Pull a stable error code out of common SDK exception shapes.
+
+    OpenAI SDK ≥ 1.x exposes both ``exc.code`` (string) and
+    ``exc.body == {"error": {"code": ...}}``. Anthropic and other SDKs
+    follow similar shapes. Returns the lowercased code string when found,
+    otherwise None — caller falls through to the substring fallback.
+    """
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code:
+        return code.lower()
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            body_code = err.get("code")
+            if isinstance(body_code, str) and body_code:
+                return body_code.lower()
+    return None
+
+
+def _is_terminal_error(exc: BaseException) -> bool:
+    """Return True if ``exc`` is unrecoverable (vs. a transient hiccup
+    that retry / fallback can handle).
+
+    Transient (return False, let the bench continue):
+      - HTTP 429 *rate-limit* (per-min throttle, recovers in seconds)
+      - HTTP 5xx (server-side blip)
+      - timeout / connection reset
+
+    Terminal (return True, abort the bench):
+      - 429 ``insufficient_quota`` (out of credits — won't recover this run)
+      - 401 ``invalid_api_key`` (bad credential — every call will 401)
+      - account deactivated / hard billing limit
+
+    Resolution order:
+      1. Structured ``.code`` / ``.body['error']['code']`` (preferred —
+         stable identifiers, no false positives on prose).
+      2. Substring match on ``str(exc).lower()`` for older SDKs / adapters.
+    """
+    code = _structured_error_code(exc)
+    if code is not None:
+        return code in _TERMINAL_ERROR_CODES
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _TERMINAL_ERROR_MARKERS)
+
+
 def _iso_or_none(value: Any) -> str | None:
     if value is None:
         return None
@@ -277,6 +362,25 @@ class LoCoMoResult:
     canonical_f1_overall: float | None = None
     #: Per-category F1 means. Empty dict under legacy scorer.
     canonical_f1_by_category: dict[str, float] = field(default_factory=dict)
+    #: Accuracy on questions that were *actually evaluated* (no errors).
+    #: Use this — not ``overall_accuracy`` — when comparing across runs
+    #: where some questions errored out. ``overall_accuracy`` divides by
+    #: the dataset's total question count, so a run with many silent
+    #: errors (rate-limit, timeout, etc.) under-reports performance.
+    evaluated_accuracy: float = 0.0
+    #: Number of questions that produced a successful per-question result.
+    evaluated_questions: int = 0
+    #: Fraction of dataset questions that errored during eval. ``0.0`` on
+    #: a clean run; trends toward ``1.0`` if every API call fails.
+    error_rate: float = 0.0
+    #: ``True`` if the bench fail-fasted on a terminal API error
+    #: (``insufficient_quota``, ``invalid_api_key``, etc.) before reaching
+    #: the end of the question list. Results are partial — every other
+    #: number on this object is from the questions that completed before
+    #: the abort. **Do not publish numbers from an aborted run.**
+    aborted: bool = False
+    #: When ``aborted=True``, the error message from the terminal exception.
+    abort_reason: str | None = None
 
 
 @dataclass
@@ -1053,6 +1157,19 @@ class LoComoBenchmark:
                     )
 
                 except Exception as exc:
+                    # Fail-fast on terminal errors: if every subsequent
+                    # call will also fail (out of credits, bad key, etc.),
+                    # logging-and-continuing produces N hours of useless
+                    # work and a corrupted results JSON. Surface it now.
+                    if _is_terminal_error(exc):
+                        logging.getLogger("astrocyte.eval.locomo").error(
+                            "TERMINAL eval error for q=%s — aborting bench: %s",
+                            q_key, exc,
+                        )
+                        metrics_collector.record_error(_classify_error(exc))
+                        raise BenchAborted(
+                            f"terminal API error during eval (q={q_key}): {exc}"
+                        ) from exc
                     logging.getLogger("astrocyte.eval.locomo").warning(
                         "eval failed for q=%s: %s (counted as incorrect)",
                         q_key,
@@ -1064,7 +1181,24 @@ class LoComoBenchmark:
             completed_count += 1
             _progress_print()
 
-        await asyncio.gather(*[_eval_one(i, q) for i, q in enumerate(all_questions)])
+        # Track whether the run aborted on a terminal API error so the
+        # caller can distinguish a genuinely complete bench from a partial
+        # one. ``return_exceptions=True`` lets us collect the first
+        # ``BenchAborted`` without losing already-completed work — without
+        # it, asyncio.gather cancels in-flight siblings and we forfeit the
+        # data they produced.
+        gather_results = await asyncio.gather(
+            *[_eval_one(i, q) for i, q in enumerate(all_questions)],
+            return_exceptions=True,
+        )
+        bench_aborted_exc: BenchAborted | None = next(
+            (r for r in gather_results if isinstance(r, BenchAborted)),
+            None,
+        )
+        # Re-raise any non-BenchAborted exception (programmer bug, OOM, etc.)
+        for r in gather_results:
+            if isinstance(r, BaseException) and not isinstance(r, BenchAborted):
+                raise r
 
         # Rebuild ordered lists from pre-allocated arrays, dropping any None
         # entries that resulted from exceptions.
@@ -1073,6 +1207,16 @@ class LoComoBenchmark:
 
         # ── Phase 4: Compute results ──
         total_duration = time.monotonic() - start_time
+        # Honest accuracy reporting — see _ACCURACY_REPORTING comment below.
+        evaluated = len(per_question)
+        evaluated_accuracy = correct / max(evaluated, 1)
+        error_rate = (len(all_questions) - evaluated) / max(len(all_questions), 1)
+        # Legacy ``overall_accuracy`` field kept for backward compat with
+        # downstream tooling that reads ``locomo.overall_accuracy``. Equals
+        # ``evaluated_accuracy`` when there are zero errors; equals the
+        # old (correct / total) otherwise. Prefer ``evaluated_accuracy``
+        # for any new analysis — it's the only number that's meaningful
+        # when ``error_rate > 0``.
         overall_accuracy = correct / max(len(all_questions), 1)
 
         category_accuracy: dict[str, float] = {}
@@ -1163,6 +1307,11 @@ class LoComoBenchmark:
             eval_result=eval_result,
             canonical_f1_overall=canonical_f1_overall,
             canonical_f1_by_category=canonical_f1_by_category,
+            evaluated_accuracy=evaluated_accuracy,
+            evaluated_questions=evaluated,
+            error_rate=error_rate,
+            aborted=bench_aborted_exc is not None,
+            abort_reason=str(bench_aborted_exc) if bench_aborted_exc else None,
         )
 
 
