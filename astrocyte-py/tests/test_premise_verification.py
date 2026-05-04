@@ -224,8 +224,10 @@ class TestVerifyQuestion:
             # extraction
             '[{"claim": "Alice worked at Google", "rationale": "implied"}]',
             # verification: not supported
-            '{"supported": false, "confidence": 0.9,'
-            ' "evidence_ids": [], "rationale": "no memory mentions Google"}',
+            (
+                '{"supported": false, "confidence": 0.9,'
+                ' "evidence_ids": [], "rationale": "no memory mentions Google"}'
+            ),
         ])
 
         async def recall_fn(query: str, max_results: int):
@@ -247,8 +249,10 @@ class TestVerifyQuestion:
     async def test_all_supported_does_not_short_circuit(self):
         llm = _ScriptedLLM([
             '[{"claim": "Alice works at Google", "rationale": "x"}]',
-            '{"supported": true, "confidence": 0.9,'
-            ' "evidence_ids": ["m1"], "rationale": "directly attested"}',
+            (
+                '{"supported": true, "confidence": 0.9,'
+                ' "evidence_ids": ["m1"], "rationale": "directly attested"}'
+            ),
         ])
 
         async def recall_fn(query: str, max_results: int):

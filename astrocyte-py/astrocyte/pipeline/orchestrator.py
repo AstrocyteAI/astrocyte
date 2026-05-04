@@ -309,13 +309,6 @@ class PipelineOrchestrator:
         #: ``Astrocyte.set_pipeline`` from ``adversarial_defense`` config.
         self.adversarial_abstention_enabled: bool = False
         self.adversarial_abstention_floor: float = 0.2
-        #: When ``True``, the abstention floor only fires for queries the
-        #: intent classifier could NOT confidently resolve to a well-formed
-        #: intent (FACTUAL / TEMPORAL / RELATIONAL / COMPARATIVE /
-        #: PROCEDURAL). EXPLORATORY and UNKNOWN still gate the floor —
-        #: that's where adversarial false-premise shapes hide. Default
-        #: ``False`` keeps the legacy "fire on every query" behaviour.
-        self.adversarial_abstention_floor_intent_only: bool = False
         #: Pre-loop premise verification — decompose question into atomic
         #: claims, verify each. Wired below in the reflect path.
         self.adversarial_premise_verification_enabled: bool = False
@@ -409,45 +402,6 @@ class PipelineOrchestrator:
     def reset_token_counter(self) -> int:
         """Return accumulated token count and reset to zero."""
         return self._tracker.reset_tokens()
-
-    def _abstention_floor_should_fire(self, query: str) -> bool:
-        """Return ``True`` when the score-floor abstention is allowed to fire.
-
-        - Default mode (``adversarial_abstention_floor_intent_only=False``):
-          always returns ``True`` — the legacy "fire on every query" behaviour.
-        - Intent-conditional mode: returns ``False`` when the query has a
-          confident, well-formed intent (FACTUAL / TEMPORAL / RELATIONAL /
-          COMPARATIVE / PROCEDURAL). Adversarial false-premise questions
-          tend to fall outside those intents (EXPLORATORY or UNKNOWN), so
-          the floor still fires where it adds value, while skipping the
-          legitimate single-hop / temporal queries the bench showed it
-          unfairly punishes.
-        """
-        if not self.adversarial_abstention_floor_intent_only:
-            return True
-        # Lazy import — query_intent is a tiny module but classify_query_intent
-        # touches compiled regex tables; keep this off the import path of
-        # callers that never enable the flag.
-        from astrocyte.pipeline.query_intent import QueryIntent, classify_query_intent
-
-        # Empty / degenerate queries: let the floor fire — there's no
-        # signal to override the safety check with.
-        if not query or not query.strip():
-            return True
-        try:
-            result = classify_query_intent(query)
-        except Exception:
-            # Defensive: classifier failure should NEVER break recall.
-            # Default to firing the floor (legacy behaviour) when in doubt.
-            return True
-        well_formed = {
-            QueryIntent.FACTUAL,
-            QueryIntent.TEMPORAL,
-            QueryIntent.RELATIONAL,
-            QueryIntent.COMPARATIVE,
-            QueryIntent.PROCEDURAL,
-        }
-        return result.intent not in well_formed
 
     async def _attach_entity_name_embeddings(self, entities: list[Entity]) -> None:
         """Embed each entity's name and attach the vector to ``entity.embedding``.
@@ -1454,11 +1408,9 @@ class PipelineOrchestrator:
 
         for record in stored_records:
             request: RetainRequest = record["request"]
-            prepared = record["prepared"]
             memory_ids: list[str] = record["memory_ids"]
             embeddings: list[list[float]] = record["embeddings"]
             chunks: list[str] = record["chunks"]
-            entities = record["entities"]
 
             for mem_id, embedding in zip(memory_ids, embeddings, strict=False):
                 self._dedup.add(request.bank_id, mem_id, embedding)
@@ -2221,18 +2173,6 @@ class PipelineOrchestrator:
         # must be low enough that legitimate weak-retrieval questions
         # still go through. Tunable via
         # ``adversarial_defense.abstention_floor`` config.
-        #
-        # When ``abstention_floor_intent_only=True``, this gate is
-        # SKIPPED for queries with a confidently-resolved well-formed
-        # intent (FACTUAL / TEMPORAL / RELATIONAL / COMPARATIVE /
-        # PROCEDURAL). The bench measured this matters: a flat 0.2 floor
-        # cratered single-hop (-10pt) and temporal (-10pt) on
-        # hindsight-balanced because legitimate factual / temporal
-        # queries occasionally have top scores below 0.2. Adversarial
-        # false-premise questions disproportionately classify as
-        # EXPLORATORY or UNKNOWN, so gating on intent recovers the
-        # well-formed-question wins without losing the adversarial
-        # defense.
         if (
             self.adversarial_abstention_enabled
             and recall_result.top_semantic_score < self.adversarial_abstention_floor
@@ -2240,7 +2180,6 @@ class PipelineOrchestrator:
                 (h.score or 0.0) < self.adversarial_abstention_floor
                 for h in recall_result.hits[:5]
             ))
-            and self._abstention_floor_should_fire(request.query)
         ):
             _logger.info(
                 "reflect: abstention floor triggered (top_semantic=%.3f < %.3f); "

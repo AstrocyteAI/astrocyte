@@ -265,6 +265,8 @@ CODEQL_QUERIES := \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/StatementNoEffect.ql \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/UnreachableCode.ql \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/AssertOnTuple.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/AssertLiteralConstant.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/SideEffectInAssert.ql \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Statements/RedundantAssignment.ql \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Functions/ConsistentReturns.ql \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Functions/ModificationOfParameterWithDefault.ql \
@@ -272,7 +274,10 @@ CODEQL_QUERIES := \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Imports/UnusedImport.ql \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Exceptions/EmptyExcept.ql \
 	~/.codeql/packages/codeql/python-queries/1.8.0/Exceptions/IncorrectExceptOrder.ql \
-	~/.codeql/packages/codeql/python-queries/1.8.0/Variables/UninitializedLocal.ql
+	~/.codeql/packages/codeql/python-queries/1.8.0/Variables/UninitializedLocal.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Variables/UnusedLocalVariable.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Variables/UnusedModuleVariable.ql \
+	~/.codeql/packages/codeql/python-queries/1.8.0/Expressions/UnintentionalImplicitStringConcatenation.ql
 
 .PHONY: codeql
 codeql:

@@ -38,5 +38,8 @@ async def test_mental_model_crud_and_refresh() -> None:
     assert refreshed.source_ids == ["m1", "m2"]
     assert "async summaries" in refreshed.content
 
-    assert await service.delete("bank-mm", "model:alice") is True
+    # Extract the side-effect from the assert so that running with `python -O`
+    # (which strips assertions) still performs the delete.
+    deleted = await service.delete("bank-mm", "model:alice")
+    assert deleted is True
     assert await service.get("bank-mm", "model:alice") is None

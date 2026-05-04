@@ -27,15 +27,12 @@ Design notes
 
 from __future__ import annotations
 
-import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from astrocyte.types import EvalMetrics
-
-_logger = logging.getLogger("astrocyte.eval.metrics")
 
 
 # ---------------------------------------------------------------------------

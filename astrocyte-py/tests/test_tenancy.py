@@ -83,9 +83,18 @@ class TestUseSchemaContextManager:
         from astrocyte.tenancy import _current_schema
 
         _current_schema.set(None)
-        with pytest.raises(RuntimeError, match="boom"):
+        # Plain try/except (instead of pytest.raises wrapping the with-block)
+        # so CodeQL's reachability analysis sees the post-block assert as
+        # reachable — pytest.raises hides the exception flow from static
+        # analyzers, triggering a false-positive "unreachable code" warning.
+        raised = False
+        try:
             with use_schema("tenant_acme"):
                 raise RuntimeError("boom")
+        except RuntimeError as exc:
+            assert "boom" in str(exc)
+            raised = True
+        assert raised
         assert get_current_schema() == "public"
 
     def test_nested_blocks_stack_correctly(self):
