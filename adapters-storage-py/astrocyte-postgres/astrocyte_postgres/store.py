@@ -302,6 +302,10 @@ class PostgresStore:
                 # mirrored here — entity tables are owned by the
                 # entity-resolution module and other store adapters.
                 #
+                # 012_mental_models.sql is intentionally NOT mirrored here —
+                # those tables are owned by ``astrocyte_postgres.mental_model_store``
+                # which has its own ``_ensure_schema()``.
+                #
                 # Mirrors 008_entities_temporal.sql (temporal_facts table only;
                 # the entity_* tables in 008 are owned by the entity-resolution
                 # adapter, not this store).

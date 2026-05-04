@@ -32,6 +32,9 @@ postgres = "astrocyte_postgres.store:PostgresStore"
 [project.entry-points."astrocyte.wiki_stores"]
 postgres = "astrocyte_postgres.wiki_store:PostgresWikiStore"
 
+[project.entry-points."astrocyte.mental_model_stores"]
+postgres = "astrocyte_postgres.mental_model_store:PostgresMentalModelStore"
+
 [tool.hatch.version]
 source = "vcs"
 raw-options = { root = "../.." }  # Git root is two levels up
