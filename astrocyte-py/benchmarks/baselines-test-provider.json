@@ -1,27 +1,27 @@
 {
   "locomo": {
     "provider": "test-provider",
-    "overall_accuracy": 0.6606,
+    "overall_accuracy": 0.6038,
     "category_accuracy": {
-      "temporal": 0.1931,
-      "open-domain": 0.3125,
-      "multi-hop": 0.4468,
-      "single-hop": 0.7705,
+      "temporal": 0.4545,
+      "open-domain": 0.3333,
+      "multi-hop": 0.3636,
+      "single-hop": 0.8182,
       "adversarial": 1.0
     },
     "metrics": {
-      "recall_precision": 0.3096,
-      "recall_hit_rate": 0.6319,
-      "recall_mrr": 0.5264,
-      "recall_ndcg": 0.5415,
-      "retain_latency_p50_ms": 36.7116,
-      "retain_latency_p95_ms": 70.6141,
-      "recall_latency_p50_ms": 29.6063,
-      "recall_latency_p95_ms": 30.7001,
-      "reflect_accuracy": 0.6606,
-      "total_duration_seconds": 22.5739
+      "recall_precision": 0.2698,
+      "recall_hit_rate": 0.4906,
+      "recall_mrr": 0.4299,
+      "recall_ndcg": 0.4381,
+      "retain_latency_p50_ms": 414.9742,
+      "retain_latency_p95_ms": 516.7358,
+      "recall_latency_p50_ms": 127.7953,
+      "recall_latency_p95_ms": 135.8131,
+      "reflect_accuracy": 0.6038,
+      "total_duration_seconds": 31.2628
     },
-    "notes": "Promoted 2026-04-25. Overall +5.6pp, temporal +11.4pp after checkpoint/parallel/multi-query wiring. open-domain -7.2pp is MockLLMProvider noise (~7 questions on 96-question category). Suite: test-provider."
+    "notes": "Promoted 2026-05-04. Re-baselined for the stratified smoke sample (--max-questions-per-conversation 5 → 53 questions across all 5 categories). Earlier 0.6606 baseline was from the unbounded 1986-question run and over-stated overall accuracy. Per-category sample sizes are small (6–11 questions each), so a single-question flip moves a category accuracy by ~10pp — pair this baseline with category-tolerance ≥ 0.15 in the regression gate. Latencies reflect the heavier per-question pipeline added since the previous baseline (entity_resolution + parallel-retrieve + final-rerank). Suite: test-provider, deterministic across runs."
   },
   "longmemeval": {
     "provider": "test-provider",
