@@ -7,7 +7,11 @@ from pathlib import Path
 
 from astrocyte import Astrocyte
 from astrocyte.config import AstrocyteConfig, access_grants_for_astrocyte, load_config
-from astrocyte_gateway.wiring import build_tier1_pipeline, resolve_wiki_store
+from astrocyte_gateway.wiring import (
+    build_tier1_pipeline,
+    resolve_mental_model_store,
+    resolve_wiki_store,
+)
 
 
 def _apply_dev_defaults_when_no_config_file(config: AstrocyteConfig) -> None:
@@ -98,6 +102,9 @@ def build_astrocyte() -> Astrocyte:
                     max_queue_size=config.wiki_compile.max_queue_size,
                 )
             )
+    mental_model_store = resolve_mental_model_store(config)
+    if mental_model_store is not None:
+        brain.set_mental_model_store(mental_model_store)
     if config.access_control.enabled:
         brain.set_access_grants(access_grants_for_astrocyte(config))
     return brain

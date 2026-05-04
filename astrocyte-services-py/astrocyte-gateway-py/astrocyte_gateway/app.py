@@ -382,10 +382,21 @@ def create_app(
         return to_jsonable(result)
 
     def _mental_models() -> MentalModelService:
-        wiki_store = getattr(brain, "_wiki_store", None)
-        if wiki_store is None:
-            raise HTTPException(status_code=501, detail="mental models require a configured wiki_store")
-        return MentalModelService(wiki_store)
+        # M9: prefer the first-class MentalModelStore (set via
+        # brain.set_mental_model_store / config.mental_model_store).
+        # Falls back to 501 when unconfigured — earlier wiki-piggyback
+        # path is gone.
+        store = getattr(brain, "_mental_model_store", None)
+        if store is None:
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    "mental models require a configured mental_model_store; "
+                    "set 'mental_model_store: postgres' (or another registered "
+                    "MentalModelStore) in astrocyte.yaml"
+                ),
+            )
+        return MentalModelService(store)
 
     # Mental-models + observations endpoints take ``ctx`` and route through
     # ``brain._policy.check_access`` for symmetry with /v1/recall, /v1/retain,

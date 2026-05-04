@@ -37,6 +37,7 @@ def _build_app(tmp_path, *, access_control_enabled: bool, default_policy: str = 
             vector_store: in_memory
             graph_store: in_memory
             wiki_store: in_memory
+            mental_model_store: in_memory
             llm_provider: mock
             access_control:
               enabled: {str(access_control_enabled).lower()}

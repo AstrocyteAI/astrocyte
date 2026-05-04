@@ -10,7 +10,14 @@ from astrocyte.config import AstrocyteConfig
 from astrocyte.errors import ConfigError
 from astrocyte.pipeline.entity_resolution import EntityResolver
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator
-from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore, WikiStore
+from astrocyte.provider import (
+    DocumentStore,
+    GraphStore,
+    LLMProvider,
+    MentalModelStore,
+    VectorStore,
+    WikiStore,
+)
 
 T = TypeVar("T")
 
@@ -89,6 +96,26 @@ def resolve_wiki_store(config: AstrocyteConfig) -> WikiStore | None:
     except LookupError as e:
         raise ConfigError(f"Wiki store {name!r} not found. ({e})") from e
     return _instantiate(cls, _cfg_dict(config.wiki_store_config), f"wiki_store {name!r}")
+
+
+def resolve_mental_model_store(config: AstrocyteConfig) -> MentalModelStore | None:
+    """Resolve the configured first-class :class:`MentalModelStore`, if any.
+
+    Default: ``None`` — the gateway returns HTTP 501 from
+    ``/v1/mental-models`` endpoints when no store is configured. Set
+    ``mental_model_store: postgres`` (or any other registered SPI
+    implementation) in YAML to enable.
+    """
+    name = config.mental_model_store or os.environ.get("ASTROCYTE_MENTAL_MODEL_STORE")
+    if not name:
+        return None
+    try:
+        cls = resolve_provider(name, "mental_model_stores")
+    except LookupError as e:
+        raise ConfigError(f"Mental model store {name!r} not found. ({e})") from e
+    return _instantiate(
+        cls, _cfg_dict(config.mental_model_store_config), f"mental_model_store {name!r}",
+    )
 
 
 def build_tier1_pipeline(config: AstrocyteConfig, *, wiki_store: WikiStore | None = None) -> PipelineOrchestrator:
