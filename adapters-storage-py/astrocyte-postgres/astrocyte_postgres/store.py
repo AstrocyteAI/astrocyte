@@ -306,6 +306,14 @@ class PostgresStore:
                 # those tables are owned by ``astrocyte_postgres.mental_model_store``
                 # which has its own ``_ensure_schema()``.
                 #
+                # 013_bm25_materialized_view.sql is intentionally NOT mirrored
+                # here — the BM25 / IDF materialized views aggregate the WHOLE
+                # corpus, so they don't make sense for the per-test custom
+                # ``table_name`` setup that drives the bootstrap path. Tests
+                # that exercise BM25 must provision the views via migrate.sh
+                # against a real ``astrocyte_vectors`` table, then call
+                # ``store.refresh_bm25_views()`` to populate them.
+                #
                 # Mirrors 008_entities_temporal.sql (temporal_facts table only;
                 # the entity_* tables in 008 are owned by the entity-resolution
                 # adapter, not this store).
@@ -828,6 +836,168 @@ class PostgresStore:
         """
         return document.id
 
+    async def search_fulltext_bm25(
+        self,
+        query: str,
+        bank_id: str,
+        limit: int = 10,
+        filters: DocumentFilters | None = None,
+    ) -> list[DocumentHit]:
+        """BM25-with-IDF full-text search using the precomputed materialized views.
+
+        Uses the M9 BM25 stack:
+
+        - ``astrocyte_vectors_bm25`` — per-document text_vector + length factor
+          (``log(1 + |D|/avgdl_per_bank)``).
+        - ``astrocyte_term_idf`` — per-lexeme inverse document frequency
+          (``log((N - df + 0.5) / (df + 0.5) + 1)``).
+
+        Both views are materialized so this query path doesn't compete with
+        live retain writes for buffer cache, and IDF lookups are O(1) on a
+        unique-indexed table instead of an O(corpus) scan per recall.
+
+        Score formula (approximate BM25): ``ts_rank_cd × avg_query_idf /
+        doc_length_factor``. ``ts_rank_cd`` provides the term-frequency-
+        and-proximity component; ``avg_query_idf`` weights the whole query
+        by the rarity of its terms (so "When did **Alice** sign the
+        **lease**?" beats "What is the?"); ``doc_length_factor`` keeps long
+        documents from dominating short ones for the same hit count.
+
+        Returns the same :class:`DocumentHit` shape as :meth:`search_fulltext`,
+        so callers can swap implementations transparently.
+
+        **Refresh requirement**: the materialized views must be refreshed
+        for new memories to be searchable. Use :meth:`refresh_bm25_views`
+        after batched retain. In production wire it to a scheduled refresh
+        (hourly or on-percent-change is reasonable).
+        """
+        if not query or not query.strip():
+            return []
+
+        pool = await self._ensure_pool()
+        # We do NOT call ``_ensure_schema`` here — the BM25 views are owned
+        # by migration 013 and there's no per-store bootstrap path for
+        # them (they aggregate the whole table; bootstrapping per-tenant
+        # would require triggering REFRESH at every test setup).
+
+        bm25_view = self._fq("astrocyte_vectors_bm25")
+        term_idf_view = self._fq("astrocyte_term_idf")
+
+        where = ["bank_id = %s", "text_vector @@ plainto_tsquery('english', %s)"]
+        where_params: list[Any] = [bank_id, query]
+        if filters and filters.tags:
+            # The MV doesn't carry tags — join back to the source table for
+            # the tag filter rather than denormalising into the view.
+            where.append(
+                f"id IN (SELECT id FROM {self._fq()} WHERE tags && %s::text[])"
+            )
+            where_params.append(filters.tags)
+
+        where_sql = " AND ".join(where)
+        # Aggregate IDF for the query: average of IDFs of (lexemes-of-query)
+        # that appear in the corpus. ``regexp_split_to_table`` decomposes
+        # the query string into raw words; we lowercase and strip punctuation
+        # so the join against ``astrocyte_term_idf.lexeme`` (already
+        # lowercase/stemmed) finds matches. Missing terms (queries with
+        # words not in the corpus) default the average to 0.5 — small but
+        # non-zero so we still get *some* score from ts_rank_cd alone.
+        sql = f"""
+            WITH query_terms AS (
+                SELECT regexp_split_to_table(
+                    lower(regexp_replace(%s, '[^a-z0-9 ]', ' ', 'gi')),
+                    '\\s+'
+                ) AS word
+            ),
+            query_idf AS (
+                SELECT COALESCE(AVG(idf), 0.5) AS avg_idf
+                FROM query_terms qt
+                JOIN {term_idf_view} ti ON ti.lexeme = qt.word
+                WHERE qt.word <> ''
+            )
+            SELECT
+                v.id,
+                ts_rank_cd(v.text_vector, plainto_tsquery('english', %s), 0)
+                    * (SELECT avg_idf FROM query_idf)
+                    / NULLIF(v.doc_length_factor, 0) AS score
+            FROM {bm25_view} v
+            WHERE {where_sql}
+            ORDER BY score DESC NULLS LAST
+            LIMIT %s
+        """
+        params = [query, query, *where_params, limit]
+
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, params)
+                rows = await cur.fetchall()
+
+        # The BM25 view doesn't carry text + metadata (would bloat it). For
+        # the matching ids, fetch text + metadata from the source table in
+        # a single follow-up query.
+        ids = [row["id"] for row in rows]
+        if not ids:
+            return []
+        scores_by_id = {row["id"]: float(row["score"] or 0.0) for row in rows}
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT id, text, metadata
+                    FROM {self._fq()}
+                    WHERE id = ANY(%s::text[]) AND forgotten_at IS NULL
+                    """,
+                    [ids],
+                )
+                bodies = {row["id"]: row for row in await cur.fetchall()}
+
+        hits: list[DocumentHit] = []
+        for hit_id in ids:
+            body = bodies.get(hit_id)
+            if body is None:
+                # Document was forgotten between MV refresh and now — skip.
+                continue
+            md = body["metadata"]
+            if isinstance(md, str):
+                md = json.loads(md)
+            hits.append(
+                DocumentHit(
+                    document_id=body["id"],
+                    text=body["text"],
+                    score=scores_by_id[hit_id],
+                    metadata=md,
+                )
+            )
+        return hits
+
+    async def refresh_bm25_views(self, *, concurrent: bool = True) -> None:
+        """Refresh the BM25 / IDF materialized views.
+
+        Call after batched retain so newly-stored memories become
+        searchable via :meth:`search_fulltext_bm25`. Bench setups should
+        invoke this once between the retain and recall phases.
+
+        Args:
+            concurrent: When ``True`` (default), uses ``REFRESH MATERIALIZED
+                VIEW CONCURRENTLY`` so reads aren't blocked during the
+                refresh. Slower but production-safe. Set ``False`` only for
+                a fast initial bulk refresh on an empty/cold view.
+        """
+        pool = await self._ensure_pool()
+        bm25_view = self._fq("astrocyte_vectors_bm25")
+        term_idf_view = self._fq("astrocyte_term_idf")
+        mode = "CONCURRENTLY " if concurrent else ""
+        async with pool.connection() as conn:
+            # CONCURRENTLY can't run inside an explicit transaction; psycopg's
+            # default autocommit is off, so toggle for the DDL.
+            await conn.set_autocommit(True)
+            try:
+                await conn.execute(f"REFRESH MATERIALIZED VIEW {mode}{bm25_view}")
+                # term_idf depends on bm25 (its source query references the
+                # other view), so refresh in dependency order.
+                await conn.execute(f"REFRESH MATERIALIZED VIEW {mode}{term_idf_view}")
+            finally:
+                await conn.set_autocommit(False)
+
     async def search_fulltext(
         self,
         query: str,
@@ -842,6 +1012,10 @@ class PostgresStore:
         on the memory-text lengths typical of Astrocyte.  Normalises the raw
         score by document length (``|normalization|=1``) so long memories
         don't dominate short ones.
+
+        For true BM25 ranking with corpus IDF and length normalisation,
+        use :meth:`search_fulltext_bm25` (requires migration 013 + periodic
+        :meth:`refresh_bm25_views`).
         """
         if not query or not query.strip():
             return []
