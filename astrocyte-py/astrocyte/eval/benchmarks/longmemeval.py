@@ -75,6 +75,67 @@ def _parse_longmemeval_date(raw: str | None) -> datetime | None:
     return None
 
 
+def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Compact, JSON-safe view of the metadata fields useful for recall
+    debugging. Mirrors the LoCoMo helper but trimmed to LME's typical
+    metadata keys (session_id, source, _created_at)."""
+    if not metadata:
+        return {}
+    keys = ("source", "session_id", "session_ids", "session_date", "_created_at")
+    out: dict[str, Any] = {}
+    for k in keys:
+        if k in metadata:
+            v = metadata[k]
+            if hasattr(v, "isoformat"):
+                v = v.isoformat()
+            out[k] = v
+    return out
+
+
+def _hit_debug(hit: Any) -> dict[str, Any]:
+    """Compact serialisation of a recall hit for the per_question dump.
+
+    Without this, LME's ``per_question`` only stored the hit count —
+    making it impossible to debug WHY a recall failed (we couldn't tell
+    if the right memory was in the candidate pool or not). Mirrors the
+    LoCoMo bench's _hit_debug shape so the same downstream tooling
+    (failure_analysis, etc.) works on both benchmarks.
+    """
+    md = getattr(hit, "metadata", None) or {}
+    return {
+        "memory_id": getattr(hit, "memory_id", None),
+        "score": getattr(hit, "score", None),
+        "fact_type": getattr(hit, "fact_type", None),
+        "memory_layer": getattr(hit, "memory_layer", None),
+        "tags": list(getattr(hit, "tags", None) or []),
+        "metadata": _safe_metadata(md),
+        "occurred_at": (
+            getattr(hit, "occurred_at", None).isoformat()
+            if getattr(hit, "occurred_at", None) is not None
+            else None
+        ),
+        "retained_at": (
+            getattr(hit, "retained_at", None).isoformat()
+            if getattr(hit, "retained_at", None) is not None
+            else None
+        ),
+        "text_preview": str(getattr(hit, "text", ""))[:240],
+    }
+
+
+def _hit_session_id(hit: Any) -> str | None:
+    """Return the LME session_id this hit's memory came from, if any.
+
+    LME retain stamps ``metadata['session_id']`` (string) on every
+    memory. Used by the session-aware relevance metric — a memory
+    is relevant when its session_id is in the question's
+    ``answer_session_ids`` set.
+    """
+    md = getattr(hit, "metadata", None) or {}
+    sid = md.get("session_id")
+    return str(sid) if sid is not None else None
+
+
 def _classify_question_type(question_type: str) -> str:
     """Map a LongMemEval question_type to a high-level category."""
     if question_type.endswith("_abs"):
@@ -92,6 +153,16 @@ class LongMemEvalResult:
     correct: int
     per_question: list[dict[str, Any]]
     eval_result: EvalResult  # Standard Astrocyte EvalResult
+    #: Accuracy on questions that were *actually evaluated* (no errors).
+    #: Use this — not ``overall_accuracy`` — when comparing across runs
+    #: where some questions errored out. Mirrors the LoCoMo result.
+    evaluated_accuracy: float = 0.0
+    evaluated_questions: int = 0
+    error_rate: float = 0.0
+    #: True if the bench fail-fasted on a terminal API error mid-run;
+    #: numbers above are partial-run snapshots, do not publish.
+    aborted: bool = False
+    abort_reason: str | None = None
 
 
 @dataclass
@@ -470,11 +541,37 @@ class LongMemEvalBenchmark:
                         correct += 1
                         category_correct[q.category] = category_correct.get(q.category, 0) + 1
 
-                    # Build QueryResult for standard metrics
+                    # ── Build QueryResult for standard metrics ──
+                    #
+                    # Relevance is computed against ``q.session_ids`` (the
+                    # ground-truth evidence sessions in the LME dataset) by
+                    # intersecting with each retrieved memory's
+                    # ``metadata['session_id']``. The previous
+                    # text-overlap-with-answer metric was an artifact for
+                    # derivational categories: temporal questions whose
+                    # answer is a number ("7 days", "4 weeks ago") have
+                    # NO retrievable memory text matching the answer, so
+                    # the metric returned 0 even when the right memories
+                    # were in the candidate pool. Result: ``temporal``
+                    # accuracy could be 0% per the headline metric while
+                    # the actual recall worked fine.
+                    #
+                    # We still keep the text-overlap as a *secondary*
+                    # signal under ``_text_overlap_relevant`` for
+                    # extractive-question debugging.
+                    expected_session_ids: set[str] = {
+                        str(s) for s in (q.session_ids or []) if s
+                    }
                     relevant_ids: set[str] = set()
+                    text_overlap_relevant_count = 0
                     for h in result.hits:
-                        if h.memory_id and text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD:
+                        if not h.memory_id:
+                            continue
+                        sid = _hit_session_id(h)
+                        if sid is not None and sid in expected_session_ids:
                             relevant_ids.add(h.memory_id)
+                        if text_overlap_score([q.answer], h.text) > ANSWER_MATCH_THRESHOLD:
+                            text_overlap_relevant_count += 1
                     retrieved_ids = [h.memory_id for h in result.hits if h.memory_id]
                     q_precision = len(relevant_ids) / max(len(retrieved_ids), 1)
                     q_rr = next(
@@ -489,13 +586,29 @@ class LongMemEvalBenchmark:
                         "category": q.category,
                         "question": q.question,
                         "expected_answer": q.answer,
+                        "session_ids": list(q.session_ids or []),
                         "correct": is_correct,
                         "recall_hits": len(result.hits),
+                        # Full retrieved hits — needed for any recall
+                        # debugging. Without this, ``per_question`` only
+                        # stored the count, and we couldn't tell whether
+                        # a failed answer was a recall or synthesis
+                        # problem. Mirrors LoCoMo's q_record shape.
+                        "recall_top_hits": [_hit_debug(h) for h in result.hits],
                         "reflect_answer_preview": reflect_result.answer[:200],
+                        # Headline metric (session-id intersection).
                         "_precision": q_precision,
                         "_reciprocal_rank": q_rr,
                         "_latency_ms": elapsed,
                         "_ndcg": q_ndcg,
+                        # Secondary diagnostic — text-overlap with answer.
+                        # Useful for extractive questions where the
+                        # answer text appears verbatim in source memories;
+                        # zero by construction for derivational categories.
+                        "_text_overlap_relevant": text_overlap_relevant_count,
+                        # Helper for failure analysis: did we retrieve
+                        # at least one memory from a ground-truth session?
+                        "_session_id_hit": len(relevant_ids) > 0,
                     }
                     per_question_arr[idx] = q_record
                     if checkpoint is not None:
@@ -512,6 +625,24 @@ class LongMemEvalBenchmark:
                     )
 
                 except Exception as exc:
+                    # Mirror the LoCoMo bench: terminal API errors
+                    # (insufficient_quota, invalid_api_key, …) abort the
+                    # whole run instead of silently logging-and-continuing.
+                    # See ``astrocyte.eval.benchmarks.locomo._is_terminal_error``
+                    # for the rationale + marker list.
+                    from astrocyte.eval.benchmarks.locomo import (
+                        BenchAborted,
+                        _is_terminal_error,
+                    )
+
+                    if _is_terminal_error(exc):
+                        logging.getLogger("astrocyte.eval.longmemeval").error(
+                            "TERMINAL eval error for q=%s — aborting bench: %s",
+                            q.question_id, exc,
+                        )
+                        raise BenchAborted(
+                            f"terminal API error during eval (q={q.question_id}): {exc}"
+                        ) from exc
                     logging.getLogger("astrocyte.eval.longmemeval").warning(
                         "eval failed for q=%s: %s (counted as incorrect)",
                         q.question_id,
@@ -522,7 +653,19 @@ class LongMemEvalBenchmark:
             completed_count += 1
             _progress_print()
 
-        await asyncio.gather(*[_eval_one(i, q) for i, q in enumerate(questions)])
+        from astrocyte.eval.benchmarks.locomo import BenchAborted
+
+        gather_results = await asyncio.gather(
+            *[_eval_one(i, q) for i, q in enumerate(questions)],
+            return_exceptions=True,
+        )
+        bench_aborted_exc: BenchAborted | None = next(
+            (r for r in gather_results if isinstance(r, BenchAborted)),
+            None,
+        )
+        for r in gather_results:
+            if isinstance(r, BaseException) and not isinstance(r, BenchAborted):
+                raise r
 
         # Rebuild ordered lists from pre-allocated arrays, dropping any None
         # entries that resulted from exceptions.
@@ -531,6 +674,13 @@ class LongMemEvalBenchmark:
 
         # ── Phase 3: Compute results ──
         total_duration = time.monotonic() - start_time
+        # Honest accuracy reporting — see _ACCURACY_REPORTING in locomo.py.
+        # ``evaluated_accuracy`` is the only number meaningful when
+        # ``error_rate > 0``; ``overall_accuracy`` divides by the dataset
+        # total and silently under-reports under partial runs.
+        evaluated = len(per_question)
+        evaluated_accuracy = correct / max(evaluated, 1)
+        error_rate = (len(questions) - evaluated) / max(len(questions), 1)
         overall_accuracy = correct / max(len(questions), 1)
 
         category_accuracy: dict[str, float] = {}
@@ -580,6 +730,11 @@ class LongMemEvalBenchmark:
             correct=correct,
             per_question=per_question,
             eval_result=eval_result,
+            evaluated_accuracy=evaluated_accuracy,
+            evaluated_questions=evaluated,
+            error_rate=error_rate,
+            aborted=bench_aborted_exc is not None,
+            abort_reason=str(bench_aborted_exc) if bench_aborted_exc else None,
         )
 
 
