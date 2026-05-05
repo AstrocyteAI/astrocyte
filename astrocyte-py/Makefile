@@ -256,6 +256,39 @@ bench-longmemeval-quick-on-2: fetch-longmemeval bench-db-start-2
 		--canonical-judge \
 		--output-dir $(RESULTS_DIR)/lme-on-2
 
+# ---------------------------------------------------------------------------
+# Single-command parallel run with full process-level isolation.
+# ---------------------------------------------------------------------------
+# Backgrounds bench-locomo (DB :5433) and bench-longmemeval-on-2 (DB :5434)
+# under one make target.  Each gets its own Postgres container, python
+# process, and log file — one crash does not affect the other.  ``wait``
+# blocks the parent shell until BOTH children finish, so make returns
+# only when both runs complete.
+#
+# Live progress: in another terminal,
+#     tail -f $(RESULTS_DIR)/parallel/locomo.log
+#     tail -f $(RESULTS_DIR)/parallel/lme.log
+#
+# Usage:
+#     doppler run -- make bench-parallel-isolated
+#     doppler run -- make bench-parallel-isolated CONFIG=benchmarks/config-foo.yaml
+#     doppler run -- make bench-parallel-isolated RESUME=1
+#
+# Requires fresh-or-resumed state on each DB.  Use ``make bench-db-reset``
+# and ``make bench-db-reset-2`` first when starting a new experiment.
+.PHONY: bench-parallel-isolated
+bench-parallel-isolated: fetch-datasets bench-db-start bench-db-start-2
+	@mkdir -p $(RESULTS_DIR)/parallel
+	@echo "  [parallel] LoCoMo on :5433 + LME on :5434"
+	@echo "  [parallel] Logs: $(RESULTS_DIR)/parallel/{locomo,lme}.log"
+	@echo "  [parallel] Watch live: tail -f $(RESULTS_DIR)/parallel/locomo.log"
+	@( $(MAKE) bench-locomo CONFIG=$(CONFIG) $(if $(RESUME),RESUME=1,) > $(RESULTS_DIR)/parallel/locomo.log 2>&1 ; \
+	   echo "  [parallel] locomo exited ($$?)" ) & \
+	 ( $(MAKE) bench-longmemeval-on-2 CONFIG=$(CONFIG) $(if $(RESUME),RESUME=1,) > $(RESULTS_DIR)/parallel/lme.log 2>&1 ; \
+	   echo "  [parallel] lme exited ($$?)" ) & \
+	 wait
+	@echo "  [parallel] Both done. Results: $(RESULTS_DIR)/latest.json (locomo) + $(RESULTS_DIR)/lme-on-2/latest.json (lme)"
+
 # LoCoMo via LiteLLM adapter (requires OPENAI_API_KEY + astrocyte-llm-litellm installed)
 bench-locomo-litellm: fetch-locomo bench-db-start
 	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
