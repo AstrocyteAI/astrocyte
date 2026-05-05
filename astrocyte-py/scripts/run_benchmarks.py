@@ -1014,10 +1014,23 @@ async def main() -> None:
     # reset_state_before=False below ensures parallel runs don't race on
     # TRUNCATE / drop_graph and don't clobber each other's data mid-flight.
     # No-op when DATABASE_URL is unset.
+    #
+    # IMPORTANT: skip the reset on ``--resume``. Otherwise the DB gets
+    # wiped while the checkpoint still says "X sessions already retained"
+    # — the harness then skips those sessions on retain (because the
+    # checkpoint says they're done) but their vectors no longer exist,
+    # producing a half-empty corpus that fails recall in the eval phase.
+    # See the May 2026 LME A/B post-mortem: a paused-then-resumed run
+    # silently dropped 1550 sessions of vectors and produced a
+    # garbage-numbers eval. ``--resume`` only makes sense if state is
+    # preserved across the resume boundary.
     from astrocyte.eval._state_reset import reset_benchmark_state
 
-    print("Resetting benchmark Postgres state...")
-    await reset_benchmark_state()
+    if args.resume:
+        print("Resume requested — skipping benchmark Postgres reset (preserving prior state).")
+    else:
+        print("Resetting benchmark Postgres state...")
+        await reset_benchmark_state()
 
     if "builtin" in args.benchmarks:
         all_results["builtin"] = await run_builtin_suites(brain)
