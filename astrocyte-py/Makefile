@@ -24,6 +24,21 @@ BENCH_DATABASE_URL := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0
 BENCH_UV_RUN := uv run --extra dev --extra rerank
 
 # ---------------------------------------------------------------------------
+# Second benchmark database — for running LoCoMo + LME in parallel without
+# state-reset interference. Each `run_benchmarks.py` invocation TRUNCATEs all
+# bench tables on startup; sharing one DB between two processes makes the
+# second TRUNCATE wipe the first run's in-flight retain. Two containers on
+# different ports give each run an isolated PgQueuer queue, observation
+# table, mental_model table, and entity graph.
+#
+# Run pattern:
+#   Terminal A: doppler run -- make bench-locomo            (DB on :5433)
+#   Terminal B: doppler run -- make bench-longmemeval-on-2  (DB on :5434)
+BENCH_PG_2_CONTAINER := astrocyte-bench-pg-2
+BENCH_PG_2_PORT      := 5434
+BENCH_DATABASE_URL_2 := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0.1:$(BENCH_PG_2_PORT)/$(BENCH_PG_DB)
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -61,7 +76,7 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench-db-start bench-db-stop bench-db-reset bench bench-full bench-gate bench-locomo bench-locomo-fair bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-builtin bench-smoke
+.PHONY: bench-db-start bench-db-stop bench-db-reset bench-db-start-2 bench-db-stop-2 bench-db-reset-2 bench bench-full bench-gate bench-locomo bench-locomo-fair bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-longmemeval-on-2 bench-longmemeval-quick-on-2 bench-builtin bench-smoke
 
 # Start the benchmark Postgres container (astrocyte-postgres).
 # Pulls from GHCR first; falls back to building locally from the Dockerfile.
@@ -114,6 +129,59 @@ bench-db-stop:
 # Recreate the disposable benchmark database, useful after embedding dimension changes.
 bench-db-reset: bench-db-stop bench-db-start
 
+# ---------------------------------------------------------------------------
+# Second benchmark database (for parallel LoCoMo + LME runs)
+# ---------------------------------------------------------------------------
+# Mirrors bench-db-start/stop/reset but with the second container/port. Body
+# is intentionally duplicated rather than abstracted into a make-macro: this
+# is an ops file and direct grep-ability beats DRY.
+
+bench-db-start-2:
+	@set -e; \
+	if docker ps --format '{{.Names}}' | grep -q '^$(BENCH_PG_2_CONTAINER)$$'; then \
+		echo "  [bench-db-2] $(BENCH_PG_2_CONTAINER) already running"; \
+	elif docker ps -a --format '{{.Names}}' | grep -q '^$(BENCH_PG_2_CONTAINER)$$'; then \
+		echo "  [bench-db-2] Restarting stopped container $(BENCH_PG_2_CONTAINER)"; \
+		docker start $(BENCH_PG_2_CONTAINER); \
+		until docker exec $(BENCH_PG_2_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL_2)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
+		echo "  [bench-db-2] Postgres ready"; \
+	else \
+		echo "  [bench-db-2] Pulling $(BENCH_PG_IMAGE)..."; \
+		if docker pull $(BENCH_PG_IMAGE); then \
+			BENCH_IMG=$(BENCH_PG_IMAGE); \
+		else \
+			echo "  [bench-db-2] Pull failed — building from ../docker/astrocyte-postgres/Dockerfile"; \
+			docker build -t $(BENCH_PG_LOCAL_IMG) -f ../docker/astrocyte-postgres/Dockerfile ..; \
+			BENCH_IMG=$(BENCH_PG_LOCAL_IMG); \
+		fi; \
+		docker run -d --name $(BENCH_PG_2_CONTAINER) \
+			-e POSTGRES_USER=$(BENCH_PG_USER) \
+			-e POSTGRES_PASSWORD=$(BENCH_PG_PASSWORD) \
+			-e POSTGRES_DB=$(BENCH_PG_DB) \
+			-p $(BENCH_PG_2_PORT):5432 \
+			$$BENCH_IMG; \
+		echo "  [bench-db-2] Waiting for Postgres to be ready..."; \
+		until docker exec $(BENCH_PG_2_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL_2)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
+		echo "  [bench-db-2] Postgres ready at localhost:$(BENCH_PG_2_PORT)"; \
+	fi; \
+	echo "  [bench-db-2] Applying pgvector HNSW migrations (vector($(BENCH_EMBEDDING_DIMENSIONS)))"; \
+	ASTROCYTE_EMBEDDING_DIMENSIONS=$(BENCH_EMBEDDING_DIMENSIONS) \
+		DATABASE_URL="$(BENCH_DATABASE_URL_2)" \
+		../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh; \
+	actual=$$(PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL_2)" -Atc "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'astrocyte_vectors'::regclass AND a.attname = 'embedding'"); \
+	if [ "$$actual" != "vector($(BENCH_EMBEDDING_DIMENSIONS))" ]; then \
+		echo "  [bench-db-2] ERROR: astrocyte_vectors.embedding is $$actual, expected vector($(BENCH_EMBEDDING_DIMENSIONS))."; \
+		echo "  [bench-db-2] Run 'make bench-db-reset-2' once to recreate the disposable benchmark database."; \
+		exit 1; \
+	fi
+
+bench-db-stop-2:
+	@docker stop $(BENCH_PG_2_CONTAINER) 2>/dev/null && docker rm $(BENCH_PG_2_CONTAINER) 2>/dev/null && echo "  [bench-db-2] $(BENCH_PG_2_CONTAINER) stopped" || echo "  [bench-db-2] $(BENCH_PG_2_CONTAINER) not running"
+
+bench-db-reset-2: bench-db-stop-2 bench-db-start-2
+
 # Full LoCoMo benchmark (requires OPENAI_API_KEY, ~30-60 min)
 # Pass RESUME=1 to continue an interrupted run: make bench-locomo RESUME=1
 bench-locomo: fetch-locomo bench-db-start
@@ -164,6 +232,29 @@ bench-longmemeval-quick: fetch-longmemeval bench-db-start
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--max-questions 100 \
 		--canonical-judge
+
+# LongMemEval pointed at the SECOND DB — for parallel runs alongside `make bench-locomo`.
+# Output dir is separate so result files don't collide.
+# Pass RESUME=1 to continue an interrupted run.
+bench-longmemeval-on-2: fetch-longmemeval bench-db-start-2
+	DATABASE_URL="$(BENCH_DATABASE_URL_2)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL_2)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
+		--config $(CONFIG) \
+		--benchmarks longmemeval \
+		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
+		--canonical-judge \
+		--output-dir $(RESULTS_DIR)/lme-on-2 \
+		$(if $(RESUME),--resume,)
+
+# Quick LongMemEval subset on the SECOND DB (100q, ~30-60 min) — for fast smoke tests
+# while a LoCoMo run is in flight on the primary DB.
+bench-longmemeval-quick-on-2: fetch-longmemeval bench-db-start-2
+	DATABASE_URL="$(BENCH_DATABASE_URL_2)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL_2)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
+		--config $(CONFIG) \
+		--benchmarks longmemeval \
+		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
+		--max-questions 100 \
+		--canonical-judge \
+		--output-dir $(RESULTS_DIR)/lme-on-2
 
 # LoCoMo via LiteLLM adapter (requires OPENAI_API_KEY + astrocyte-llm-litellm installed)
 bench-locomo-litellm: fetch-locomo bench-db-start
