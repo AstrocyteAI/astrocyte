@@ -1,0 +1,146 @@
+# Hindsight-style benchmark configuration.
+#
+# Purpose:
+# - Same retain stack as fast-recall, but flip the recall/reflect knobs
+#   to mirror Hindsight's strategy:
+#     1. Agentic reflect loop with iterative tool-calling
+#     2. NO adversarial-defense abstention (let the LLM try harder)
+#     3. Multi-query expansion (passed via --multi-query CLI flag at run time)
+#     4. (TODO) MentalModelStore wired so agent can hit cached summaries
+#     5. (TODO) Synthesis prompt biased toward reasoning + counting
+#
+# Hypothesis:
+# - LME accuracy on a 100-Q sample with single-shot reflect was 31%.
+# - With agentic reflect + relaxed abstention + multi-query, we expect
+#   the agent to:
+#     - decompose abstract questions into multiple recall calls
+#     - keep searching when initial top-K is below the abstention floor
+#     - use multi-query expansion to find buried evidence
+# - Cost: each Q runs 2-5 LLM calls instead of 1; total eval ~3-5× longer.
+
+profile: research
+
+provider_tier: storage
+
+benchmark_preset:
+  name: fast-recall
+  version: 1
+  budget: low
+  low:
+    candidate_limit: 12
+    graph_expansion_limit: 12
+    rerank_top_k: 12
+    max_tokens: 2048
+    observation_weight: 0.0
+    agentic_reflect_allowed: false
+
+vector_store: postgres
+vector_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+document_store: postgres
+document_store_config:
+  embedding_dimensions: 1536
+  bootstrap_schema: false
+
+graph_store: age
+
+entity_resolution:
+  enabled: true
+  enable_llm_disambiguation: false
+  canonical_resolution: true
+
+async_tasks:
+  enabled: true
+  backend: pgqueuer
+  install_on_start: true
+  auto_start_worker: true
+
+wiki_compile:
+  enabled: false
+  auto_start: false
+
+spreading_activation:
+  enabled: true
+  expansion_limit: 12
+
+semantic_link_graph:
+  enabled: true
+  top_k: 3
+  similarity_threshold: 0.75
+
+causal_links:
+  enabled: false
+
+agentic_reflect:
+  enabled: true
+  max_iterations: 3
+  recall_step_max_results: 10
+  max_evidence_pool_size: 30
+
+cross_encoder_rerank:
+  # Tier-1 #1 from the post-rerank-fault-analysis plan.  49% of failures on
+  # the previous run had the right memory in the candidate pool but ranked
+  # below the synthesis cut.  Always-on CE on the top-12 should lift those
+  # without paying latency for a deeper rerank.  ``top_k: 12`` matches
+  # ``benchmark_preset.low.candidate_limit: 12`` so the CE reranks exactly
+  # the synthesis pool — no over-fetch.  The ``adversarial_defense`` below stays on
+  # (abstention floor + adversarial system prompt) to preserve the 0.71
+  # adversarial score that previous CE-on presets blew up to 0.37.
+  enabled: true
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_k: 12
+  force_cpu: false
+
+adversarial_defense:
+  # Hindsight-style: don't bail out on low-score evidence.  Let the
+  # agentic reflect loop iterate (search harder, expand, decompose)
+  # before saying "insufficient evidence".
+  abstention_enabled: false
+  abstention_floor: 0.0
+  premise_verification_enabled: false
+  adversarial_prompt_enabled: false
+
+structured_fact_extraction:
+  enabled: true
+  extraction_mode: verbatim
+  max_facts_per_call: 30
+  chunk_strategy: paragraph
+
+query_analyzer:
+  enabled: true
+  allow_llm_fallback: false
+
+llm_provider: openai
+llm_provider_config:
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
+  embedding_model: text-embedding-3-small
+
+barriers:
+  pii:
+    mode: disabled
+  validation:
+    reject_empty_content: true
+
+homeostasis:
+  recall_max_tokens: 2048
+  reflect_max_tokens: 4096
+  rate_limits:
+    retain_per_minute: 500
+    recall_per_minute: 500
+    reflect_per_minute: 200
+
+signal_quality:
+  dedup:
+    enabled: false
+  noisy_bank:
+    enabled: false
+
+escalation:
+  degraded_mode: error
+
+observability:
+  otel_enabled: false
+  prometheus_enabled: false
