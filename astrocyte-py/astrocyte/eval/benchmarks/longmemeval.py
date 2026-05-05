@@ -110,14 +110,10 @@ def _hit_debug(hit: Any) -> dict[str, Any]:
         "tags": list(getattr(hit, "tags", None) or []),
         "metadata": _safe_metadata(md),
         "occurred_at": (
-            getattr(hit, "occurred_at", None).isoformat()
-            if getattr(hit, "occurred_at", None) is not None
-            else None
+            getattr(hit, "occurred_at", None).isoformat() if getattr(hit, "occurred_at", None) is not None else None
         ),
         "retained_at": (
-            getattr(hit, "retained_at", None).isoformat()
-            if getattr(hit, "retained_at", None) is not None
-            else None
+            getattr(hit, "retained_at", None).isoformat() if getattr(hit, "retained_at", None) is not None else None
         ),
         "text_preview": str(getattr(hit, "text", ""))[:240],
     }
@@ -181,6 +177,14 @@ class LongMemEvalQuestion:
     #: ``category`` above is the lossy Astrocyte-side summary and
     #: cannot round-trip to the template choice.
     question_type: str = ""
+    #: Parsed ``question_date`` from the LongMemEval dataset. Used as
+    #: the ``as_of`` anchor for recall + reflect so relative phrases
+    #: (``"yesterday"``, ``"last week"``) are resolved against the
+    #: question's contemporaneous date, NOT the run wall-clock.  The
+    #: dataset is 2023-vintage; without this, every relative phrase is
+    #: silently wrong by years on bench runs in 2026+. ``None`` when
+    #: the upstream record lacks a parseable date.
+    question_date: datetime | None = None
 
 
 class LongMemEvalBenchmark:
@@ -505,12 +509,31 @@ class LongMemEvalBenchmark:
             async with rate_limiter:
                 try:
                     t0 = time.monotonic()
-                    result = await self.brain.recall(q.question, bank_id=bank_id, max_results=10)
+                    # ``query_reference_date=q.question_date`` anchors
+                    # relative temporal phrases ("yesterday", "X weeks
+                    # ago") in the question to the dataset's
+                    # contemporaneous date.  Crucially we do NOT pass
+                    # ``as_of=q.question_date`` here — that's a
+                    # ``retained_at`` time-travel filter and would drop
+                    # every memory because retain happened today (after
+                    # the 2023-vintage question dates).  See the May
+                    # 2026 LME post-mortem: as_of vs
+                    # query_reference_date split.
+                    result = await self.brain.recall(
+                        q.question,
+                        bank_id=bank_id,
+                        max_results=10,
+                        query_reference_date=q.question_date,
+                    )
                     elapsed = (time.monotonic() - t0) * 1000
                     recall_latencies.append(elapsed)
 
                     # Always run reflect so canonical-judge path has an answer.
-                    reflect_result = await self.brain.reflect(q.question, bank_id=bank_id)
+                    reflect_result = await self.brain.reflect(
+                        q.question,
+                        bank_id=bank_id,
+                        query_reference_date=q.question_date,
+                    )
 
                     if canonical_judge is not None:
                         try:
@@ -559,9 +582,7 @@ class LongMemEvalBenchmark:
                     # We still keep the text-overlap as a *secondary*
                     # signal under ``_text_overlap_relevant`` for
                     # extractive-question debugging.
-                    expected_session_ids: set[str] = {
-                        str(s) for s in (q.session_ids or []) if s
-                    }
+                    expected_session_ids: set[str] = {str(s) for s in (q.session_ids or []) if s}
                     relevant_ids: set[str] = set()
                     text_overlap_relevant_count = 0
                     for h in result.hits:
@@ -638,11 +659,10 @@ class LongMemEvalBenchmark:
                     if _is_terminal_error(exc):
                         logging.getLogger("astrocyte.eval.longmemeval").error(
                             "TERMINAL eval error for q=%s — aborting bench: %s",
-                            q.question_id, exc,
+                            q.question_id,
+                            exc,
                         )
-                        raise BenchAborted(
-                            f"terminal API error during eval (q={q.question_id}): {exc}"
-                        ) from exc
+                        raise BenchAborted(f"terminal API error during eval (q={q.question_id}): {exc}") from exc
                     logging.getLogger("astrocyte.eval.longmemeval").warning(
                         "eval failed for q=%s: %s (counted as incorrect)",
                         q.question_id,
@@ -895,6 +915,15 @@ def load_longmemeval_dataset(
                                 }
                             )
 
+            # Parse the question's ``question_date`` field — the dataset
+            # records the date the question was *asked* and every relative
+            # phrase ("yesterday", "last week", "X days ago") in the
+            # question must be resolved against THIS date, not the run
+            # wall-clock.  Skipping this silently broke LME-temporal:
+            # benches running in 2026 against a 2023-vintage dataset
+            # treated "yesterday" as ~3 years off.
+            question_date = _parse_longmemeval_date(item.get("question_date"))
+
             q = LongMemEvalQuestion(
                 question_id=str(item.get("question_id", item.get("id", ""))),
                 category=category,
@@ -903,6 +932,7 @@ def load_longmemeval_dataset(
                 session_ids=[str(s) for s in session_ids] if isinstance(session_ids, list) else [],
                 conversation_context=conversation_context,
                 question_type=str(question_type),
+                question_date=question_date,
             )
             if q.question and q.answer:
                 questions.append(q)

@@ -319,6 +319,21 @@ class RecallRequest:
     detail_level: str | None = None  # "titles" | "bodies" | "full" | None (default=full)
     external_context: list[MemoryHit] | None = None  # External RAG/graph results for cross-source fusion
     as_of: datetime | None = None  # Time-travel: recall as if it were this UTC moment (M9)
+    #: Reference date for resolving relative temporal phrases in the
+    #: query (``"yesterday"``, ``"last week"``, ``"3 days ago"``).
+    #: SEPARATE from ``as_of``: ``as_of`` is a ``retained_at`` time-travel
+    #: filter (M9 audit/legal-hold use case); ``query_reference_date`` is
+    #: ONLY consumed by the query analyzer to anchor relative phrases.
+    #:
+    #: When unset, the query analyzer uses ``as_of`` if set, else
+    #: ``datetime.now()`` — preserving prior behaviour. Set this on
+    #: bench/eval paths whose dataset predates the run wall-clock (e.g.
+    #: LongMemEval is 2023-vintage; running in 2026 without anchoring
+    #: makes "yesterday" wrong by ~3 years). Crucially, setting only
+    #: ``query_reference_date`` (and leaving ``as_of=None``) does NOT
+    #: filter out memories retained after that date — the entire corpus
+    #: stays in scope. See the May 2026 LME post-mortem.
+    query_reference_date: datetime | None = None
 
 
 @dataclass
@@ -464,6 +479,22 @@ class ReflectRequest:
     #: carrying every listed tag — closing the leak where single-bank
     #: ``Astrocyte.reflect(tags=...)`` previously dropped the filter.
     tags: list[str] | None = None
+    #: M9 time-travel anchor: filters reflect's underlying recall to
+    #: ``retained_at <= as_of``. Use for legal-hold / audit replay
+    #: ("show me what the system knew at time X"). NOT for anchoring
+    #: relative phrases — see ``query_reference_date`` below for that.
+    as_of: datetime | None = None
+    #: Reference date for resolving relative temporal phrases in the
+    #: query (``"yesterday"``, ``"last week"``, ``"3 days ago"``).
+    #: SEPARATE from ``as_of``: setting ONLY this anchors phrase
+    #: resolution without filtering out memories retained after that
+    #: date. Required for benchmarks whose dataset predates the run
+    #: wall-clock — e.g. LongMemEval (2023-vintage) measured in 2026
+    #: must set ``query_reference_date=question_date`` so "yesterday"
+    #: resolves to question_date - 1 day, not run_wall_clock - 1 day.
+    #: Mirrors ``RecallRequest.query_reference_date``; the orchestrator
+    #: forwards this into every sub_recall the reflect path builds.
+    query_reference_date: datetime | None = None
 
 
 @dataclass

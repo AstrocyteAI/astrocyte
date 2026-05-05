@@ -19,3 +19,7 @@ class RecallParams:
     layer_weights: dict[str, float] | None = None
     detail_level: str | None = None
     as_of: datetime | None = None  # M9: time-travel filter
+    #: Reference date for resolving relative temporal phrases in the
+    #: query.  Separate from ``as_of`` (which is a retained_at filter).
+    #: See ``RecallRequest.query_reference_date`` for the rationale.
+    query_reference_date: datetime | None = None

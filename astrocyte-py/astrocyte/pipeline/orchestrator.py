@@ -115,7 +115,9 @@ def _warn_on_version_drift(
         _logger.warning(
             "MIP pipeline version drift in bank %r: current=%d, hits retained under versions %s. "
             "Consider re-indexing or accepting the drift.",
-            bank_id, current_version, sorted(seen),
+            bank_id,
+            current_version,
+            sorted(seen),
         )
 
 
@@ -444,10 +446,7 @@ class PipelineOrchestrator:
         trigram-only and the cost is correctness for that one batch, not
         a retain failure.
         """
-        targets = [
-            e for e in entities
-            if e.embedding is None and e.name and e.name.strip()
-        ]
+        targets = [e for e in entities if e.embedding is None and e.name and e.name.strip()]
         if not targets:
             return
         try:
@@ -457,8 +456,8 @@ class PipelineOrchestrator:
             )
         except Exception as exc:
             _logger.warning(
-                "entity name embedding failed (resolver will fall back to "
-                "trigram-only tier): %s", exc,
+                "entity name embedding failed (resolver will fall back to trigram-only tier): %s",
+                exc,
             )
             return
         for entity, vec in zip(targets, vectors, strict=False):
@@ -496,10 +495,7 @@ class PipelineOrchestrator:
         # enabled, it fires regardless of the profile's entity
         # extraction mode — the profile's metadata-entities are
         # ignored in favor of the richer SFE output.
-        if (
-            not self.structured_fact_extraction_enabled
-            or self.llm_provider is None
-        ):
+        if not self.structured_fact_extraction_enabled or self.llm_provider is None:
             return None, None, None, None
 
         try:
@@ -524,6 +520,7 @@ class PipelineOrchestrator:
                 # chunk per LoCoMo session (no paragraph breaks in
                 # dialogue text). Profile-driven strategy fixes that.
                 from astrocyte.pipeline.chunking import chunk_text
+
                 pre_chunk_kwargs: dict[str, int] = {}
                 if chunk_max_size is not None:
                     pre_chunk_kwargs["max_chunk_size"] = chunk_max_size
@@ -548,8 +545,8 @@ class PipelineOrchestrator:
                 )
         except Exception as exc:
             _logger.warning(
-                "structured fact extraction failed (%s); falling back "
-                "to legacy chunk + entity-extraction path.", exc,
+                "structured fact extraction failed (%s); falling back to legacy chunk + entity-extraction path.",
+                exc,
             )
             return None, None, None, None
         if not facts:
@@ -559,7 +556,8 @@ class PipelineOrchestrator:
         # later for cost. We only need the list of fact texts and the
         # pre-extracted entities + association index map.
         materialized = materialize_facts(
-            facts, bank_id=request.bank_id,
+            facts,
+            bank_id=request.bank_id,
             occurred_at=request.occurred_at,
             verbatim=verbatim,  # propagate so VectorItem.text uses raw chunk
         )
@@ -605,11 +603,7 @@ class PipelineOrchestrator:
         Best-effort — failures log and continue rather than aborting
         retain.
         """
-        if (
-            not self.semantic_link_graph_enabled
-            or self.graph_store is None
-            or not memory_ids
-        ):
+        if not self.semantic_link_graph_enabled or self.graph_store is None or not memory_ids:
             return
         try:
             from astrocyte.pipeline.semantic_link_graph import compute_semantic_links
@@ -671,8 +665,8 @@ class PipelineOrchestrator:
                     )
                 except Exception as exc:
                     _logger.warning(
-                        "canonical resolution failed during retain (falling "
-                        "back to tentative IDs): %s", exc,
+                        "canonical resolution failed during retain (falling back to tentative IDs): %s",
+                        exc,
                     )
 
         entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
@@ -692,9 +686,7 @@ class PipelineOrchestrator:
             ]
         else:
             associations = [
-                MemoryEntityAssociation(memory_id=mid, entity_id=eid)
-                for mid in memory_ids
-                for eid in entity_ids
+                MemoryEntityAssociation(memory_id=mid, entity_id=eid) for mid in memory_ids for eid in entity_ids
             ]
         await self.graph_store.link_memories_to_entities(associations, request.bank_id)
         if len(entity_ids) > 1:
@@ -726,14 +718,13 @@ class PipelineOrchestrator:
                     metadata={"bank_id": request.bank_id, "source": "fact_extraction"},
                 )
                 for src_idx, tgt_idx, conf in sfe_caused_by
-                if 0 <= src_idx < len(memory_ids)
-                and 0 <= tgt_idx < len(memory_ids)
-                and src_idx != tgt_idx
+                if 0 <= src_idx < len(memory_ids) and 0 <= tgt_idx < len(memory_ids) and src_idx != tgt_idx
             ]
             if memory_links:
                 try:
                     await self.graph_store.store_memory_links(
-                        memory_links, request.bank_id,
+                        memory_links,
+                        request.bank_id,
                     )
                 except Exception as exc:
                     _logger.warning("storing memory_links failed: %s", exc)
@@ -748,6 +739,7 @@ class PipelineOrchestrator:
                     build_memory_links_from_relations,
                     extract_fact_causal_relations,
                 )
+
                 relations = await extract_fact_causal_relations(
                     chunks,
                     self.llm_provider,
@@ -755,7 +747,9 @@ class PipelineOrchestrator:
                     min_confidence=self.causal_min_confidence,
                 )
                 memory_links = build_memory_links_from_relations(
-                    relations, memory_ids, bank_id=request.bank_id,
+                    relations,
+                    memory_ids,
+                    bank_id=request.bank_id,
                 )
             except Exception as exc:
                 _logger.warning("fact-level causal extraction failed: %s", exc)
@@ -763,17 +757,15 @@ class PipelineOrchestrator:
             if memory_links:
                 try:
                     await self.graph_store.store_memory_links(
-                        memory_links, request.bank_id,
+                        memory_links,
+                        request.bank_id,
                     )
                 except Exception as exc:
                     _logger.warning("storing memory_links failed: %s", exc)
 
         # Legacy two-stage flow: post-store alias resolution. Skipped when
         # ``canonical_resolution=True`` because IDs are already canonical.
-        if (
-            self.entity_resolver is not None
-            and not self.entity_resolver.canonical_resolution
-        ):
+        if self.entity_resolver is not None and not self.entity_resolver.canonical_resolution:
             try:
                 await self.entity_resolver.resolve(
                     new_entities=entities,
@@ -833,15 +825,17 @@ class PipelineOrchestrator:
             source_chunks: list[SourceChunk] = []
             for i, chunk_text_str in enumerate(chunks):
                 chunk_hash = hashlib.sha256(chunk_text_str.encode("utf-8")).hexdigest()
-                source_chunks.append(SourceChunk(
-                    id=f"{stored_doc_id}:{i}",
-                    bank_id=request.bank_id,
-                    document_id=stored_doc_id,
-                    chunk_index=i,
-                    text=chunk_text_str,
-                    content_hash=chunk_hash,
-                    metadata=None,
-                ))
+                source_chunks.append(
+                    SourceChunk(
+                        id=f"{stored_doc_id}:{i}",
+                        bank_id=request.bank_id,
+                        document_id=stored_doc_id,
+                        chunk_index=i,
+                        text=chunk_text_str,
+                        content_hash=chunk_hash,
+                        metadata=None,
+                    )
+                )
             chunk_ids = await self.source_store.store_chunks(source_chunks)  # type: ignore[union-attr]
             if len(chunk_ids) != n:
                 # Should not happen for well-behaved adapters; defend
@@ -849,7 +843,8 @@ class PipelineOrchestrator:
                 # silently misaligning chunk_ids onto VectorItems.
                 _logger.warning(
                     "source_store.store_chunks returned %d ids, expected %d — falling back",
-                    len(chunk_ids), n,
+                    len(chunk_ids),
+                    n,
                 )
                 return empty
             return list(chunk_ids)
@@ -888,11 +883,7 @@ class PipelineOrchestrator:
         # multiplier already shrinks tail-hit gains and we want to keep
         # the per-recall fan-out bounded.
         seed_cap = max(1, self.source_expansion_max_per_hit * 4)
-        seed_chunk_ids = [
-            getattr(h, "chunk_id", None)
-            for h in fused[:seed_cap]
-            if getattr(h, "chunk_id", None)
-        ]
+        seed_chunk_ids = [getattr(h, "chunk_id", None) for h in fused[:seed_cap] if getattr(h, "chunk_id", None)]
         if not seed_chunk_ids:
             return fused
 
@@ -905,10 +896,7 @@ class PipelineOrchestrator:
                     return []
                 siblings = await store.list_chunks(chunk.document_id, bank_id)  # type: ignore[union-attr]
                 # Drop the seed chunk itself; cap at expansion_max_per_hit.
-                ids = [
-                    c.id for c in siblings
-                    if c.id != chunk_id
-                ][: self.source_expansion_max_per_hit]
+                ids = [c.id for c in siblings if c.id != chunk_id][: self.source_expansion_max_per_hit]
                 return ids
             except Exception as exc:
                 _logger.debug("source_store sibling lookup failed for %s: %s", chunk_id, exc)
@@ -920,9 +908,7 @@ class PipelineOrchestrator:
             sibling_chunk_ids.update(ids)
         # Drop any chunk_ids already represented in ``fused`` so we don't
         # re-rank the same memory twice.
-        already_present = {
-            getattr(h, "chunk_id", None) for h in fused if getattr(h, "chunk_id", None)
-        }
+        already_present = {getattr(h, "chunk_id", None) for h in fused if getattr(h, "chunk_id", None)}
         sibling_chunk_ids -= already_present
         if not sibling_chunk_ids:
             return fused
@@ -931,7 +917,8 @@ class PipelineOrchestrator:
         # we apply the configured multiplier so seeds stay ranked higher.
         try:
             sibling_hits = await self.vector_store.get_by_chunk_ids(  # type: ignore[attr-defined]
-                list(sibling_chunk_ids), bank_id,
+                list(sibling_chunk_ids),
+                bank_id,
             )
         except Exception as exc:
             _logger.warning("vector_store.get_by_chunk_ids failed; skipping chunk expansion: %s", exc)
@@ -1001,7 +988,8 @@ class PipelineOrchestrator:
             sfe_associations,
             sfe_caused_by,
         ) = await self._structured_fact_extraction_for_text(
-            prepared, request,
+            prepared,
+            request,
             chunk_strategy=self.structured_fact_extraction_chunk_strategy,
             chunk_max_size=chunking.max_size,
             chunk_overlap=chunking.overlap,
@@ -1025,7 +1013,9 @@ class PipelineOrchestrator:
         any_duplicate = False
         for i, emb in enumerate(embeddings):
             is_dup, _sim = self._dedup.is_duplicate(
-                request.bank_id, emb, threshold_override=dedup_threshold_override,
+                request.bank_id,
+                emb,
+                threshold_override=dedup_threshold_override,
             )
             if is_dup:
                 any_duplicate = True
@@ -1049,9 +1039,7 @@ class PipelineOrchestrator:
             old_to_new = {old: new for new, old in enumerate(keep_indices)}
             if sfe_associations is not None:
                 sfe_associations = [
-                    (ent_idx, old_to_new[mem_idx])
-                    for ent_idx, mem_idx in sfe_associations
-                    if mem_idx in old_to_new
+                    (ent_idx, old_to_new[mem_idx]) for ent_idx, mem_idx in sfe_associations if mem_idx in old_to_new
                 ]
             if sfe_caused_by is not None:
                 sfe_caused_by = [
@@ -1096,7 +1084,8 @@ class PipelineOrchestrator:
         # backed deployments share the same observability contract.
         chunk_metadata = dict(chunk_metadata or {})
         chunk_metadata.setdefault(
-            "_created_at", datetime.now(timezone.utc).isoformat(),
+            "_created_at",
+            datetime.now(timezone.utc).isoformat(),
         )
 
         # 3b. M10: persist source-document + chunk provenance, get back per-chunk
@@ -1105,7 +1094,9 @@ class PipelineOrchestrator:
         # Returns ``[None] * len(chunks)`` when source_store is not configured
         # or the flag is off — fully backward-compatible.
         chunk_ids = await self._provision_source_provenance(
-            request, prepared.text, chunks,
+            request,
+            prepared.text,
+            chunks,
         )
 
         # 4. Store vectors
@@ -1167,7 +1158,8 @@ class PipelineOrchestrator:
                     _logger.warning(
                         "document_store.store_document failed for chunk %s: %s "
                         "(keyword retrieval will miss this chunk)",
-                        item.id, exc,
+                        item.id,
+                        exc,
                     )
 
         # 5. Store entities and links (if graph store configured)
@@ -1193,8 +1185,8 @@ class PipelineOrchestrator:
                         )
                     except Exception as exc:
                         _logger.warning(
-                            "canonical resolution failed during retain "
-                            "(falling back to tentative IDs): %s", exc,
+                            "canonical resolution failed during retain (falling back to tentative IDs): %s",
+                            exc,
                         )
 
             entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
@@ -1217,8 +1209,7 @@ class PipelineOrchestrator:
                 ]
             else:
                 associations = [
-                    MemoryEntityAssociation(memory_id=mid, entity_id=eid)
-                    for mid in memory_ids for eid in entity_ids
+                    MemoryEntityAssociation(memory_id=mid, entity_id=eid) for mid in memory_ids for eid in entity_ids
                 ]
             await self.graph_store.link_memories_to_entities(associations, request.bank_id)
 
@@ -1251,14 +1242,13 @@ class PipelineOrchestrator:
                         metadata={"bank_id": request.bank_id, "source": "fact_extraction"},
                     )
                     for src_idx, tgt_idx, conf in sfe_caused_by
-                    if 0 <= src_idx < len(memory_ids)
-                    and 0 <= tgt_idx < len(memory_ids)
-                    and src_idx != tgt_idx
+                    if 0 <= src_idx < len(memory_ids) and 0 <= tgt_idx < len(memory_ids) and src_idx != tgt_idx
                 ]
                 if memory_links:
                     try:
                         await self.graph_store.store_memory_links(
-                            memory_links, request.bank_id,
+                            memory_links,
+                            request.bank_id,
                         )
                     except Exception as exc:
                         _logger.warning("storing memory_links failed: %s", exc)
@@ -1274,6 +1264,7 @@ class PipelineOrchestrator:
                         build_memory_links_from_relations,
                         extract_fact_causal_relations,
                     )
+
                     relations = await extract_fact_causal_relations(
                         chunks,
                         self.llm_provider,
@@ -1281,7 +1272,9 @@ class PipelineOrchestrator:
                         min_confidence=self.causal_min_confidence,
                     )
                     memory_links = build_memory_links_from_relations(
-                        relations, memory_ids, bank_id=request.bank_id,
+                        relations,
+                        memory_ids,
+                        bank_id=request.bank_id,
                     )
                 except Exception as exc:
                     _logger.warning("fact-level causal extraction failed: %s", exc)
@@ -1289,7 +1282,8 @@ class PipelineOrchestrator:
                 if memory_links:
                     try:
                         await self.graph_store.store_memory_links(
-                            memory_links, request.bank_id,
+                            memory_links,
+                            request.bank_id,
                         )
                     except Exception as exc:
                         _logger.warning("storing memory_links failed: %s", exc)
@@ -1299,10 +1293,7 @@ class PipelineOrchestrator:
             # are already canonical from the pre-store pass above. Otherwise
             # the legacy two-stage path runs the cascade and writes
             # alias_of links for matched candidates.
-            if (
-                self.entity_resolver is not None
-                and not self.entity_resolver.canonical_resolution
-            ):
+            if self.entity_resolver is not None and not self.entity_resolver.canonical_resolution:
                 try:
                     await self.entity_resolver.resolve(
                         new_entities=entities,
@@ -1347,9 +1338,7 @@ class PipelineOrchestrator:
                         scope="|".join(sorted(request.tags)) if request.tags else None,
                     )
                 except Exception as exc:
-                    _logger.warning(
-                        "Observation consolidation task failed for bank %s: %s", bank_id, exc
-                    )
+                    _logger.warning("Observation consolidation task failed for bank %s: %s", bank_id, exc)
 
             task = asyncio.create_task(_run_consolidation())
             self._background_tasks.add(task)
@@ -1401,7 +1390,8 @@ class PipelineOrchestrator:
                 sfe_associations,
                 sfe_caused_by,
             ) = await self._structured_fact_extraction_for_text(
-                prepared, request,
+                prepared,
+                request,
                 chunk_strategy=self.structured_fact_extraction_chunk_strategy,
                 chunk_max_size=chunking.max_size,
                 chunk_overlap=chunking.overlap,
@@ -1416,21 +1406,23 @@ class PipelineOrchestrator:
 
             start = len(all_chunks)
             all_chunks.extend(chunks)
-            records.append({
-                "index": index,
-                "request": request,
-                "profile": profile,
-                "prepared": prepared,
-                "chunks": chunks,
-                "start": start,
-                "end": len(all_chunks),
-                # Carry the SFE artefacts through to the second loop and
-                # _process_record_entities. None entries mean the record
-                # took the legacy chunk_text + extract_entities path.
-                "sfe_entities": sfe_entities,
-                "sfe_associations": sfe_associations,
-                "sfe_caused_by": sfe_caused_by,
-            })
+            records.append(
+                {
+                    "index": index,
+                    "request": request,
+                    "profile": profile,
+                    "prepared": prepared,
+                    "chunks": chunks,
+                    "start": start,
+                    "end": len(all_chunks),
+                    # Carry the SFE artefacts through to the second loop and
+                    # _process_record_entities. None entries mean the record
+                    # took the legacy chunk_text + extract_entities path.
+                    "sfe_entities": sfe_entities,
+                    "sfe_associations": sfe_associations,
+                    "sfe_caused_by": sfe_caused_by,
+                }
+            )
 
         if not records:
             return [result or RetainResult(stored=False, error="No content after chunking") for result in results]
@@ -1444,7 +1436,7 @@ class PipelineOrchestrator:
             profile: ExtractionProfileConfig | None = record["profile"]
             prepared = record["prepared"]
             chunks = record["chunks"]
-            embeddings = all_embeddings[record["start"]:record["end"]]
+            embeddings = all_embeddings[record["start"] : record["end"]]
             mip_pipeline = request.mip_pipeline
             mip_dedup = mip_pipeline.dedup if mip_pipeline else None
             dedup_threshold_override = mip_dedup.threshold if mip_dedup else None
@@ -1490,9 +1482,7 @@ class PipelineOrchestrator:
                 old_to_new = {old: new for new, old in enumerate(keep_indices)}
                 if sfe_associations is not None:
                     sfe_associations = [
-                        (ent_idx, old_to_new[mem_idx])
-                        for ent_idx, mem_idx in sfe_associations
-                        if mem_idx in old_to_new
+                        (ent_idx, old_to_new[mem_idx]) for ent_idx, mem_idx in sfe_associations if mem_idx in old_to_new
                     ]
                 if sfe_caused_by is not None:
                     sfe_caused_by = [
@@ -1529,7 +1519,9 @@ class PipelineOrchestrator:
 
             # M10 source-aware retain — same helper as the single-retain path.
             chunk_ids = await self._provision_source_provenance(
-                request, prepared.text, chunks,
+                request,
+                prepared.text,
+                chunks,
             )
 
             memory_ids: list[str] = []
@@ -1552,13 +1544,15 @@ class PipelineOrchestrator:
                     )
                 )
 
-            record.update({
-                "chunks": chunks,
-                "embeddings": embeddings,
-                "entities": entities,
-                "memory_ids": memory_ids,
-                "items": items,
-            })
+            record.update(
+                {
+                    "chunks": chunks,
+                    "embeddings": embeddings,
+                    "entities": entities,
+                    "memory_ids": memory_ids,
+                    "items": items,
+                }
+            )
             stored_records.append(record)
             all_items.extend(items)
 
@@ -1610,9 +1604,7 @@ class PipelineOrchestrator:
         if self.graph_store is not None:
             entity_records = [r for r in stored_records if r["entities"]]
             if entity_records:
-                await asyncio.gather(*[
-                    self._process_record_entities(r) for r in entity_records
-                ])
+                await asyncio.gather(*[self._process_record_entities(r) for r in entity_records])
 
         for record in stored_records:
             request: RetainRequest = record["request"]
@@ -1694,15 +1686,22 @@ class PipelineOrchestrator:
         # analyzer's hit is the more restrictive of the two — the
         # caller's filter remains the floor.
         if (
-            self.query_analyzer_enabled
-            and request.time_range is None  # caller-supplied range wins
+            self.query_analyzer_enabled and request.time_range is None  # caller-supplied range wins
         ):
             try:
                 from astrocyte.pipeline.query_analyzer import analyze_query
 
+                # Resolution order for the relative-phrase anchor:
+                #   1. ``query_reference_date`` if explicitly set
+                #      (preferred — see types.py for rationale)
+                #   2. ``as_of`` if set (back-compat: M9 audit-replay
+                #      callers got temporal anchoring "for free" before
+                #      the split — preserve that)
+                #   3. ``None`` → analyze_query falls back to ``now()``
+                anchor = request.query_reference_date or request.as_of
                 analysis = await analyze_query(
                     request.query,
-                    reference_date=request.as_of,
+                    reference_date=anchor,
                     llm_provider=self.llm_provider,
                     allow_llm_fallback=self.query_analyzer_allow_llm_fallback,
                 )
@@ -1730,8 +1729,8 @@ class PipelineOrchestrator:
                     )
             except Exception as exc:  # pragma: no cover — defensive
                 _logger.warning(
-                    "query_analyzer failed (%s); continuing without "
-                    "temporal filter.", exc,
+                    "query_analyzer failed (%s); continuing without temporal filter.",
+                    exc,
                 )
 
         # 2b. Extract entities from query for graph search
@@ -1793,10 +1792,7 @@ class PipelineOrchestrator:
             use_bm25_idf=self.bm25_idf_enabled,
         )
         query_plan = build_query_plan(request.query)
-        if (
-            not request.fact_types
-            and query_plan.needs_multi_hop_synthesis
-        ):
+        if not request.fact_types and query_plan.needs_multi_hop_synthesis:
             entity_path_hits = await self._retrieve_entity_path_fallback(
                 request.query,
                 request.bank_id,
@@ -1832,11 +1828,7 @@ class PipelineOrchestrator:
             if query_intent in _OBS_INJECTION_INTENTS or prompt_variant == "evidence_inference"
             else self.observation_weight
         )
-        if (
-            self._observation_consolidator is not None
-            and not request.fact_types
-            and effective_obs_weight > 0.0
-        ):
+        if self._observation_consolidator is not None and not request.fact_types and effective_obs_weight > 0.0:
             obs_results = await self._retrieve_observations(
                 query_vector, request.bank_id, overfetch_limit, request.as_of
             )
@@ -1875,11 +1867,7 @@ class PipelineOrchestrator:
         # signals — entity overlap, semantic kNN, causal — and merge
         # the resulting candidates back into the fused set. Replaces
         # the previous BFS-hop spreading-activation path.
-        if (
-            self.link_expansion_params is not None
-            and self.graph_store is not None
-            and fused
-        ):
+        if self.link_expansion_params is not None and self.graph_store is not None and fused:
             try:
                 expansion_hits = await link_expansion(
                     fused[: self.link_expansion_params.expansion_limit],
@@ -1891,8 +1879,8 @@ class PipelineOrchestrator:
                 )
             except Exception as exc:  # pragma: no cover — defensive
                 _logger.warning(
-                    "link expansion failed (%s); continuing with "
-                    "direct fused hits only.", exc,
+                    "link expansion failed (%s); continuing with direct fused hits only.",
+                    exc,
                 )
                 expansion_hits = []
             if expansion_hits:
@@ -1919,15 +1907,12 @@ class PipelineOrchestrator:
         if "semantic" in strategy_results and strategy_results["semantic"]:
             _top_semantic_score = strategy_results["semantic"][0].score
 
-        if (
-            self.enable_multi_query_expansion
-            and fused
-            and _top_semantic_score < self.multi_query_confidence_threshold
-        ):
+        if self.enable_multi_query_expansion and fused and _top_semantic_score < self.multi_query_confidence_threshold:
             from astrocyte.pipeline.multi_query import decompose_query
 
             sub_queries = await decompose_query(request.query, self.llm_provider)
             if len(sub_queries) > 1:
+
                 async def _fuse_sub_query(sq: str) -> list[Any]:
                     sq_vec = (await generate_embeddings([sq], self.llm_provider))[0]
                     sq_strategy_results = await parallel_retrieve(
@@ -1946,15 +1931,11 @@ class PipelineOrchestrator:
                         use_bm25_idf=self.bm25_idf_enabled,
                     )
                     sq_intent = (
-                        classify_query_intent(sq).intent
-                        if self.enable_intent_aware_recall
-                        else QueryIntent.UNKNOWN
+                        classify_query_intent(sq).intent if self.enable_intent_aware_recall else QueryIntent.UNKNOWN
                     )
                     sq_weights = weights_for_intent(sq_intent)
                     sq_weighted = [
-                        (res, getattr(sq_weights, strat, 1.0))
-                        for strat, res in sq_strategy_results.items()
-                        if res
+                        (res, getattr(sq_weights, strat, 1.0)) for strat, res in sq_strategy_results.items() if res
                     ]
                     if not sq_weighted:
                         return []
@@ -1963,9 +1944,7 @@ class PipelineOrchestrator:
                     return weighted_rrf_fusion(sq_weighted, k=self.rrf_k)
 
                 # sub_queries[0] is the original (already in fused); expand the rest
-                sub_fused_lists = await asyncio.gather(
-                    *[_fuse_sub_query(sq) for sq in sub_queries[1:]]
-                )
+                sub_fused_lists = await asyncio.gather(*[_fuse_sub_query(sq) for sq in sub_queries[1:]])
                 non_empty = [sf for sf in sub_fused_lists if sf]
                 if non_empty:
                     fused = rrf_fusion([fused, *non_empty], k=self.rrf_k)
@@ -2075,9 +2054,7 @@ class PipelineOrchestrator:
             as_of=as_of,
         )
         try:
-            hits = await self.vector_store.search_similar(
-                query_vector, obs_bank, limit=limit, filters=obs_filters
-            )
+            hits = await self.vector_store.search_similar(query_vector, obs_bank, limit=limit, filters=obs_filters)
         except Exception as exc:
             _logger.warning("Observation retrieval failed for bank %s: %s", bank_id, exc)
             return []
@@ -2269,6 +2246,8 @@ class PipelineOrchestrator:
             max_results=query_plan.recall_max_results,
             max_tokens=request.max_tokens,
             tags=request.tags,
+            as_of=request.as_of,
+            query_reference_date=request.query_reference_date,
         )
         recall_result = await self.recall(recall_request)
         expanded_hits = await self._expand_reflect_sources(
@@ -2326,10 +2305,7 @@ class PipelineOrchestrator:
             # mode so the LLM admits uncertainty instead of hallucinating.
             # Skip if query_plan already chose evidence_strict (adversarial
             # query shape) — no need to double-set.
-            if (
-                recall_result.top_semantic_score < _EVIDENCE_STRICT_THRESHOLD
-                and prompt_variant != "evidence_strict"
-            ):
+            if recall_result.top_semantic_score < _EVIDENCE_STRICT_THRESHOLD and prompt_variant != "evidence_strict":
                 prompt_variant = "evidence_strict"
 
             if prompt_variant is not None:
@@ -2347,10 +2323,7 @@ class PipelineOrchestrator:
         # against memory. Short-circuit to "insufficient evidence"
         # when ANY presupposition fails. Targets false-premise and
         # negative-existence adversarial questions.
-        if (
-            self.adversarial_premise_verification_enabled
-            and self.llm_provider is not None
-        ):
+        if self.adversarial_premise_verification_enabled and self.llm_provider is not None:
             try:
                 from astrocyte.pipeline.premise_verification import verify_question
 
@@ -2361,6 +2334,8 @@ class PipelineOrchestrator:
                         max_results=max_results,
                         max_tokens=request.max_tokens,
                         tags=request.tags,
+                        as_of=request.as_of,
+                        query_reference_date=request.query_reference_date,
                     )
                     sub_result = await self.recall(sub_request)
                     return sub_result.hits
@@ -2380,8 +2355,8 @@ class PipelineOrchestrator:
                     return ReflectResult(answer=short_circuit, sources=[])
             except Exception as exc:
                 _logger.warning(
-                    "premise verification failed (%s); continuing without "
-                    "the guard.", exc,
+                    "premise verification failed (%s); continuing without the guard.",
+                    exc,
                 )
 
         # 2c. Adversarial-defense gate: score-floor abstention.
@@ -2401,10 +2376,10 @@ class PipelineOrchestrator:
         if (
             self.adversarial_abstention_enabled
             and recall_result.top_semantic_score < self.adversarial_abstention_floor
-            and (not recall_result.hits or all(
-                (h.score or 0.0) < self.adversarial_abstention_floor
-                for h in recall_result.hits[:5]
-            ))
+            and (
+                not recall_result.hits
+                or all((h.score or 0.0) < self.adversarial_abstention_floor for h in recall_result.hits[:5])
+            )
         ):
             _logger.info(
                 "reflect: abstention floor triggered (top_semantic=%.3f < %.3f); "
@@ -2440,13 +2415,19 @@ class PipelineOrchestrator:
                 # Reuses everything we just shipped: spread, cross-
                 # encoder rerank, tag scoping, RRF — same recall the
                 # outer step ran, parameterized by the agent's refined
-                # query and its requested max_results.
+                # query and its requested max_results.  Forwards the
+                # outer ``as_of`` (audit replay) AND
+                # ``query_reference_date`` (relative-phrase anchor) so
+                # every sub-recall the agent makes sees the same
+                # temporal context as the seed reflect.
                 sub_request = RecallRequest(
                     query=query,
                     bank_id=request.bank_id,
                     max_results=max_results,
                     max_tokens=request.max_tokens,
                     tags=request.tags,
+                    as_of=request.as_of,
+                    query_reference_date=request.query_reference_date,
                 )
                 sub_result = await self.recall(sub_request)
                 return sub_result.hits
@@ -2457,16 +2438,19 @@ class PipelineOrchestrator:
             # stored at retain time.
             observations_fn = None
             if self._observation_consolidator is not None:
+
                 async def _loop_observations(query: str, max_results: int) -> list[MemoryHit]:
                     qvec_batch = await generate_embeddings([query], self.llm_provider)
                     qvec = qvec_batch[0] if qvec_batch else []
-                    # ReflectRequest doesn't carry ``as_of`` (recall does);
-                    # observation search uses the bank's current state.
+                    # ``request.as_of`` (when set) propagates through to
+                    # observation search so time-travel reflect sees the
+                    # same observation snapshot as raw recall.  When
+                    # unset, search uses the bank's current state.
                     obs_results = await self._retrieve_observations(
                         qvec,
                         request.bank_id,
                         max_results,
-                        None,
+                        request.as_of,
                     )
                     # Convert ScoredItem → MemoryHit so the loop can
                     # cite IDs uniformly across tools.
@@ -2483,6 +2467,7 @@ class PipelineOrchestrator:
                         )
                         for item in (obs_results or [])
                     ]
+
                 observations_fn = _loop_observations
 
             # ``expand`` tool — fetch source memories cited by a
@@ -2491,7 +2476,8 @@ class PipelineOrchestrator:
             async def _loop_expand(memory_id: str, max_sources: int) -> list[MemoryHit]:
                 # Find the seed hit in the running pool to expand from.
                 seed: MemoryHit | None = next(
-                    (h for h in recall_result.hits if h.memory_id == memory_id), None,
+                    (h for h in recall_result.hits if h.memory_id == memory_id),
+                    None,
                 )
                 if seed is None:
                     return []
@@ -2512,16 +2498,20 @@ class PipelineOrchestrator:
             # are usually a handful per bank, the LLM picks).
             mental_models_fn = None
             if self.mental_model_service is not None:
+
                 async def _loop_mental_models(
-                    query: str, scope: str | None,
+                    query: str,
+                    scope: str | None,
                 ) -> list[MemoryHit]:
                     try:
                         models = await self.mental_model_service.list(  # type: ignore[union-attr]
-                            request.bank_id, scope=scope,
+                            request.bank_id,
+                            scope=scope,
                         )
                     except Exception as exc:
                         _logger.warning(
-                            "agentic_reflect.mental_models list failed (%s)", exc,
+                            "agentic_reflect.mental_models list failed (%s)",
+                            exc,
                         )
                         return []
                     return [
@@ -2540,6 +2530,7 @@ class PipelineOrchestrator:
                         )
                         for m in models
                     ]
+
                 mental_models_fn = _loop_mental_models
 
             return await agentic_reflect(
@@ -2617,14 +2608,15 @@ class PipelineOrchestrator:
         if self.cross_encoder is not None:
             try:
                 scored = cross_encoder_rerank(
-                    items, query,
+                    items,
+                    query,
                     model=self.cross_encoder,
                     top_k=self.cross_encoder_top_k,
                 )
             except Exception as exc:  # pragma: no cover — defensive
                 _logger.warning(
-                    "cross-encoder rerank failed (%s); falling back to "
-                    "heuristic.", exc,
+                    "cross-encoder rerank failed (%s); falling back to heuristic.",
+                    exc,
                 )
                 scored = cross_encoder_like_rerank(items, query)
         else:
@@ -2708,9 +2700,7 @@ class PipelineOrchestrator:
         # tag in ``tags``. ``None``/empty disables the filter (legacy
         # behavior). Comparison is case-insensitive to match recall's
         # tag-filter convention.
-        required_tags = (
-            {str(t).lower() for t in tags} if tags else None
-        )
+        required_tags = {str(t).lower() for t in tags} if tags else None
         while target:
             chunk = await self.vector_store.list_vectors(bank_id, offset=offset, limit=batch)
             if not chunk:
@@ -2773,10 +2763,7 @@ def _source_ids_from_metadata(metadata: dict[str, Any] | None) -> list[str]:
 
 
 def _deterministic_names(text: str) -> set[str]:
-    return {
-        match.group(0).strip().lower()
-        for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b", text or "")
-    }
+    return {match.group(0).strip().lower() for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b", text or "")}
 
 
 def _entities_from_metadata(metadata: dict[str, Any] | None) -> list[Entity]:

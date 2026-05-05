@@ -76,7 +76,6 @@ def _normalize_multi_bank_strategy(
     raise ConfigError(f"Unknown multi-bank strategy: {strategy!r}")
 
 
-
 class Astrocyte:
     """The Astrocyte memory framework — unified API for AI agent memory.
 
@@ -304,8 +303,10 @@ class Astrocyte:
             from astrocyte.pipeline.cross_encoder_rerank import (
                 get_default_cross_encoder,
             )
+
             pipeline.cross_encoder = get_default_cross_encoder(
-                cer_cfg.model_name, force_cpu=cer_cfg.force_cpu,
+                cer_cfg.model_name,
+                force_cpu=cer_cfg.force_cpu,
             )
             pipeline.cross_encoder_top_k = cer_cfg.top_k
         else:
@@ -349,6 +350,7 @@ class Astrocyte:
         sa_cfg = self._config.spreading_activation
         if sa_cfg.enabled:
             from astrocyte.pipeline.link_expansion import LinkExpansionParams
+
             pipeline.link_expansion_params = LinkExpansionParams(
                 expansion_limit=sa_cfg.expansion_limit,
             )
@@ -382,6 +384,7 @@ class Astrocyte:
         ar_cfg = self._config.agentic_reflect
         if ar_cfg.enabled:
             from astrocyte.pipeline.agentic_reflect import AgenticReflectParams
+
             pipeline.agentic_reflect_params = AgenticReflectParams(
                 max_iterations=ar_cfg.max_iterations,
                 recall_step_max_results=ar_cfg.recall_step_max_results,
@@ -664,6 +667,7 @@ class Astrocyte:
             detail_level=params.detail_level,
             external_context=ext,
             as_of=params.as_of,  # M9
+            query_reference_date=params.query_reference_date,
         )
 
     async def recall(
@@ -684,6 +688,7 @@ class Astrocyte:
         layer_weights: dict[str, float] | None = None,
         detail_level: str | None = None,
         as_of: datetime | None = None,
+        query_reference_date: datetime | None = None,
     ) -> RecallResult:
         """Retrieve relevant memories for a query.
 
@@ -706,7 +711,13 @@ class Astrocyte:
 
         max_tokens = max_tokens or self._config.homeostasis.recall_max_tokens
 
-        with span("astrocyte.recall", {"astrocyte.bank_count": len(bank_ids), "astrocyte.bank_id": bank_ids[0] if len(bank_ids) == 1 else f"{bank_ids[0]}+{len(bank_ids)-1}"}):
+        with span(
+            "astrocyte.recall",
+            {
+                "astrocyte.bank_count": len(bank_ids),
+                "astrocyte.bank_id": bank_ids[0] if len(bank_ids) == 1 else f"{bank_ids[0]}+{len(bank_ids) - 1}",
+            },
+        ):
             # Access control for all banks
             for bid in bank_ids:
                 self._policy.check_access(bid, "read", context)
@@ -724,6 +735,7 @@ class Astrocyte:
                 layer_weights=layer_weights,
                 detail_level=detail_level,
                 as_of=as_of,  # M9
+                query_reference_date=query_reference_date,
             )
 
             # Single bank — direct
@@ -799,6 +811,8 @@ class Astrocyte:
         context: AstrocyteContext | None = None,
         include_sources: bool = True,
         dispositions: Any | None = None,
+        as_of: datetime | None = None,
+        query_reference_date: datetime | None = None,
     ) -> ReflectResult:
         """Synthesize an answer from memory.
 
@@ -806,6 +820,20 @@ class Astrocyte:
             tags: Filter recall by tags during reflect.
             include_sources: Include source memories in the result.
             dispositions: Emotional/tonal dispositions for synthesis.
+            as_of: M9 time-travel anchor — filters underlying recall to
+                ``retained_at <= as_of``.  For legal-hold / audit-replay
+                use cases ("show me what the system knew at time X"). Do
+                NOT pass for relative-phrase anchoring on benchmarks
+                whose retain happens after the dataset's question dates;
+                use ``query_reference_date`` instead.
+            query_reference_date: Reference date for resolving relative
+                temporal phrases (``"yesterday"``, ``"last week"``,
+                ``"3 days ago"``). Required when running a benchmark
+                whose dataset predates the wall-clock — e.g. LongMemEval
+                (2023-vintage) measured in 2026 must pass the question's
+                contemporaneous date here. Unlike ``as_of``, setting
+                this alone does NOT filter out memories retained after
+                this date — the entire corpus stays in scope.
 
         Supports multi-bank reflect: pass ``banks`` (and optionally ``strategy``) to
         recall across multiple banks and synthesize over the fused results.
@@ -816,7 +844,13 @@ class Astrocyte:
         max_tokens = max_tokens or self._config.homeostasis.reflect_max_tokens
         primary_bank = bank_ids[0]
 
-        with span("astrocyte.reflect", {"astrocyte.bank_count": len(bank_ids), "astrocyte.bank_id": bank_ids[0] if len(bank_ids) == 1 else f"{bank_ids[0]}+{len(bank_ids)-1}"}):
+        with span(
+            "astrocyte.reflect",
+            {
+                "astrocyte.bank_count": len(bank_ids),
+                "astrocyte.bank_id": bank_ids[0] if len(bank_ids) == 1 else f"{bank_ids[0]}+{len(bank_ids) - 1}",
+            },
+        ):
             # Access control for all banks
             for bid in bank_ids:
                 self._policy.check_access(bid, "read", context)
@@ -833,6 +867,8 @@ class Astrocyte:
                     include_sources=include_sources,
                     dispositions=dispositions,
                     tags=tags,
+                    as_of=as_of,
+                    query_reference_date=query_reference_date,
                 )
                 try:
                     self._policy.check_circuit(self._provider_name)
@@ -849,7 +885,11 @@ class Astrocyte:
             else:
                 strat = _normalize_multi_bank_strategy(strategy)
                 with timed() as t:
-                    _rp = RecallParams(include_sources=include_sources)
+                    _rp = RecallParams(
+                        include_sources=include_sources,
+                        as_of=as_of,
+                        query_reference_date=query_reference_date,
+                    )
                     recall_result = await self._multi_bank.recall(
                         query,
                         bank_ids,
@@ -945,9 +985,7 @@ class Astrocyte:
             # legal-hold check so that a rule with respect_legal_hold=True wins
             # over the caller's compliance bypass, and so audit logs fire even
             # on policy refusal.
-            mip_forget = (
-                self._mip_router.resolve_forget_for_bank(bank_id) if self._mip_router else None
-            )
+            mip_forget = self._mip_router.resolve_forget_for_bank(bank_id) if self._mip_router else None
             if mip_forget is not None:
                 # max_per_call: cap blast radius for selective deletes by id
                 if (
@@ -964,13 +1002,11 @@ class Astrocyte:
                 # Best-effort: requires the engine to populate `_created_at` in
                 # metadata at retain time. Records lacking this stamp are skipped
                 # with a warning (degraded enforcement, not a hard failure).
-                if (
-                    mip_forget.min_age_days is not None
-                    and mip_forget.min_age_days > 0
-                    and memory_ids
-                ):
+                if mip_forget.min_age_days is not None and mip_forget.min_age_days > 0 and memory_ids:
                     too_young = await self._collect_too_young_ids(
-                        bank_id, memory_ids, mip_forget.min_age_days,
+                        bank_id,
+                        memory_ids,
+                        mip_forget.min_age_days,
                     )
                     if too_young:
                         raise MipRoutingError(
@@ -1030,11 +1066,7 @@ class Astrocyte:
             # `_deleted: true` instead of physically removing. Recall is
             # responsible for filtering them out. Falls through to hard delete
             # with a warning if the engine doesn't expose `soft_delete`.
-            soft_mode = (
-                mip_forget is not None
-                and mip_forget.mode == "soft"
-                and memory_ids is not None
-            )
+            soft_mode = mip_forget is not None and mip_forget.mode == "soft" and memory_ids is not None
             if soft_mode:
                 soft_fn = getattr(self._engine_provider, "soft_delete", None)
                 if soft_fn is not None:
@@ -1048,7 +1080,8 @@ class Astrocyte:
                 logging.getLogger("astrocyte.mip").warning(
                     "forget.mode=soft requested for bank=%s but engine %s does not "
                     "implement soft_delete(); falling back to hard delete",
-                    bank_id, type(self._engine_provider).__name__ if self._engine_provider else "pipeline",
+                    bank_id,
+                    type(self._engine_provider).__name__ if self._engine_provider else "pipeline",
                 )
 
             request = ForgetRequest(
@@ -1093,7 +1126,8 @@ class Astrocyte:
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning(
                 "min_age_days check skipped: recall failed for bank=%s: %s",
-                bank_id, exc,
+                bank_id,
+                exc,
             )
             return []
 
@@ -1132,7 +1166,9 @@ class Astrocyte:
             mip_logger.warning(
                 "min_age_days enforcement degraded: %d/%d record(s) in bank=%s "
                 "lack `_created_at` metadata and were skipped",
-                missing_stamp, len(seen), bank_id,
+                missing_stamp,
+                len(seen),
+                bank_id,
             )
             # One increment per forget call that encountered unstamped records.
             # The warning log above carries the exact count; this counter
@@ -1189,14 +1225,12 @@ class Astrocyte:
 
         if self._wiki_store is None:
             raise ConfigError(
-                "brain.compile() requires a WikiStore. "
-                "Call brain.set_wiki_store(store) before compiling."
+                "brain.compile() requires a WikiStore. Call brain.set_wiki_store(store) before compiling."
             )
 
         if self._pipeline is None:
             raise ProviderUnavailable(
-                "brain.compile() requires a Tier 1 pipeline. "
-                "Call brain.set_pipeline(pipeline) before compiling."
+                "brain.compile() requires a Tier 1 pipeline. Call brain.set_pipeline(pipeline) before compiling."
             )
 
         from astrocyte.pipeline.compile import CompileEngine
@@ -1219,8 +1253,7 @@ class Astrocyte:
             )
         else:
             logger.info(
-                "compile complete bank=%s scope=%s pages_created=%d pages_updated=%d "
-                "noise=%d tokens=%d elapsed_ms=%d",
+                "compile complete bank=%s scope=%s pages_created=%d pages_updated=%d noise=%d tokens=%d elapsed_ms=%d",
                 bank_id,
                 scope or "auto",
                 result.pages_created,
@@ -1266,8 +1299,7 @@ class Astrocyte:
         graph_store = getattr(self._pipeline, "graph_store", None) if self._pipeline else None
         if graph_store is None:
             raise ConfigError(
-                "graph_search() requires a GraphStore. "
-                "Configure a graph_store provider in astrocyte.yaml."
+                "graph_search() requires a GraphStore. Configure a graph_store provider in astrocyte.yaml."
             )
         return await graph_store.query_entities(query, bank_id, limit=limit)
 
@@ -1305,12 +1337,9 @@ class Astrocyte:
         graph_store = getattr(self._pipeline, "graph_store", None) if self._pipeline else None
         if graph_store is None:
             raise ConfigError(
-                "graph_neighbors() requires a GraphStore. "
-                "Configure a graph_store provider in astrocyte.yaml."
+                "graph_neighbors() requires a GraphStore. Configure a graph_store provider in astrocyte.yaml."
             )
-        return await graph_store.query_neighbors(
-            entity_ids, bank_id, max_depth=max_depth, limit=limit
-        )
+        return await graph_store.query_neighbors(entity_ids, bank_id, max_depth=max_depth, limit=limit)
 
     async def history(
         self,
@@ -1430,6 +1459,7 @@ class Astrocyte:
         pipeline = self._pipeline
         if pipeline is None:
             from astrocyte.exceptions import ConfigError
+
             raise ConfigError("No pipeline configured — call set_pipeline() first.")
 
         return await run_audit(
@@ -1505,7 +1535,9 @@ class Astrocyte:
                         bank_id=bank_id,
                         created_at=created_at,
                         last_recalled_at=last_recalled,
-                        tags=item.metadata.get("_tags", "").split(",") if item.metadata and item.metadata.get("_tags") else None,
+                        tags=item.metadata.get("_tags", "").split(",")
+                        if item.metadata and item.metadata.get("_tags")
+                        else None,
                         fact_type=item.metadata.get("_fact_type") if item.metadata else None,
                         now=now,
                     )
@@ -1718,4 +1750,3 @@ class Astrocyte:
 
     async def _do_forget(self, request: ForgetRequest) -> ForgetResult:
         return await self._dispatcher.forget(request)
-
