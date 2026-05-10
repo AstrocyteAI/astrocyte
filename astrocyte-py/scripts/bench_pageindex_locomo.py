@@ -759,6 +759,35 @@ _LISTING_PATTERNS = [
     r"\bnames?\s+of\s+",
     r"\bwhich\s+\w+s\b",  # plural noun → likely listing
 ]
+
+# PR2 D.7.2: counting/sum question patterns. LME multi-session is
+# 78% counting/sum questions ("how many doctors", "how much spent",
+# "total hours"). The PR2-D.7 gate showed graph_expand correctly
+# bridges sessions but the synth undercounts because the picker
+# returns top-K (5-6) sections — insufficient for exhaustive
+# enumeration when the answer needs 8-10 mentions.
+#
+# Routing these to ``listing`` mode (PICK_PROMPT_LISTING +
+# SYNTHESIZE_PROMPT_LISTING) makes the picker fetch ALL relevant
+# sections, which is the same fix that lifted LoCoMo open-domain
+# from 33→67% in PR2-D.1-4 for "every / all / list" questions.
+_COUNTING_PATTERNS = [
+    r"\bhow\s+many\s+(?!days?\s+(?:passed|elapsed|ago)|weeks?\s+(?:passed|elapsed|ago)|months?\s+(?:passed|elapsed|ago)|years?\s+(?:passed|elapsed|ago))",
+    r"\bhow\s+much\s+(?:total|money|did|do|have)",
+    r"\b(?:total|sum)\s+(?:number|amount|money|cost|hours?|days?|weeks?|months?|years?)\b",
+    r"\bcount\s+(?:of|the)\s+",
+]
+
+
+def _is_counting_question(question: str) -> bool:
+    """PR2 D.7.2: detect counting/sum questions that need listing-shape
+    retrieval. The ``how many days passed`` / ``how many weeks ago``
+    patterns are EXCLUDED — those are handled by D.5.5's date-arithmetic
+    short-circuit, not listing.
+    """
+    q = question.lower()
+    return any(re.search(p, q) for p in _COUNTING_PATTERNS)
+
 _TEMPORAL_PATTERNS = [
     r"\bwhen\s+(?:did|was|were|does|will|do)\b",
     r"\bwhat\s+(?:date|day|month|year|time)\b",
@@ -1428,6 +1457,20 @@ async def answer_question(
         f"  line {ln}: {d}" for ln, d in session_dates
     ) or "  (none — header dates not parseable)"
 
+    # PR2 D.7.2: counting/sum listing-mode dispatch — REVERTED.
+    # Tested: LME overall 46→38%, multi-session 1/9 → 0/9, plus
+    # collateral regressions (knowledge-update -12pp, single-session-
+    # user -11pp, single-session-preference -13pp). Two failure modes:
+    #   (1) Listing synth enumerates ("boots, boots") instead of
+    #       counting ("3"). The judge expects the count.
+    #   (2) Counting regex over-matches: "how many Korean restaurants"
+    #       is a single-fact lookup, not aggregation, but listing pick
+    #       fetches "every relevant" → synth abstains.
+    # Counting needs a new synth prompt that produces a NUMBER, not an
+    # enumeration. That's a separate piece of work; for now, accept
+    # LME multi-session at 11% and ship PR2-D as-is.
+    is_counting = False
+
     if mode == "temporal":
         pick_msg = PICK_PROMPT_TEMPORAL.format(
             tree_json=tree_json,
@@ -1436,7 +1479,7 @@ async def answer_question(
             session_date_index=session_date_index,
             reference_date=reference_date,
         )
-    elif mode == "listing":
+    elif mode == "listing" or is_counting:
         pick_msg = PICK_PROMPT_LISTING.format(
             tree_json=tree_json,
             question=question,
@@ -1569,7 +1612,11 @@ async def answer_question(
         answer = arithmetic_answer
         return answer, line_nums
 
-    if mode == "listing":
+    if mode == "listing" or is_counting:
+        # PR2 D.7.2: route counting/sum questions through the listing
+        # synth so it enumerates + dedupes mentions across all picked
+        # sections. The listing synth's "list every distinct item"
+        # instruction is exactly what counting questions need.
         syn_msg = SYNTHESIZE_PROMPT_LISTING.format(
             excerpts=excerpts, question=question, reference_date=reference_date,
         )
