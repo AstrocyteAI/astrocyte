@@ -452,6 +452,83 @@ class PostgresPageIndexStore:
             await conn.commit()
         return len(rows)
 
+    # ── PR2 D.7.1: semantic-kNN graph (no LLM cost) ─────────────────────
+
+    async def populate_semantic_knn_links(
+        self,
+        document_id: str,
+        *,
+        top_k: int = 5,
+        min_similarity: float = 0.5,
+    ) -> int:
+        """Populate ``section_links`` with ``link_type='semantic_knn'``
+        for every section in this document. For each section, finds the
+        ``top_k`` most-embedding-similar OTHER sections in the same
+        document and inserts an edge with ``weight = 1 - cosine_distance``.
+
+        Pure SQL — uses pgvector's ``<=>`` (cosine distance) operator
+        with a ``LATERAL`` join (Hindsight's pattern). No LLM call.
+        Idempotent on the composite primary key — safe to re-run.
+
+        ``min_similarity`` filters out near-zero-similarity pairs so the
+        graph isn't dominated by uninformative noise. 0.5 is a sensible
+        default for ``text-embedding-3-small`` (cosine values cluster in
+        ~0.3-0.9 for related text on this model).
+
+        Why this exists: PR2-D.7's LLM-based causal/supersedes/elaborates
+        extraction over-emits on LoCoMo (~110 links/doc) but
+        under-emits on LME (~5 links/doc) because LME's chat-history
+        shape rarely has explicit causal/correction relationships.
+        Semantic-kNN restores the kind of dense topical bridging that
+        the graph_expand strategy needs to lift LME multi-session.
+        """
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Use RETURNING to count inserts. ON CONFLICT DO NOTHING
+                # makes this idempotent — re-running just no-ops.
+                # Self-loops are excluded by the line_num inequality.
+                # Bidirectional links are NOT auto-created — the picker's
+                # graph_expand walks both directions in its CTE, so we
+                # only need each pair stored once.
+                await cur.execute(
+                    f"""
+                    WITH inserted AS (
+                        INSERT INTO {self._fq('astrocyte_pi_section_links')}
+                            (from_doc, from_line, to_doc, to_line, link_type, weight)
+                        SELECT s1.document_id, s1.line_num,
+                               t.to_doc, t.to_line,
+                               'semantic_knn',
+                               t.sim
+                        FROM {self._fq('astrocyte_pi_sections')} AS s1
+                        CROSS JOIN LATERAL (
+                            SELECT s2.document_id AS to_doc,
+                                   s2.line_num   AS to_line,
+                                   1 - (s1.summary_embedding <=> s2.summary_embedding) AS sim
+                            FROM {self._fq('astrocyte_pi_sections')} AS s2
+                            WHERE s2.document_id = s1.document_id
+                              AND s2.line_num != s1.line_num
+                              AND s2.summary_embedding IS NOT NULL
+                            ORDER BY s1.summary_embedding <=> s2.summary_embedding
+                            LIMIT %s
+                        ) AS t
+                        WHERE s1.document_id = %s
+                          AND s1.summary_embedding IS NOT NULL
+                          AND t.sim >= %s
+                        ON CONFLICT (from_doc, from_line, to_doc, to_line, link_type)
+                            DO NOTHING
+                        RETURNING 1
+                    )
+                    SELECT count(*) FROM inserted
+                    """,
+                    (top_k, document_id, float(min_similarity)),
+                )
+                row = await cur.fetchone()
+                inserted = int(row[0]) if row else 0
+            await conn.commit()
+        return inserted
+
     # ── PR2 commit B: parallel-strategy query methods ───────────────────
     #
     # Each method is a single SQL round-trip returning ranked
