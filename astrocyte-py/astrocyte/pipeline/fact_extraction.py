@@ -38,6 +38,7 @@ orchestrator needs to persist:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -130,8 +131,6 @@ text verbatim. Your job is to produce per-chunk metadata.
 Output a JSON object: {"facts": [...]}. The facts list MUST be the \
 same length as the input chunks list, in the same order. For each \
 chunk, produce ONE entry with:
-- "what": leave EMPTY (""). The caller substitutes the original chunk \
-text. Including content here is wasted output tokens.
 - "when" (string, default "N/A"): natural-language time expression \
 present in this chunk; "N/A" otherwise.
 - "where" (string, default "N/A"): location.
@@ -144,17 +143,89 @@ absolute date when possible; null otherwise.
 - "entities" (list): each entity mentioned in this chunk, as \
 {"name": str, "entity_type": str}. Types: PERSON, ORG, LOCATION, \
 PRODUCT, CONCEPT, OTHER.
-- "causal_relations" (list, default []): each entry is \
-{"target_fact_index": int, "strength": float} pointing at ANOTHER \
-chunk in the input that THIS chunk was caused_by. ``target_fact_index`` \
-references the chunk's position in the input list.
 
 Rules:
 1. Output exactly one entry per input chunk, in the same order.
-2. NEVER include content in "what" — leave it empty.
-3. Don't invent. Use "N/A" / null / [] for absent metadata.
-4. Output JSON only.
+2. Don't invent. Use "N/A" / null / [] for absent metadata.
+3. Output JSON only.
 """
+
+
+# JSON Schema for OpenAI structured outputs (Phase 2 of cost-control
+# port). When the provider supports ``response_format=json_schema`` (set
+# at the call site), the model is decode-time constrained to this shape
+# and malformed-JSON parse failures become impossible. Strict mode
+# requires every property in ``required`` and ``additionalProperties:
+# false`` at every level — keep it that way when extending.
+#
+# ``causal_relations`` is intentionally omitted from the schema:
+# ``causal_links.enabled`` defaults to false in our research configs,
+# and OpenAI strict-mode JSON schema enforces required-everywhere which
+# makes optional cross-chunk index references awkward. If we re-enable
+# causal extraction, add a separate schema variant rather than bolting
+# it on here.
+_VERBATIM_JSON_SCHEMA: dict = {
+    "name": "verbatim_facts",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["facts"],
+        "properties": {
+            "facts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "when",
+                        "where",
+                        "who",
+                        "why",
+                        "fact_type",
+                        "occurred_start",
+                        "occurred_end",
+                        "entities",
+                    ],
+                    "properties": {
+                        "when": {"type": "string"},
+                        "where": {"type": "string"},
+                        "who": {"type": "string"},
+                        "why": {"type": "string"},
+                        "fact_type": {
+                            "type": "string",
+                            "enum": ["world", "experience"],
+                        },
+                        "occurred_start": {"type": ["string", "null"]},
+                        "occurred_end": {"type": ["string", "null"]},
+                        "entities": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["name", "entity_type"],
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "entity_type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "PERSON",
+                                            "ORG",
+                                            "LOCATION",
+                                            "PRODUCT",
+                                            "CONCEPT",
+                                            "OTHER",
+                                        ],
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        },
+    },
+}
 
 
 def _build_verbatim_user_prompt(
@@ -173,6 +244,350 @@ def _build_verbatim_user_prompt(
     lines.append("")
     lines.append("Per-chunk metadata (JSON, same order, same length):")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Per-chunk parallel verbatim extraction (Phase 3 of cost-control port)
+# ---------------------------------------------------------------------------
+#
+# Splits the verbatim metadata extraction into one LLM call per chunk,
+# dispatched in parallel via ``asyncio.gather`` with a ``Semaphore``
+# bounding in-flight calls per session. Trade-offs vs the batched
+# ``extract_facts_verbatim``:
+#
+# - Output tokens per call are tiny (~150 tokens for one entry vs ~150 *
+#   N for N-chunk batched), so per-call latency drops sharply on
+#   gpt-4o-mini (latency is roughly linear in output tokens).
+# - More API calls overall, but they run in parallel, so wall time drops.
+# - Cross-chunk ``causal_relations`` index references are dropped — they
+#   require co-located chunks in one prompt to reference. Acceptable
+#   default because ``causal_links.enabled`` is false in our research
+#   configs; if you need causal extraction, use the batched path.
+
+_VERBATIM_SINGLE_SYSTEM_PROMPT = """\
+You enrich a single PRE-CHUNKED text excerpt with structured metadata. \
+Do NOT rewrite or paraphrase the chunk — produce metadata only.
+
+Output a JSON object with these fields:
+- "when" (string, default "N/A"): natural-language time expression in \
+the chunk; "N/A" otherwise.
+- "where" (string, default "N/A"): location.
+- "who" (string, default "N/A"): people involved.
+- "why" (string, default "N/A"): reason / motivation if explicit.
+- "fact_type" ("world" | "experience"): classify the chunk.
+- "occurred_start" (ISO 8601 string or null): resolve "when" to an \
+absolute date when possible; null otherwise.
+- "occurred_end" (ISO 8601 string or null): instant or end of range.
+- "entities" (list): each entity as {"name": str, "entity_type": str}. \
+Types: PERSON, ORG, LOCATION, PRODUCT, CONCEPT, OTHER.
+
+Don't invent. Use "N/A" / null / [] for absent metadata. Output JSON \
+only.
+"""
+
+
+_VERBATIM_SINGLE_JSON_SCHEMA: dict = {
+    "name": "verbatim_chunk_metadata",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "when",
+            "where",
+            "who",
+            "why",
+            "fact_type",
+            "occurred_start",
+            "occurred_end",
+            "entities",
+        ],
+        "properties": {
+            "when": {"type": "string"},
+            "where": {"type": "string"},
+            "who": {"type": "string"},
+            "why": {"type": "string"},
+            "fact_type": {
+                "type": "string",
+                "enum": ["world", "experience"],
+            },
+            "occurred_start": {"type": ["string", "null"]},
+            "occurred_end": {"type": ["string", "null"]},
+            "entities": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["name", "entity_type"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "entity_type": {
+                            "type": "string",
+                            "enum": [
+                                "PERSON",
+                                "ORG",
+                                "LOCATION",
+                                "PRODUCT",
+                                "CONCEPT",
+                                "OTHER",
+                            ],
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+
+def _build_verbatim_single_user_prompt(
+    chunk: str, event_date: datetime | None = None,
+) -> str:
+    lines = []
+    if event_date is not None:
+        lines.append(f"Reference date for relative time expressions: {event_date.isoformat()}")
+        lines.append("")
+    lines.append("Chunk:")
+    snippet = chunk.strip()
+    # Larger cap than batched (which truncates at 800 chars per chunk
+    # to fit many in one prompt) — single-chunk path can afford the
+    # full chunk text up to chunk_max_size.
+    if len(snippet) > 8000:
+        snippet = snippet[:7997] + "..."
+    lines.append(snippet)
+    lines.append("")
+    lines.append("Metadata (JSON):")
+    return "\n".join(lines)
+
+
+@dataclass(slots=True, frozen=True)
+class _ChunkResult:
+    """Result of one parallel verbatim-extraction task.
+
+    Internal record paired with each input chunk. ``raw`` is the
+    parsed metadata dict from the LLM (vendor-shaped JSON, no fixed
+    schema beyond the constraints in ``_VERBATIM_SINGLE_JSON_SCHEMA``)
+    or ``{}`` when extraction fell through after retries.
+    """
+
+    idx: int
+    raw: dict
+
+
+class _VerbatimChunkError(Exception):
+    """Raised by ``_extract_one_chunk_verbatim_attempt`` on any failure
+    that should be retried — LLM-side exception, malformed JSON, etc.
+    Internal to the retry wrapper; never escapes the public surface."""
+
+
+async def _extract_one_chunk_verbatim_attempt(
+    chunk: str,
+    llm_provider,
+    *,
+    event_date: datetime | None = None,
+) -> dict:
+    """Single attempt at extracting verbatim metadata for ONE chunk.
+    Raises :class:`_VerbatimChunkError` on any failure so the outer
+    retry loop can back off and try again."""
+    messages_in = [
+        Message(role="system", content=_VERBATIM_SINGLE_SYSTEM_PROMPT),
+        Message(
+            role="user",
+            content=_build_verbatim_single_user_prompt(chunk, event_date),
+        ),
+    ]
+    try:
+        completion = await llm_provider.complete(
+            messages_in,
+            # Per-chunk output is one metadata object; tiny in absolute
+            # terms, but at chunk_max_size=2048 with dialogue-dense
+            # chunks the LLM can emit dozens of entities and the JSON
+            # blows past 512 tokens, getting truncated mid-emit.
+            # Structured outputs can't recover from a hard max_tokens
+            # cap, so we get parse failures even with json_schema mode.
+            # 2048 gives ~10× headroom and is still tiny vs the
+            # batched path's 4096 ceiling.
+            max_tokens=2048,
+            temperature=0.0,
+            response_format={
+                "type": "json_schema",
+                "json_schema": _VERBATIM_SINGLE_JSON_SCHEMA,
+            },
+        )
+    except TypeError:
+        # Provider's complete() pre-dates response_format kwarg —
+        # retry once without (still JSON-parseable thanks to the
+        # prompt). A real failure on this fallback raises through
+        # the surrounding except.
+        try:
+            completion = await llm_provider.complete(
+                messages_in, max_tokens=2048, temperature=0.0,
+            )
+        except Exception as exc:
+            raise _VerbatimChunkError(f"LLM call failed: {exc}") from exc
+    except Exception as exc:
+        raise _VerbatimChunkError(f"LLM call failed: {exc}") from exc
+    parsed = _parse_json_object(completion.text)
+    if parsed is None:
+        raise _VerbatimChunkError("malformed JSON response")
+    return parsed
+
+
+async def _extract_one_chunk_verbatim(
+    chunk: str,
+    llm_provider,
+    *,
+    event_date: datetime | None = None,
+    max_retries: int = 3,
+    base_retry_delay: float = 2.0,
+) -> dict:
+    """Extract verbatim metadata for ONE chunk with retries.
+
+    Phase 4 of cost-control port — wraps
+    :func:`_extract_one_chunk_verbatim_attempt` with the same retry
+    policy Hindsight uses for ``_extract_chunk_with_retry``: up to
+    ``max_retries`` attempts with exponential backoff
+    (``base_retry_delay`` × 2^attempt). On final exhaustion returns
+    ``{}`` so the caller falls through to a metadata-less
+    ExtractedFact (chunk text still preserved).
+
+    Tests that need to exercise the bare single-attempt failure path
+    can pass ``max_retries=1``.
+    """
+    if not chunk.strip():
+        return {}
+    last_exc: BaseException | None = None
+    for attempt in range(max(1, max_retries)):
+        try:
+            return await _extract_one_chunk_verbatim_attempt(
+                chunk, llm_provider, event_date=event_date,
+            )
+        except _VerbatimChunkError as exc:
+            last_exc = exc
+            if attempt < max_retries - 1:
+                delay = base_retry_delay * (2**attempt)
+                _logger.warning(
+                    "fact_extraction (verbatim/parallel) chunk attempt %d/%d "
+                    "failed (%s); retrying in %.0fs",
+                    attempt + 1, max_retries, exc, delay,
+                )
+                await asyncio.sleep(delay)
+    _logger.warning(
+        "fact_extraction (verbatim/parallel) chunk exhausted %d retries (%s); "
+        "falling through to metadata-less ExtractedFact",
+        max_retries, last_exc,
+    )
+    return {}
+
+
+def _build_extracted_fact_from_raw(
+    chunk: str, raw: dict,
+) -> ExtractedFact:
+    """Convert one parsed metadata dict + the original chunk text into
+    an :class:`ExtractedFact`. Shared by the batched and per-chunk
+    parallel paths."""
+    entities: list[FactEntity] = []
+    for ent in raw.get("entities") or []:
+        if not isinstance(ent, dict):
+            continue
+        name = str(ent.get("name") or "").strip()
+        if not name:
+            continue
+        etype = str(ent.get("entity_type") or "OTHER").strip().upper() or "OTHER"
+        entities.append(FactEntity(name=name, entity_type=etype))
+    ftype = str(raw.get("fact_type") or "experience").strip().lower()
+    if ftype not in {"world", "experience"}:
+        ftype = "experience"
+    return ExtractedFact(
+        what=chunk,
+        when=str(raw.get("when") or "N/A").strip() or "N/A",
+        where=str(raw.get("where") or "N/A").strip() or "N/A",
+        who=str(raw.get("who") or "N/A").strip() or "N/A",
+        why=str(raw.get("why") or "N/A").strip() or "N/A",
+        fact_type=ftype,
+        occurred_start=_parse_iso_datetime(raw.get("occurred_start")),
+        occurred_end=_parse_iso_datetime(raw.get("occurred_end")),
+        entities=entities,
+        # Per-chunk parallel path drops cross-chunk causal_relations.
+        # Caller using this helper from the batched path can override.
+        causal_relations=[],
+    )
+
+
+async def extract_facts_verbatim_parallel(
+    chunk_texts: list[str],
+    llm_provider,
+    *,
+    event_date: datetime | None = None,
+    max_concurrency: int = 6,
+    max_retries: int = 3,
+    base_retry_delay: float = 2.0,
+) -> list[ExtractedFact]:
+    """Per-chunk parallel verbatim extraction.
+
+    Phase 3 of the Hindsight cost-control port. Sends one LLM call per
+    chunk in parallel, bounded by ``max_concurrency`` per session call.
+    Returns one :class:`ExtractedFact` per input chunk in the same
+    order; failed chunks get a metadata-less ExtractedFact preserving
+    the chunk text.
+
+    When to use vs :func:`extract_facts_verbatim`:
+    - Sessions with many small chunks (LME-shaped traffic, ~6 chunks
+      after Phase 1 chunk_size=2048): per-chunk parallel typically
+      ~2× faster wall time because per-call output is small and they
+      run concurrently.
+    - Sessions with very few chunks (1–2): batched is comparable; the
+      extra round trips don't pay for themselves.
+
+    Drops cross-chunk ``causal_relations`` index references — they make
+    no sense per-chunk. ``causal_links.enabled=false`` in our research
+    configs, so this is a non-loss; if causal extraction is on, prefer
+    the batched path.
+    """
+    if not chunk_texts:
+        return []
+    if not any(t.strip() for t in chunk_texts):
+        return []
+    sem = asyncio.Semaphore(max(1, max_concurrency))
+
+    async def _one(idx: int, text: str) -> _ChunkResult:
+        async with sem:
+            return _ChunkResult(
+                idx=idx,
+                raw=await _extract_one_chunk_verbatim(
+                    text,
+                    llm_provider,
+                    event_date=event_date,
+                    max_retries=max_retries,
+                    base_retry_delay=base_retry_delay,
+                ),
+            )
+
+    gathered = await asyncio.gather(
+        *[_one(i, t) for i, t in enumerate(chunk_texts)],
+        return_exceptions=True,
+    )
+
+    # Reassemble in input order. asyncio.gather preserves order, but we
+    # store explicit ``_ChunkResult`` records to defend against future
+    # refactors that change the dispatch pattern.
+    raw_by_idx: dict[int, dict] = {}
+    for r in gathered:
+        if isinstance(r, BaseException):
+            # The semaphore-wrapped coroutine swallows exceptions inside
+            # _extract_one_chunk_verbatim and returns {}, so reaching
+            # this branch means a programming error or task
+            # cancellation. Log and continue with an empty metadata.
+            _logger.warning(
+                "fact_extraction (verbatim/parallel) task raised: %r", r,
+            )
+            continue
+        raw_by_idx[r.idx] = r.raw if isinstance(r.raw, dict) else {}
+
+    return [
+        _build_extracted_fact_from_raw(chunk, raw_by_idx.get(idx, {}))
+        for idx, chunk in enumerate(chunk_texts)
+    ]
 
 
 _SYSTEM_PROMPT = """\
@@ -406,18 +821,39 @@ async def extract_facts_verbatim(
     if not any(t.strip() for t in chunk_texts):
         return []
 
+    # Phase 2 of cost-control port: prefer structured outputs so the
+    # decoder is constrained to ``_VERBATIM_JSON_SCHEMA`` and the
+    # "malformed JSON" failure mode becomes impossible. Falls back
+    # transparently to the legacy free-form path when the provider
+    # doesn't accept the kwarg (legacy fakes / non-OpenAI providers
+    # that haven't ported the SPI extension yet).
+    messages_in = [
+        Message(role="system", content=_VERBATIM_SYSTEM_PROMPT),
+        Message(
+            role="user",
+            content=_build_verbatim_user_prompt(chunk_texts, event_date),
+        ),
+    ]
     try:
         completion = await llm_provider.complete(
-            [
-                Message(role="system", content=_VERBATIM_SYSTEM_PROMPT),
-                Message(
-                    role="user",
-                    content=_build_verbatim_user_prompt(chunk_texts, event_date),
-                ),
-            ],
+            messages_in,
             max_tokens=4096,
             temperature=0.0,
+            response_format={"type": "json_schema", "json_schema": _VERBATIM_JSON_SCHEMA},
         )
+    except TypeError:
+        # Provider's complete() pre-dates the response_format kwarg —
+        # retry without it. Free-form path is still resilient via the
+        # _parse_json_object fallback below.
+        try:
+            completion = await llm_provider.complete(
+                messages_in,
+                max_tokens=4096,
+                temperature=0.0,
+            )
+        except Exception as exc:
+            _logger.warning("fact_extraction (verbatim) LLM call failed (%s)", exc)
+            return []
     except Exception as exc:
         _logger.warning("fact_extraction (verbatim) LLM call failed (%s)", exc)
         return []

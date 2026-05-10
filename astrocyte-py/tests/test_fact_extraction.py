@@ -338,6 +338,190 @@ class TestExtractFactsVerbatim:
         assert facts == []
 
 
+class TestExtractFactsVerbatimParallel:
+    """Per-chunk parallel verbatim extraction (Phase 3 of cost-control
+    port).
+
+    Verifies that one LLM call fires per chunk, results are reassembled
+    in input order, and per-chunk failures don't lose neighboring
+    chunks' metadata.
+    """
+
+    @pytest.mark.asyncio
+    async def test_one_call_per_chunk(self):
+        from astrocyte.pipeline.fact_extraction import (
+            extract_facts_verbatim_parallel,
+        )
+
+        # Single-chunk schema: returns one metadata dict per call.
+        llm = _ScriptedLLM(
+            '{"when":"yesterday","where":"home","who":"Alice","why":"N/A",'
+            '"fact_type":"experience","occurred_start":null,'
+            '"occurred_end":null,"entities":[]}'
+        )
+        chunks = ["chunk one", "chunk two", "chunk three"]
+        facts = await extract_facts_verbatim_parallel(chunks, llm)
+        assert len(facts) == len(chunks)
+        # One LLM call per chunk (vs the batched path's one call total).
+        assert llm.call_count == len(chunks)
+        # Order preserved.
+        for i, fact in enumerate(facts):
+            assert fact.what == chunks[i]
+            assert fact.who == "Alice"
+            # Per-chunk parallel always drops cross-chunk causal refs.
+            assert fact.causal_relations == []
+
+    @pytest.mark.asyncio
+    async def test_max_concurrency_bounds_in_flight(self):
+        """Semaphore caps concurrent LLM calls per session."""
+        import asyncio
+
+        from astrocyte.pipeline.fact_extraction import (
+            extract_facts_verbatim_parallel,
+        )
+
+        in_flight = 0
+        peak_in_flight = 0
+        peak_lock = asyncio.Lock()
+
+        class _CountingLLM(_ScriptedLLM):
+            async def complete(self, messages, **kwargs):
+                nonlocal in_flight, peak_in_flight
+                async with peak_lock:
+                    in_flight += 1
+                    peak_in_flight = max(peak_in_flight, in_flight)
+                try:
+                    await asyncio.sleep(0.01)
+                    return await super().complete(messages, **kwargs)
+                finally:
+                    async with peak_lock:
+                        in_flight -= 1
+
+        llm = _CountingLLM(
+            '{"when":"N/A","where":"N/A","who":"N/A","why":"N/A",'
+            '"fact_type":"world","occurred_start":null,'
+            '"occurred_end":null,"entities":[]}'
+        )
+        chunks = [f"chunk-{i}" for i in range(10)]
+        await extract_facts_verbatim_parallel(chunks, llm, max_concurrency=3)
+        assert peak_in_flight <= 3, f"semaphore breached: peak={peak_in_flight}"
+
+    @pytest.mark.asyncio
+    async def test_per_chunk_failure_isolated(self):
+        """One chunk's malformed JSON doesn't lose neighbors' metadata."""
+        from astrocyte.pipeline.fact_extraction import (
+            extract_facts_verbatim_parallel,
+        )
+
+        good = (
+            '{"when":"today","where":"office","who":"Bob","why":"N/A",'
+            '"fact_type":"experience","occurred_start":null,'
+            '"occurred_end":null,"entities":[]}'
+        )
+
+        class _AlternatingLLM(MockLLMProvider):
+            def __init__(self):
+                super().__init__()
+                self.call_count = 0
+
+            async def complete(self, messages, **kwargs):
+                self.call_count += 1
+                # Every other call returns garbage to simulate isolated
+                # parse failures.
+                text = good if self.call_count % 2 == 1 else "not json"
+                return Completion(
+                    text=text,
+                    model="mock",
+                    usage=TokenUsage(input_tokens=5, output_tokens=10),
+                )
+
+        llm = _AlternatingLLM()
+        chunks = ["A", "B", "C", "D"]
+        # Disable retries so we test single-attempt failure isolation.
+        # (With retries enabled the alternating call_count pattern would
+        # mask failures by re-rolling them.)
+        facts = await extract_facts_verbatim_parallel(
+            chunks, llm, max_retries=1,
+        )
+        # All 4 ExtractedFacts produced (failures fall through to
+        # metadata-less ExtractedFact preserving chunk text).
+        assert len(facts) == 4
+        for i, fact in enumerate(facts):
+            assert fact.what == chunks[i]
+        # Every other one has good metadata; the rest have N/A defaults.
+        assert facts[0].who == "Bob"
+        assert facts[1].who == "N/A"
+        assert facts[2].who == "Bob"
+        assert facts[3].who == "N/A"
+
+    @pytest.mark.asyncio
+    async def test_retry_on_malformed_json(self):
+        """Phase 4: parse-failure on first attempt → retry → success."""
+        from astrocyte.pipeline.fact_extraction import (
+            extract_facts_verbatim_parallel,
+        )
+
+        good = (
+            '{"when":"now","where":"N/A","who":"Carol","why":"N/A",'
+            '"fact_type":"experience","occurred_start":null,'
+            '"occurred_end":null,"entities":[]}'
+        )
+
+        class _FailFirstLLM(MockLLMProvider):
+            def __init__(self):
+                super().__init__()
+                self.call_count = 0
+
+            async def complete(self, messages, **kwargs):
+                self.call_count += 1
+                # First call returns garbage, retries return good.
+                text = "not json" if self.call_count == 1 else good
+                return Completion(
+                    text=text,
+                    model="mock",
+                    usage=TokenUsage(input_tokens=5, output_tokens=10),
+                )
+
+        llm = _FailFirstLLM()
+        # Use base_retry_delay=0 to keep the test fast.
+        facts = await extract_facts_verbatim_parallel(
+            ["chunk-X"], llm, max_retries=3, base_retry_delay=0.0,
+        )
+        assert len(facts) == 1
+        assert facts[0].who == "Carol", "retry path should have recovered"
+        # Two LLM calls: first fails, second succeeds.
+        assert llm.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_exhaustion_falls_through(self):
+        """Phase 4: when all retries fail, return metadata-less fact."""
+        from astrocyte.pipeline.fact_extraction import (
+            extract_facts_verbatim_parallel,
+        )
+
+        llm = _ScriptedLLM("not json ever")
+        facts = await extract_facts_verbatim_parallel(
+            ["doomed-chunk"], llm, max_retries=3, base_retry_delay=0.0,
+        )
+        assert len(facts) == 1
+        # Chunk text preserved, metadata defaults applied.
+        assert facts[0].what == "doomed-chunk"
+        assert facts[0].who == "N/A"
+        # Three attempts before giving up.
+        assert llm.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_empty_chunks_returns_empty(self):
+        from astrocyte.pipeline.fact_extraction import (
+            extract_facts_verbatim_parallel,
+        )
+
+        llm = _ScriptedLLM("{}")
+        assert await extract_facts_verbatim_parallel([], llm) == []
+        assert await extract_facts_verbatim_parallel(["", "  "], llm) == []
+        assert llm.call_count == 0
+
+
 class TestMaterializeFactsVerbatimFlag:
     """``materialize_facts(verbatim=True)`` uses ``fact.what`` directly
     (no Involving/At/When decorations)."""
@@ -555,3 +739,113 @@ class TestMaterializeFacts:
 
         assert result.vector_items[0].occurred_at == fact_time
         assert result.vector_items[1].occurred_at == default_time
+
+
+class TestSFEConfigWiring:
+    """Phase 1+3 of cost-control port: ``StructuredFactExtractionConfig``
+    fields (``chunk_max_size``, ``parallel_chunks``,
+    ``parallel_chunks_max_concurrency``) must flow through to the
+    orchestrator pipeline attributes so the SFE retain path actually
+    honors them at runtime.
+
+    This is a guard against silent misconfiguration: if the wiring step
+    in ``Astrocyte.set_pipeline`` ever drops one of these fields, the
+    feature will be a no-op even when the YAML sets it.
+    """
+
+    def _make_brain_with_pipeline(self, config):
+        from astrocyte._astrocyte import Astrocyte
+        from astrocyte.pipeline.orchestrator import PipelineOrchestrator
+        from astrocyte.testing.in_memory import (
+            InMemoryVectorStore,
+            MockLLMProvider,
+        )
+
+        brain = Astrocyte(config)
+        pipeline = PipelineOrchestrator(
+            vector_store=InMemoryVectorStore(),
+            llm_provider=MockLLMProvider(),
+        )
+        brain.set_pipeline(pipeline)
+        return pipeline
+
+    def test_chunk_max_size_default_is_none(self):
+        from astrocyte.config import AstrocyteConfig
+
+        config = AstrocyteConfig()
+        # Defaults: SFE off, no chunk_max_size override, parallel disabled.
+        pipeline = self._make_brain_with_pipeline(config)
+        assert pipeline.structured_fact_extraction_chunk_max_size is None
+        assert pipeline.structured_fact_extraction_parallel_chunks is False
+        assert (
+            pipeline.structured_fact_extraction_parallel_chunks_max_concurrency
+            == 6
+        )
+
+    def test_chunk_max_size_overrides_propagate(self):
+        from astrocyte.config import AstrocyteConfig
+
+        config = AstrocyteConfig()
+        config.structured_fact_extraction.enabled = True
+        config.structured_fact_extraction.chunk_max_size = 2048
+        config.structured_fact_extraction.parallel_chunks = True
+        config.structured_fact_extraction.parallel_chunks_max_concurrency = 8
+
+        pipeline = self._make_brain_with_pipeline(config)
+        assert pipeline.structured_fact_extraction_enabled is True
+        assert pipeline.structured_fact_extraction_chunk_max_size == 2048
+        assert pipeline.structured_fact_extraction_parallel_chunks is True
+        assert (
+            pipeline.structured_fact_extraction_parallel_chunks_max_concurrency
+            == 8
+        )
+
+    @pytest.mark.asyncio
+    async def test_chunk_max_size_used_in_pre_chunking(self, monkeypatch):
+        """End-to-end check: when SFE retains text, the configured
+        ``chunk_max_size`` is the value passed into ``chunk_text`` —
+        not the orchestrator's default chunking decision.
+        """
+        from astrocyte._astrocyte import Astrocyte
+        from astrocyte.config import AstrocyteConfig
+        from astrocyte.pipeline import chunking as chunking_mod
+
+        captured_max_size: list[int | None] = []
+        original_chunk_text = chunking_mod.chunk_text
+
+        # Spy on the module-level chunk_text. The SFE path inside
+        # ``_structured_fact_extraction_for_text`` does a function-local
+        # ``from astrocyte.pipeline.chunking import chunk_text`` so it
+        # picks up our patched symbol on each call.
+        def _spy_chunk_text(text, *, strategy, max_chunk_size=512, **kw):
+            captured_max_size.append(max_chunk_size)
+            return original_chunk_text(
+                text, strategy=strategy, max_chunk_size=max_chunk_size, **kw,
+            )
+
+        monkeypatch.setattr(chunking_mod, "chunk_text", _spy_chunk_text)
+
+        config = AstrocyteConfig()
+        config.provider_tier = "storage"
+        config.barriers.pii.mode = "disabled"
+        config.escalation.degraded_mode = "error"
+        config.structured_fact_extraction.enabled = True
+        config.structured_fact_extraction.chunk_max_size = 1024
+
+        pipeline = self._make_brain_with_pipeline(config)
+
+        # Drive a retain so the SFE pre-chunking path fires. The
+        # MockLLM's canned response won't satisfy the verbatim schema
+        # which is fine — the assertion only cares about the
+        # chunk_max_size that was forwarded.
+        brain = Astrocyte(config)
+        brain.set_pipeline(pipeline)
+        await brain.retain(
+            "Paragraph one.\n\nParagraph two.\n\nParagraph three.",
+            bank_id="bank-test",
+        )
+
+        assert captured_max_size, "chunk_text was never called by SFE path"
+        assert 1024 in captured_max_size, (
+            f"SFE did not use chunk_max_size=1024; saw {captured_max_size!r}"
+        )
