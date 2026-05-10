@@ -334,6 +334,14 @@ class RecallRequest:
     #: filter out memories retained after that date — the entire corpus
     #: stays in scope. See the May 2026 LME post-mortem.
     query_reference_date: datetime | None = None
+    #: Per-call disposition override. When set, the orchestrator's
+    #: abstention decision derives from ``dispositions.skepticism``
+    #: (1=trust everything → never abstain, 5=skeptical → aggressive
+    #: abstention) — see ``_abstention_floor_for_skepticism``. Falls
+    #: back to deployment defaults when ``None``. Use this to make a
+    #: single deployment serve both adversarial-resistant agents and
+    #: trust-the-model assistants without forking the YAML config.
+    dispositions: "Dispositions | None" = None
 
 
 @dataclass
@@ -1236,6 +1244,75 @@ class CompileResult:
     tokens_used: int
     elapsed_ms: int
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Tier-2 recall (M9): PageIndex tree + section graph
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PageIndexDocument:
+    """One conversation/document in the PageIndex tier.
+
+    Holds the canonical markdown so the picker can slice section excerpts
+    by line_num without round-tripping to a separate document store, plus
+    the reference_date used by the synthesiser to resolve relative phrases
+    like "two months ago".
+    """
+
+    id: str  # UUID-stringly typed for storage-adapter portability
+    bank_id: str
+    source_id: str  # e.g. "conv-26", "lme-user-42"
+    md_text: str
+    reference_date: datetime | None = None
+    built_at: datetime | None = None
+
+
+@dataclass
+class PageIndexSection:
+    """One tree node in the PageIndex tier — the M9 recall primitive.
+
+    The picker fetches a list of these (without ``summary_embedding``,
+    which is only needed by the semantic-strategy SQL) as the "skeleton"
+    it navigates over.
+    """
+
+    document_id: str
+    line_num: int
+    node_id: str  # PageIndex's "0001"-style id
+    title: str
+    summary: str | None = None
+    summary_embedding: list[float] | None = None
+    speaker: str | None = None  # 'user' | 'assistant' | None — LME assistant-recall
+    session_date: datetime | None = None
+    parent_node: str | None = None
+    depth: int = 0
+
+
+@dataclass
+class PageIndexSectionEntity:
+    """A (section, entity) tuple — Hindsight's unit_entities pattern at section grain."""
+
+    document_id: str
+    line_num: int
+    entity_name: str
+
+
+@dataclass
+class PageIndexSectionLink:
+    """An edge between two sections — Hindsight's memory_links pattern at section grain.
+
+    ``link_type`` discriminates: 'semantic_knn' | 'causal' | 'supersedes' | 'elaborates'.
+    See ADR-006 §4.2 and migration 015.
+    """
+
+    from_doc: str
+    from_line: int
+    to_doc: str
+    to_line: int
+    link_type: str
+    weight: float
 
 
 # ---------------------------------------------------------------------------
