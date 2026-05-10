@@ -100,23 +100,6 @@ class ExtractedFact:
     entities: list[FactEntity] = field(default_factory=list)
     causal_relations: list[FactCausalRelation] = field(default_factory=list)
 
-    def build_text(self) -> str:
-        """Combine dimensions into a single fact text for storage.
-
-        Format: ``"{what} | Involving: {who} | {why}"`` with N/A
-        sections dropped. Hindsight uses the same convention.
-        """
-        parts: list[str] = [self.what.strip()]
-        if self.who and self.who.upper() != "N/A":
-            parts.append(f"Involving: {self.who.strip()}")
-        if self.why and self.why.upper() != "N/A":
-            parts.append(self.why.strip())
-        if self.where and self.where.upper() != "N/A":
-            parts.append(f"At: {self.where.strip()}")
-        if self.when and self.when.upper() != "N/A":
-            parts.append(f"When: {self.when.strip()}")
-        return " | ".join(parts)
-
 
 # ---------------------------------------------------------------------------
 # Prompt
@@ -821,7 +804,6 @@ def materialize_facts(
     metadata: dict | None = None,
     occurred_at: datetime | None = None,
     embeddings: list[list[float]] | None = None,
-    verbatim: bool = False,
 ) -> MaterializedFacts:
     """Convert extracted facts to retain-pipeline artefacts.
 
@@ -829,8 +811,16 @@ def materialize_facts(
     (store_vectors → store_entities → link_memories_to_entities →
     store_memory_links) without further translation.
 
+    The VectorItem's ``text`` is always the raw chunk content
+    (``fact.what``) — verbatim mode is now the only supported flow
+    after the M9 concise-path removal. Storing the original vocabulary
+    is what makes question embeddings match against retained memories;
+    decorated text (``what | Involving: ... | When: ...``) caused
+    severe recall_hit_rate degradation (2026-05-02 finding).
+
     Args:
-        facts: Output of :func:`extract_facts` or :func:`extract_facts_verbatim`.
+        facts: Output of :func:`extract_facts_verbatim` /
+            :func:`extract_facts_verbatim_parallel`.
         bank_id: Target bank.
         tags: Tags applied to every produced VectorItem.
         metadata: Base metadata merged onto every VectorItem; the
@@ -843,12 +833,6 @@ def materialize_facts(
         embeddings: Optional pre-computed embeddings per fact (must
             match ``len(facts)``). When omitted, items are created
             with empty vectors — caller is responsible for embedding.
-        verbatim: When True, the VectorItem's text is the raw chunk
-            text (``fact.what``) — no Involving/At/When decorations.
-            Use with :func:`extract_facts_verbatim` to preserve
-            original vocabulary for embedding-match against questions.
-            When False (default), uses :meth:`ExtractedFact.build_text`
-            which decorates the fact with structured field annotations.
     """
     base_metadata = dict(metadata or {})
     base_tags = list(tags or [])
@@ -903,10 +887,10 @@ def materialize_facts(
                 id=item_id,
                 bank_id=bank_id,
                 vector=vector,
-                # Verbatim mode: store the chunk text as-is so question
-                # embeddings can match against the original vocabulary.
-                # Concise mode: use the structured/decorated fact text.
-                text=fact.what if verbatim else fact.build_text(),
+                # Always store the raw chunk text so question embeddings
+                # match against the original vocabulary. The decorated-
+                # text path (concise mode) was removed in M9.
+                text=fact.what,
                 metadata=fact_metadata,
                 tags=list(base_tags),
                 fact_type=fact.fact_type,

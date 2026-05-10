@@ -388,46 +388,33 @@ class TestExtractFactsVerbatimParallel:
         assert llm.call_count == 0
 
 
-class TestMaterializeFactsVerbatimFlag:
-    """``materialize_facts(verbatim=True)`` uses ``fact.what`` directly
-    (no Involving/At/When decorations)."""
+class TestMaterializeFactsTextIsChunkVerbatim:
+    """``materialize_facts`` always stores ``fact.what`` as the
+    VectorItem text (the verbatim path is now the only path — concise
+    decoration was removed in M9)."""
 
-    def test_verbatim_text_is_chunk_text_not_decorated(self):
+    def test_text_is_raw_chunk_not_decorated(self):
         facts = [
             ExtractedFact(
                 what="Alice went hiking yesterday.",
                 who="Alice", when="yesterday", where="N/A",
             ),
         ]
-        materialized = materialize_facts(facts, bank_id="b1", verbatim=True)
-        # Stored text is the raw chunk, NOT "Alice went hiking yesterday. | Involving: Alice | When: yesterday"
+        materialized = materialize_facts(facts, bank_id="b1")
+        # NOT "Alice went hiking yesterday. | Involving: Alice | When: yesterday"
         assert materialized.vector_items[0].text == "Alice went hiking yesterday."
 
-    def test_concise_default_decorates_text(self):
-        """Concise mode (default, verbatim=False) keeps the build_text
-        decoration behavior."""
-        facts = [
-            ExtractedFact(
-                what="Alice went hiking",
-                who="Alice", when="yesterday",
-            ),
-        ]
-        materialized = materialize_facts(facts, bank_id="b1")  # verbatim=False default
-        text = materialized.vector_items[0].text
-        assert "Alice went hiking" in text
-        assert "Involving:" in text or "When:" in text, (
-            "Concise mode must include build_text decorations"
-        )
-
-    def test_verbatim_metadata_still_populated(self):
-        """Even in verbatim mode, structured fields go into _fact_* metadata."""
+    def test_structured_fields_still_promoted_to_metadata(self):
+        """The verbatim path keeps the fact's structured dimensions in
+        ``_fact_*`` metadata for downstream filter/rerank — only the
+        VectorItem text is undecorated."""
         facts = [
             ExtractedFact(
                 what="Alice went hiking yesterday.",
                 who="Alice", when="yesterday",
             ),
         ]
-        materialized = materialize_facts(facts, bank_id="b1", verbatim=True)
+        materialized = materialize_facts(facts, bank_id="b1")
         meta = materialized.vector_items[0].metadata
         assert meta["_fact_who"] == "Alice"
         assert meta["_fact_when"] == "yesterday"
@@ -555,26 +542,6 @@ class TestMaterializeFacts:
         meta = result.vector_items[0].metadata
         for key in ("_fact_when", "_fact_where", "_fact_who", "_fact_why"):
             assert key not in meta
-
-    def test_text_includes_dimensions_when_present(self):
-        """build_text appends Involving/At/When sections for non-N/A
-        dimensions, joined with ' | '."""
-        facts = [
-            ExtractedFact(
-                what="Alice joined Google",
-                who="Alice",
-                why="for research",
-                where="Mountain View",
-            ),
-        ]
-
-        result = materialize_facts(facts, bank_id="b1")
-
-        text = result.vector_items[0].text
-        assert "Alice joined Google" in text
-        assert "Involving:" in text and "Alice" in text
-        assert "At:" in text and "Mountain View" in text
-        assert "for research" in text
 
     def test_embeddings_threaded_through_when_provided(self):
         """When embeddings are supplied, they go onto the VectorItems."""

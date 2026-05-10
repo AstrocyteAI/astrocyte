@@ -767,7 +767,6 @@ class PipelineOrchestrator:
             facts,
             bank_id=request.bank_id,
             occurred_at=request.occurred_at,
-            verbatim=True,  # concise path was removed in M9 — always verbatim
         )
         fact_texts = [item.text for item in materialized.vector_items]
         entities = list(materialized.entities)
