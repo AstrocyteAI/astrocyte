@@ -1,0 +1,677 @@
+"""PostgreSQL-backed PageIndexStore for the Tier-2 recall stack (M9).
+
+Backs the three-layer recall design described in
+``docs/_design/tier-2-recall.md`` — the section-grain SQL adapter that
+holds the PageIndex tree (one document per conversation, sections as
+tree nodes), Hindsight-style entity-mention rows, and section-to-section
+links.
+
+PR1 only exercises ``save_document`` / ``save_sections`` /
+``load_document`` / ``load_skeleton`` — the minimum needed to port the
+Phase A POC picker to a Postgres-backed cache. Entity / link methods are
+implemented but exercised in PR2 (commits A, B, D).
+
+Schema: ``adapters-storage-py/astrocyte-postgres/migrations/015_tier2_recall.sql``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from datetime import UTC, datetime
+from typing import Any, ClassVar
+
+import psycopg
+from astrocyte.tenancy import fq_table, get_current_schema
+from astrocyte.types import (
+    HealthStatus,
+    PageIndexDocument,
+    PageIndexSection,
+    PageIndexSectionEntity,
+    PageIndexSectionLink,
+)
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
+
+_VALID_LINK_TYPES = frozenset({"semantic_knn", "causal", "supersedes", "elaborates"})
+
+
+def _embedding_param(vec: list[float] | None) -> str | None:
+    """Format a Python embedding list for the pgvector text protocol.
+
+    pgvector accepts both binary (via psycopg-vector) and text formats.
+    We use text + ``::vector`` cast to keep psycopg-vector as an optional
+    dep — the text format is `'[0.1, 0.2, ...]'` (literal JSON-array).
+    Returns ``None`` so NULL passes through cleanly when the section
+    doesn't have an embedding yet.
+    """
+    if vec is None:
+        return None
+    # Use repr for floats to avoid scientific-notation ambiguity at
+    # boundary values; pgvector parses both forms but repr is unambiguous.
+    return "[" + ", ".join(repr(float(x)) for x in vec) + "]"
+
+
+class PostgresPageIndexStore:
+    """Durable PageIndexStore using the Tier-2 schema (migration 015).
+
+    Per-tenant aware via :func:`astrocyte.tenancy.fq_table` — the active
+    tenant schema prefixes every table name. Same connection-pool /
+    schema-bootstrap shape as :class:`PostgresWikiStore`.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    def __init__(
+        self,
+        dsn: str | None = None,
+        *,
+        bootstrap_schema: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        self._dsn = dsn or os.environ.get("DATABASE_URL") or os.environ.get("ASTROCYTE_PG_DSN")
+        if not self._dsn:
+            raise ValueError(
+                "PostgresPageIndexStore requires `dsn` in pageindex_store_config "
+                "or DATABASE_URL / ASTROCYTE_PG_DSN",
+            )
+        self._bootstrap_schema = bool(bootstrap_schema)
+        self._pool: AsyncConnectionPool | None = None
+        self._pool_lock = asyncio.Lock()
+        self._bootstrapped_schemas: set[str] = set()
+        self._schema_lock = asyncio.Lock()
+
+    # ── lifecycle ───────────────────────────────────────────────────────
+
+    def _fq(self, table: str) -> str:
+        return fq_table(table)
+
+    async def _ensure_pool(self) -> AsyncConnectionPool:
+        async with self._pool_lock:
+            if self._pool is None:
+                async def configure(conn: psycopg.AsyncConnection) -> None:
+                    # Same search_path discipline as the wiki store — pin
+                    # to public so the bench DB's user-named schema doesn't
+                    # silently shadow the canonical tables.
+                    await conn.execute('SET search_path = public, "$user"')
+                    await conn.commit()
+
+                self._pool = AsyncConnectionPool(
+                    conninfo=self._dsn,
+                    configure=configure,
+                    open=False,
+                    min_size=2,
+                    max_size=20,
+                    kwargs={"connect_timeout": 10},
+                )
+                await self._pool.open()
+            return self._pool
+
+    async def _ensure_schema(self, pool: AsyncConnectionPool) -> None:
+        """Per-tenant-aware bootstrap. Mirrors migration 015 for the
+        active tenant schema. Idempotent (CREATE TABLE IF NOT EXISTS)."""
+        if not self._bootstrap_schema:
+            return
+        active_schema = get_current_schema()
+        if active_schema in self._bootstrapped_schemas:
+            return
+        async with self._schema_lock:
+            if active_schema in self._bootstrapped_schemas:
+                return
+            async with pool.connection() as conn:
+                # CREATE EXTENSION must run as superuser; assume the
+                # operator's migrate.sh already ran. We just need the
+                # tables themselves.
+                async with conn.cursor() as cur:
+                    await cur.execute(self._ddl_documents())
+                    await cur.execute(self._ddl_sections())
+                    await cur.execute(self._ddl_section_entities())
+                    await cur.execute(self._ddl_section_links())
+                await conn.commit()
+            self._bootstrapped_schemas.add(active_schema)
+
+    # ── DDL (mirrors 015_tier2_recall.sql for the active schema) ────────
+
+    def _ddl_documents(self) -> str:
+        return f"""
+        CREATE TABLE IF NOT EXISTS {self._fq('astrocyte_pi_documents')} (
+            id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+            bank_id         TEXT         NOT NULL,
+            source_id       TEXT         NOT NULL,
+            md_text         TEXT         NOT NULL,
+            reference_date  TIMESTAMPTZ,
+            built_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            UNIQUE (bank_id, source_id)
+        );
+        """
+
+    def _ddl_sections(self) -> str:
+        # PR2 commit A adds the summary_embedding column + DiskANN index.
+        # Bootstrap path includes both — operators on plain pgvector who
+        # can't run the diskann index should ALTER it manually.
+        return f"""
+        CREATE TABLE IF NOT EXISTS {self._fq('astrocyte_pi_sections')} (
+            document_id        UUID         NOT NULL
+                REFERENCES {self._fq('astrocyte_pi_documents')}(id) ON DELETE CASCADE,
+            line_num           INT          NOT NULL,
+            node_id            TEXT         NOT NULL,
+            title              TEXT         NOT NULL,
+            summary            TEXT,
+            summary_embedding  vector(1536),
+            speaker            TEXT,
+            session_date       TIMESTAMPTZ,
+            parent_node        TEXT,
+            depth              INT          NOT NULL,
+            PRIMARY KEY (document_id, line_num)
+        );
+        ALTER TABLE {self._fq('astrocyte_pi_sections')}
+            ADD COLUMN IF NOT EXISTS summary_embedding vector(1536);
+        CREATE INDEX IF NOT EXISTS ix_pi_sections_skeleton
+            ON {self._fq('astrocyte_pi_sections')} (document_id, depth, line_num);
+        """
+
+    def _ddl_section_entities(self) -> str:
+        return f"""
+        CREATE TABLE IF NOT EXISTS {self._fq('astrocyte_pi_section_entities')} (
+            document_id  UUID  NOT NULL,
+            line_num     INT   NOT NULL,
+            entity_name  TEXT  NOT NULL,
+            PRIMARY KEY (document_id, line_num, entity_name),
+            FOREIGN KEY (document_id, line_num)
+                REFERENCES {self._fq('astrocyte_pi_sections')}(document_id, line_num) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS ix_pi_section_entities_name
+            ON {self._fq('astrocyte_pi_section_entities')} (entity_name);
+        """
+
+    def _ddl_section_links(self) -> str:
+        return f"""
+        CREATE TABLE IF NOT EXISTS {self._fq('astrocyte_pi_section_links')} (
+            from_doc    UUID         NOT NULL,
+            from_line   INT          NOT NULL,
+            to_doc      UUID         NOT NULL,
+            to_line     INT          NOT NULL,
+            link_type   TEXT         NOT NULL
+                CHECK (link_type IN ('semantic_knn', 'causal', 'supersedes', 'elaborates')),
+            weight      DOUBLE PRECISION NOT NULL,
+            created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (from_doc, from_line, to_doc, to_line, link_type),
+            FOREIGN KEY (from_doc, from_line)
+                REFERENCES {self._fq('astrocyte_pi_sections')}(document_id, line_num) ON DELETE CASCADE,
+            FOREIGN KEY (to_doc, to_line)
+                REFERENCES {self._fq('astrocyte_pi_sections')}(document_id, line_num) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS ix_pi_section_links_from
+            ON {self._fq('astrocyte_pi_section_links')} (from_doc, from_line, link_type);
+        """
+
+    # ── document upsert ─────────────────────────────────────────────────
+
+    async def save_document(self, doc: PageIndexDocument) -> str:
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Upsert keyed on (bank_id, source_id). Re-running tree-
+                # build for the same conversation replaces the row in
+                # place; the FK cascade on sections drops stale rows.
+                # We let the DB generate the UUID on insert; on update,
+                # we keep the existing id and bump built_at.
+                await cur.execute(
+                    f"""
+                    INSERT INTO {self._fq('astrocyte_pi_documents')}
+                        (bank_id, source_id, md_text, reference_date, built_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (bank_id, source_id) DO UPDATE SET
+                        md_text = EXCLUDED.md_text,
+                        reference_date = EXCLUDED.reference_date,
+                        built_at = EXCLUDED.built_at
+                    RETURNING id
+                    """,
+                    (
+                        doc.bank_id,
+                        doc.source_id,
+                        doc.md_text,
+                        doc.reference_date,
+                        doc.built_at or datetime.now(tz=UTC),
+                    ),
+                )
+                row = await cur.fetchone()
+                doc_id = str(row[0])
+            await conn.commit()
+        return doc_id
+
+    # ── sections bulk-replace ───────────────────────────────────────────
+
+    async def save_sections(
+        self,
+        document_id: str,
+        sections: list[PageIndexSection],
+    ) -> int:
+        if not sections:
+            return 0
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        rows = [
+            (
+                document_id,
+                s.line_num,
+                s.node_id,
+                s.title,
+                s.summary,
+                _embedding_param(s.summary_embedding),
+                s.speaker,
+                s.session_date,
+                s.parent_node,
+                s.depth,
+            )
+            for s in sorted(sections, key=lambda x: x.line_num)
+        ]
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Atomic replace of the whole tree. The FK cascade on
+                # section_entities and section_links wipes dependent
+                # rows; PR2 will repopulate them.
+                await cur.execute(
+                    f"DELETE FROM {self._fq('astrocyte_pi_sections')} WHERE document_id = %s",
+                    (document_id,),
+                )
+                await cur.executemany(
+                    f"""
+                    INSERT INTO {self._fq('astrocyte_pi_sections')}
+                        (document_id, line_num, node_id, title, summary,
+                         summary_embedding, speaker, session_date, parent_node, depth)
+                    VALUES (%s, %s, %s, %s, %s, %s::vector, %s, %s, %s, %s)
+                    """,
+                    rows,
+                )
+            await conn.commit()
+        return len(rows)
+
+    async def save_section_embeddings(
+        self,
+        document_id: str,
+        embeddings: list[tuple[int, list[float]]],
+    ) -> int:
+        """PR2 commit A: bulk-update ``summary_embedding`` after sections
+        already exist. Used when the embedding pass runs as a separate
+        post-write step (cheaper than re-issuing a full ``save_sections``
+        with embeddings inlined). ``embeddings`` is an iterable of
+        ``(line_num, vector)`` tuples."""
+        if not embeddings:
+            return 0
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        rows = [(document_id, ln, _embedding_param(v)) for ln, v in embeddings]
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    f"""
+                    UPDATE {self._fq('astrocyte_pi_sections')}
+                    SET summary_embedding = %s::vector
+                    WHERE document_id = %s AND line_num = %s
+                    """,
+                    [(v, doc, ln) for doc, ln, v in rows],
+                )
+            await conn.commit()
+        return len(rows)
+
+    # ── reads ───────────────────────────────────────────────────────────
+
+    async def load_document(
+        self,
+        bank_id: str,
+        source_id: str,
+    ) -> PageIndexDocument | None:
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT id, bank_id, source_id, md_text,
+                           reference_date, built_at
+                    FROM {self._fq('astrocyte_pi_documents')}
+                    WHERE bank_id = %s AND source_id = %s
+                    """,
+                    (bank_id, source_id),
+                )
+                row = await cur.fetchone()
+        if row is None:
+            return None
+        return PageIndexDocument(
+            id=str(row["id"]),
+            bank_id=row["bank_id"],
+            source_id=row["source_id"],
+            md_text=row["md_text"],
+            reference_date=row["reference_date"],
+            built_at=row["built_at"],
+        )
+
+    async def load_skeleton(self, document_id: str) -> list[PageIndexSection]:
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                # Project out summary_embedding (column doesn't exist in
+                # PR1 anyway). Order by line_num so the picker sees the
+                # tree in document order.
+                await cur.execute(
+                    f"""
+                    SELECT document_id, line_num, node_id, title, summary,
+                           speaker, session_date, parent_node, depth
+                    FROM {self._fq('astrocyte_pi_sections')}
+                    WHERE document_id = %s
+                    ORDER BY line_num
+                    """,
+                    (document_id,),
+                )
+                rows = await cur.fetchall()
+        return [
+            PageIndexSection(
+                document_id=str(r["document_id"]),
+                line_num=r["line_num"],
+                node_id=r["node_id"],
+                title=r["title"],
+                summary=r["summary"],
+                summary_embedding=None,  # not loaded; PR2 strategy queries fetch separately
+                speaker=r["speaker"],
+                session_date=r["session_date"],
+                parent_node=r["parent_node"],
+                depth=r["depth"],
+            )
+            for r in rows
+        ]
+
+    # ── PR2 surfaces: entities + links (DDL ready; consumers come later) ─
+
+    async def save_section_entities(
+        self,
+        entities: list[PageIndexSectionEntity],
+    ) -> int:
+        if not entities:
+            return 0
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        rows = [(e.document_id, e.line_num, e.entity_name) for e in entities]
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # ON CONFLICT DO NOTHING — idempotent on the composite PK.
+                await cur.executemany(
+                    f"""
+                    INSERT INTO {self._fq('astrocyte_pi_section_entities')}
+                        (document_id, line_num, entity_name)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (document_id, line_num, entity_name) DO NOTHING
+                    """,
+                    rows,
+                )
+                # rowcount is unreliable for executemany under some psycopg
+                # versions; report the input length as a best-effort count
+                # of "rows attempted to write".
+            await conn.commit()
+        return len(rows)
+
+    async def save_section_links(
+        self,
+        links: list[PageIndexSectionLink],
+    ) -> int:
+        if not links:
+            return 0
+        for link in links:
+            if link.link_type not in _VALID_LINK_TYPES:
+                raise ValueError(
+                    f"section_links.link_type must be one of {sorted(_VALID_LINK_TYPES)!r}, "
+                    f"got {link.link_type!r}"
+                )
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        rows = [
+            (
+                link.from_doc,
+                link.from_line,
+                link.to_doc,
+                link.to_line,
+                link.link_type,
+                link.weight,
+            )
+            for link in links
+        ]
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    f"""
+                    INSERT INTO {self._fq('astrocyte_pi_section_links')}
+                        (from_doc, from_line, to_doc, to_line, link_type, weight)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (from_doc, from_line, to_doc, to_line, link_type) DO UPDATE SET
+                        weight = EXCLUDED.weight
+                    """,
+                    rows,
+                )
+            await conn.commit()
+        return len(rows)
+
+    # ── PR2 commit B: parallel-strategy query methods ───────────────────
+    #
+    # Each method is a single SQL round-trip returning ranked
+    # ``(document_id, line_num, score)`` tuples. The Tier-2 recall
+    # orchestrator (``astrocyte.pipeline.tier2_recall``) calls them in
+    # parallel via asyncio.gather, then fuses via RRF.
+
+    async def search_sections_semantic(
+        self,
+        bank_id: str,
+        query_embedding: list[float],
+        *,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        embed_param = _embedding_param(query_embedding)
+        if embed_param is None:
+            return []
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # ``1 - (a <=> b)`` converts cosine distance → similarity
+                # so RRF gets a positively-oriented score. Filter
+                # NULL embeddings (sections built before PR2 commit A).
+                await cur.execute(
+                    f"""
+                    SELECT s.document_id, s.line_num,
+                           1 - (s.summary_embedding <=> %s::vector) AS score
+                    FROM {self._fq('astrocyte_pi_sections')} AS s
+                    JOIN {self._fq('astrocyte_pi_documents')} AS d ON d.id = s.document_id
+                    WHERE d.bank_id = %s
+                      AND s.summary_embedding IS NOT NULL
+                    ORDER BY s.summary_embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (embed_param, bank_id, embed_param, top_k),
+                )
+                rows = await cur.fetchall()
+        return [(str(r[0]), r[1], float(r[2])) for r in rows]
+
+    async def search_sections_keyword(
+        self,
+        bank_id: str,
+        query: str,
+        *,
+        top_k: int = 20,
+        speaker: str | None = None,
+    ) -> list[tuple[str, int, float]]:
+        if not query.strip():
+            return []
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        # Use plainto_tsquery for natural-language input; ts_rank_cd
+        # gives the standard cover-density rank score.
+        speaker_clause = "AND s.speaker = %s" if speaker else ""
+        params: list = [query, bank_id]
+        if speaker:
+            params.append(speaker)
+        params.extend([query, top_k])
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    WITH q AS (SELECT plainto_tsquery('english', %s) AS tsq)
+                    SELECT s.document_id, s.line_num,
+                           ts_rank_cd(
+                               to_tsvector('english',
+                                   coalesce(s.title, '') || ' ' || coalesce(s.summary, '')
+                               ),
+                               (SELECT tsq FROM q)
+                           ) AS score
+                    FROM {self._fq('astrocyte_pi_sections')} AS s
+                    JOIN {self._fq('astrocyte_pi_documents')} AS d ON d.id = s.document_id
+                    WHERE d.bank_id = %s
+                      {speaker_clause}
+                      AND to_tsvector('english',
+                              coalesce(s.title, '') || ' ' || coalesce(s.summary, '')
+                          ) @@ (SELECT tsq FROM q)
+                    ORDER BY ts_rank_cd(
+                        to_tsvector('english',
+                            coalesce(s.title, '') || ' ' || coalesce(s.summary, '')
+                        ),
+                        plainto_tsquery('english', %s)
+                    ) DESC
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = await cur.fetchall()
+        return [(str(r[0]), r[1], float(r[2])) for r in rows]
+
+    async def search_sections_by_entities(
+        self,
+        bank_id: str,
+        entity_names: list[str],
+        *,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        if not entity_names:
+            return []
+        # Case-insensitive match — entity extraction stores the canonical
+        # form as written ("Caroline"); the question may use any case.
+        normalized = [n.strip() for n in entity_names if n and n.strip()]
+        if not normalized:
+            return []
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Hindsight's CTE pattern at section grain: count distinct
+                # matching entities per section, rank by count.
+                await cur.execute(
+                    f"""
+                    SELECT se.document_id, se.line_num,
+                           COUNT(DISTINCT lower(se.entity_name))::float AS score
+                    FROM {self._fq('astrocyte_pi_section_entities')} AS se
+                    JOIN {self._fq('astrocyte_pi_documents')} AS d ON d.id = se.document_id
+                    WHERE d.bank_id = %s
+                      AND lower(se.entity_name) = ANY(%s::text[])
+                    GROUP BY se.document_id, se.line_num
+                    ORDER BY score DESC
+                    LIMIT %s
+                    """,
+                    (bank_id, [n.lower() for n in normalized], top_k),
+                )
+                rows = await cur.fetchall()
+        return [(str(r[0]), r[1], float(r[2])) for r in rows]
+
+    async def search_sections_temporal(
+        self,
+        bank_id: str,
+        date_range,  # tuple[datetime, datetime]
+        *,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        start, end = date_range
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Uses ix_pi_sections_date partial index from migration
+                # 015. Score is uniform 1.0 — temporal is a filter, not
+                # a ranker. RRF combines with other strategies' scores.
+                await cur.execute(
+                    f"""
+                    SELECT s.document_id, s.line_num, 1.0 AS score
+                    FROM {self._fq('astrocyte_pi_sections')} AS s
+                    JOIN {self._fq('astrocyte_pi_documents')} AS d ON d.id = s.document_id
+                    WHERE d.bank_id = %s
+                      AND s.session_date IS NOT NULL
+                      AND s.session_date BETWEEN %s AND %s
+                    ORDER BY s.session_date
+                    LIMIT %s
+                    """,
+                    (bank_id, start, end, top_k),
+                )
+                rows = await cur.fetchall()
+        return [(str(r[0]), r[1], float(r[2])) for r in rows]
+
+    async def expand_section_links(
+        self,
+        seeds: list[tuple[str, int]],
+        *,
+        link_types: list[str] | None = None,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        if not seeds:
+            return []
+        # Pass seeds as two parallel arrays (docs + lines) so we can
+        # ``unnest`` them with a clean join. Postgres doesn't have a
+        # nice composite-pair literal across psycopg versions.
+        seed_docs = [d for d, _ in seeds]
+        seed_lines = [ln for _, ln in seeds]
+        link_clause = ""
+        # Build params: seeds (×2 for the two unnest sides), then
+        # link_types twice (once per UNION arm) if filtering, then top_k.
+        link_params: list = []
+        if link_types:
+            link_clause = "AND sl.link_type = ANY(%s::text[])"
+            link_params = [link_types, link_types]
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    WITH seeds AS (
+                        SELECT seed_doc::uuid AS doc, seed_line::int AS line
+                        FROM unnest(%s::uuid[], %s::int[])
+                            AS t(seed_doc, seed_line)
+                    )
+                    SELECT edges.to_doc::text, edges.to_line, SUM(edges.weight)::float AS score
+                    FROM (
+                        SELECT sl.to_doc, sl.to_line, sl.weight
+                        FROM {self._fq('astrocyte_pi_section_links')} AS sl
+                        JOIN seeds ON sl.from_doc = seeds.doc AND sl.from_line = seeds.line
+                        WHERE 1=1 {link_clause}
+                        UNION ALL
+                        SELECT sl.from_doc AS to_doc, sl.from_line AS to_line, sl.weight
+                        FROM {self._fq('astrocyte_pi_section_links')} AS sl
+                        JOIN seeds ON sl.to_doc = seeds.doc AND sl.to_line = seeds.line
+                        WHERE 1=1 {link_clause}
+                    ) AS edges
+                    GROUP BY edges.to_doc, edges.to_line
+                    ORDER BY score DESC
+                    LIMIT %s
+                    """,
+                    tuple([seed_docs, seed_lines] + link_params + [top_k]),
+                )
+                rows = await cur.fetchall()
+        return [(str(r[0]), r[1], float(r[2])) for r in rows]
+
+    # ── health ──────────────────────────────────────────────────────────
+
+    async def health(self) -> HealthStatus:
+        try:
+            pool = await self._ensure_pool()
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT 1")
+            return HealthStatus(healthy=True, message="postgres pageindex store")
+        except Exception as exc:  # noqa: BLE001 — health check
+            return HealthStatus(healthy=False, message=f"{type(exc).__name__}: {exc!s}"[:200])

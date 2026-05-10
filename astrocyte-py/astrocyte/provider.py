@@ -20,6 +20,7 @@ Providers with unrecognized versions are rejected.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -42,6 +43,10 @@ if TYPE_CHECKING:
         MemoryLink,
         MentalModel,
         Message,
+        PageIndexDocument,
+        PageIndexSection,
+        PageIndexSectionEntity,
+        PageIndexSectionLink,
         RecallRequest,
         RecallResult,
         ReflectRequest,
@@ -451,6 +456,168 @@ class WikiStore(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Tier-2 recall (M9): PageIndex tree + section graph store
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class PageIndexStore(Protocol):
+    """SPI for the Tier-2 recall store (M9). Optional.
+
+    Backs the three-layer recall stack defined in
+    ``docs/_design/tier-2-recall.md``. Holds:
+
+    - ``PageIndexDocument`` — one row per conversation/document, with the
+      canonical markdown that the picker slices for synth excerpts.
+    - ``PageIndexSection`` — tree nodes (the M9 recall primitive).
+    - ``PageIndexSectionEntity`` — Hindsight's unit_entities pattern at
+      section grain (PR2 commit A populates).
+    - ``PageIndexSectionLink`` — Hindsight's memory_links pattern at
+      section grain (PR2 commit D populates).
+
+    PR1 (this milestone) only exercises ``save_document`` /
+    ``save_sections`` / ``load_skeleton`` / ``load_document`` — the
+    minimum needed to port the Phase A POC picker to a Postgres-backed
+    cache. Entity / link methods land empty in PR1 and are populated in
+    PR2.
+
+    See ``astrocyte.testing.in_memory.InMemoryPageIndexStore`` for the
+    reference fixture; ``astrocyte_postgres.PostgresPageIndexStore`` for
+    the production backend.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    async def save_document(self, doc: PageIndexDocument) -> str:
+        """Upsert a document. Returns the document id (UUID string).
+
+        Upsert keyed on ``(bank_id, source_id)`` — re-running tree-build
+        for the same conversation replaces the prior row.
+        """
+
+    async def save_sections(
+        self,
+        document_id: str,
+        sections: list[PageIndexSection],
+    ) -> int:
+        """Bulk-replace all sections for a document. Returns the count
+        written. Existing rows for ``document_id`` are deleted first
+        (the tree rebuild is treated as atomic — no partial trees)."""
+
+    async def load_document(
+        self,
+        bank_id: str,
+        source_id: str,
+    ) -> PageIndexDocument | None:
+        """Fetch one document by (bank_id, source_id). Returns ``None``
+        when not found (caller decides whether to build it)."""
+
+    async def load_skeleton(self, document_id: str) -> list[PageIndexSection]:
+        """Fetch all sections for a document, ordered by ``line_num``.
+
+        Returned sections do NOT carry ``summary_embedding`` (that field
+        is only used by the semantic strategy in PR2; the picker doesn't
+        need it). Implementations may project it out for cheaper reads.
+        """
+
+    async def save_section_embeddings(
+        self,
+        document_id: str,
+        embeddings: list[tuple[int, list[float]]],
+    ) -> int:
+        """PR2 commit A: bulk-update ``summary_embedding`` on existing
+        section rows. Skips rows whose ``line_num`` doesn't already
+        exist (the tree-build step is the source of truth for which
+        sections exist). Returns rows updated."""
+
+    async def save_section_entities(
+        self,
+        entities: list[PageIndexSectionEntity],
+    ) -> int:
+        """Bulk-insert entity-mention rows. Idempotent on the composite
+        primary key. Returns rows written. PR2 commit A populates."""
+
+    async def save_section_links(
+        self,
+        links: list[PageIndexSectionLink],
+    ) -> int:
+        """Bulk-insert section-link rows. Idempotent on the composite
+        primary key. Returns rows written. PR2 commit B/D populates."""
+
+    # ── PR2 commit B: query methods for the 5 parallel strategies ──
+    #
+    # These are pure read methods that the Tier-2 recall orchestrator
+    # (``astrocyte.pipeline.tier2_recall``) calls in parallel. Each
+    # returns a ranked list of ``(document_id, line_num, score)``
+    # tuples; the orchestrator fuses them via RRF.
+    #
+    # Single-bank scoping for now (PR2). Cross-bank scoping comes when
+    # multi-bank Tier-2 ships in M10+.
+
+    async def search_sections_semantic(
+        self,
+        bank_id: str,
+        query_embedding: list[float],
+        *,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        """PR2 commit B / semantic strategy: cosine-similarity over
+        ``summary_embedding``. Returns ``(document_id, line_num, score)``
+        tuples, ordered by similarity desc. Score is in [0, 1] (1 - distance)."""
+
+    async def search_sections_keyword(
+        self,
+        bank_id: str,
+        query: str,
+        *,
+        top_k: int = 20,
+        speaker: str | None = None,
+    ) -> list[tuple[str, int, float]]:
+        """PR2 commit B / keyword strategy: full-text search (``tsvector``)
+        over section titles + summaries. Returns ``(document_id,
+        line_num, score)`` tuples. The optional ``speaker`` filter is
+        for LME assistant-recall (``WHERE speaker = 'assistant'``)."""
+
+    async def search_sections_by_entities(
+        self,
+        bank_id: str,
+        entity_names: list[str],
+        *,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        """PR2 commit B / entity strategy: Hindsight's CTE pattern.
+        Returns ``(document_id, line_num, score)`` where score is the
+        count of distinct matching entity_names per section."""
+
+    async def search_sections_temporal(
+        self,
+        bank_id: str,
+        date_range: tuple[datetime, datetime],
+        *,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        """PR2 commit B / temporal strategy: date-range filter on
+        ``session_date`` (uses the partial btree index from migration
+        015). Score is uniform (1.0) — temporal is a filter, not a
+        ranker; ranking happens in fusion."""
+
+    async def expand_section_links(
+        self,
+        seeds: list[tuple[str, int]],
+        *,
+        link_types: list[str] | None = None,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        """PR2 commit B / graph-expand strategy: 1-hop expansion through
+        ``section_links`` from the given ``(document_id, line_num)``
+        seeds. ``link_types`` filters to e.g. ['semantic_knn', 'causal'];
+        None means all types. Score is link weight."""
+
+    async def health(self) -> HealthStatus:
+        """Check storage connectivity."""
+
+
+# ---------------------------------------------------------------------------
 # Tier 1: Mental Model Store (first-class — see Hindsight comparison)
 # ---------------------------------------------------------------------------
 
@@ -715,6 +882,7 @@ class LLMProvider(Protocol):
         temperature: float = 0.0,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = None,
+        response_format: dict | None = None,
     ) -> Completion:
         """Generate a text completion from a message sequence.
 
@@ -728,6 +896,17 @@ class LLMProvider(Protocol):
         or a specific tool name. Providers that don't support tools
         SHOULD ignore both args and return ``tool_calls=None`` so callers
         can feature-detect.
+
+        ``response_format`` (optional) — a provider-specific structured-
+        output spec passed straight through to the underlying API. For
+        OpenAI this is the ``response_format`` request body parameter
+        (e.g. ``{"type": "json_schema", "json_schema": {"name": "facts",
+        "schema": {...}, "strict": True}}``). When set, the provider
+        constrains the model's output to the schema at decode time —
+        callers that need malformed-JSON-free responses (e.g. structured
+        fact extraction) should set this. Providers that don't support
+        structured outputs SHOULD ignore the arg and return their normal
+        text completion so callers can feature-detect by parsing.
         """
         pass
 
