@@ -1,0 +1,51 @@
+---
+title: "Benchmark trajectory"
+draft: false
+topic: design
+---
+
+import BenchTrajectory from "../../../components/BenchTrajectory.astro";
+
+Live time-series of Astrocyte's LoCoMo and LongMemEval scores. Data is read from the public R2 bucket at runtime — every archived run shows up within seconds of upload, with no docs rebuild needed.
+
+The chart is rendered client-side from `trajectory/<bench>.json` in the public R2 bucket. See [bench-archive](./bench-archive/) for the bucket layout, the `archive` / `fetch` tooling, and how the trajectory artifact is regenerated on each run.
+
+## LoCoMo
+
+<BenchTrajectory bench="locomo" />
+
+## LongMemEval
+
+<BenchTrajectory bench="longmemeval" />
+
+## What you're looking at
+
+Each point on the **overall accuracy** chart is one archived bench run. Hovering reveals the run's `stage` (e.g. `pr2-d55-gate`, `weekly-ci`), the git commit it was launched from, and the question count.
+
+The **per-category accuracy** chart breaks the same runs down by category. For LoCoMo: single-hop, multi-hop, temporal, open-domain, adversarial. For LongMemEval: single-session-{user/assistant/preference}, multi-session, temporal-reasoning, knowledge-update.
+
+## How a run becomes a point on the chart
+
+```text
+make bench-locomo-fair / bench-longmemeval / bench-full
+   ↓ (writes results-*.json locally)
+scripts/run_benchmarks.py  ← post-run hook
+   ↓ (R2_* env vars present?)
+scripts/archive_bench_results.py
+   ↓ (gzip + put_object × 2 buckets)
+private bucket: runs/<date>/<stage>/<bench>/results-*.json.gz
+public bucket:  trajectory/<bench>.json   ← this page reads from here
+```
+
+A run that completes without R2 credentials still writes locally; it just doesn't show up here. To force-archive an existing run:
+
+```bash
+doppler run --config bench -- make bench-archive-push STAGE=local-ad-hoc
+```
+
+## Related
+
+- [Evaluation](./evaluation/) — what the suites measure and how scoring works.
+- [Benchmark roadmap](./benchmark-roadmap/) — the PR1 / PR2 / PR3 plan whose deltas appear here.
+- [Bench archive](./bench-archive/) — bucket layout and tooling reference.
+- [Doppler setup](../../plugins/benchmarks-doppler-setup/) — how the `R2_*` secrets are provisioned.

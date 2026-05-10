@@ -1,0 +1,285 @@
+---
+/**
+ * BenchTrajectory — renders LoCoMo / LongMemEval trajectory charts from
+ * the public R2 bucket's trajectory/<bench>.json artifact.
+ *
+ * Data source: $R2_PUBLIC_URL/trajectory/<bench>.json
+ *   - Maintained by astrocyte-py/scripts/archive_bench_results.py on every
+ *     archived run (post-run hook in scripts/run_benchmarks.py).
+ *   - Schema: see docs/_design/bench-archive.md ("Trajectory artifact").
+ *
+ * Client-side: fetches at runtime, renders with Chart.js loaded from CDN.
+ * No build-time dependency on R2; if R2_PUBLIC_URL is unset at build time
+ * the component renders an inline note instead of a chart.
+ *
+ * Props:
+ *   bench: "locomo" | "longmemeval"
+ */
+const bench = (Astro.props.bench || "locomo") as "locomo" | "longmemeval";
+const publicUrl = (import.meta.env.R2_PUBLIC_URL || "").toString().replace(/\/$/, "");
+const dataUrl = publicUrl ? `${publicUrl}/trajectory/${bench}.json` : "";
+---
+
+<div class="bench-trajectory" data-bench={bench} data-src={dataUrl}>
+  {dataUrl ? (
+    <>
+      <div class="bench-loading">Loading {bench} trajectory&hellip;</div>
+      <div class="bench-error" style="display:none"></div>
+
+      <div class="bench-latest" style="display:none">
+        <h3>Latest run</h3>
+        <table class="bench-summary-table">
+          <tbody class="bench-latest-body"></tbody>
+        </table>
+      </div>
+
+      <div class="bench-charts" style="display:none">
+        <div class="bench-chart-container">
+          <canvas class="chart-overall"></canvas>
+        </div>
+        <div class="bench-chart-container">
+          <canvas class="chart-categories"></canvas>
+        </div>
+      </div>
+    </>
+  ) : (
+    <div class="bench-config-note">
+      <strong>Trajectory chart not configured.</strong>
+      Set <code>R2_PUBLIC_URL</code> at docs build time
+      (<code>doppler run --config bench -- pnpm build</code>)
+      to enable the {bench} chart. See
+      <a href="/plugins/benchmarks-doppler-setup/">benchmarks-doppler-setup</a>.
+    </div>
+  )}
+</div>
+
+<style>
+  .bench-trajectory {
+    margin: 1.5rem 0;
+  }
+  .bench-loading {
+    color: var(--sl-color-gray-3);
+    font-style: italic;
+  }
+  .bench-error {
+    color: var(--sl-color-red);
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--sl-color-red);
+    border-radius: 0.5rem;
+  }
+  .bench-summary-table {
+    width: 100%;
+    max-width: 480px;
+    border-collapse: collapse;
+    margin: 0.75rem 0 1.5rem;
+  }
+  .bench-summary-table td {
+    padding: 0.35rem 0.75rem;
+    border-bottom: 1px solid var(--sl-color-gray-5);
+  }
+  .bench-summary-table td:first-child {
+    color: var(--sl-color-gray-3);
+    width: 14rem;
+  }
+  .bench-chart-container {
+    position: relative;
+    height: 320px;
+    margin: 1rem 0;
+  }
+  .bench-config-note {
+    padding: 0.75rem 1rem;
+    border: 1px dashed var(--sl-color-gray-4);
+    border-radius: 0.5rem;
+    color: var(--sl-color-gray-2);
+  }
+  .bench-config-note code {
+    font-size: 0.9em;
+  }
+</style>
+
+<script>
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) return resolve();
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  function fmtPct(v) {
+    if (v == null) return "—";
+    return (v * 100).toFixed(1) + "%";
+  }
+
+  function fmtDate(s) {
+    if (!s) return "";
+    return new Date(s + "T00:00:00Z").toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "2-digit",
+    });
+  }
+
+  // Stable category color map (palette consistent with EvalDashboard).
+  const CATEGORY_COLORS = {
+    "single-hop": "#2dd4bf",
+    "multi-hop": "#d97706",
+    "temporal": "#6366f1",
+    "open-domain": "#22c55e",
+    "adversarial": "#ef4444",
+    // LongMemEval categories
+    "single-session-user": "#2dd4bf",
+    "single-session-assistant": "#0ea5e9",
+    "single-session-preference": "#6366f1",
+    "multi-session": "#d97706",
+    "temporal-reasoning": "#a855f7",
+    "knowledge-update": "#22c55e",
+  };
+
+  function colorFor(category) {
+    return CATEGORY_COLORS[category] || "#94a3b8";
+  }
+
+  async function initOne(root) {
+    const dataUrl = root.dataset.src;
+    if (!dataUrl) return;
+    const bench = root.dataset.bench;
+    const loading = root.querySelector(".bench-loading");
+    const error = root.querySelector(".bench-error");
+    const latest = root.querySelector(".bench-latest");
+    const latestBody = root.querySelector(".bench-latest-body");
+    const charts = root.querySelector(".bench-charts");
+
+    try {
+      const resp = await fetch(dataUrl, { cache: "no-store" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      const runs = (data.runs || []).filter((r) => r.overall != null);
+
+      if (!runs.length) {
+        loading.textContent = `No ${bench} runs archived yet.`;
+        return;
+      }
+      loading.style.display = "none";
+
+      // Latest summary
+      const last = runs[runs.length - 1];
+      const rows = [
+        ["Date", fmtDate(last.date)],
+        ["Stage", last.stage || "—"],
+        ["Commit", last.sha || "—"],
+        ["Overall", fmtPct(last.overall)],
+        ["Questions", last.n_questions ?? "—"],
+        ["Judge", last.judge || "—"],
+      ];
+      const cats = Object.entries(last.categories || {});
+      cats.forEach(([k, v]) => rows.push([k, fmtPct(v)]));
+      rows.forEach(([k, v]) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
+        latestBody.appendChild(tr);
+      });
+      latest.style.display = "block";
+
+      if (runs.length < 2) {
+        const note = document.createElement("p");
+        note.textContent = "Trend charts will appear after 2+ archived runs.";
+        note.style.color = "var(--sl-color-gray-3)";
+        note.style.fontStyle = "italic";
+        charts.parentElement.insertBefore(note, charts);
+        return;
+      }
+
+      await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js");
+      const Chart = window.Chart;
+
+      const isDark = document.documentElement.dataset.theme === "dark" ||
+        (document.documentElement.dataset.theme !== "light" &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches);
+      const gridColor = isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)";
+      const textColor = isDark ? "#a0a0a0" : "#666";
+
+      const labels = runs.map((r) => fmtDate(r.date));
+      const baseOpts = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: textColor } } },
+        scales: {
+          x: { ticks: { color: textColor }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor }, grid: { color: gridColor }, min: 0, max: 1 },
+        },
+      };
+
+      // Overall accuracy chart
+      new Chart(root.querySelector(".chart-overall"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label: "Overall accuracy",
+            data: runs.map((r) => r.overall),
+            borderColor: "#6366f1",
+            backgroundColor: "rgba(99,102,241,0.15)",
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+          }],
+        },
+        options: {
+          ...baseOpts,
+          plugins: {
+            ...baseOpts.plugins,
+            title: { display: true, text: `${bench} — overall accuracy`, color: textColor },
+            tooltip: {
+              callbacks: {
+                afterLabel: (ctx) => {
+                  const r = runs[ctx.dataIndex];
+                  return [`stage: ${r.stage}`, `sha: ${r.sha}`, `n=${r.n_questions ?? "?"}`];
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Per-category chart
+      const categoryNames = Array.from(
+        new Set(runs.flatMap((r) => Object.keys(r.categories || {})))
+      ).sort();
+      new Chart(root.querySelector(".chart-categories"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: categoryNames.map((cat) => ({
+            label: cat,
+            data: runs.map((r) => (r.categories || {})[cat] ?? null),
+            borderColor: colorFor(cat),
+            tension: 0.3,
+            spanGaps: true,
+          })),
+        },
+        options: {
+          ...baseOpts,
+          plugins: {
+            ...baseOpts.plugins,
+            title: { display: true, text: `${bench} — per-category accuracy`, color: textColor },
+          },
+        },
+      });
+
+      charts.style.display = "block";
+    } catch (e) {
+      loading.style.display = "none";
+      error.textContent = `Could not load ${root.dataset.bench} trajectory: ${e.message}`;
+      error.style.display = "block";
+    }
+  }
+
+  function initAll() {
+    document.querySelectorAll(".bench-trajectory[data-src]").forEach(initOne);
+  }
+
+  document.addEventListener("DOMContentLoaded", initAll);
+  document.addEventListener("astro:page-load", initAll);
+</script>

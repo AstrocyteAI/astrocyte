@@ -14,7 +14,15 @@ CONFIG        ?= benchmarks/config.yaml
 # ---------------------------------------------------------------------------
 BENCH_PG_CONTAINER := astrocyte-bench-pg
 BENCH_PG_PORT      := 5433
-BENCH_PG_IMAGE     := ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:latest
+# Default to the LOCAL image because the upstream
+# ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:latest predates the
+# 2026-05-06 default switch to pgvectorscale and doesn't have the
+# vectorscale or vchord binaries baked in. The bench-db-start target
+# will fall through to building from docker/astrocyte-postgres/Dockerfile
+# if the local image is missing. Override with
+# ``make bench-db-start BENCH_PG_IMAGE=ghcr.io/...`` once an upstream
+# image with all three backends is published.
+BENCH_PG_IMAGE     := astrocyte/astrocyte-postgres:local
 BENCH_PG_LOCAL_IMG := astrocyte/astrocyte-postgres:local
 BENCH_PG_USER      := astrocyte
 BENCH_PG_PASSWORD  := astrocyte
@@ -22,6 +30,22 @@ BENCH_PG_DB        := astrocyte_bench
 BENCH_EMBEDDING_DIMENSIONS := 1536
 BENCH_DATABASE_URL := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0.1:$(BENCH_PG_PORT)/$(BENCH_PG_DB)
 BENCH_UV_RUN := uv run --extra dev --extra rerank
+# ANN backend for the bench Postgres images. Drives the migration's
+# CREATE EXTENSION + USING clause for vector indexes.
+#   pgvectorscale  (default)  — DiskANN indexes. Better concurrent-insert
+#                                throughput than HNSW; chosen as default
+#                                after the 2026-05 LME bench observed
+#                                HNSW per-page write-lock drift
+#                                (1.0s → 2.0s/session as the index
+#                                grew). pgvectorscale is OSS under the
+#                                PostgreSQL License.
+#   pgvector                  — HNSW indexes. Use when the pgvectorscale
+#                                binary is unavailable.
+#   vchord                    — VectorChord vchordrq. Vendor-cited
+#                                highest insert throughput; opt-in.
+#
+# Override per-run: ``make bench-db-reset BENCH_VECTOR_EXTENSION=pgvector``
+BENCH_VECTOR_EXTENSION ?= pgvectorscale
 
 # ---------------------------------------------------------------------------
 # Second benchmark database — for running LoCoMo + LME in parallel without
@@ -111,8 +135,9 @@ bench-db-start:
 		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
 		echo "  [bench-db] Postgres ready at localhost:$(BENCH_PG_PORT)"; \
 	fi; \
-	echo "  [bench-db] Applying pgvector HNSW migrations (vector($(BENCH_EMBEDDING_DIMENSIONS)))"; \
+	echo "  [bench-db] Applying $(BENCH_VECTOR_EXTENSION) migrations (vector($(BENCH_EMBEDDING_DIMENSIONS)))"; \
 	ASTROCYTE_EMBEDDING_DIMENSIONS=$(BENCH_EMBEDDING_DIMENSIONS) \
+		VECTOR_EXTENSION=$(BENCH_VECTOR_EXTENSION) \
 		DATABASE_URL="$(BENCH_DATABASE_URL)" \
 		../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh; \
 	actual=$$(PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL)" -Atc "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'astrocyte_vectors'::regclass AND a.attname = 'embedding'"); \
@@ -166,8 +191,9 @@ bench-db-start-2:
 		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL_2)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
 		echo "  [bench-db-2] Postgres ready at localhost:$(BENCH_PG_2_PORT)"; \
 	fi; \
-	echo "  [bench-db-2] Applying pgvector HNSW migrations (vector($(BENCH_EMBEDDING_DIMENSIONS)))"; \
+	echo "  [bench-db-2] Applying $(BENCH_VECTOR_EXTENSION) migrations (vector($(BENCH_EMBEDDING_DIMENSIONS)))"; \
 	ASTROCYTE_EMBEDDING_DIMENSIONS=$(BENCH_EMBEDDING_DIMENSIONS) \
+		VECTOR_EXTENSION=$(BENCH_VECTOR_EXTENSION) \
 		DATABASE_URL="$(BENCH_DATABASE_URL_2)" \
 		../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh; \
 	actual=$$(PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_DATABASE_URL_2)" -Atc "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'astrocyte_vectors'::regclass AND a.attname = 'embedding'"); \
@@ -190,6 +216,7 @@ bench-locomo: fetch-locomo bench-db-start
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
 		--canonical-judge \
+		$(if $(MULTI_QUERY),--multi-query,) \
 		$(if $(RESUME),--resume,)
 
 # Quick LoCoMo subset (50 questions, ~2-3 min)
@@ -212,7 +239,9 @@ bench-locomo-fair: fetch-locomo bench-db-start
 		--benchmarks locomo \
 		--locomo-path $(LOCOMO_DIR)/data \
 		--max-questions-per-conversation 20 \
-		--canonical-judge
+		--canonical-judge \
+		$(if $(RETAIN_CONCURRENCY),--retain-concurrency $(RETAIN_CONCURRENCY),) \
+		$(if $(RESUME),--resume,)
 
 # Full LongMemEval benchmark (requires OPENAI_API_KEY, ~2-4 hrs for all 500 questions)
 # Pass RESUME=1 to continue an interrupted run: make bench-longmemeval RESUME=1
@@ -243,6 +272,7 @@ bench-longmemeval-on-2: fetch-longmemeval bench-db-start-2
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--canonical-judge \
 		--output-dir $(RESULTS_DIR)/lme-on-2 \
+		$(if $(MULTI_QUERY),--multi-query,) \
 		$(if $(RESUME),--resume,)
 
 # Quick LongMemEval subset on the SECOND DB (100q, ~30-60 min) — for fast smoke tests
@@ -254,7 +284,8 @@ bench-longmemeval-quick-on-2: fetch-longmemeval bench-db-start-2
 		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
 		--max-questions 100 \
 		--canonical-judge \
-		--output-dir $(RESULTS_DIR)/lme-on-2
+		--output-dir $(RESULTS_DIR)/lme-on-2 \
+		$(if $(MULTI_QUERY),--multi-query,)
 
 # ---------------------------------------------------------------------------
 # Single-command parallel run with full process-level isolation.
@@ -274,17 +305,30 @@ bench-longmemeval-quick-on-2: fetch-longmemeval bench-db-start-2
 #     doppler run -- make bench-parallel-isolated CONFIG=benchmarks/config-foo.yaml
 #     doppler run -- make bench-parallel-isolated RESUME=1
 #
+# Per-leg config override (LoCoMo and LME need different
+# adversarial_defense settings — LoCoMo's adversarial bucket scores
+# by abstaining, LME has no such bucket):
+#     doppler run -- make bench-parallel-isolated \
+#         LOCOMO_CONFIG=benchmarks/config-X-locomo.yaml \
+#         LME_CONFIG=benchmarks/config-X-lme.yaml
+#
+# CONFIG, LOCOMO_CONFIG, LME_CONFIG precedence: per-leg overrides
+# CONFIG. When neither is set, falls back to the bench-locomo /
+# bench-longmemeval-on-2 defaults.
+#
 # Requires fresh-or-resumed state on each DB.  Use ``make bench-db-reset``
 # and ``make bench-db-reset-2`` first when starting a new experiment.
 .PHONY: bench-parallel-isolated
 bench-parallel-isolated: fetch-datasets bench-db-start bench-db-start-2
 	@mkdir -p $(RESULTS_DIR)/parallel
 	@echo "  [parallel] LoCoMo on :5433 + LME on :5434"
+	@echo "  [parallel] LoCoMo config: $(or $(LOCOMO_CONFIG),$(CONFIG))"
+	@echo "  [parallel]    LME config: $(or $(LME_CONFIG),$(CONFIG))"
 	@echo "  [parallel] Logs: $(RESULTS_DIR)/parallel/{locomo,lme}.log"
 	@echo "  [parallel] Watch live: tail -f $(RESULTS_DIR)/parallel/locomo.log"
-	@( $(MAKE) bench-locomo CONFIG=$(CONFIG) $(if $(RESUME),RESUME=1,) > $(RESULTS_DIR)/parallel/locomo.log 2>&1 ; \
+	@( $(MAKE) bench-locomo CONFIG=$(or $(LOCOMO_CONFIG),$(CONFIG)) $(if $(MULTI_QUERY),MULTI_QUERY=1,) $(if $(RESUME),RESUME=1,) > $(RESULTS_DIR)/parallel/locomo.log 2>&1 ; \
 	   echo "  [parallel] locomo exited ($$?)" ) & \
-	 ( $(MAKE) bench-longmemeval-on-2 CONFIG=$(CONFIG) $(if $(RESUME),RESUME=1,) > $(RESULTS_DIR)/parallel/lme.log 2>&1 ; \
+	 ( $(MAKE) bench-longmemeval-on-2 CONFIG=$(or $(LME_CONFIG),$(CONFIG)) $(if $(MULTI_QUERY),MULTI_QUERY=1,) $(if $(RESUME),RESUME=1,) > $(RESULTS_DIR)/parallel/lme.log 2>&1 ; \
 	   echo "  [parallel] lme exited ($$?)" ) & \
 	 wait
 	@echo "  [parallel] Both done. Results: $(RESULTS_DIR)/latest.json (locomo) + $(RESULTS_DIR)/lme-on-2/latest.json (lme)"
@@ -416,6 +460,53 @@ codeql:
 	codeql database analyze $(CODEQL_DB) $(CODEQL_QUERIES) --format=csv --output=$(CODEQL_OUT)
 	@echo "--- Findings (excluding datasets/) ---"
 	@python3 scripts/filter_codeql.py $(CODEQL_OUT)
+
+# ---------------------------------------------------------------------------
+# Bench archive (Cloudflare R2)
+# ---------------------------------------------------------------------------
+# All targets here require the six R2_* env vars from Doppler config `bench`.
+# See docs/_design/bench-archive.md and docs/_plugins/benchmarks-doppler-setup.md.
+
+.PHONY: bench-archive-selftest bench-archive-push bench-archive-fetch \
+	bench-archive-trajectory bench-archive-rebuild-trajectory \
+	bench-archive-backfill-dry bench-archive-backfill
+
+# STAGE label (defaults to local-ad-hoc) and BENCH selector pass through.
+STAGE ?= local-ad-hoc
+BENCH ?= locomo
+
+# Round-trip a small object against both buckets to verify creds + CORS reach.
+bench-archive-selftest:
+	uv run python -m scripts.archive_bench_results --selftest
+
+# Manually archive every results-*.json in benchmark-results/ under STAGE.
+# Usually unnecessary: scripts/run_benchmarks.py archives via the post-run
+# hook on every successful run. Use this for backfilling a single label.
+bench-archive-push:
+	uv run python -m scripts.archive_bench_results \
+		--stage $(STAGE) \
+		--files $(RESULTS_DIR)/results-*.json
+
+# Pull the latest archived run for one bench down to benchmark-results/_r2/.
+bench-archive-fetch:
+	uv run python -m scripts.fetch_bench_results --bench $(BENCH) --latest
+
+# Pull only the public trajectory artifact (small, useful for CLI trends).
+bench-archive-trajectory:
+	uv run python -m scripts.fetch_bench_results --bench $(BENCH) --trajectory
+
+# Rebuild trajectory/<bench>.json from manifests (no upload of raw runs).
+# Use after `bench-archive-backfill` or if the public bucket is wiped.
+bench-archive-rebuild-trajectory:
+	uv run python -m scripts.archive_bench_results --rebuild-trajectory
+
+# One-shot historical backfill — preview what would upload (default DRY).
+bench-archive-backfill-dry:
+	uv run python -m scripts.backfill_archive
+
+# One-shot historical backfill — actually upload everything.
+bench-archive-backfill:
+	uv run python -m scripts.backfill_archive --execute
 
 # ---------------------------------------------------------------------------
 # Cleanup

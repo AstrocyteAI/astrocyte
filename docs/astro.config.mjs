@@ -173,6 +173,8 @@ const topicItems = {
         { label: "Bank health & utilization", link: "/design/memory-analytics/" },
         { label: "Evaluation", link: "/design/evaluation/" },
         { label: "Eval Dashboard", link: "/eval/dashboard/" },
+        { label: "Benchmark trajectory", link: "/design/benchmark-trajectory/" },
+        { label: "Benchmark archive", link: "/design/bench-archive/" },
       ],
     },
     // ── Meta ──
