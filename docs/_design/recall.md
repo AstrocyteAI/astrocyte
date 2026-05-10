@@ -440,3 +440,78 @@ Phase A v7 results (50Q):
 | temporal | 45% |
 
 These are PR1's regression floor: the migration to Postgres + AGE removal must not regress below v7.
+
+---
+
+## 12. PR2.6 close-out (2026-05-10)
+
+PR2.6 wired agentic reflect into the bench, added a deterministic counting tool, fixed three bugs in the LME bench harness, and tightened the temporal-arithmetic short-circuit. Today's gates ran the first true large-N validation; some prior small-N "high-waters" did not survive the tighter measurement.
+
+### Final numbers
+
+| Bench | Sample | Score | Wilson 95% CI |
+|-------|-------:|------:|---------------|
+| **LoCoMo** | **N=500** | **61.6%** (308/500) | 57.3% – 65.7% |
+| **LME** | N=50 | **48%** (24/50) | 34.0% – 62.5% |
+
+LoCoMo per-category (N=500):
+
+| Category | Score | Wilson 95% CI |
+|----------|------:|---------------|
+| adversarial | 86.4% (89/103) | 79.9% – 91.4% |
+| single-hop | 77.1% (81/105) | 68.4% – 84.0% |
+| open-domain | 61.0% (50/82) | 50.0% – 71.0% |
+| temporal | 46.2% (49/106) | 37.0% – 55.7% |
+| multi-hop | 37.5% (39/104) | 28.7% – 47.2% |
+
+LME per-category (N=50, ~8-9/category, Wilson CI ±30pp at this sample size):
+
+| Category | Score |
+|----------|------:|
+| single-session-assistant | 100% (8/8) |
+| knowledge-update | 88% (7/8) |
+| single-session-user | 67% (6/9) |
+| single-session-preference | 25% (2/8) |
+| multi-session | 11% (1/9) |
+| temporal-reasoning | 0% (0/8) |
+
+### How prior "high-water" claims survived under tight measurement
+
+The previously claimed PR2-D numbers (LoCoMo 68%, LME 46%) were taken on N=50 with Wilson CIs of ±13pp and ±13pp. Today's findings:
+
+| Claim | Reality |
+|---|---|
+| LoCoMo 68% (N=50) | 61.6% (N=500). Statistically indistinguishable from 68% at the small-N CI. The N=500 number is the reliable one. |
+| LME 46% (N=50, picker-only) | 48% (N=50, post-bug-fix) — the prior 46% was the picker-on-full-skeleton path because `_build_lme_tree_via_store` was dropping `document_id` on both cache paths. `section_recall`, `rerank`, the question annotator, AND reflect were silently disabled on LME. The +36pp lift over PR1's 12% baseline is real, but PR2-D's claimed mechanisms weren't the cause — the picker dispatch + LME-specific synth prompts (D.1, D.3) were. |
+
+### What shipped in PR2.6
+
+1. **`section_reflect` adapter** ([astrocyte-py/astrocyte/pipeline/section_reflect.py](../../astrocyte-py/astrocyte/pipeline/section_reflect.py)) — bridges agentic reflect's `MemoryHit`-shaped tools to the section-grain pipeline. Three closure factories: `make_section_recall_fn`, `make_section_expand_fn`, `make_list_entities_fn`. Memory-id format `f"{document_id}:{line_num}"` round-trips for citation extraction.
+2. **`list_distinct_entities` SPI** on `PageIndexStore` (in-memory + Postgres) — returns `[(entity_name, mention_count), ...]` filtered by ILIKE pattern. Powers the agent's `list_entities` counting tool.
+3. **`list_entities` reflect tool** in `agentic_reflect.py` — registered alongside `recall` / `expand` / `done` when `list_entities_fn` is supplied. System prompt directs the agent to use it for "how many X" questions.
+4. **Bench reflect dispatch** in `bench_pageindex_locomo.answer_question` — gated narrowly to `mode == "multi-session"` (LME category) on store-backed paths. Inherits warm `initial_hits` from the existing fused recall pass.
+5. **`document_id` propagation fix** in `bench_pageindex_lme._build_lme_tree_via_store` — both cache paths now pass `document_id` through `_conv_tree_dict`. **Without this, all of PR2's section-grain features had been silently disabled on LME.**
+6. **Temporal-arithmetic regex coverage** — added `_ORDER_THREE_RE` for "Which three events happened in the order…" questions. Coverage on LME's 8 temporal-reasoning shapes: 7/8 → 8/8.
+7. **`document_id` filter on `search_sections_keyword`** — avoids bank-wide top-K starvation when 50+ docs share a bank. `find_event_date` uses this so its `top_k=10` actually reflects single-doc candidates instead of being starved by hits from sibling LME conversations.
+8. **`question_date` as `reference_date` for LME** — the LME dataset carries `question_date` separately from haystack session dates; `build_lme_tree` now overrides `conv_tree["reference_date"]` with it so "X weeks ago" anchors against when the user is asking, not when the last session ended.
+9. **Entity fallback in `find_event_date`** — when keyword search on title+summary returns zero hits (PageIndex tree summaries abstract over content like "retail shopping" instead of "Nordstrom sale"), fall back to `list_distinct_entities` over the document's section_entities table to recover concrete proper-noun anchors.
+
+### Stuck holes — data-quality limits, not algorithmic
+
+LME multi-session 11% (1/9) and temporal-reasoning 0% (0/8) did not lift despite all of the above. Diagnostic findings:
+
+- **multi-session counting**: reflect fires 9/9, agent calls `list_entities("doctor")` / `("kit")` / etc. with smart pattern choices. Returns near-empty because section_entities stored proper nouns (`Dr. Patel`, `Dr. Lee`) without category tags. Agent falls back to text reasoning → undercounts. **The agent and tools work; the data doesn't carry the categories the agent needs.**
+- **temporal-reasoning**: the entity-fallback recovers single-token events (Nordstrom, MoMA), but multi-token natural-language event descriptions ("attend the friends and family sale", "two charity events on consecutive days") don't reduce to a single discriminating proper noun. Multiple events resolving to the same fallback token produce same-date answers ("0 days").
+
+Both bottlenecks point at the same architectural gap: **typed entity extraction at retain time** would carry `(name, type, category)` tuples, not just `name`. With `entity_type='medical_professional'`, counting questions become `SELECT COUNT(DISTINCT entity_name) WHERE entity_type='medical_professional'`. With event-typed sections, the temporal arithmetic has clean anchors.
+
+### Deferred to M10
+
+- **Typed entity extraction** at retain time. Would unblock multi-session counting AND temporal-reasoning. ~1-2 days work + ~$5 to re-extract for current bench data.
+- **Section-aware compile / wiki layer** (PR3). The existing M8 `CompileEngine` operates over `memory_units` via `VectorStore`; the PageIndex POC bypasses both, so a separate section-aware compile path is needed. Architectural work.
+- **Open reflect gate to LoCoMo multi-hop** (currently 37.5%). Reflect is gated narrowly to `multi-session` for safety; opening to multi-hop is a one-line change.
+- **Stronger model on reflect** (`gpt-4o` vs `gpt-4o-mini`). Bounded experiment, no code change.
+
+### Validation discipline note
+
+LME at N=50 has ±32pp Wilson CIs per category — almost any single-category move under 30pp is within noise. Today's "no lift" reads on multi-session and temporal-reasoning are at the edge of the noise band; a real entity-typing fix should produce moves large enough to clear the band. **Future per-category claims should run at N≥200/category to be defensible.**
