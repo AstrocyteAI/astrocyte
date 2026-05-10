@@ -23,7 +23,6 @@ BENCH_PG_PORT      := 5433
 # ``make bench-db-start BENCH_PG_IMAGE=ghcr.io/...`` once an upstream
 # image with all three backends is published.
 BENCH_PG_IMAGE     := astrocyte/astrocyte-postgres:local
-BENCH_PG_LOCAL_IMG := astrocyte/astrocyte-postgres:local
 BENCH_PG_USER      := astrocyte
 BENCH_PG_PASSWORD  := astrocyte
 BENCH_PG_DB        := astrocyte_bench
@@ -100,7 +99,7 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench-db-start bench-db-stop bench-db-reset bench-db-start-2 bench-db-stop-2 bench-db-reset-2 bench bench-full bench-gate bench-locomo bench-locomo-fair bench-locomo-quick bench-locomo-litellm bench-locomo-litellm-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-longmemeval-on-2 bench-longmemeval-quick-on-2 bench-builtin bench-smoke
+.PHONY: bench-db-start bench-db-stop bench-db-reset bench-db-start-2 bench-db-stop-2 bench-db-reset-2 bench bench-full bench-gate bench-locomo bench-locomo-fair bench-locomo-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-longmemeval-on-2 bench-longmemeval-quick-on-2 bench-builtin bench-smoke
 
 # Start the benchmark Postgres container (astrocyte-postgres).
 # Pulls from GHCR first; falls back to building locally from the Dockerfile.
@@ -121,8 +120,8 @@ bench-db-start:
 			BENCH_IMG=$(BENCH_PG_IMAGE); \
 		else \
 			echo "  [bench-db] Pull failed — building from ../docker/astrocyte-postgres/Dockerfile"; \
-			docker build -t $(BENCH_PG_LOCAL_IMG) -f ../docker/astrocyte-postgres/Dockerfile ..; \
-			BENCH_IMG=$(BENCH_PG_LOCAL_IMG); \
+			docker build -t $(BENCH_PG_IMAGE) -f ../docker/astrocyte-postgres/Dockerfile ..; \
+			BENCH_IMG=$(BENCH_PG_IMAGE); \
 		fi; \
 		docker run -d --name $(BENCH_PG_CONTAINER) \
 			-e POSTGRES_USER=$(BENCH_PG_USER) \
@@ -177,8 +176,8 @@ bench-db-start-2:
 			BENCH_IMG=$(BENCH_PG_IMAGE); \
 		else \
 			echo "  [bench-db-2] Pull failed — building from ../docker/astrocyte-postgres/Dockerfile"; \
-			docker build -t $(BENCH_PG_LOCAL_IMG) -f ../docker/astrocyte-postgres/Dockerfile ..; \
-			BENCH_IMG=$(BENCH_PG_LOCAL_IMG); \
+			docker build -t $(BENCH_PG_IMAGE) -f ../docker/astrocyte-postgres/Dockerfile ..; \
+			BENCH_IMG=$(BENCH_PG_IMAGE); \
 		fi; \
 		docker run -d --name $(BENCH_PG_2_CONTAINER) \
 			-e POSTGRES_USER=$(BENCH_PG_USER) \
@@ -333,20 +332,8 @@ bench-parallel-isolated: fetch-datasets bench-db-start bench-db-start-2
 	 wait
 	@echo "  [parallel] Both done. Results: $(RESULTS_DIR)/latest.json (locomo) + $(RESULTS_DIR)/lme-on-2/latest.json (lme)"
 
-# LoCoMo via LiteLLM adapter (requires OPENAI_API_KEY + astrocyte-llm-litellm installed)
-bench-locomo-litellm: fetch-locomo bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config-litellm.yaml \
-		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data
-
-# Quick LoCoMo via LiteLLM (50 questions)
-bench-locomo-litellm-quick: fetch-locomo bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config-litellm.yaml \
-		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data \
-		--max-questions 50
+# For LiteLLM provider, use: make bench-locomo CONFIG=benchmarks/config-litellm.yaml
+# (or any other bench-locomo-* / bench-longmemeval-* target with the CONFIG override).
 
 # Side-by-side: built-in OpenAI vs LiteLLM adapter (50 questions each)
 bench-compare: fetch-locomo bench-db-start
@@ -401,15 +388,12 @@ bench-gate:
 		--gates benchmarks/gates-hindsight-informed.json \
 		--results $(RESULTS_DIR)/latest.json
 
-.PHONY: bench-baseline-locomo-fair bench-baseline-longmemeval-quick bench-baseline-gate
+# Baseline-config gate. Run with:
+#   make bench-locomo-fair CONFIG=benchmarks/config-baseline.yaml
+#   make bench-gate-baseline
+.PHONY: bench-gate-baseline
 
-bench-baseline-locomo-fair:
-	$(MAKE) bench-locomo-fair CONFIG=benchmarks/config-baseline.yaml
-
-bench-baseline-longmemeval-quick:
-	$(MAKE) bench-longmemeval-quick CONFIG=benchmarks/config-baseline.yaml
-
-bench-baseline-gate:
+bench-gate-baseline:
 	uv run python scripts/check_benchmark_gates.py \
 		--gates benchmarks/gates-baseline.json \
 		--results $(RESULTS_DIR)/latest.json
