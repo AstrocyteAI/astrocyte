@@ -32,9 +32,13 @@ CREATE INDEX IF NOT EXISTS astrocyte_entities_name_trgm_idx
 ALTER TABLE astrocyte_entities
     ADD COLUMN IF NOT EXISTS embedding vector(:embedding_dimensions);
 
--- HNSW index on the embedding column for sub-millisecond cosine lookups.
--- Same parameters as the main astrocyte_vectors index — proven good
--- defaults for OpenAI text-embedding-3-small.
+-- ANN index on the embedding column for sub-millisecond cosine lookups.
+-- The backend (HNSW vs DiskANN) is selected via :vector_using_clause —
+-- same knob as migration 003. Default HNSW m=16, ef_construction=64.
+\if :{?vector_using_clause}
+\else
+\set vector_using_clause 'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)'
+\endif
+
 CREATE INDEX IF NOT EXISTS astrocyte_entities_embedding_idx
-    ON astrocyte_entities USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64);
+    ON astrocyte_entities :vector_using_clause;
