@@ -1,5 +1,5 @@
 {
-  "description": "Feature/baseline ablation matrix. Run each scenario against the same dataset slice before promoting a Hindsight-parity default.",
+  "description": "Feature/baseline ablation matrix. Run each scenario against the same dataset slice to compare product-position trade-offs (storage floor / low-latency / max quality).",
   "branch": "feature/baseline",
   "default_benchmarks": ["locomo", "longmemeval"],
   "default_commands": {
@@ -10,22 +10,12 @@
     {
       "id": "baseline",
       "config": "config-baseline.yaml",
-      "purpose": "Conservative Tier 1 storage path with Hindsight-parity feature bundles disabled."
+      "purpose": "Conservative Tier 1 storage path with optional feature bundles disabled."
     },
     {
       "id": "fast-recall",
       "config": "config-fast-recall.yaml",
       "purpose": "Low-latency profile for recall p95 gates and fast-chat use cases."
-    },
-    {
-      "id": "hindsight-parity",
-      "config": "config-hindsight-parity.yaml",
-      "purpose": "Full Hindsight-inspired feature bundle used for parity tracking."
-    },
-    {
-      "id": "hindsight-balanced",
-      "config": "config-hindsight-balanced.yaml",
-      "purpose": "Hindsight-parity bundle with cheap adversarial defense (abstention floor + adversarial prompt, no premise verification) — single-variable test for recovering adversarial accuracy without harming single/multi-hop wins."
     },
     {
       "id": "quality-max",
