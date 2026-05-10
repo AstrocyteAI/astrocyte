@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### ⚠️ Breaking — Apache AGE removed (M9 / ADR-008)
+
+Apache AGE is no longer supported. M9's section-grain recall stack replaces AGE-backed graph operations with flat tables + SQL CTEs (Hindsight pattern), at section grain (`astrocyte_pi_section_links`, `astrocyte_pi_section_entities`) and at memory-unit grain (`astrocyte_unit_links`, `astrocyte_unit_entities`).
+
+**Migration:**
+
+1. Remove the `graph_store: age` line from your config. The `graph_store` field becomes optional; graph operations live inside the Postgres adapter as flat tables.
+2. If your bank was AGE-backed, rebuild from raw memory_units before upgrading. There is no migration tool — re-extraction produces a cleaner result than walking AGE's per-label OID structure.
+3. Drop the `astrocyte-age` dependency from your `pyproject.toml` / `requirements.txt`.
+4. Migration `016_drop_age.sql` runs `DROP EXTENSION IF EXISTS age CASCADE` (idempotent — deployments without AGE skip cleanly).
+
+**Impact on Docker / Helm:** the `astrocyte-postgres` image base flipped from `apache/age:release_PG16_1.6.0` to `postgres:16-trixie`. `shared_preload_libraries` no longer includes `age`. Smaller image, faster cold start, one fewer extension to upgrade across Postgres majors.
+
+If you set `graph_store: age` in any config after upgrading, startup raises `ConfigError` with a pointer to ADR-008.
+
+See:
+- `docs/_design/recall.md` — recall design (M9)
+- `docs/_design/adr/adr-006-three-layer-recall-stack.md`
+- `docs/_design/adr/adr-007-pageindex-tree-as-section-primitive.md`
+- `docs/_design/adr/adr-008-section-graph-replaces-age.md`
+
 ## [0.11.0] — 2026-05-03 (multi-tenancy, mental models, package rename)
 
 This release introduces schema-per-tenant isolation across the entire stack, a new mental-model knowledge tier, intent-driven reflect routing, and a comprehensive package rename. Operators upgrading from v0.10.0 must replace `astrocyte-pgvector` with `astrocyte-postgres` in their dependency lists.
