@@ -411,10 +411,12 @@ async def _populate_section_index(
     link_results = all_results[1 + n_entity : 1 + n_entity + n_link]
 
     # Embeddings.
+    n_embeddings = 0
     if isinstance(embed_result, Exception):
         print(f"  [pageindex] embed pass failed for doc={document_id}: {type(embed_result).__name__}")
     elif embed_result:
         await store.save_section_embeddings(document_id, embed_result)
+        n_embeddings = len(embed_result)
 
     # Entities — flatten across sections, swallow per-section failures.
     all_entities = []
@@ -434,11 +436,26 @@ async def _populate_section_index(
     if all_links:
         await store.save_section_links(all_links)
 
+    # PR2 D.7.1: semantic-kNN graph (no LLM cost). Runs AFTER
+    # embeddings are saved so the SQL can read them. ``min_similarity``
+    # filters near-zero noise — LME's chat-history shape produces lots
+    # of weak similarities (different topics) that would only dilute
+    # graph_expand if included.
+    n_knn = 0
+    if n_embeddings >= 2 and hasattr(store, "populate_semantic_knn_links"):
+        try:
+            n_knn = await store.populate_semantic_knn_links(
+                document_id, top_k=5, min_similarity=0.5,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [pageindex] semantic_knn failed for doc={document_id}: {type(exc).__name__}: {exc}")
+
     print(
         f"  [pageindex] indexed doc={document_id}: "
         f"{len(all_entities)} entities, "
-        f"{len(embed_result) if not isinstance(embed_result, Exception) else 0} embeddings, "
-        f"{len(all_links)} links"
+        f"{n_embeddings} embeddings, "
+        f"{len(all_links)} llm-links, "
+        f"{n_knn} knn-links"
     )
 
 
