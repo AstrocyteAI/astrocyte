@@ -1500,6 +1500,109 @@ async def answer_question(
     # work. Accepting LME multi-session at 11% for PR2 close.
     is_counting = False
 
+    # PR2.6: agentic reflect dispatch for multi-session questions.
+    # PR2.5 post-mortem showed the picker undercounts when aggregation
+    # across sessions is needed (fetches 5-6 sections when 8-10 are
+    # required). Reflect's iterative tool-call loop lets the agent
+    # re-query until it has enough evidence. Gated narrowly to
+    # mode=="multi-session" for this first gate; we'll broaden if it
+    # lifts. Bounded to 5 iterations (default 10) to cap cost.
+    if (
+        store is not None and bank_id and document_id
+        and mode == "multi-session"
+        and recall_result and recall_result.fused
+    ):
+        from astrocyte.pipeline.agentic_reflect import (
+            AgenticReflectParams,
+            agentic_reflect,
+        )
+        from astrocyte.pipeline.section_reflect import (
+            cited_ids_to_line_nums,
+            make_section_expand_fn,
+            make_section_recall_fn,
+            section_tuples_to_memory_hits,
+        )
+        from astrocyte.types import ReflectResult
+
+        md_text_by_doc = {document_id: conv_tree["md_text"]}
+        # Initial hits = top-15 from the existing fused recall pass.
+        # The reranker's top-25 isn't in scope outside its try block;
+        # taking fused[:15] keeps the agent warm without re-running
+        # the cross-encoder.
+        initial_tuples = [
+            (h.document_id, h.line_num, h.rrf_score)
+            for h in recall_result.fused[:15]
+        ]
+        initial_hits = section_tuples_to_memory_hits(
+            initial_tuples,
+            md_text_by_doc=md_text_by_doc,
+            slice_fn=_slice_section_around_line,
+        )
+        recall_fn = make_section_recall_fn(
+            store=store,
+            bank_id=bank_id,
+            embedding_provider=provider,
+            md_text_by_doc=md_text_by_doc,
+            slice_fn=_slice_section_around_line,
+        )
+        expand_fn = make_section_expand_fn(
+            store=store,
+            md_text_by_doc=md_text_by_doc,
+            slice_fn=_slice_section_around_line,
+        )
+
+        async def _reflect_final_synth(
+            *, query: str, hits, llm_provider, **_kw,
+        ) -> ReflectResult:
+            """Fallback when reflect exits without a ``done`` call.
+            Mirrors the bench's default synth shape so cited_ids still
+            roundtrip back to line_nums."""
+            excerpts = "\n\n---\n\n".join(
+                (h.text or "").strip() for h in hits[:15]
+            ) or "(no relevant section found)"
+            msg = SYNTHESIZE_PROMPT_DEFAULT.format(
+                excerpts=excerpts, question=query, reference_date=reference_date,
+            )
+            completion = await llm_provider.complete(
+                [Message(role="user", content=msg)],
+                model=model, max_tokens=250, temperature=0.0,
+            )
+            return ReflectResult(answer=completion.text.strip(), sources=hits)
+
+        try:
+            result = await agentic_reflect(
+                question,
+                initial_hits=initial_hits,
+                recall_fn=recall_fn,
+                llm_provider=provider,
+                expand_fn=expand_fn,
+                params=AgenticReflectParams(max_iterations=5),
+                final_synthesize_fn=_reflect_final_synth,
+            )
+            cited_mids = [
+                h.memory_id for h in (result.sources or []) if h.memory_id
+            ]
+            reflect_lines = cited_ids_to_line_nums(
+                cited_mids, expected_doc_id=document_id,
+            )
+            return result.answer, reflect_lines
+        except Exception as exc:  # noqa: BLE001 — fall through to picker+synth on failure
+            # Re-raise terminal errors (insufficient_quota, invalid_api_key,
+            # account_deactivated, billing_hard_limit_reached) so the
+            # BenchAborted machinery in eval/benchmarks/locomo.py picks
+            # them up. Without this, the bench would silently log + fall
+            # through every multi-session question for the rest of the
+            # run while the real failure (out of credits / bad key)
+            # stayed hidden.
+            from astrocyte.eval.benchmarks.locomo import _is_terminal_error
+
+            if _is_terminal_error(exc):
+                raise
+            print(
+                f"  [pageindex] reflect failed for q={question[:40]!r}: "
+                f"{type(exc).__name__}: {exc}",
+            )
+
     if mode == "temporal":
         pick_msg = PICK_PROMPT_TEMPORAL.format(
             tree_json=tree_json,
