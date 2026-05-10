@@ -1,4 +1,4 @@
-"""Tier-2 recall orchestrator (M9 PR2 commit B).
+"""Section recall orchestrator (M9 PR2 commit B).
 
 Runs the five Hindsight-pattern parallel strategies — semantic, keyword,
 entity, temporal, graph-expand — over the ``PageIndexStore`` SPI, then
@@ -23,7 +23,7 @@ replaces it with a 1-token LLM classifier when the heuristic
 mis-routes.
 
 See:
-- ``docs/_design/tier-2-recall.md`` §6 (recall pipeline)
+- ``docs/_design/recall.md`` §6 (recall pipeline)
 - ``docs/_design/adr/adr-006-three-layer-recall-stack.md``
 """
 
@@ -66,8 +66,8 @@ class FusedHit:
 
 
 @dataclass
-class Tier2RecallResult:
-    """Full output of one Tier-2 recall call. Carries per-strategy
+class SectionRecallResult:
+    """Full output of one section recall call. Carries per-strategy
     debug data so failure analysis can attribute regressions to the
     right component."""
 
@@ -145,10 +145,10 @@ import asyncio  # noqa: E402 — placed after types/helpers per module style
 import logging  # noqa: E402
 import time  # noqa: E402
 
-logger = logging.getLogger("astrocyte.pipeline.tier2_recall")
+logger = logging.getLogger("astrocyte.pipeline.section_recall")
 
 
-async def tier2_recall(
+async def section_recall(
     *,
     store: PageIndexStore,
     bank_id: str,
@@ -160,8 +160,12 @@ async def tier2_recall(
     semantic_seed_count: int = 20,
     rrf_k: int = DEFAULT_RRF_K,
     per_strategy_top_k: int = 20,
-) -> Tier2RecallResult:
+) -> SectionRecallResult:
     """Run all selected strategies in parallel, RRF-fuse, return.
+
+    Operates on **sections** (PageIndex tree nodes) — the M9 middle
+    recall layer in ``recall.md``'s three-layer stack. Wiki recall
+    sits above this; raw memory_units below.
 
     Args:
       store: PageIndexStore SPI handle (in-memory or postgres).
@@ -184,7 +188,7 @@ async def tier2_recall(
       per_strategy_top_k: Top-K limit per strategy before fusion.
 
     Returns:
-      ``Tier2RecallResult`` with the fused list (sorted by rrf_score
+      ``SectionRecallResult`` with the fused list (sorted by rrf_score
       desc) plus per-strategy traces for debugging.
     """
     t0 = time.monotonic()
@@ -311,7 +315,7 @@ async def tier2_recall(
             ))
 
     fused = _rrf_fuse_section_hits(initial_results, k=rrf_k)
-    return Tier2RecallResult(
+    return SectionRecallResult(
         fused=fused,
         strategies=initial_results,
         mode=mode,

@@ -828,9 +828,9 @@ class AstrocyteConfig:
     # when unset, vectors remain anonymous flat rows (backward compatible).
     source_store: str | None = None
     source_store_config: dict[str, str | int | float | bool | None] | None = None
-    # M9 Tier-2 recall — PageIndex tree + section graph. Optional.
-    # When unset, tier-2 recall is disabled and ``recall_strategy: tier2``
-    # raises ConfigError. See docs/_design/tier-2-recall.md.
+    # M9 section recall — PageIndex tree + section graph. Optional.
+    # When unset, section recall is disabled (the SPI is gated on this
+    # store being configured). See docs/_design/recall.md.
     pageindex_store: str | None = None
     pageindex_store_config: dict[str, str | int | float | bool | None] | None = None
 

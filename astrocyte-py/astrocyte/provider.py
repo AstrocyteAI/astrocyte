@@ -456,16 +456,16 @@ class WikiStore(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Tier-2 recall (M9): PageIndex tree + section graph store
+# Section recall (M9): PageIndex tree + section graph store
 # ---------------------------------------------------------------------------
 
 
 @runtime_checkable
 class PageIndexStore(Protocol):
-    """SPI for the Tier-2 recall store (M9). Optional.
+    """SPI for the section recall store (M9). Optional.
 
     Backs the three-layer recall stack defined in
-    ``docs/_design/tier-2-recall.md``. Holds:
+    ``docs/_design/recall.md``. Holds:
 
     - ``PageIndexDocument`` — one row per conversation/document, with the
       canonical markdown that the picker slices for synth excerpts.
@@ -564,13 +564,13 @@ class PageIndexStore(Protocol):
 
     # ── PR2 commit B: query methods for the 5 parallel strategies ──
     #
-    # These are pure read methods that the Tier-2 recall orchestrator
-    # (``astrocyte.pipeline.tier2_recall``) calls in parallel. Each
+    # These are pure read methods that the section recall orchestrator
+    # (``astrocyte.pipeline.section_recall``) calls in parallel. Each
     # returns a ranked list of ``(document_id, line_num, score)``
     # tuples; the orchestrator fuses them via RRF.
     #
     # Single-bank scoping for now (PR2). Cross-bank scoping comes when
-    # multi-bank Tier-2 ships in M10+.
+    # multi-bank section recall ships in M10+.
 
     async def search_sections_semantic(
         self,

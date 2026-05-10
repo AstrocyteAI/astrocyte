@@ -1,6 +1,6 @@
-"""Tier-2 cross-encoder rerank (M9 PR2 commit C).
+"""Section cross-encoder rerank (M9 PR2 commit C).
 
-Sits between the Tier-2 recall orchestrator (RRF-fused candidates) and
+Sits between the section recall orchestrator (RRF-fused candidates) and
 the picker (PageIndex's reasoning loop). Two responsibilities:
 
 1. **Cross-encoder rerank**: take the top-30 RRF-fused hits, score each
@@ -20,7 +20,7 @@ The picker's prompt format is unchanged — it just sees fewer nodes.
 No prompt tuning required. This is the cheapest accuracy lift in PR2.
 
 See:
-- ``docs/_design/tier-2-recall.md`` §6, §8.3
+- ``docs/_design/recall.md`` §6, §8.3
 - ``docs/_design/adr/adr-006-three-layer-recall-stack.md``
 """
 
@@ -36,10 +36,10 @@ from astrocyte.pipeline.cross_encoder_rerank import (
 from astrocyte.pipeline.reranking import ScoredItem
 
 if TYPE_CHECKING:
-    from astrocyte.pipeline.tier2_recall import FusedHit
+    from astrocyte.pipeline.section_recall import FusedHit
     from astrocyte.types import PageIndexSection
 
-logger = logging.getLogger("astrocyte.pipeline.tier2_rerank")
+logger = logging.getLogger("astrocyte.pipeline.section_rerank")
 
 
 def rerank_fused_hits(
@@ -54,7 +54,7 @@ def rerank_fused_hits(
     """Rerank top-K fused hits with a cross-encoder; return top-N.
 
     Args:
-      fused: ``Tier2RecallResult.fused`` (sorted by RRF score desc).
+      fused: ``SectionRecallResult.fused`` (sorted by RRF score desc).
       sections_by_key: Map ``(document_id, line_num) → PageIndexSection``
         so we can fetch (title + summary) without re-querying the store.
         Caller pre-builds this from the conv_tree's skeleton.
@@ -100,7 +100,7 @@ def rerank_fused_hits(
     # Map ScoredItem.id back to (doc, line) and emit FusedHit objects
     # with the new score in ``rrf_score`` (we abuse the field for
     # uniformity downstream — picker doesn't care which scorer wrote it).
-    from astrocyte.pipeline.tier2_recall import FusedHit  # avoid circular import
+    from astrocyte.pipeline.section_recall import FusedHit  # avoid circular import
 
     out: list[FusedHit] = []
     by_key = {(h.document_id, h.line_num): h for h in fused}
