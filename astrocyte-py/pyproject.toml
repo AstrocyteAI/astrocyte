@@ -96,7 +96,9 @@ dev = [
     "pgqueuer>=0.26.3",
     # Storage adapters — needed for benchmark runs against the real stack
     "astrocyte-postgres>=0.8.0,<2",
-    "astrocyte-age>=0.8.0,<2",
+    # astrocyte-age removed in M9; see docs/_design/adr/adr-008-section-graph-replaces-age.md
+    # R2 archive scripts (scripts/archive_bench_results.py et al.) — async S3 client.
+    "aiobotocore>=2.13",
 ]
 all = [
     "astrocyte[otel,prometheus,mcp,eval,openai,gateway,stream,poll,worker]",
@@ -128,6 +130,9 @@ in_memory = "astrocyte.testing.in_memory:InMemoryMentalModelStore"
 [project.entry-points."astrocyte.source_stores"]
 in_memory = "astrocyte.testing.in_memory:InMemorySourceStore"
 
+[project.entry-points."astrocyte.pageindex_stores"]
+in_memory = "astrocyte.testing.in_memory:InMemoryPageIndexStore"
+
 [project.entry-points."astrocyte.llm_providers"]
 mock = "astrocyte.testing.in_memory:MockLLMProvider"
 openai = "astrocyte.providers.openai:OpenAIProvider"
@@ -144,7 +149,6 @@ packages = ["astrocyte"]
 
 [tool.uv.sources]
 astrocyte-postgres = { path = "../adapters-storage-py/astrocyte-postgres", editable = true }
-astrocyte-age = { path = "../adapters-storage-py/astrocyte-age", editable = true }
 astrocyte-ingestion-kafka = { path = "../adapters-ingestion-py/astrocyte-ingestion-kafka", editable = true }
 astrocyte-ingestion-redis = { path = "../adapters-ingestion-py/astrocyte-ingestion-redis", editable = true }
 astrocyte-ingestion-github = { path = "../adapters-ingestion-py/astrocyte-ingestion-github", editable = true }
