@@ -61,6 +61,7 @@ if TYPE_CHECKING:
         VectorHit,
         VectorItem,
         WikiPage,
+        WikiPageHit,
     )
 
 
@@ -635,6 +636,64 @@ class PageIndexStore(Protocol):
         ``section_links`` from the given ``(document_id, line_num)``
         seeds. ``link_types`` filters to e.g. ['semantic_knn', 'causal'];
         None means all types. Score is link weight."""
+
+    async def load_sections_with_embeddings(
+        self,
+        bank_id: str,
+        document_id: str,
+    ) -> list["PageIndexSection"]:
+        """M10.1: load sections including ``summary_embedding`` (which
+        :meth:`load_skeleton` deliberately drops as a cost optimisation).
+
+        Used by :func:`section_compile.compile_sections_for_document` to
+        cluster sections via DBSCAN. Returns sections in arbitrary order;
+        caller sorts as needed."""
+
+    async def save_wiki_page(
+        self,
+        *,
+        page: "WikiPage",
+        embedding: list[float] | None,
+        provenance: list[tuple[str, int]],
+    ) -> str:
+        """M10.1: persist one observation as a wiki page + its
+        section-grain provenance + (optional) embedding for the wiki
+        recall strategy.
+
+        Implementations must:
+        - Insert / upsert the wiki_page row.
+        - Insert provenance rows ``(wiki_page_id, document_id, line_num)``
+          via ``astrocyte_pi_wiki_provenance`` (migration 015).
+        - Set ``current_embedding`` on the wiki page when the column
+          exists (migration 018 adds it). Pass ``None`` to skip
+          embedding (caller does its own deferred indexing).
+
+        Returns the page's ``page_id``."""
+
+    async def search_wiki_pages_semantic(
+        self,
+        bank_id: str,
+        query_embedding: list[float],
+        *,
+        top_k: int = 5,
+        document_id: str | None = None,
+    ) -> list["WikiPageHit"]:
+        """M10.1: cosine-similarity search over
+        ``astrocyte_wiki_pages.current_embedding`` (migration 018).
+
+        Returns up to ``top_k`` :class:`~astrocyte.types.WikiPageHit`
+        rows ordered by similarity desc. The optional ``document_id``
+        filter scopes to a single document (the bench is per-doc; prod
+        deployments may want bank-wide)."""
+
+    async def count_wiki_pages_for_doc(
+        self,
+        bank_id: str,
+        document_id: str,
+    ) -> int:
+        """M10.1: idempotency check for the consolidation pass.
+        ``compile_sections_for_document`` skips work when this returns
+        > 0."""
 
     async def list_distinct_entities(
         self,

@@ -833,6 +833,10 @@ class InMemoryPageIndexStore:
         self._section_entities: dict[str, list[PageIndexSectionEntity]] = {}
         # document_id → list[PageIndexSectionLink]
         self._section_links: dict[str, list[PageIndexSectionLink]] = {}
+        # M10.1: bank_id → list[(WikiPage, embedding)]; provenance:
+        # page_id → list[(document_id, line_num)]
+        self._wiki_pages: dict[str, list[tuple["WikiPage", list[float] | None]]] = {}
+        self._wiki_provenance: dict[str, list[tuple[str, int]]] = {}
 
     async def save_document(self, doc: PageIndexDocument) -> str:
         # Upsert keyed on (bank_id, source_id). Behaviour matches the
@@ -1159,6 +1163,87 @@ class InMemoryPageIndexStore:
         # Order by count desc, then name asc for determinism.
         ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
         return ordered[: max(1, limit)]
+
+    # ── M10.1 wiki / consolidation ─────────────────────────────────
+
+    async def load_sections_with_embeddings(
+        self,
+        bank_id: str,
+        document_id: str,
+    ) -> list[PageIndexSection]:
+        del bank_id  # documents are bank-scoped via _documents key
+        return list(self._sections.get(document_id, []))
+
+    async def save_wiki_page(
+        self,
+        *,
+        page,  # WikiPage
+        embedding: list[float] | None,
+        provenance: list[tuple[str, int]],
+    ) -> str:
+        bucket = self._wiki_pages.setdefault(page.bank_id, [])
+        # Upsert: replace any existing page with the same page_id.
+        bucket[:] = [(p, e) for (p, e) in bucket if p.page_id != page.page_id]
+        bucket.append((page, embedding))
+        self._wiki_provenance[page.page_id] = list(provenance)
+        return page.page_id
+
+    async def search_wiki_pages_semantic(
+        self,
+        bank_id: str,
+        query_embedding: list[float],
+        *,
+        top_k: int = 5,
+        document_id: str | None = None,
+    ):
+        from astrocyte.types import WikiPageHit
+
+        bucket = self._wiki_pages.get(bank_id, [])
+        if not bucket or not query_embedding:
+            return []
+        scope_filter = (
+            f"document:{document_id}" if document_id is not None else None
+        )
+
+        def _cos(a: list[float], b: list[float]) -> float:
+            import math
+            dot = sum(x * y for x, y in zip(a, b))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            if na == 0 or nb == 0:
+                return 0.0
+            return dot / (na * nb)
+
+        scored: list[tuple[float, WikiPage]] = []
+        for page, emb in bucket:
+            if scope_filter is not None and page.scope != scope_filter:
+                continue
+            if not emb:
+                continue
+            scored.append((_cos(query_embedding, emb), page))
+        scored.sort(key=lambda kv: kv[0], reverse=True)
+        out: list[WikiPageHit] = []
+        for score, page in scored[: max(1, top_k)]:
+            out.append(WikiPageHit(
+                page_id=page.page_id,
+                title=page.title,
+                content=page.content,
+                scope=page.scope,
+                kind=page.kind,
+                score=float(score),
+                source_ids=list(page.source_ids),
+                bank_id=page.bank_id,
+            ))
+        return out
+
+    async def count_wiki_pages_for_doc(
+        self,
+        bank_id: str,
+        document_id: str,
+    ) -> int:
+        bucket = self._wiki_pages.get(bank_id, [])
+        scope = f"document:{document_id}"
+        return sum(1 for p, _ in bucket if p.scope == scope)
 
     async def health(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="in-memory pageindex store")

@@ -309,18 +309,48 @@ LLM is bad at distinct-counting across many chunks.
 
 COUNTING DISCIPLINE — when the question is "how many X" or "how much Y":
 
-A. Reach for `list_entities(pattern=...)` BEFORE `recall`. The pattern \
-should be the question's countable category (`"doctor"` for "how many \
-doctors", `"kit"` for "how many kits", `"trip"` or `"trip_destination"` \
-for trips, etc.). Try multiple patterns if the first returns nothing — \
-extraction may have used different wording.
+A. Reach for `list_entities(pattern=...)` BEFORE `recall`. Entities are \
+extracted in two shapes:
 
-B. The returned `total_distinct` is your count. If the list contains \
-items that don't fit the question (e.g. "Dr. Pepper" returned for "how \
-many doctors"), filter mentally and report the filtered count.
+  1. PROPER NOUNS — "Dr. Patel", "Nordstrom", "MoMA". Use these when \
+     the question names a specific person or place.
+
+  2. STRUCTURED LABELS — `key:value` strings the extractor emits for \
+     COUNTABLE CATEGORIES. Four key prefixes:
+       - `role:<noun>` — occupational categories (`role:doctor`, \
+         `role:dermatologist`, `role:lawyer`)
+       - `category:<noun>` — countable kinds of things \
+         (`category:model_kit`, `category:plant`, `category:restaurant`, \
+         `category:trip`, `category:bike`)
+       - `event:<noun>` — distinct occurrences \
+         (`event:wedding`, `event:sale`, `event:road_trip`)
+       - `expense:<currency_amount>` — money spent \
+         (`expense:$45`, `expense:$185`)
+       - `prefers:<aspect>=<value>` — stable user preference / taste \
+         (`prefers:camera_brand=Sony`, \
+         `prefers:movie_genre=stand-up_comedy`)
+
+  STRONGLY PREFER querying labels for category counts. Examples:
+  - "How many doctors?" → `list_entities(pattern="role:doctor")` \
+    OR `list_entities(pattern="role:")` to see all roles.
+  - "How many model kits?" → `list_entities(pattern="category:kit")` \
+    OR `pattern="category:model_kit"`.
+  - "Total spent on bikes?" → `list_entities(pattern="expense:")` and \
+    sum the dollar amounts in the entity names.
+  - "How many trips?" → `list_entities(pattern="category:trip")`.
+
+B. The returned `total_distinct` is the count of DISTINCT label-or-name \
+strings; `section_mentions` is how many sections each appeared in. For \
+"how many doctors" you want `total_distinct` of `role:doctor` rows \
+(or sum the section_mentions if each role mention = one visit).
 
 C. After `list_entities`, you may still want one `recall` to verify \
-context — but the COUNT is whatever `list_entities` returned (filtered).
+context — but the COUNT is whatever `list_entities` returned.
+
+D. If `pattern="category:doctor_visit"` returns nothing, try the role: \
+form (`role:doctor`) and counting role mentions instead. Different docs \
+may have used different label conventions; try ~2 patterns before \
+giving up on labels and falling back to recall+count.
 
 Core rules:
 1. Gather evidence with the tools above before answering.

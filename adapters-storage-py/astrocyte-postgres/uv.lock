@@ -26,7 +26,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "astrocyte-age", marker = "extra == 'dev'", editable = "../astrocyte-age" },
+    { name = "aiobotocore", marker = "extra == 'dev'", specifier = ">=2.13" },
     { name = "astrocyte-ingestion-github", marker = "extra == 'all'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-github", marker = "extra == 'dev'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },
     { name = "astrocyte-ingestion-github", marker = "extra == 'poll'", editable = "../../adapters-ingestion-py/astrocyte-ingestion-github" },

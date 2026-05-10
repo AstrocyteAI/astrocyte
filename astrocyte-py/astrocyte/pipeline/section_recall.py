@@ -75,6 +75,12 @@ class SectionRecallResult:
     strategies: list[StrategyResult]
     mode: str
     elapsed_ms: float
+    # M10.1: wiki page hits found at recall time. Surfaced separately
+    # from ``fused`` because they carry pre-aggregated text the bench
+    # prepends to synth excerpts as ``[OBSERVATION]`` blocks rather
+    # than feeding through the picker. Empty list when no wiki tier or
+    # no hits cleared the score threshold.
+    wiki_hits: list = field(default_factory=list)
 
 
 # ── Section-grain RRF fusion (specialised for tuple hits) ─────────────
@@ -160,6 +166,10 @@ async def section_recall(
     semantic_seed_count: int = 20,
     rrf_k: int = DEFAULT_RRF_K,
     per_strategy_top_k: int = 20,
+    wiki_enabled: bool = False,
+    wiki_document_id: str | None = None,
+    wiki_min_score: float = 0.55,
+    wiki_top_k: int = 3,
 ) -> SectionRecallResult:
     """Run all selected strategies in parallel, RRF-fuse, return.
 
@@ -315,9 +325,49 @@ async def section_recall(
             ))
 
     fused = _rrf_fuse_section_hits(initial_results, k=rrf_k)
+
+    # M10.1 wiki tier — pre-aggregated observations sit ABOVE sections.
+    # When enabled, we semantic-search the bank's wiki pages and surface
+    # any high-confidence hit. The bench prepends these as
+    # ``[OBSERVATION]`` blocks to the synth excerpts so multi-session
+    # / preference questions read pre-aggregated facts instead of
+    # making the LLM aggregate from raw section text.
+    wiki_hits: list = []
+    if wiki_enabled:
+        ts = time.monotonic()
+        try:
+            # Reuse the embedding from the semantic strategy when present
+            # so we don't pay for a second embed call per question.
+            sem_result = by_name.get("semantic") if "semantic" in selected else None
+            if sem_result and sem_result.hits:
+                # The semantic strategy's embed already happened; refetch
+                # by embedding the question again is the simple path
+                # (one extra call). Cheap enough at our gate sizes.
+                qvec = (await embedding_provider.embed([question]))[0]
+            else:
+                qvec = (await embedding_provider.embed([question]))[0]
+            raw_hits = await store.search_wiki_pages_semantic(
+                bank_id, qvec,
+                top_k=wiki_top_k,
+                document_id=wiki_document_id,
+            )
+            wiki_hits = [h for h in raw_hits if h.score >= wiki_min_score]
+            initial_results.append(StrategyResult(
+                strategy="wiki",
+                hits=[(h.page_id, 0, h.score) for h in wiki_hits],
+                elapsed_ms=(time.monotonic() - ts) * 1000.0,
+            ))
+        except Exception as exc:  # noqa: BLE001
+            initial_results.append(StrategyResult(
+                strategy="wiki", hits=[],
+                elapsed_ms=(time.monotonic() - ts) * 1000.0,
+                error=f"{type(exc).__name__}: {exc}",
+            ))
+
     return SectionRecallResult(
         fused=fused,
         strategies=initial_results,
         mode=mode,
         elapsed_ms=(time.monotonic() - t0) * 1000.0,
+        wiki_hits=wiki_hits,
     )

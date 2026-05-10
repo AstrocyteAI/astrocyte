@@ -49,24 +49,50 @@ from astrocyte.types import Message, PageIndexSectionEntity
 logger = logging.getLogger("astrocyte.pipeline.section_entity_extraction")
 
 
-_EXTRACT_PROMPT = """Extract the named entities from the conversation excerpt below.
+_EXTRACT_PROMPT = """Extract two kinds of entities from the conversation excerpt below.
 
-Named entities include:
+(A) NAMED ENTITIES — proper nouns the user mentioned:
 - People (first names, last names, full names, nicknames)
 - Places (cities, countries, neighbourhoods, named buildings)
 - Organisations (companies, schools, sports teams, clubs)
 - Products (named brands, books, movies, songs, games, foods)
 - Notable concepts (named events, named projects, named conditions)
 
-Do NOT extract:
+Do NOT extract for (A):
 - Common nouns ("dog", "car", "school" without a name)
 - Pronouns
 - Dates / times (the temporal index handles those separately)
 
-Return ONLY a JSON object with one key, ``entities``, containing an array of
-entity-name strings. Strings should be the canonical form as written in the text
-(don't normalise case). Cap at 15 most-mentioned entities; the index is sized
-for breadth, not depth.
+(B) STRUCTURED LABELS — `key:value` strings that classify what the user \
+DID, ENCOUNTERED, or HAS. Use these vocabularies:
+
+- `role:<noun>` — occupational / functional category. Use when the user \
+visited / spoke to someone in a role. Examples: `role:doctor`, \
+`role:dermatologist`, `role:lawyer`, `role:teacher`, `role:therapist`.
+- `category:<noun>` — countable kind of THING the user owns / acquired / \
+worked on / consumed. Examples: `category:model_kit`, `category:plant`, \
+`category:restaurant`, `category:book`, `category:movie`, \
+`category:trip`, `category:doctor_visit`, `category:project`.
+- `event:<noun>` — distinct occurrence the user attended / experienced. \
+Examples: `event:wedding`, `event:engagement_party`, `event:sale`, \
+`event:concert`, `event:road_trip`, `event:job_interview`.
+- `expense:<currency_amount>` — money the user spent (when a number is \
+mentioned). Examples: `expense:$45`, `expense:$185`, `expense:$2400`.
+
+Rules for (B):
+- Use snake_case for the noun. Lowercase.
+- Emit ONE label per distinct mention (e.g. user visited 3 doctors → \
+emit `role:doctor` 3 times across the relevant sections).
+- Match the COUNTABLE category in user questions: "how many doctors?" \
+→ `role:doctor`. "How many bikes did I buy?" → `category:bike`. \
+"Total spent on bikes?" → `expense:$N`.
+- DO NOT invent labels outside the four prefixes above.
+- It's fine to emit nothing in (B) if the section is generic chit-chat.
+
+Return ONLY a JSON object with one key, ``entities``, containing an \
+array of strings (mixed (A) named entities + (B) `key:value` labels). \
+Cap at 15 entries total; prefer (B) labels when the section discusses \
+a countable category, since those drive the wiki recall layer.
 
 Excerpt:
 {text}

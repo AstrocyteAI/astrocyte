@@ -335,6 +335,7 @@ async def _build_or_load_via_store(
             md_text=md_text,
             entity_model=entity_model,
             embedding_model=embedding_model,
+            bank_id=bank_id,
         )
 
     return _conv_tree_dict(
@@ -352,6 +353,7 @@ async def _populate_section_index(
     md_text: str,
     entity_model: str | None,
     embedding_model: str | None,
+    bank_id: str | None = None,
 ) -> None:
     """PR2 commit A + D.7: extract entities + embed summaries +
     extract section links for every section in a freshly-built tree.
@@ -450,12 +452,34 @@ async def _populate_section_index(
         except Exception as exc:  # noqa: BLE001
             print(f"  [pageindex] semantic_knn failed for doc={document_id}: {type(exc).__name__}: {exc}")
 
+    # M10.1: section-aware consolidation — synthesise observations from
+    # clusters of related sections. Idempotent (skips when pages already
+    # exist for this document). Bounded by ``max_pages_per_doc`` to cap
+    # cost. Fires AFTER embeddings + entities + links so the cluster
+    # input is fully populated.
+    n_wiki = 0
+    if n_embeddings >= 2 and bank_id and hasattr(store, "save_wiki_page"):
+        from astrocyte.pipeline.section_compile import compile_sections_for_document  # noqa: PLC0415
+        try:
+            page_ids = await compile_sections_for_document(
+                store=store,
+                bank_id=bank_id,
+                document_id=document_id,
+                provider=provider,
+                model=entity_model,
+                embedding_model=embedding_model,
+            )
+            n_wiki = len(page_ids)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [pageindex] wiki compile failed for doc={document_id}: {type(exc).__name__}: {exc}")
+
     print(
         f"  [pageindex] indexed doc={document_id}: "
         f"{len(all_entities)} entities, "
         f"{n_embeddings} embeddings, "
         f"{len(all_links)} llm-links, "
-        f"{n_knn} knn-links"
+        f"{n_knn} knn-links, "
+        f"{n_wiki} wiki-pages"
     )
 
 
@@ -1327,6 +1351,7 @@ async def answer_question(
     bank_id: str | None = None,
     cross_encoder=None,  # CrossEncoderProtocol | None
     category: str | None = None,  # PR2-D.1: dataset-provided category label
+    reflect_provider: OpenAIProvider | None = None,  # PR2.6 1b: optional stronger model for reflect
 ) -> tuple[str, list[int]]:
     """Run the 2-step PageIndex agent loop for one question, with an
     iterative-expansion fallback when the first pick yields "Not in
@@ -1414,6 +1439,20 @@ async def answer_question(
                 embedding_provider=provider,
                 question_entities=question_entities or None,
                 date_range=date_range,
+                # M10.1 wiki tier: scope to this question's document so
+                # we don't pull pre-aggregated facts from sibling LME
+                # conversations. Threshold tuned conservatively (0.55)
+                # — only fire when the wiki page genuinely matches.
+                wiki_enabled=True,
+                wiki_document_id=document_id,
+                # text-embedding-3-small produces cosine sims in the
+                # 0.20-0.45 range for related-but-not-identical text;
+                # 0.55 was the SBERT-era threshold and starves the
+                # wiki tier on natural-language questions. 0.25
+                # matches the bench's empirical "page is on-topic"
+                # band without admitting unrelated noise.
+                wiki_min_score=0.25,
+                wiki_top_k=2,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  [pageindex] section_recall failed for q={question[:40]!r}: {type(exc).__name__}: {exc}")
@@ -1500,16 +1539,15 @@ async def answer_question(
     # work. Accepting LME multi-session at 11% for PR2 close.
     is_counting = False
 
-    # PR2.6: agentic reflect dispatch for multi-session questions.
-    # PR2.5 post-mortem showed the picker undercounts when aggregation
-    # across sessions is needed (fetches 5-6 sections when 8-10 are
-    # required). Reflect's iterative tool-call loop lets the agent
-    # re-query until it has enough evidence. Gated narrowly to
-    # mode=="multi-session" for this first gate; we'll broaden if it
-    # lifts. Bounded to 5 iterations (default 10) to cap cost.
+    # PR2.6: agentic reflect dispatch for hard categories where the
+    # picker undercounts evidence. Multi-session (LME) needs aggregation
+    # across many sessions; multi-hop (LoCoMo) needs bridging across
+    # sessions via different entity anchors. Reflect's iterative tool-call
+    # loop lets the agent re-query until it has enough evidence. Bounded
+    # to 5 iterations (default 10) to cap cost.
     if (
         store is not None and bank_id and document_id
-        and mode == "multi-session"
+        and mode in {"multi-session", "multi-hop"}
         and recall_result and recall_result.fused
     ):
         from astrocyte.pipeline.agentic_reflect import (
@@ -1575,12 +1613,18 @@ async def answer_question(
             )
             return ReflectResult(answer=completion.text.strip(), sources=hits)
 
+        # PR2.6 1b: optional stronger model for reflect's loop. When
+        # ``reflect_provider`` is supplied the agent runs against it
+        # (e.g. gpt-4o) while the rest of the bench stays on the
+        # default (gpt-4o-mini). Diagnostic for whether multi-session /
+        # multi-hop is model-limited or data-limited.
+        agent_provider = reflect_provider or provider
         try:
             result = await agentic_reflect(
                 question,
                 initial_hits=initial_hits,
                 recall_fn=recall_fn,
-                llm_provider=provider,
+                llm_provider=agent_provider,
                 expand_fn=expand_fn,
                 list_entities_fn=list_entities_fn,
                 params=AgenticReflectParams(max_iterations=5),
@@ -1678,6 +1722,33 @@ async def answer_question(
         # nothing's in scope — let it answer "Not in the provided
         # memories." which is the right outcome on adversarial Qs.
         excerpts = "(no relevant section found)"
+
+    # M10.1: prepend wiki observation hits (pre-aggregated facts) to
+    # the synth excerpts. The synth reads these BEFORE raw section
+    # excerpts so multi-session aggregation answers are answered
+    # directly from the observation when available. Only fires when
+    # section_recall's wiki strategy returned high-confidence hits.
+    wiki_hits = (
+        recall_result.wiki_hits
+        if (recall_result is not None and getattr(recall_result, "wiki_hits", None))
+        else []
+    )
+    if wiki_hits:
+        wiki_block = "\n\n".join(
+            f"[OBSERVATION: {h.title}]\n{h.content}"
+            for h in wiki_hits
+        )
+        excerpts = f"{wiki_block}\n\n---\n\n{excerpts}"
+
+    # M10.3 (REVERTED): an earlier attempt added ``prefers:<aspect>=<value>``
+    # entity labels at retain and surfaced them as ``[USER PREFERENCES]``
+    # injection here for ss-preference / open-domain / inference modes.
+    # LME gate showed the dense prefs (40+/doc) over-personalised
+    # "recommend X" answers — agent suggested the user's hip-hop dance
+    # class for a "relaxing evening" question. Reverted to keep the
+    # M10.2 high-water (LME 56%). The ``prefers:`` extraction prefix is
+    # also gone from the entity prompt; this branch is documented in
+    # ``docs/_design/recall.md`` §13 (M10 close-out) for the next attempt.
 
     # PR2 D.5.5c: structured-dates synth context — REVERTED.
     # Tested in two gates:
@@ -1926,6 +1997,16 @@ async def main() -> None:
         default="bench-pageindex-locomo",
         help="Bank id used when --backend in {memory,postgres}; ignored otherwise.",
     )
+    parser.add_argument(
+        "--reflect-model",
+        default=None,
+        help=(
+            "Optional stronger model for the agentic-reflect loop only "
+            "(e.g. 'gpt-4o'). Diagnostic for whether multi-session / "
+            "multi-hop accuracy is model-limited. Falls back to --model "
+            "when unset."
+        ),
+    )
     args = parser.parse_args()
 
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -1958,6 +2039,20 @@ async def main() -> None:
     # picker / synth, and the judge. Same model, same auth path, single
     # connection pool.
     provider = OpenAIProvider(api_key=api_key, model=args.model)
+    # PR2.6 1b: optional stronger model for the agentic-reflect loop only.
+    # Construct a sibling provider so reflect uses (e.g.) gpt-4o while
+    # the rest of the bench (picker, synth, entity extraction, judge)
+    # stays on the cheaper default. None means "same as default".
+    reflect_provider = (
+        OpenAIProvider(api_key=api_key, model=args.reflect_model)
+        if args.reflect_model and args.reflect_model != args.model
+        else None
+    )
+    if reflect_provider is not None:
+        print(
+            f"  [pageindex] Reflect model override: {args.reflect_model} "
+            f"(default: {args.model})",
+        )
 
     # ── Step 1: build (or load cached) per-conversation trees.
     #
@@ -2008,6 +2103,7 @@ async def main() -> None:
                 bank_id=args.bank_id if store is not None else None,
                 cross_encoder=None,  # PR2-C: default Hindsight model lazy-loaded inside reranker
                 category=cat_label,
+                reflect_provider=reflect_provider,
             )
         except Exception as exc:  # noqa: BLE001 — single-Q failure mustn't tank the run
             print(f"  [pageindex] Q{i} failed: {exc}")

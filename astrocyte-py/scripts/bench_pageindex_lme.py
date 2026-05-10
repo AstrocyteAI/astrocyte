@@ -233,6 +233,7 @@ async def _build_lme_tree_via_store(
             md_text=md_text,
             entity_model=entity_model,
             embedding_model=embedding_model,
+            bank_id=bank_id,
         )
 
     return _BENCH._conv_tree_dict(
@@ -323,6 +324,15 @@ async def main() -> None:
         default="bench-pageindex-lme",
         help="Bank id used when --backend in {memory,postgres}; ignored otherwise.",
     )
+    parser.add_argument(
+        "--reflect-model",
+        default=None,
+        help=(
+            "Optional stronger model for the agentic-reflect loop only "
+            "(e.g. 'gpt-4o'). Diagnostic for whether multi-session "
+            "accuracy is model-limited. Falls back to --model when unset."
+        ),
+    )
     args = parser.parse_args()
 
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -350,6 +360,17 @@ async def main() -> None:
     print(f"  [pi-lme] Scoring {len(lme_data)} samples (stratified across question_type)")
 
     provider = OpenAIProvider(api_key=api_key, model=args.model)
+    # PR2.6 1b: optional stronger model for the agentic-reflect loop only.
+    reflect_provider = (
+        OpenAIProvider(api_key=api_key, model=args.reflect_model)
+        if args.reflect_model and args.reflect_model != args.model
+        else None
+    )
+    if reflect_provider is not None:
+        print(
+            f"  [pi-lme] Reflect model override: {args.reflect_model} "
+            f"(default: {args.model})",
+        )
     judge = LongMemEvalJudge(provider, model=args.model) if not args.no_judge else None
 
     # ── Step 1: build trees ──
@@ -401,6 +422,7 @@ async def main() -> None:
                     bank_id=args.bank_id if store is not None else None,
                     cross_encoder=None,
                     category=question_type,
+                    reflect_provider=reflect_provider,
                 )
             except Exception as exc:  # noqa: BLE001 — single-Q failure mustn't tank the run
                 print(f"  [pi-lme] Q{i} ({sample_id}) failed: {exc}")

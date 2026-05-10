@@ -36,6 +36,29 @@ from psycopg_pool import AsyncConnectionPool
 _VALID_LINK_TYPES = frozenset({"semantic_knn", "causal", "supersedes", "elaborates"})
 
 
+def _parse_pgvector(raw) -> list[float] | None:
+    """Parse a pgvector value back to a Python list[float].
+
+    The text protocol returns embeddings as strings like
+    ``"[0.1, -0.5, ...]"``. When ``psycopg-vector`` is registered the
+    adapter returns a numpy array directly; we coerce to plain list
+    either way to keep this module pgvector-binding-optional.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return [float(x) for x in raw]
+    if hasattr(raw, "tolist"):  # numpy array path (psycopg-vector)
+        return [float(x) for x in raw.tolist()]
+    if isinstance(raw, str):
+        s = raw.strip().lstrip("[").rstrip("]")
+        if not s:
+            return []
+        return [float(p.strip()) for p in s.split(",") if p.strip()]
+    # Unknown shape — fail loudly so we notice during dev.
+    raise TypeError(f"_parse_pgvector: unsupported {type(raw).__name__}")
+
+
 def _embedding_param(vec: list[float] | None) -> str | None:
     """Format a Python embedding list for the pgvector text protocol.
 
@@ -789,6 +812,207 @@ class PostgresPageIndexStore:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
         return [(str(r[0]), int(r[1])) for r in rows]
+
+    # ── M10.1 wiki / consolidation ──────────────────────────────────────
+
+    async def load_sections_with_embeddings(
+        self,
+        bank_id: str,
+        document_id: str,
+    ):
+        from astrocyte.types import PageIndexSection
+        del bank_id  # documents are bank-scoped via pi_documents.bank_id
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT line_num, node_id, title, summary,
+                           summary_embedding, speaker, session_date,
+                           parent_node, depth
+                    FROM {self._fq('astrocyte_pi_sections')}
+                    WHERE document_id = %s
+                    ORDER BY line_num
+                    """,
+                    (document_id,),
+                )
+                rows = await cur.fetchall()
+        out: list[PageIndexSection] = []
+        for r in rows:
+            emb = _parse_pgvector(r[4])
+            out.append(PageIndexSection(
+                document_id=document_id,
+                line_num=r[0],
+                node_id=r[1] or "",
+                title=r[2] or "",
+                summary=r[3],
+                summary_embedding=emb,
+                speaker=r[5],
+                session_date=r[6],
+                parent_node=r[7],
+                depth=r[8] or 0,
+            ))
+        return out
+
+    async def save_wiki_page(
+        self,
+        *,
+        page,
+        embedding: list[float] | None,
+        provenance: list[tuple[str, int]],
+    ) -> str:
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    # Upsert the page row (keyed on bank_id + page_id per
+                    # migration 007's UNIQUE constraint). On conflict, bump
+                    # the existing row's updated_at.
+                    await cur.execute(
+                        f"""
+                        INSERT INTO {self._fq('astrocyte_wiki_pages')}
+                            (page_id, bank_id, slug, title, kind, scope,
+                             confidence, tags, metadata, current_embedding)
+                        VALUES (%s, %s, %s, %s, %s, %s, 1.0, NULL, '{{}}'::jsonb, %s)
+                        ON CONFLICT (bank_id, page_id) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            current_embedding = EXCLUDED.current_embedding,
+                            updated_at = NOW()
+                        RETURNING id
+                        """,
+                        (
+                            page.page_id, page.bank_id,
+                            page.page_id,  # slug == page_id (unique enough)
+                            page.title, page.kind, page.scope,
+                            embedding,
+                        ),
+                    )
+                    row = await cur.fetchone()
+                    page_uuid = row[0]
+                    # Insert a revision row with the markdown content.
+                    await cur.execute(
+                        f"""
+                        INSERT INTO {self._fq('astrocyte_wiki_revisions')}
+                            (page_uuid, revision_number, markdown,
+                             summary, compiled_by, source_count, tokens_used)
+                        VALUES (%s, %s, %s, %s, 'section_compile', %s, 0)
+                        ON CONFLICT (page_uuid, revision_number) DO UPDATE SET
+                            markdown = EXCLUDED.markdown
+                        RETURNING id
+                        """,
+                        (
+                            page_uuid, page.revision, page.content,
+                            page.title, len(page.source_ids),
+                        ),
+                    )
+                    rev_row = await cur.fetchone()
+                    rev_id = rev_row[0]
+                    await cur.execute(
+                        f"""
+                        UPDATE {self._fq('astrocyte_wiki_pages')}
+                        SET current_revision_id = %s
+                        WHERE id = %s
+                        """,
+                        (rev_id, page_uuid),
+                    )
+                    # Replace provenance rows for this page.
+                    await cur.execute(
+                        f"""
+                        DELETE FROM {self._fq('astrocyte_pi_wiki_provenance')}
+                        WHERE wiki_page_id = %s
+                        """,
+                        (page_uuid,),
+                    )
+                    if provenance:
+                        await cur.executemany(
+                            f"""
+                            INSERT INTO {self._fq('astrocyte_pi_wiki_provenance')}
+                                (wiki_page_id, document_id, line_num)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                            """,
+                            [
+                                (page_uuid, doc_id, line_num)
+                                for doc_id, line_num in provenance
+                            ],
+                        )
+        return page.page_id
+
+    async def search_wiki_pages_semantic(
+        self,
+        bank_id: str,
+        query_embedding: list[float],
+        *,
+        top_k: int = 5,
+        document_id: str | None = None,
+    ):
+        from astrocyte.types import WikiPageHit
+        if not query_embedding:
+            return []
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        scope_clause = "AND p.scope = %s" if document_id is not None else ""
+        params: list = [query_embedding, bank_id]
+        if document_id is not None:
+            params.append(f"document:{document_id}")
+        params.extend([query_embedding, top_k])
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT p.page_id, p.title, r.markdown, p.scope, p.kind,
+                           1 - (p.current_embedding <=> %s::vector) AS score,
+                           p.bank_id
+                    FROM {self._fq('astrocyte_wiki_pages')} AS p
+                    LEFT JOIN {self._fq('astrocyte_wiki_revisions')} AS r
+                        ON r.id = p.current_revision_id
+                    WHERE p.bank_id = %s
+                      AND p.deleted_at IS NULL
+                      AND p.current_embedding IS NOT NULL
+                      {scope_clause}
+                    ORDER BY p.current_embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = await cur.fetchall()
+        out: list[WikiPageHit] = []
+        for r in rows:
+            out.append(WikiPageHit(
+                page_id=r[0],
+                title=r[1] or "",
+                content=r[2] or "",
+                scope=r[3] or "",
+                kind=r[4] or "topic",
+                score=float(r[5]),
+                source_ids=[],  # provenance lookup is a separate query
+                bank_id=r[6] or bank_id,
+            ))
+        return out
+
+    async def count_wiki_pages_for_doc(
+        self,
+        bank_id: str,
+        document_id: str,
+    ) -> int:
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM {self._fq('astrocyte_wiki_pages')}
+                    WHERE bank_id = %s
+                      AND scope = %s
+                      AND deleted_at IS NULL
+                    """,
+                    (bank_id, f"document:{document_id}"),
+                )
+                row = await cur.fetchone()
+        return int(row[0]) if row else 0
 
     # ── health ──────────────────────────────────────────────────────────
 
