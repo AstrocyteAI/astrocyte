@@ -336,7 +336,7 @@ The dataset contains 10 conversations with ~200 sessions each and 1,986 total qu
 
 ### 7.3 Running benchmarks locally
 
-Datasets are fetched automatically on first run to `datasets/` (gitignored). Results are written to `benchmark-results/`. Requires Doppler for API keys on real-provider runs.
+Datasets are fetched automatically on first run to `datasets/` (gitignored). Results are written to `benchmark-results/` locally and **archived to Cloudflare R2** (`s3://astrocyte-benchmarks/`) at end-of-run for durable history. The local `benchmark-results/` directory is the working scratch dir; R2 is the system of record. See [`bench-archive.md`](bench-archive.md) for the bucket layout and the `archive`/`fetch` tooling. Requires Doppler for API keys (LLM provider + R2) on real-provider runs.
 
 ```bash
 # Smoke test — in-memory, no API key needed (~25s)
@@ -448,6 +448,8 @@ See [`benchmark-presets.md`](/plugins/benchmark-presets/) for the live results m
 The GitHub Actions workflow (`.github/workflows/benchmarks.yml`) runs benchmarks weekly and on manual dispatch. It uses `--canonical-judge` and compares results against `benchmarks/baselines-openai.json` (falling back to `baselines-test-provider.json` if no real-provider baseline exists yet). The `bench-smoke` job runs on every PR using the mock provider and `baselines-test-provider.json`.
 
 The regression gate (`scripts/check_benchmark_regression.py`) exits non-zero when any metric drops more than a configurable tolerance (default: 2pp overall, 3pp per category, 3pp retrieval metrics).
+
+CI runs also archive their `results-*.json` to R2 via the same post-run hook used locally; the `bench` Doppler config carries the `R2_*` credentials. Trajectory analysis (`make bench-archive-trajectory`) reads from R2, so weekly CI numbers and ad-hoc local runs share one history.
 
 ---
 

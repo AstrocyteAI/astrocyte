@@ -161,7 +161,11 @@ Or run the full matrix via the helper script
 
 - Per-preset result files: `benchmark-results/results-matrix-<preset>.json`
   and `results-matrix-<preset>-fixed.json` (the latter group is post-`text_fts`
-  fix in migration 011)
+  fix in migration 011) — local working copies.
+- **Durable archive**: every run's `results-*.json` is uploaded to the
+  Cloudflare R2 bucket `astrocyte-benchmarks` at end-of-run; see
+  [`bench-archive.md`](/design/bench-archive/) for the path layout and
+  the `fetch` / `trajectory` tooling.
 - The v1 decision is locked in by
   `tests/test_hindsight_informed_config.py::test_default_config_matches_fast_recall`
 - The cross-preset trade-off discussion above should be revisited any time
