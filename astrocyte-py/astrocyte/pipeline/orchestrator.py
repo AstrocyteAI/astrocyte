@@ -10,8 +10,12 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 import re
+import time
 import uuid
+from collections import defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -121,6 +125,163 @@ def _warn_on_version_drift(
         )
 
 
+def _abstention_floor_for_skepticism(skepticism: int, base_floor: float) -> float:
+    """Scale the configured abstention floor by a bank/call's
+    disposition skepticism (1–5).
+
+    Same primitive Hindsight uses for per-bank disposition behavior:
+    a single deployment can serve adversarial-resistant agents AND
+    trust-the-model assistants without forking the YAML config. The
+    bench harnesses use this to express "LME wants no abstention,
+    LoCoMo wants aggressive abstention" via per-call ``dispositions``,
+    not split configs.
+
+    Mapping (linear around the legacy default of skepticism=3):
+
+    - ``skepticism=1`` → ``0.0`` — never abstain. An "answer-everything"
+      assistant. Replicates the legacy ``abstention_enabled=False`` knob.
+    - ``skepticism=2`` → ``base_floor * 0.5`` — trusting, abstain only
+      on extremely weak retrieval.
+    - ``skepticism=3`` → ``base_floor`` — legacy default. Replicates
+      the legacy ``abstention_enabled=True`` behaviour.
+    - ``skepticism=4`` → ``base_floor * 1.5`` — moderately skeptical.
+    - ``skepticism=5`` → ``base_floor * 2.0`` (capped at 1.0) —
+      aggressive abstention. Use for adversarial-bucket evaluation
+      where false answers cost more than abstentions.
+    """
+    if skepticism <= 1:
+        return 0.0
+    return min(1.0, base_floor * 0.5 * (skepticism - 1))
+
+
+def _build_cooccurrence_pairs(
+    entity_ids: list[str], max_entities: int,
+) -> list[tuple[str, str]]:
+    """Return the (a, b) pairs to create ``co_occurs`` links for.
+
+    Caps the input at ``max_entities`` (taking the head of the list,
+    which preserves extraction order — typically tracks prominence in
+    the source text), then emits the all-pairs Cartesian product over
+    that subset. ``C(K,2)`` pairs at most. Returns ``[]`` for trivial
+    inputs (≤1 entity) so the caller can skip the storage call entirely.
+
+    Extracted as a pure helper so the cap is testable without standing
+    up the full retain pipeline. The 2026-05-06 LME profile measured
+    the unbounded path at 34% of retain wall — capping here is the
+    targeted fix.
+    """
+    if len(entity_ids) <= 1:
+        return []
+    k = max(2, max_entities)
+    head = entity_ids[:k]
+    return [(head[i], head[j]) for i in range(len(head)) for j in range(i + 1, len(head))]
+
+
+def _resolve_skepticism_for_abstention(
+    request_dispositions, fallback_enabled: bool,
+) -> int:
+    """Resolve effective skepticism for the abstention decision.
+
+    Precedence:
+    1. ``request_dispositions.skepticism`` (per-call override)
+    2. Backward compat: legacy
+       ``adversarial_defense.abstention_enabled`` bool maps to
+       skepticism=3 when True (legacy default behaviour) or
+       skepticism=1 when False (never abstain). New code should pass
+       ``dispositions`` per-call instead of toggling the bool.
+    """
+    if request_dispositions is not None:
+        return int(getattr(request_dispositions, "skepticism", 3))
+    return 3 if fallback_enabled else 1
+
+
+class _RetainProfiler:
+    """Aggregate per-stage timings during retain for evidence-driven
+    bottleneck identification.
+
+    Disabled unless ``ASTROCYTE_RETAIN_PROFILE=1`` (env var) — the cost
+    of the time.monotonic() calls is small but non-zero and we don't
+    want it on by default in production. When enabled, the orchestrator
+    captures wall time for each suspected hot path (SFE LLM, embedding
+    generation, vector insert, entity merge, entity resolution) and
+    emits an aggregated p50/p95/max breakdown via :meth:`report`.
+
+    The samples accumulate across the lifetime of the orchestrator so a
+    single bench run produces one breakdown that covers all retain
+    calls. Call :meth:`reset` between batches if you want per-batch
+    isolation.
+
+    Why not Prometheus / OTel: those exist (``observability.*`` config),
+    but require running collectors and a separate analysis stack just
+    to find a bottleneck. This is a stop-gap for dev/bench
+    investigation — write data once, print at end of run, done.
+    """
+
+    def __init__(self) -> None:
+        self.enabled = os.environ.get("ASTROCYTE_RETAIN_PROFILE") == "1"
+        self.samples: dict[str, list[float]] = defaultdict(list)
+
+    @asynccontextmanager
+    async def time(self, stage: str):
+        """Async context manager that records elapsed wall time (ms)
+        under ``stage`` if profiling is enabled. No-op otherwise so the
+        production hot path stays clean."""
+        if not self.enabled:
+            yield
+            return
+        t0 = time.monotonic()
+        try:
+            yield
+        finally:
+            self.samples[stage].append((time.monotonic() - t0) * 1000.0)
+
+    def reset(self) -> None:
+        self.samples.clear()
+
+    def report(self, prefix: str = "[retain.profile]") -> None:
+        """Print p50/p95/max for every recorded stage, ordered by total
+        time (descending). The dominant stage is first — that's what
+        you want to optimize.
+
+        Uses ``print`` rather than the module logger so the breakdown
+        always reaches stdout regardless of how the caller configured
+        logging — this is dev/bench tooling output, not production
+        telemetry, and we want it to be impossible to lose."""
+        if not self.enabled:
+            print(f"{prefix} (profiler disabled — set ASTROCYTE_RETAIN_PROFILE=1)")
+            return
+        if not self.samples:
+            print(f"{prefix} (profiler enabled but captured no samples — instrumentation unwired?)")
+            return
+        import statistics
+        rows: list[tuple[str, int, float, float, float, float]] = []
+        for stage, samples in self.samples.items():
+            if not samples:
+                continue
+            rows.append(
+                (
+                    stage,
+                    len(samples),
+                    sum(samples),
+                    statistics.median(samples),
+                    statistics.quantiles(samples, n=20)[18] if len(samples) >= 20 else max(samples),
+                    max(samples),
+                ),
+            )
+        # Sort by total descending — biggest cost first.
+        rows.sort(key=lambda r: r[2], reverse=True)
+        print(f"{prefix} aggregate breakdown (sorted by total wall time):")
+        print(
+            f"{prefix}  {'stage':<22} {'n':<7} {'total_ms':<12} "
+            f"{'p50_ms':<10} {'p95_ms':<10} {'max_ms':<10}",
+        )
+        for stage, n, total, p50, p95, mx in rows:
+            print(
+                f"{prefix}  {stage:<22} {n:<7d} {total:<12.0f} "
+                f"{p50:<10.1f} {p95:<10.1f} {mx:<10.1f}",
+            )
+
+
 class _TrackingLLMProvider:
     """Transparent wrapper that accumulates token usage from an LLMProvider.
 
@@ -147,6 +308,7 @@ class _TrackingLLMProvider:
         temperature: float = 0.0,
         tools: list | None = None,  # list[ToolDefinition] — kept loose to avoid import cycle
         tool_choice: str | None = None,
+        response_format: dict | None = None,
     ) -> Completion:
         # Forward native function-calling kwargs through to the underlying
         # provider so the agentic reflect loop (Hindsight parity) can use
@@ -156,13 +318,16 @@ class _TrackingLLMProvider:
         #
         # Backward compat: only thread the new kwargs when the caller
         # actually supplied them. Legacy providers / test fakes whose
-        # ``complete()`` signatures predate the tools extension keep
-        # working when invoked via the old text-only path.
+        # ``complete()`` signatures predate the tools/response_format
+        # extensions keep working when invoked via the old text-only
+        # path.
         extra_kwargs: dict = {}
         if tools is not None:
             extra_kwargs["tools"] = tools
         if tool_choice is not None:
             extra_kwargs["tool_choice"] = tool_choice
+        if response_format is not None:
+            extra_kwargs["response_format"] = response_format
         result = await self._inner.complete(
             messages,
             model=model,
@@ -304,6 +469,12 @@ class PipelineOrchestrator:
         # LLM call per recall.  Enable for multi-hop / paraphrase-heavy workloads.
         self.enable_hyde = enable_hyde
         self._dedup = DedupDetector(similarity_threshold=0.95)
+        #: Per-stage retain timing aggregator. No-op unless
+        #: ``ASTROCYTE_RETAIN_PROFILE=1`` is set in the environment;
+        #: when enabled, retain_many wraps suspect call sites and the
+        #: caller can inspect the breakdown via ``profiler.report()``
+        #: or read raw samples from ``profiler.samples``.
+        self._profiler = _RetainProfiler()
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when ``recall_authority`` is configured.
         self.recall_authority: RecallAuthorityConfig | None = None
         #: Set by :meth:`astrocyte._astrocyte.Astrocyte.set_pipeline` when
@@ -366,6 +537,33 @@ class PipelineOrchestrator:
         #: metadata extraction); LoCoMo benchmark losses 2.5 pts overall
         #: when set to "dialogue".
         self.structured_fact_extraction_chunk_strategy: str = "paragraph"
+        #: Per-chunk character budget for verbatim SFE pre-chunking.
+        #: When ``None`` the SFE path falls through to the same
+        #: chunk-size resolver legacy retain uses (orchestrator default
+        #: 512 chars). Bumping this is the dominant retain throughput
+        #: lever for SFE — fewer chunks = fewer ``facts[]`` entries the
+        #: LLM has to emit per session, and gpt-4o-mini latency is
+        #: roughly linear in output tokens. 2048 measured ~4× on LME-
+        #: shaped traffic without accuracy regression on LoCoMo.
+        self.structured_fact_extraction_chunk_max_size: int | None = None
+        #: Per-chunk parallel verbatim extraction (Phase 3 of cost-
+        #: control port). When True, the SFE path sends one LLM call
+        #: per chunk in parallel rather than one batched call. Drops
+        #: cross-chunk causal_relations — pair with
+        #: ``causal_links.enabled=false``.
+        self.structured_fact_extraction_parallel_chunks: bool = False
+        #: Max in-flight LLM calls per session when
+        #: ``parallel_chunks`` is True.
+        self.structured_fact_extraction_parallel_chunks_max_concurrency: int = 6
+        #: Entity co-occurrence link cap (2026-05-06 retain-profile fix).
+        #: When ``enabled``, retain creates ``co_occurs`` links between
+        #: at most ``max_entities`` entities per memory — bounding the
+        #: Cartesian product to ``C(K,2)`` per retain regardless of N.
+        #: Profiling on LME measured the unbounded path at 34% of
+        #: retain wall with O(N²) drift; capping at K=5 brings it to
+        #: <1% steady state.
+        self.entity_cooccurrence_enabled: bool = True
+        self.entity_cooccurrence_max_entities: int = 5
         #: Query-level temporal constraint extraction. When enabled,
         #: recall parses temporal expressions in the query into a
         #: time_range filter applied to retrieval. Regex pre-pass is
@@ -502,6 +700,7 @@ class PipelineOrchestrator:
             from astrocyte.pipeline.fact_extraction import (
                 extract_facts,
                 extract_facts_verbatim,
+                extract_facts_verbatim_parallel,
                 materialize_facts,
             )
 
@@ -531,11 +730,24 @@ class PipelineOrchestrator:
                     strategy=chunk_strategy,
                     **pre_chunk_kwargs,
                 )
-                facts = await extract_facts_verbatim(
-                    chunks_local,
-                    self.llm_provider,
-                    event_date=request.occurred_at,
-                )
+                # Phase 3: route to the per-chunk parallel path when
+                # opt-in. Drops cross-chunk causal_relations — pair
+                # with ``causal_links.enabled=false``.
+                if self.structured_fact_extraction_parallel_chunks:
+                    facts = await extract_facts_verbatim_parallel(
+                        chunks_local,
+                        self.llm_provider,
+                        event_date=request.occurred_at,
+                        max_concurrency=(
+                            self.structured_fact_extraction_parallel_chunks_max_concurrency
+                        ),
+                    )
+                else:
+                    facts = await extract_facts_verbatim(
+                        chunks_local,
+                        self.llm_provider,
+                        event_date=request.occurred_at,
+                    )
             else:
                 facts = await extract_facts(
                     prepared.text,
@@ -626,6 +838,73 @@ class PipelineOrchestrator:
         except Exception as exc:
             _logger.warning("storing semantic memory_links failed: %s", exc)
 
+    async def _process_record_entities_with_retry(
+        self, record: dict[str, Any], *, max_retries: int = 10, base_delay: float = 0.1,
+    ) -> None:
+        """Retry-wrapper around :meth:`_process_record_entities`.
+
+        AGE's entity ``MERGE`` path takes per-label advisory locks
+        (``pg_advisory_xact_lock(label_oid)``) so concurrent retains
+        racing on the same label name don't produce duplicate label
+        rows. Three or more retains contending on the same label can
+        produce a CYCLIC wait: P1 holds advisory, waits on tx; P2 waits
+        on advisory; P3 holds tx, waits on advisory — Postgres breaks
+        the cycle by aborting one of them with ``DeadlockDetected``.
+
+        This is timing-sensitive: with HNSW vector inserts the retain
+        latency was high enough that the cyclic pattern was rare in
+        practice. With DiskANN's faster inserts (2026-05-06 default
+        switch) the LoCoMo bench surfaced it within 20 retains.
+        Postgres-style deadlocks are inherently retriable — only the
+        loser's transaction rolls back, so we just try again with
+        exponential backoff.
+
+        Tuning history:
+
+        - 2026-05-06 (initial): ``max_retries=3``, ``base_delay=0.2``.
+          Absorbed most deadlocks but the LoCoMo bench surfaced 4-way
+          cyclic waits that the 3 attempts couldn't outlast.
+        - 2026-05-06 (revised): ``max_retries=10``, ``base_delay=0.1``.
+          Retain throughput evidence: with ``concurrency=10`` retains
+          and a per-bank entity overlap rate around 30% (LoCoMo
+          characters appearing in many sessions), deadlocks fire on
+          ~5% of retains. 10 retries with 0.1s × 2^n backoff
+          (capped at 3.6s by the worst case) gives 51.1s max stall —
+          ample headroom for the cyclic-wait probability tail. The
+          bench earlier observed 6 deadlocks absorbed before one
+          exhausted — bumping to 10 attempts more than doubles the
+          probability mass we cover.
+        """
+        last_exc: BaseException | None = None
+        for attempt in range(max_retries):
+            try:
+                await self._process_record_entities(record)
+                return
+            except Exception as exc:  # noqa: BLE001 — match psycopg without import dep
+                # Match by class name + message so we don't need a hard
+                # dependency on psycopg in this module (the orchestrator
+                # is provider-agnostic; deadlocks are a Postgres-side
+                # concept that bubbles up via whatever DB driver the
+                # graph_store happens to use).
+                name = type(exc).__name__.lower()
+                msg = str(exc).lower()
+                is_deadlock = "deadlock" in name or "deadlock detected" in msg
+                if not is_deadlock or attempt == max_retries - 1:
+                    raise
+                last_exc = exc
+                delay = base_delay * (2**attempt)
+                _logger.warning(
+                    "_process_record_entities deadlock on attempt %d/%d "
+                    "(%s); retrying in %.2fs",
+                    attempt + 1, max_retries, exc, delay,
+                )
+                await asyncio.sleep(delay)
+        # Defensive — loop body either returns or re-raises; this is
+        # only reachable if max_retries=0 (which we guard against above
+        # via the attempt < max_retries-1 check).
+        if last_exc is not None:
+            raise last_exc
+
     async def _process_record_entities(self, record: dict[str, Any]) -> None:
         """Run all entity-related I/O for a single retain_many record.
 
@@ -649,7 +928,8 @@ class PipelineOrchestrator:
             return
 
         if self.entity_resolver is not None:
-            await self._attach_entity_name_embeddings(entities)
+            async with self._profiler.time("entity_emb"):
+                await self._attach_entity_name_embeddings(entities)
             # Path B (Hindsight-style): rewrite tentative IDs to canonical
             # IDs BEFORE storage so different surface forms that match an
             # existing canonical never produce duplicate entity rows. The
@@ -657,19 +937,21 @@ class PipelineOrchestrator:
             # mode and is skipped below.
             if self.entity_resolver.canonical_resolution:
                 try:
-                    await self.entity_resolver.resolve_canonical_ids_in_place(
-                        new_entities=entities,
-                        bank_id=request.bank_id,
-                        graph_store=self.graph_store,
-                        event_date=request.occurred_at,
-                    )
+                    async with self._profiler.time("entity_resolve"):
+                        await self.entity_resolver.resolve_canonical_ids_in_place(
+                            new_entities=entities,
+                            bank_id=request.bank_id,
+                            graph_store=self.graph_store,
+                            event_date=request.occurred_at,
+                        )
                 except Exception as exc:
                     _logger.warning(
                         "canonical resolution failed during retain (falling back to tentative IDs): %s",
                         exc,
                     )
 
-        entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
+        async with self._profiler.time("entity_store"):
+            entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
 
         # Per-fact entity associations when SFE supplied them
         # (each memory linked only to entities IT mentions); legacy path
@@ -688,18 +970,22 @@ class PipelineOrchestrator:
             associations = [
                 MemoryEntityAssociation(memory_id=mid, entity_id=eid) for mid in memory_ids for eid in entity_ids
             ]
-        await self.graph_store.link_memories_to_entities(associations, request.bank_id)
-        if len(entity_ids) > 1:
-            links = [
-                EntityLink(
-                    entity_a=entity_ids[i],
-                    entity_b=entity_ids[j],
-                    link_type="co_occurs",
-                )
-                for i in range(len(entity_ids))
-                for j in range(i + 1, len(entity_ids))
-            ]
-            await self.graph_store.store_links(links, request.bank_id)
+        async with self._profiler.time("entity_link_mem"):
+            await self.graph_store.link_memories_to_entities(associations, request.bank_id)
+        # Same cap as the single-record retain path — see comment there.
+        # Without it the all-pairs Cartesian product dominates retain
+        # wall on entity-dense workloads (LME profile 2026-05-06).
+        if self.entity_cooccurrence_enabled:
+            pairs = _build_cooccurrence_pairs(
+                entity_ids, self.entity_cooccurrence_max_entities,
+            )
+            if pairs:
+                links = [
+                    EntityLink(entity_a=a, entity_b=b, link_type="co_occurs")
+                    for a, b in pairs
+                ]
+                async with self._profiler.time("entity_co_occur"):
+                    await self.graph_store.store_links(links, request.bank_id)
 
         # MemoryLinks (caused_by). Two paths:
         # - SFE supplied them inline → resolve indices, store.
@@ -982,18 +1268,23 @@ class PipelineOrchestrator:
         # SFE has different granularity needs: large chunks give the LLM
         # full context for metadata extraction. Default "paragraph" wins
         # +2.5pts on LoCoMo over the profile-driven "dialogue" choice.
-        (
-            sfe_fact_texts,
-            sfe_entities,
-            sfe_associations,
-            sfe_caused_by,
-        ) = await self._structured_fact_extraction_for_text(
-            prepared,
-            request,
-            chunk_strategy=self.structured_fact_extraction_chunk_strategy,
-            chunk_max_size=chunking.max_size,
-            chunk_overlap=chunking.overlap,
-        )
+        async with self._profiler.time("sfe"):
+            (
+                sfe_fact_texts,
+                sfe_entities,
+                sfe_associations,
+                sfe_caused_by,
+            ) = await self._structured_fact_extraction_for_text(
+                prepared,
+                request,
+                chunk_strategy=self.structured_fact_extraction_chunk_strategy,
+                chunk_max_size=(
+                    self.structured_fact_extraction_chunk_max_size
+                    if self.structured_fact_extraction_chunk_max_size is not None
+                    else chunking.max_size
+                ),
+                chunk_overlap=chunking.overlap,
+            )
         if sfe_fact_texts is not None:
             chunks = list(sfe_fact_texts)
         else:
@@ -1002,7 +1293,8 @@ class PipelineOrchestrator:
             return RetainResult(stored=False, error="No content after chunking")
 
         # 2. Generate embeddings for all chunks
-        embeddings = await generate_embeddings(chunks, self.llm_provider)
+        async with self._profiler.time("embed"):
+            embeddings = await generate_embeddings(chunks, self.llm_provider)
 
         # 2b. Per-chunk dedup — behavior depends on dedup_action:
         #     "skip_chunk" (default): drop duplicate chunks, keep the rest
@@ -1120,7 +1412,8 @@ class PipelineOrchestrator:
                 )
             )
 
-        await self.vector_store.store_vectors(items)
+        async with self._profiler.time("store_vec"):
+            await self.vector_store.store_vectors(items)
 
         # Hindsight-parity semantic-kNN graph (C3a). Best-effort: links
         # the new memories to their nearest existing neighbors so the
@@ -1170,26 +1463,29 @@ class PipelineOrchestrator:
             # entity_resolver is wired up — without one, the embedding
             # would be persisted but never used, wasting API budget.
             if self.entity_resolver is not None:
-                await self._attach_entity_name_embeddings(entities)
+                async with self._profiler.time("entity_emb"):
+                    await self._attach_entity_name_embeddings(entities)
                 # Path B (Hindsight): rewrite tentative IDs to canonicals
                 # before storage. Skipped when canonical_resolution=False
                 # to preserve the legacy two-stage (store → resolve aliases)
                 # flow.
                 if self.entity_resolver.canonical_resolution:
                     try:
-                        await self.entity_resolver.resolve_canonical_ids_in_place(
-                            new_entities=entities,
-                            bank_id=request.bank_id,
-                            graph_store=self.graph_store,
-                            event_date=request.occurred_at,
-                        )
+                        async with self._profiler.time("entity_resolve"):
+                            await self.entity_resolver.resolve_canonical_ids_in_place(
+                                new_entities=entities,
+                                bank_id=request.bank_id,
+                                graph_store=self.graph_store,
+                                event_date=request.occurred_at,
+                            )
                     except Exception as exc:
                         _logger.warning(
                             "canonical resolution failed during retain (falling back to tentative IDs): %s",
                             exc,
                         )
 
-            entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
+            async with self._profiler.time("entity_store"):
+                entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
 
             # Link memories to entities. Two paths:
             # - Structured fact extraction provides per-fact-per-entity
@@ -1211,20 +1507,26 @@ class PipelineOrchestrator:
                 associations = [
                     MemoryEntityAssociation(memory_id=mid, entity_id=eid) for mid in memory_ids for eid in entity_ids
                 ]
-            await self.graph_store.link_memories_to_entities(associations, request.bank_id)
+            async with self._profiler.time("entity_link_mem"):
+                await self.graph_store.link_memories_to_entities(associations, request.bank_id)
 
-            # Create co-occurrence links between entities
-            if len(entity_ids) > 1:
-                links = [
-                    EntityLink(
-                        entity_a=entity_ids[i],
-                        entity_b=entity_ids[j],
-                        link_type="co_occurs",
-                    )
-                    for i in range(len(entity_ids))
-                    for j in range(i + 1, len(entity_ids))
-                ]
-                await self.graph_store.store_links(links, request.bank_id)
+            # Create co-occurrence links between entities. The 2026-05-06
+            # LME retain-profile measured the unbounded all-pairs
+            # Cartesian product at 34% of retain wall (52s tail at the
+            # session-100 mark). The cap in
+            # ``_build_cooccurrence_pairs`` bounds the work to O(K²) per
+            # retain regardless of corpus size.
+            if self.entity_cooccurrence_enabled:
+                pairs = _build_cooccurrence_pairs(
+                    entity_ids, self.entity_cooccurrence_max_entities,
+                )
+                if pairs:
+                    links = [
+                        EntityLink(entity_a=a, entity_b=b, link_type="co_occurs")
+                        for a, b in pairs
+                    ]
+                    async with self._profiler.time("entity_co_occur"):
+                        await self.graph_store.store_links(links, request.bank_id)
 
             # Causal MemoryLinks. Two paths:
             # - Structured fact extraction supplies them inline (no
@@ -1384,18 +1686,23 @@ class PipelineOrchestrator:
             # retain(); produces fact texts + pre-extracted entities +
             # caused_by index pairs for this record.
             # SFE uses its own chunking strategy (see retain() above).
-            (
-                sfe_fact_texts,
-                sfe_entities,
-                sfe_associations,
-                sfe_caused_by,
-            ) = await self._structured_fact_extraction_for_text(
-                prepared,
-                request,
-                chunk_strategy=self.structured_fact_extraction_chunk_strategy,
-                chunk_max_size=chunking.max_size,
-                chunk_overlap=chunking.overlap,
-            )
+            async with self._profiler.time("sfe"):
+                (
+                    sfe_fact_texts,
+                    sfe_entities,
+                    sfe_associations,
+                    sfe_caused_by,
+                ) = await self._structured_fact_extraction_for_text(
+                    prepared,
+                    request,
+                    chunk_strategy=self.structured_fact_extraction_chunk_strategy,
+                    chunk_max_size=(
+                        self.structured_fact_extraction_chunk_max_size
+                        if self.structured_fact_extraction_chunk_max_size is not None
+                        else chunking.max_size
+                    ),
+                    chunk_overlap=chunking.overlap,
+                )
             if sfe_fact_texts is not None:
                 chunks = list(sfe_fact_texts)
             else:
@@ -1427,7 +1734,8 @@ class PipelineOrchestrator:
         if not records:
             return [result or RetainResult(stored=False, error="No content after chunking") for result in results]
 
-        all_embeddings = await generate_embeddings(all_chunks, self.llm_provider)
+        async with self._profiler.time("embed"):
+            all_embeddings = await generate_embeddings(all_chunks, self.llm_provider)
         stored_records: list[dict[str, Any]] = []
         all_items: list[VectorItem] = []
 
@@ -1557,7 +1865,8 @@ class PipelineOrchestrator:
             all_items.extend(items)
 
         if all_items:
-            await self.vector_store.store_vectors(all_items)
+            async with self._profiler.time("store_vec"):
+                await self.vector_store.store_vectors(all_items)
 
         # Hindsight-parity semantic-kNN graph (C3a) — same call as the
         # single-retain path, applied per record so each batch's
@@ -1604,7 +1913,9 @@ class PipelineOrchestrator:
         if self.graph_store is not None:
             entity_records = [r for r in stored_records if r["entities"]]
             if entity_records:
-                await asyncio.gather(*[self._process_record_entities(r) for r in entity_records])
+                await asyncio.gather(
+                    *[self._process_record_entities_with_retry(r) for r in entity_records]
+                )
 
         for record in stored_records:
             request: RetainRequest = record["request"]
@@ -2368,24 +2679,36 @@ class PipelineOrchestrator:
         # questions (negative existence, false premise, time-shift)
         # where the LLM left to its own devices invents an answer.
         #
-        # ``abstention_floor`` is more aggressive than
-        # ``evidence_strict_threshold``: by default 0.2 vs 0.5 — it
-        # must be low enough that legitimate weak-retrieval questions
-        # still go through. Tunable via
-        # ``adversarial_defense.abstention_floor`` config.
+        # The effective floor is now derived from the request's
+        # ``dispositions.skepticism`` (1=trust→never abstain,
+        # 5=skeptical→aggressive abstention) rather than the legacy
+        # global ``abstention_enabled`` bool. This lets one deployment
+        # serve both adversarial-resistant agents and answer-everything
+        # assistants from a single config — see
+        # ``_abstention_floor_for_skepticism`` for the mapping. Legacy
+        # ``abstention_enabled`` remains as a fallback when no
+        # per-call dispositions are supplied.
+        skepticism = _resolve_skepticism_for_abstention(
+            request.dispositions, self.adversarial_abstention_enabled,
+        )
+        effective_floor = _abstention_floor_for_skepticism(
+            skepticism, self.adversarial_abstention_floor,
+        )
         if (
-            self.adversarial_abstention_enabled
-            and recall_result.top_semantic_score < self.adversarial_abstention_floor
+            effective_floor > 0.0
+            and recall_result.top_semantic_score < effective_floor
             and (
                 not recall_result.hits
-                or all((h.score or 0.0) < self.adversarial_abstention_floor for h in recall_result.hits[:5])
+                or all((h.score or 0.0) < effective_floor for h in recall_result.hits[:5])
             )
         ):
             _logger.info(
-                "reflect: abstention floor triggered (top_semantic=%.3f < %.3f); "
-                "returning 'insufficient evidence' without LLM call.",
+                "reflect: abstention floor triggered (top_semantic=%.3f < "
+                "%.3f, skepticism=%d); returning 'insufficient evidence' "
+                "without LLM call.",
                 recall_result.top_semantic_score,
-                self.adversarial_abstention_floor,
+                effective_floor,
+                skepticism,
             )
             return ReflectResult(
                 answer="insufficient evidence: no memory supports this question.",
@@ -2407,6 +2730,10 @@ class PipelineOrchestrator:
             max_tokens=request.max_tokens or 2048,
             authority_context=auth_ctx,
             mip_reflect=mip_reflect,
+            # Forward the relative-phrase anchor so the synthesis
+            # prompt's ``<reference_date>`` block reflects the
+            # question's contemporaneous date, not the run wall-clock.
+            query_reference_date=request.query_reference_date,
         )
         if self.agentic_reflect_params is not None:
             from astrocyte.pipeline.agentic_reflect import agentic_reflect
