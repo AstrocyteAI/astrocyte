@@ -134,6 +134,13 @@ async def build_lme_tree(
     """LME-side build wrapper. Same SPI as the LoCoMo bench's
     ``build_or_load_tree`` but rendered from LME's haystack_sessions
     shape. Reuses the LoCoMo bench's caching + dispatch.
+
+    PR2.6 Bug 3: LME samples carry ``question_date`` separately from
+    haystack session dates. We override ``reference_date`` with
+    ``question_date`` so the temporal-arithmetic short-circuit anchors
+    "X weeks ago" to *when the user is asking*, not *when the last
+    session ended* (those can differ by weeks). The judge expects
+    answers framed against question_date.
     """
     md_path = workspace / f"{sample_id}.md"
     md_text = lme_sample_to_markdown(sample, sample_id)
@@ -142,25 +149,33 @@ async def build_lme_tree(
     if store is not None:
         # Inline the store path to avoid needing to mock the LoCoMo-
         # specific ``conv["conversation"]`` shape.
-        return await _build_lme_tree_via_store(
+        conv_tree = await _build_lme_tree_via_store(
             store=store, bank_id=bank_id, sample_id=sample_id,
             md_path=md_path, md_text=md_text, model=model,
             provider=provider,
             entity_model=entity_model,
             embedding_model=embedding_model,
         )
-
-    # File backend
-    tree_path = workspace / f"{sample_id}.tree.json"
-    if tree_path.exists() and tree_path.stat().st_mtime >= md_path.stat().st_mtime:
-        cached = json.loads(tree_path.read_text())
     else:
-        print(f"  [pi-lme] Building tree for {sample_id} (file backend)...")
-        cached = await _BENCH._build_raw_tree(md_path, model)
-        tree_path.write_text(json.dumps(cached, indent=2))
-    nodes = cached.get("structure", cached) if isinstance(cached, dict) else cached
-    session_dates = _BENCH._enrich_nodes_with_dates(nodes)
-    return _BENCH._conv_tree_dict(sample_id, md_text, cached, session_dates)
+        # File backend
+        tree_path = workspace / f"{sample_id}.tree.json"
+        if tree_path.exists() and tree_path.stat().st_mtime >= md_path.stat().st_mtime:
+            cached = json.loads(tree_path.read_text())
+        else:
+            print(f"  [pi-lme] Building tree for {sample_id} (file backend)...")
+            cached = await _BENCH._build_raw_tree(md_path, model)
+            tree_path.write_text(json.dumps(cached, indent=2))
+        nodes = cached.get("structure", cached) if isinstance(cached, dict) else cached
+        session_dates = _BENCH._enrich_nodes_with_dates(nodes)
+        conv_tree = _BENCH._conv_tree_dict(sample_id, md_text, cached, session_dates)
+
+    # PR2.6 Bug 3: anchor relative phrases to LME's question_date when
+    # present. Format mirrors haystack_dates ("YYYY/MM/DD (Day) HH:MM")
+    # so the existing _parse_session_date works on it.
+    qd = sample.get("question_date")
+    if qd:
+        conv_tree["reference_date"] = qd
+    return conv_tree
 
 
 async def _build_lme_tree_via_store(
@@ -180,7 +195,10 @@ async def _build_lme_tree_via_store(
             for s in sections if s.session_date is not None
         ]
         session_dates = [(ln, d) for ln, d in session_dates if d]
-        return _BENCH._conv_tree_dict(sample_id, md_text, compact, session_dates)
+        return _BENCH._conv_tree_dict(
+            sample_id, md_text, compact, session_dates,
+            document_id=cached_doc.id,
+        )
 
     print(f"  [pi-lme] Building tree for {sample_id} (store backend)...")
     raw_tree = await _BENCH._build_raw_tree(md_path, model)
@@ -217,7 +235,10 @@ async def _build_lme_tree_via_store(
             embedding_model=embedding_model,
         )
 
-    return _BENCH._conv_tree_dict(sample_id, md_text, raw_tree, session_dates)
+    return _BENCH._conv_tree_dict(
+        sample_id, md_text, raw_tree, session_dates,
+        document_id=document_id,
+    )
 
 
 # ── Stratified sampler (PR2 prep) ────────────────────────────────────────

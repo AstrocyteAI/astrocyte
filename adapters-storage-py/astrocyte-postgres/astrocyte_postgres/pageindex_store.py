@@ -576,6 +576,7 @@ class PostgresPageIndexStore:
         *,
         top_k: int = 20,
         speaker: str | None = None,
+        document_id: str | None = None,
     ) -> list[tuple[str, int, float]]:
         if not query.strip():
             return []
@@ -584,9 +585,14 @@ class PostgresPageIndexStore:
         # Use plainto_tsquery for natural-language input; ts_rank_cd
         # gives the standard cover-density rank score.
         speaker_clause = "AND s.speaker = %s" if speaker else ""
+        # PR2.6: optional single-doc scope so temporal_arithmetic.find_event_date
+        # isn't starved by bank-wide top-K when 50+ docs share a bank.
+        doc_clause = "AND s.document_id = %s::uuid" if document_id else ""
         params: list = [query, bank_id]
         if speaker:
             params.append(speaker)
+        if document_id:
+            params.append(document_id)
         params.extend([query, top_k])
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -604,6 +610,7 @@ class PostgresPageIndexStore:
                     JOIN {self._fq('astrocyte_pi_documents')} AS d ON d.id = s.document_id
                     WHERE d.bank_id = %s
                       {speaker_clause}
+                      {doc_clause}
                       AND to_tsvector('english',
                               coalesce(s.title, '') || ' ' || coalesce(s.summary, '')
                           ) @@ (SELECT tsq FROM q)
@@ -740,6 +747,48 @@ class PostgresPageIndexStore:
                 )
                 rows = await cur.fetchall()
         return [(str(r[0]), r[1], float(r[2])) for r in rows]
+
+    async def list_distinct_entities(
+        self,
+        bank_id: str,
+        document_id: str,
+        *,
+        pattern: str | None = None,
+        limit: int = 50,
+    ) -> list[tuple[str, int]]:
+        # bank_id is unused at the SQL layer because the entity rows
+        # are already scoped to the document_id (which itself belongs
+        # to one bank). Kept in the signature to match the SPI shape.
+        del bank_id
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        if pattern is not None:
+            sql = f"""
+                SELECT entity_name, COUNT(*) AS mentions
+                FROM {self._fq('astrocyte_pi_section_entities')}
+                WHERE document_id = %s AND entity_name ILIKE %s
+                GROUP BY entity_name
+                ORDER BY mentions DESC, entity_name ASC
+                LIMIT %s
+            """
+            # If caller didn't include % wildcards, treat as substring.
+            ilike = pattern if "%" in pattern else f"%{pattern}%"
+            params = (document_id, ilike, max(1, limit))
+        else:
+            sql = f"""
+                SELECT entity_name, COUNT(*) AS mentions
+                FROM {self._fq('astrocyte_pi_section_entities')}
+                WHERE document_id = %s
+                GROUP BY entity_name
+                ORDER BY mentions DESC, entity_name ASC
+                LIMIT %s
+            """
+            params = (document_id, max(1, limit))
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, params)
+                rows = await cur.fetchall()
+        return [(str(r[0]), int(r[1])) for r in rows]
 
     # ── health ──────────────────────────────────────────────────────────
 

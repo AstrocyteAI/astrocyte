@@ -590,11 +590,16 @@ class PageIndexStore(Protocol):
         *,
         top_k: int = 20,
         speaker: str | None = None,
+        document_id: str | None = None,
     ) -> list[tuple[str, int, float]]:
         """PR2 commit B / keyword strategy: full-text search (``tsvector``)
         over section titles + summaries. Returns ``(document_id,
         line_num, score)`` tuples. The optional ``speaker`` filter is
-        for LME assistant-recall (``WHERE speaker = 'assistant'``)."""
+        for LME assistant-recall (``WHERE speaker = 'assistant'``).
+        The optional ``document_id`` filter (PR2.6) scopes the search
+        to a single document — used by ``temporal_arithmetic.find_event_date``
+        to avoid bank-wide top-K starvation when 50+ documents share a
+        bank and the matching one isn't in the unfiltered top-5."""
 
     async def search_sections_by_entities(
         self,
@@ -630,6 +635,35 @@ class PageIndexStore(Protocol):
         ``section_links`` from the given ``(document_id, line_num)``
         seeds. ``link_types`` filters to e.g. ['semantic_knn', 'causal'];
         None means all types. Score is link weight."""
+
+    async def list_distinct_entities(
+        self,
+        bank_id: str,
+        document_id: str,
+        *,
+        pattern: str | None = None,
+        limit: int = 50,
+    ) -> list[tuple[str, int]]:
+        """PR2.6 / agentic counting tool: list distinct entity names in a
+        document with their per-section mention counts.
+
+        ``pattern`` is a SQL ILIKE substring (case-insensitive) — pass
+        ``"doctor"`` to match ``"Dr. Smith"``, ``"%kit%"`` to match any
+        entity containing ``"kit"``. ``None`` returns the top-``limit``
+        entities by mention count (useful when the agent doesn't yet
+        know what to look for).
+
+        Returns ``[(entity_name, count), ...]`` ordered by count desc
+        then name asc. ``count`` is the number of distinct sections in
+        which the entity appears (the (document_id, line_num,
+        entity_name) PK in 015 means one section can mention an entity
+        at most once).
+
+        Used by the reflect agent's ``list_entities`` tool to count
+        across-session mentions deterministically — fixes the LME
+        multi-session counting holes from the PR2.6 gate where the LLM
+        couldn't reliably aggregate entity mentions from raw section
+        text."""
 
     async def health(self) -> HealthStatus:
         """Check storage connectivity."""

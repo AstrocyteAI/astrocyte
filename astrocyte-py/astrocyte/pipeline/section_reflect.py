@@ -113,6 +113,7 @@ def section_tuples_to_memory_hits(
 
 RecallFn = Callable[[str, int], Awaitable[list[MemoryHit]]]
 ExpandFn = Callable[[str, int], Awaitable[list[MemoryHit]]]
+ListEntitiesFn = Callable[[str | None, int], Awaitable[list[tuple[str, int]]]]
 
 
 def make_section_recall_fn(
@@ -216,6 +217,38 @@ def make_section_expand_fn(
         )
 
     return _expand
+
+
+def make_list_entities_fn(
+    *,
+    store: PageIndexStore,
+    bank_id: str,
+    document_id: str,
+) -> ListEntitiesFn:
+    """Build a ``list_entities_fn(pattern, limit) -> [(name, count)]``
+    that calls :meth:`PageIndexStore.list_distinct_entities` scoped to
+    a single document.
+
+    The bench answers one question per document, so binding
+    ``document_id`` here lets the agent issue a single-arg tool call
+    (``pattern`` only) without leaking storage shape into the prompt.
+    """
+
+    async def _list(
+        pattern: str | None, limit: int,
+    ) -> list[tuple[str, int]]:
+        try:
+            return await store.list_distinct_entities(
+                bank_id, document_id, pattern=pattern, limit=limit,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "section_reflect.list_entities_fn failed pattern=%r: %s: %s",
+                pattern, type(exc).__name__, exc,
+            )
+            return []
+
+    return _list
 
 
 # ── Citation → line_nums ────────────────────────────────────────────

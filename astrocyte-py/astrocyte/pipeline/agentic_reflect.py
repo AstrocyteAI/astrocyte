@@ -190,6 +190,43 @@ _TOOL_EXPAND = ToolDefinition(
     },
 )
 
+_TOOL_LIST_ENTITIES = ToolDefinition(
+    name="list_entities",
+    description=(
+        "List distinct entity names in the current document with their per-section "
+        "mention counts — use this for COUNTING / AGGREGATION questions where you "
+        "need the exact count of distinct items mentioned across the conversation. "
+        "Pass a substring `pattern` to filter (e.g. `\"doctor\"`, `\"kit\"`, "
+        "`\"trip\"`); pass no pattern to see the top-mentioned entities. Returns "
+        "`[(entity_name, count), ...]` ordered by count desc. The agent counts the "
+        "list — this is the deterministic counting primitive the recall+done loop "
+        "lacks. If `list_entities` returns the right list, your answer is just "
+        "`len(list)` or a sum of relevant counts."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": "Why you're listing (e.g. 'count distinct doctors mentioned').",
+            },
+            "pattern": {
+                "type": "string",
+                "description": (
+                    "Case-insensitive substring filter on entity_name. Use a "
+                    "broad term (`'doctor'` not `'Dr. Smith'`). Omit to see the "
+                    "top-mentioned entities globally."
+                ),
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max entries to return (default 50, max 200).",
+            },
+        },
+        "required": ["reason"],
+    },
+)
+
 _TOOL_DONE = ToolDefinition(
     name="done",
     description=(
@@ -261,7 +298,29 @@ here when the higher tiers return nothing relevant).
 - `expand`: fetch source memories under a compiled fact / mental model / \
 wiki page you've seen — useful when the distilled summary loses verbatim \
 context.
+- `list_entities`: list distinct entity names with their mention counts. \
+USE THIS FOR COUNTING / AGGREGATION QUESTIONS ("how many doctors / projects \
+/ items"). Pass a substring `pattern` (e.g. `"doctor"`, `"kit"`, `"trip"`); \
+the tool returns the distinct entities matching it with per-section \
+mention counts. The answer is `total_distinct` (or a sum / a filtered \
+subcount). This is far more reliable than counting from raw text — the \
+LLM is bad at distinct-counting across many chunks.
 - `done`: commit final answer with citations.
+
+COUNTING DISCIPLINE — when the question is "how many X" or "how much Y":
+
+A. Reach for `list_entities(pattern=...)` BEFORE `recall`. The pattern \
+should be the question's countable category (`"doctor"` for "how many \
+doctors", `"kit"` for "how many kits", `"trip"` or `"trip_destination"` \
+for trips, etc.). Try multiple patterns if the first returns nothing — \
+extraction may have used different wording.
+
+B. The returned `total_distinct` is your count. If the list contains \
+items that don't fit the question (e.g. "Dr. Pepper" returned for "how \
+many doctors"), filter mentally and report the filtered count.
+
+C. After `list_entities`, you may still want one `recall` to verify \
+context — but the COUNT is whatever `list_entities` returned (filtered).
 
 Core rules:
 1. Gather evidence with the tools above before answering.
@@ -379,6 +438,11 @@ ExpandFn = Callable[[str, int], Awaitable[list[MemoryHit]]] | None
 # models are usually a handful per bank — return all in scope and trust the
 # LLM to pick.
 MentalModelsFn = Callable[[str, str | None], Awaitable[list[MemoryHit]]] | None
+# (pattern_or_None, limit) -> [(entity_name, mention_count), ...].
+# Counting primitive — agent uses this for "how many doctors / projects /
+# items" questions where the recall+done loop produces unreliable counts
+# from raw text. PR2.6 addition; Hindsight does not have this tool.
+ListEntitiesFn = Callable[[str | None, int], Awaitable[list[tuple[str, int]]]] | None
 
 
 @dataclass
@@ -479,6 +543,7 @@ async def agentic_reflect(
     observations_fn: ObservationsFn = None,
     expand_fn: ExpandFn = None,
     mental_models_fn: MentalModelsFn = None,
+    list_entities_fn: ListEntitiesFn = None,
     params: AgenticReflectParams | None = None,
     final_synthesize_fn: Callable[..., Awaitable[ReflectResult]] | None = None,
     final_synthesize_kwargs: dict[str, Any] | None = None,
@@ -521,6 +586,8 @@ async def agentic_reflect(
     tools.append(_TOOL_RECALL)
     if expand_fn is not None:
         tools.append(_TOOL_EXPAND)
+    if list_entities_fn is not None:
+        tools.append(_TOOL_LIST_ENTITIES)
     tools.append(_TOOL_DONE)
 
     state = _AgentState(
@@ -678,6 +745,43 @@ async def agentic_reflect(
                         tool_call_id=tc.id,
                         name=name,
                         content=_format_hits_for_tool_response(new_hits),
+                    )
+                )
+                continue
+
+            if name == "list_entities" and list_entities_fn is not None:
+                pattern_arg = args.get("pattern")
+                pattern = (
+                    str(pattern_arg).strip() or None
+                    if isinstance(pattern_arg, str)
+                    else None
+                )
+                try:
+                    limit = int(args.get("limit") or 50)
+                except (TypeError, ValueError):
+                    limit = 50
+                limit = max(1, min(limit, 200))
+                try:
+                    entities = await list_entities_fn(pattern, limit)
+                except Exception as exc:  # noqa: BLE001
+                    _logger.warning("agentic_reflect.list_entities failed (%s)", exc)
+                    entities = []
+                # Format the response so the agent sees both the count
+                # AND the named items — so it can distinguish over- and
+                # under-counting from extraction errors.
+                payload = {
+                    "total_distinct": len(entities),
+                    "entities": [
+                        {"name": name, "section_mentions": count}
+                        for name, count in entities
+                    ],
+                }
+                state.conversation.append(
+                    Message(
+                        role="tool",
+                        tool_call_id=tc.id,
+                        name=name,
+                        content=json.dumps(payload, ensure_ascii=False),
                     )
                 )
                 continue

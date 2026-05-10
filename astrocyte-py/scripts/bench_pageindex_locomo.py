@@ -1518,6 +1518,7 @@ async def answer_question(
         )
         from astrocyte.pipeline.section_reflect import (
             cited_ids_to_line_nums,
+            make_list_entities_fn,
             make_section_expand_fn,
             make_section_recall_fn,
             section_tuples_to_memory_hits,
@@ -1550,6 +1551,11 @@ async def answer_question(
             md_text_by_doc=md_text_by_doc,
             slice_fn=_slice_section_around_line,
         )
+        list_entities_fn = make_list_entities_fn(
+            store=store,
+            bank_id=bank_id,
+            document_id=document_id,
+        )
 
         async def _reflect_final_synth(
             *, query: str, hits, llm_provider, **_kw,
@@ -1576,6 +1582,7 @@ async def answer_question(
                 recall_fn=recall_fn,
                 llm_provider=provider,
                 expand_fn=expand_fn,
+                list_entities_fn=list_entities_fn,
                 params=AgenticReflectParams(max_iterations=5),
                 final_synthesize_fn=_reflect_final_synth,
             )

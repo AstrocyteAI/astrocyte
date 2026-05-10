@@ -1021,6 +1021,7 @@ class InMemoryPageIndexStore:
         *,
         top_k: int = 20,
         speaker: str | None = None,
+        document_id: str | None = None,
     ) -> list[tuple[str, int, float]]:
         if not query.strip():
             return []
@@ -1031,7 +1032,12 @@ class InMemoryPageIndexStore:
         terms = [t for t in query.lower().split() if t]
         if not terms:
             return []
-        doc_ids = self._docs_in_bank(bank_id)
+        if document_id is not None:
+            # Caller wants single-doc scope (PR2.6 temporal-arithmetic
+            # find_event_date use case); skip the bank fanout entirely.
+            doc_ids = [document_id] if document_id in self._sections else []
+        else:
+            doc_ids = self._docs_in_bank(bank_id)
         scored: list[tuple[str, int, float]] = []
         for doc_id in doc_ids:
             for s in self._sections.get(doc_id, []):
@@ -1119,6 +1125,40 @@ class InMemoryPageIndexStore:
         scored = [(d, ln, w) for (d, ln), w in weights.items()]
         scored.sort(key=lambda x: x[2], reverse=True)
         return scored[:top_k]
+
+    async def list_distinct_entities(
+        self,
+        bank_id: str,
+        document_id: str,
+        *,
+        pattern: str | None = None,
+        limit: int = 50,
+    ) -> list[tuple[str, int]]:
+        # Filter section_entities to this document; substring-match the
+        # entity_name when pattern is set (case-insensitive). Mirrors
+        # the Postgres ILIKE semantics: pattern is a substring, ``%``
+        # wildcards are NOT auto-injected — caller passes them if
+        # desired (matches Postgres behaviour).
+        entries = self._section_entities.get(document_id, [])
+        if not entries:
+            return []
+        if pattern is not None:
+            needle = pattern.lower().replace("%", "")
+            entries = [e for e in entries if needle in e.entity_name.lower()]
+        # Distinct (line_num, entity_name) collapses to one mention per
+        # section — matches the Postgres PK (document_id, line_num,
+        # entity_name).
+        seen: set[tuple[int, str]] = set()
+        counts: dict[str, int] = {}
+        for e in entries:
+            key = (e.line_num, e.entity_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            counts[e.entity_name] = counts.get(e.entity_name, 0) + 1
+        # Order by count desc, then name asc for determinism.
+        ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        return ordered[: max(1, limit)]
 
     async def health(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="in-memory pageindex store")
