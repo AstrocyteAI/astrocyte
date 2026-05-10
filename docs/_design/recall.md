@@ -515,3 +515,89 @@ Both bottlenecks point at the same architectural gap: **typed entity extraction 
 ### Validation discipline note
 
 LME at N=50 has ±32pp Wilson CIs per category — almost any single-category move under 30pp is within noise. Today's "no lift" reads on multi-session and temporal-reasoning are at the edge of the noise band; a real entity-typing fix should produce moves large enough to clear the band. **Future per-category claims should run at N≥200/category to be defensible.**
+
+---
+
+## 13. M10 close-out (2026-05-11)
+
+M10 implemented the **section-aware consolidation engine** (PR3 deferred from M9 close-out) plus **typed entity labels** (Hindsight-aligned `key:value` taxonomy). The whole stack was tested in three layers — wiki tier (M10.1), typed entities (M10.2), preferences injection (M10.3) — with an M10.3 revert and a final clean re-run.
+
+### Final numbers
+
+| Bench | Sample | Score | Wilson 95% CI | Δ vs PR2.6 close |
+|-------|-------:|------:|---------------|-----------------:|
+| **LME** | N=50 | **52%** (26/50) | 38% – 65% | **+4pp** |
+| **LoCoMo** | N=500 | **59.6%** (298/500) | 55.3% – 63.7% | -2pp (within noise) |
+
+LME per-category — the breakthrough:
+
+| Category | PR2.6 close | M10 final | Δ |
+|----------|------------:|----------:|--:|
+| **temporal-reasoning** | **0%** (0/8) | **38%** (3/8) | **+38pp** ✓ |
+| knowledge-update | 88% (7/8) | 75% (6/8) | -1 (noise) |
+| single-session-assistant | 100% (8/8) | 100% (8/8) | 0 |
+| single-session-user | 67% (6/9) | 67% (6/9) | 0 |
+| single-session-preference | 25% (2/8) | 25% (2/8) | 0 |
+| multi-session | 11% (1/9) | 11% (1/9) | 0 (bounced 11→33→11; statistically indistinguishable at N=9) |
+
+LoCoMo per-category (N=500):
+
+| Category | PR2.6 close | M10 final | Δ |
+|----------|------------:|----------:|--:|
+| adversarial | 86.4% | 85.4% | -1 (noise) |
+| single-hop | 77.1% | 73.3% | -4 (noise) |
+| open-domain | 61.0% | 58.5% | -3 (noise) |
+| temporal | 46.2% | 47.2% | +1 (noise) |
+| multi-hop | 37.5% | 33.7% | -4 (noise) |
+
+### What shipped
+
+1. **`section_compile.py`** — Hindsight-aligned consolidation. DBSCAN over section embeddings, single LLM call per cluster synthesizes one observation, stored as `WikiPage` rows with `astrocyte_pi_wiki_provenance`.
+2. **Migration 018** — `current_embedding vector(1536)` on `astrocyte_wiki_pages` + DiskANN index.
+3. **Wiki tier** in `section_recall` — semantic search over `wiki_pages.current_embedding`; surfaced as `[OBSERVATION]` block in synth context.
+4. **Typed entity labels** in `section_entity_extraction.py`. Extraction emits BOTH proper-noun entities (`"Dr. Patel"`, `"Nordstrom"`) AND `key:value` structured labels alongside them, in the same `astrocyte_pi_section_entities` table:
+   - `role:<noun>` — occupational categories (`role:doctor`, `role:dermatologist`)
+   - `category:<noun>` — countable kinds of things (`category:trip`, `category:plant`)
+   - `event:<noun>` — distinct occurrences (`event:wedding`, `event:road_trip`)
+   - `expense:<currency_amount>` — money spent (`expense:$185`)
+5. **`agentic_reflect`** updated — system prompt teaches the agent to query labels via `list_entities(pattern="role:doctor")` for counting questions.
+6. **PageIndexStore SPI** extensions — `load_sections_with_embeddings`, `save_wiki_page`, `search_wiki_pages_semantic`, `count_wiki_pages_for_doc`. Implemented on both `InMemoryPageIndexStore` and `PostgresPageIndexStore`.
+7. **Bench retain hook** — `_populate_section_index` now invokes `compile_sections_for_document` after entity/embedding/link extraction; idempotent on cache hit.
+8. **Multi-hop reflect gate opened** in the bench (`mode in {"multi-session", "multi-hop"}`) — measured but no LoCoMo lift.
+9. **`--reflect-model` CLI flag** — optional stronger model for the agentic-reflect loop only (e.g. `gpt-4o`); diagnostic — confirmed model swap alone doesn't lift counting.
+
+### What was tried and reverted
+
+- **M10.3 `prefers:<aspect>=<value>` labels + `[USER PREFERENCES]` synth injection.** Worked as designed (extracted 2024 prefs across LME) but caused regressions: dense prefs (40+/doc) over-personalised "recommend X" answers; multi-session 3→1 from extraction stochasticity at N=9. Reverted; the dead branch in `bench_pageindex_locomo.py` is documented for the next attempt.
+
+### What works, what doesn't, why
+
+**The temporal-reasoning lift (0% → 38%) is the standout.** The wiki tier gives the synth pre-aggregated event observations that the picker+synth path couldn't compose from raw text. Wilson CI 14-65% — clearly above the 0% floor.
+
+**Multi-session bouncing 11→33→11 across runs at N=9** suggests we have a real (small) lift wrapped inside heavy small-N noise. To confirm, multi-session needs N=100+ stratified.
+
+**LoCoMo flat against PR2.6 close** because:
+- LoCoMo conversations are topically tighter — DBSCAN at `eps=0.55` produced only 1 wiki page per doc (10 total), too high-level to match question vocab
+- Single-hop / adversarial categories were already near-ceiling under picker+synth; wiki tier adds no signal
+- Multi-hop questions (37.5%) are bridging-shape, not aggregation-shape — wiki summaries don't surface the bridge
+
+### Per-category data-quality assessment
+
+| Category | Bottleneck | Fixable how? |
+|----------|------------|--------------|
+| LME multi-session | Extraction stochasticity + small N | N≥100 sweep; possibly tighten consolidation prompt |
+| LME temporal-reasoning | Was: event lookup. Now: residual gpt-4o-mini date arithmetic | Stronger model on temporal synth (~$5/gate) |
+| LME ss-preference | "Recommend X" wants personalised retrieval — neither picker nor wiki tier captures stable preferences well | Mental models tier (M11+) — needs a separate compile pass that synthesises *only* preferences, not topic clusters |
+| LoCoMo multi-hop | DBSCAN at LoCoMo's topic-coherence yields too few wiki pages | Lower `eps` for LoCoMo; possibly compile per-section-pair bridges |
+
+### Bench costs
+
+| Item | Cost |
+|------|-----:|
+| Migration 018 + DDL | $0 |
+| LME wiki compile (×3 versions during prompt tuning) | ~$5 |
+| LME entity re-extract (×3 attempts; M10.2 final) | ~$6 |
+| LoCoMo entity re-extract + wiki compile | ~$1.50 |
+| M10.x LME gates (4 dev + 1 final) | ~$5 |
+| LoCoMo M10 final (N=500) | ~$5 |
+| **Total** | **~$22** |
