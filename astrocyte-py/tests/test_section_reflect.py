@@ -27,6 +27,7 @@ import pytest
 from astrocyte.pipeline.section_reflect import (
     cited_ids_to_line_nums,
     format_section_memory_id,
+    make_list_entities_fn,
     make_section_expand_fn,
     make_section_recall_fn,
     parse_section_memory_id,
@@ -285,3 +286,63 @@ class TestMakeSectionExpandFn:
         )
         assert await expand_fn("garbage-no-colon", 5) == []
         assert await expand_fn("", 5) == []
+
+
+class TestMakeListEntitiesFn:
+    """The PR2.6 ``list_entities`` agentic-reflect tool: bench-side
+    closure factory that scopes ``PageIndexStore.list_distinct_entities``
+    to one document. The agent calls it with ``(pattern, limit)``;
+    document_id is bound at factory time."""
+
+    @pytest.mark.asyncio
+    async def test_returns_callable_with_pattern_filter_shape(
+        self, populated_store,
+    ):
+        """The factory binds bank_id + document_id and exposes a
+        ``(pattern, limit) -> [(name, count)]`` callable."""
+        from astrocyte.types import PageIndexSectionEntity
+
+        store, doc_id = populated_store
+        # Seed 3 distinct entities with different mention counts so the
+        # factory's output ordering (count desc, name asc) is testable.
+        await store.save_section_entities([
+            PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Alice"),
+            PageIndexSectionEntity(document_id=doc_id, line_num=2, entity_name="Alice"),
+            PageIndexSectionEntity(document_id=doc_id, line_num=3, entity_name="Alice"),
+            PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Bob"),
+            PageIndexSectionEntity(document_id=doc_id, line_num=2, entity_name="Bob"),
+            PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Carol"),
+        ])
+
+        list_entities_fn = make_list_entities_fn(
+            store=store, bank_id="b1", document_id=doc_id,
+        )
+        # No pattern → top-N entities by mention count.
+        results = await list_entities_fn(None, 10)
+        names = [name for name, _count in results]
+        # Alice (3) > Bob (2) > Carol (1) — count desc, name asc.
+        assert names[0] == "Alice"
+        assert names[1] == "Bob"
+        assert names[2] == "Carol"
+
+        # Pattern filter ("ali") → only Alice (case-insensitive).
+        results = await list_entities_fn("ali", 10)
+        assert [name for name, _count in results] == ["Alice"]
+
+    @pytest.mark.asyncio
+    async def test_failure_returns_empty_not_raise(self):
+        """If the underlying store raises, the closure must return []
+        so the agentic loop degrades gracefully — same convention as
+        make_section_recall_fn / make_section_expand_fn."""
+
+        class BrokenStore:
+            async def list_distinct_entities(self, *a, **kw):
+                raise RuntimeError("synthetic list_distinct_entities failure")
+
+        list_entities_fn = make_list_entities_fn(
+            store=BrokenStore(),  # type: ignore[arg-type]
+            bank_id="b1",
+            document_id="doc-1",
+        )
+        assert await list_entities_fn("anything", 10) == []
+        assert await list_entities_fn(None, 10) == []

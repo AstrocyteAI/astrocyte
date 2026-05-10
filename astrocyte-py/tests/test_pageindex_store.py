@@ -522,3 +522,131 @@ class TestBuildOrLoadTreeWithStore:
 
         assert collect_line_nums(fake_tree["structure"]) == collect_line_nums(rebuilt)
         assert loaded_doc.md_text == "md body"
+
+
+# ── Tests: list_distinct_entities (PR2.6 / agentic counting tool) ──────
+
+
+class TestInMemoryListDistinctEntities:
+    """``PageIndexStore.list_distinct_entities`` SPI conformance.
+
+    Pinned behaviours (mirror the Postgres adapter's ILIKE semantics):
+    - ``pattern=None`` → top-N entities by mention count (count desc, name asc)
+    - ``pattern="alice"`` → case-insensitive substring match
+    - ``pattern="%kit%"`` → ``%`` is stripped (the field is a substring,
+      not a SQL wildcard at the SPI surface — Postgres handles ILIKE
+      wildcards on its side; the in-memory adapter mirrors the same
+      shape so callers see consistent results across both backends)
+    - distinct ``(line_num, entity_name)`` collapses duplicate mentions
+    - empty document → empty result
+    - ``limit`` caps output
+    - cross-document isolation: only entities for ``document_id`` count
+    """
+
+    @pytest.fixture
+    async def populated(self):
+        store = InMemoryPageIndexStore()
+        doc1 = await store.save_document(PageIndexDocument(
+            id="", bank_id="b1", source_id="conv-1",
+            md_text="x", reference_date=None,
+            built_at=datetime.now(tz=timezone.utc),
+        ))
+        doc2 = await store.save_document(PageIndexDocument(
+            id="", bank_id="b1", source_id="conv-2",
+            md_text="x", reference_date=None,
+            built_at=datetime.now(tz=timezone.utc),
+        ))
+        # Sections must exist before save_section_entities (FK to (doc, line)).
+        for doc_id in (doc1, doc2):
+            await store.save_sections(doc_id, [
+                PageIndexSection(
+                    document_id=doc_id, line_num=ln, node_id=f"{ln:04d}",
+                    title=f"S{ln}", depth=1,
+                )
+                for ln in (1, 2, 3)
+            ])
+        # Doc 1: Alice ×3, Bob ×2, Carol ×1.
+        await store.save_section_entities([
+            PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Alice"),
+            PageIndexSectionEntity(document_id=doc1, line_num=2, entity_name="Alice"),
+            PageIndexSectionEntity(document_id=doc1, line_num=3, entity_name="Alice"),
+            PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Bob"),
+            PageIndexSectionEntity(document_id=doc1, line_num=2, entity_name="Bob"),
+            PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Carol"),
+        ])
+        # Doc 2: Dave ×1 (must NOT leak into doc 1's results).
+        await store.save_section_entities([
+            PageIndexSectionEntity(document_id=doc2, line_num=1, entity_name="Dave"),
+        ])
+        return store, doc1, doc2
+
+    @pytest.mark.asyncio
+    async def test_no_pattern_returns_top_by_count_desc(self, populated):
+        store, doc1, _ = populated
+        result = await store.list_distinct_entities("b1", doc1)
+        # Count desc: Alice (3), Bob (2), Carol (1).
+        assert result == [("Alice", 3), ("Bob", 2), ("Carol", 1)]
+
+    @pytest.mark.asyncio
+    async def test_pattern_filter_case_insensitive(self, populated):
+        store, doc1, _ = populated
+        # "ALI" matches "Alice" regardless of case.
+        result_upper = await store.list_distinct_entities("b1", doc1, pattern="ALI")
+        result_lower = await store.list_distinct_entities("b1", doc1, pattern="ali")
+        assert result_upper == [("Alice", 3)]
+        assert result_lower == [("Alice", 3)]
+
+    @pytest.mark.asyncio
+    async def test_percent_wildcards_stripped_to_substring(self, populated):
+        """``%bo%`` is treated as substring 'bo' — % is stripped to
+        match the Postgres ILIKE shape at the in-memory layer."""
+        store, doc1, _ = populated
+        result = await store.list_distinct_entities("b1", doc1, pattern="%bo%")
+        assert result == [("Bob", 2)]
+
+    @pytest.mark.asyncio
+    async def test_distinct_per_section_collapses_duplicates(self, populated):
+        """If the same (line_num, entity_name) is inserted twice, the
+        count reflects DISTINCT sections — matches the Postgres
+        composite PK (document_id, line_num, entity_name)."""
+        store, doc1, _ = populated
+        # Re-insert Alice@line=1; must NOT bump the count.
+        await store.save_section_entities([
+            PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Alice"),
+        ])
+        result = await store.list_distinct_entities("b1", doc1, pattern="alice")
+        assert result == [("Alice", 3)]  # still 3, not 4
+
+    @pytest.mark.asyncio
+    async def test_cross_document_isolation(self, populated):
+        """Entities in doc2 must not appear in doc1's results."""
+        store, doc1, doc2 = populated
+        result_doc1 = await store.list_distinct_entities("b1", doc1)
+        assert "Dave" not in {name for name, _ in result_doc1}
+        # Reverse direction: doc2 should ONLY contain Dave.
+        result_doc2 = await store.list_distinct_entities("b1", doc2)
+        assert result_doc2 == [("Dave", 1)]
+
+    @pytest.mark.asyncio
+    async def test_limit_caps_output(self, populated):
+        store, doc1, _ = populated
+        result = await store.list_distinct_entities("b1", doc1, limit=2)
+        # Keeps the top 2 by count.
+        assert [name for name, _ in result] == ["Alice", "Bob"]
+
+    @pytest.mark.asyncio
+    async def test_empty_document_returns_empty(self):
+        store = InMemoryPageIndexStore()
+        empty_doc = await store.save_document(PageIndexDocument(
+            id="", bank_id="b1", source_id="empty",
+            md_text="", reference_date=None,
+            built_at=datetime.now(tz=timezone.utc),
+        ))
+        result = await store.list_distinct_entities("b1", empty_doc)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_no_match_returns_empty(self, populated):
+        store, doc1, _ = populated
+        result = await store.list_distinct_entities("b1", doc1, pattern="zzz-no-such")
+        assert result == []
