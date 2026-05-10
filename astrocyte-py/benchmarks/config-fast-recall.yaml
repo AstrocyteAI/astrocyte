@@ -31,7 +31,6 @@ document_store_config:
   embedding_dimensions: 1536
   bootstrap_schema: false
 
-graph_store: age
 
 entity_resolution:
   enabled: true

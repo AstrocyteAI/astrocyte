@@ -21,7 +21,6 @@ vector_store_config:
   embedding_dimensions: 1536
   bootstrap_schema: false
 
-graph_store: age
 
 wiki_store: postgres
 wiki_store_config:
