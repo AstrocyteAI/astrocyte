@@ -13,7 +13,9 @@ def test_reference_stack_config_parses_wiki_compile_and_entity_resolution() -> N
         {
             "provider_tier": "storage",
             "vector_store": "postgres",
-            "graph_store": "age",
+            # graph_store: age was removed in M9 (ADR-008). Tier-2 ships
+            # entity/link tables as part of the Postgres adapter; no
+            # separate graph_store value is needed.
             "wiki_store": "postgres",
             "wiki_compile": {
                 "enabled": True,

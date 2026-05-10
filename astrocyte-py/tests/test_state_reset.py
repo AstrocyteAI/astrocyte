@@ -36,14 +36,35 @@ class TestTableList:
             assert t in _BENCH_TABLES, f"missing {t}"
 
     def test_includes_entity_layer(self) -> None:
+        # M9 / ADR-008: astrocyte_age_mem_entity removed with AGE.
         for t in (
             "astrocyte_entities",
             "astrocyte_entity_aliases",
             "astrocyte_entity_links",
             "astrocyte_memory_entities",
-            "astrocyte_age_mem_entity",
         ):
             assert t in _BENCH_TABLES, f"missing {t}"
+
+    def test_includes_tier2_tables(self) -> None:
+        # M9: PageIndex tree + section graph tables must be wiped between runs.
+        for t in (
+            "astrocyte_pi_documents",
+            "astrocyte_pi_sections",
+            "astrocyte_pi_section_entities",
+            "astrocyte_pi_section_links",
+            "astrocyte_pi_wiki_provenance",
+            "astrocyte_pi_wiki_contradictions",
+            "astrocyte_unit_entities",
+            "astrocyte_unit_links",
+        ):
+            assert t in _BENCH_TABLES, f"missing {t}"
+
+    def test_excludes_age_tables(self) -> None:
+        # M9 / ADR-008: AGE removed entirely; no AGE-managed tables remain.
+        for t in _BENCH_TABLES:
+            assert "_age_" not in t and not t.startswith("ag_"), (
+                f"AGE table {t!r} should not be in _BENCH_TABLES post-M9"
+            )
 
     def test_includes_temporal_facts(self) -> None:
         assert "astrocyte_temporal_facts" in _BENCH_TABLES

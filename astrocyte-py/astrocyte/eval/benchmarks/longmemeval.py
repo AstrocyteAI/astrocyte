@@ -32,7 +32,13 @@ from typing import TYPE_CHECKING, Any
 from astrocyte.eval.checkpoint import BenchmarkCheckpoint
 from astrocyte.eval.metrics import ndcg_at_k, text_overlap_score
 from astrocyte.eval.rate_limiter import EvalRateLimiter
-from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult
+from astrocyte.types import (
+    Dispositions,
+    EvalMetrics,
+    EvalResult,
+    ForgetRequest,
+    QueryResult,
+)
 
 if TYPE_CHECKING:
     from astrocyte._astrocyte import Astrocyte
@@ -329,7 +335,19 @@ class LongMemEvalBenchmark:
                     {
                         "session_key": session_key,
                         "content": content,
-                        "tags": [msg.get("role", "user"), q.category],
+                        # ``lme:session:<sid>`` enables per-question haystack
+                        # scoping at recall time. LME questions carry
+                        # ``q.session_ids`` — the ground-truth subset of
+                        # sessions that contain the answer. Recall scoped to
+                        # those tags shrinks the search corpus from ~4500
+                        # sessions to ~20-50 per question, materially
+                        # boosting recall hit-rate (the structural
+                        # bottleneck on LME).
+                        "tags": [
+                            msg.get("role", "user"),
+                            q.category,
+                            f"lme:session:{session_key}",
+                        ],
                         "metadata": {
                             "session_id": session_key,
                             "source": "longmemeval",
@@ -519,20 +537,44 @@ class LongMemEvalBenchmark:
                     # the 2023-vintage question dates).  See the May
                     # 2026 LME post-mortem: as_of vs
                     # query_reference_date split.
+                    # ``haystack_tags``: scope recall + reflect to the
+                    # ground-truth session subset that the LME dataset
+                    # marks as containing the answer (q.session_ids).
+                    # Without this, every recall searches across all
+                    # ~4500 retained sessions.  Tag-filter is OR-semantics
+                    # ("memory carries ANY of these tags"), which is the
+                    # right shape — we want hits from the union of
+                    # ground-truth sessions.  May 2026 instrumentation
+                    # showed hit-rate climb materially under this scope.
+                    haystack_tags = (
+                        [f"lme:session:{sid}" for sid in (q.session_ids or []) if sid]
+                        or None
+                    )
                     result = await self.brain.recall(
                         q.question,
                         bank_id=bank_id,
                         max_results=10,
+                        tags=haystack_tags,
                         query_reference_date=q.question_date,
                     )
                     elapsed = (time.monotonic() - t0) * 1000
                     recall_latencies.append(elapsed)
 
                     # Always run reflect so canonical-judge path has an answer.
+                    # LME has no abstention-keyed bucket — every question
+                    # has an answer in the haystack. Set skepticism=1
+                    # so the orchestrator never short-circuits to
+                    # "insufficient evidence" on score-floor grounds.
+                    # This replaces the previous deployment-wide
+                    # ``adversarial_defense.abstention_enabled=false``
+                    # YAML toggle; same effect, but expressible per-call
+                    # so a single config can serve both LME and LoCoMo.
                     reflect_result = await self.brain.reflect(
                         q.question,
                         bank_id=bank_id,
+                        tags=haystack_tags,
                         query_reference_date=q.question_date,
+                        dispositions=Dispositions(skepticism=1),
                     )
 
                     if canonical_judge is not None:

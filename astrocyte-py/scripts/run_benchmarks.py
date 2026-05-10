@@ -1156,6 +1156,24 @@ async def main() -> None:
     with open(latest, "w") as f:
         json.dump(all_results, f, indent=2, default=str)
 
+    # Post-run hook: archive to R2 if credentials are present.
+    # Opt-out via BENCH_ARCHIVE_DISABLE=1. Failures log a warning but do
+    # not fail the bench run — the local benchmark-results/ copy is the
+    # authoritative fallback.
+    if os.environ.get("BENCH_ARCHIVE_DISABLE") != "1":
+        try:
+            from scripts._r2_client import env_is_configured  # type: ignore
+            from scripts.archive_bench_results import archive_files  # type: ignore
+            if env_is_configured():
+                stage = os.environ.get("BENCH_ARCHIVE_STAGE", "local-ad-hoc")
+                n = await archive_files([output_file], stage=stage)
+                print(f"  Archived {n} bench-payload(s) to R2 (stage={stage})")
+            else:
+                print("  R2 archive skipped: R2_* env vars not set "
+                      "(set them via Doppler or BENCH_ARCHIVE_DISABLE=1 to silence)")
+        except Exception as exc:
+            print(f"  WARNING: R2 archive failed: {exc}", file=sys.stderr)
+
     await brain.stop_background_tasks()
     await _stop_benchmark_task_worker(benchmark_task_worker)
 

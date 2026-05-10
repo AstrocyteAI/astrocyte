@@ -42,12 +42,22 @@ _BENCH_TABLES: tuple[str, ...] = (
     "astrocyte_wiki_links",
     "astrocyte_wiki_revisions",
     "astrocyte_wiki_pages",
-    # Entity layer (cross-store: same tables shared by postgres + AGE)
+    # Entity layer
+    # (M9 / ADR-008: astrocyte_age_mem_entity removed with AGE.)
     "astrocyte_memory_entities",
-    "astrocyte_age_mem_entity",
     "astrocyte_entity_links",
     "astrocyte_entity_aliases",
     "astrocyte_entities",
+    # Tier-2 recall (M9): PageIndex tree + section graph
+    "astrocyte_pi_wiki_provenance",
+    "astrocyte_pi_wiki_contradictions",
+    "astrocyte_pi_section_links",
+    "astrocyte_pi_section_entities",
+    "astrocyte_pi_sections",
+    "astrocyte_pi_documents",
+    # Tier-1 graph (M9): unit-grain Hindsight-style flat tables
+    "astrocyte_unit_links",
+    "astrocyte_unit_entities",
     # Temporal facts
     "astrocyte_temporal_facts",
     # Core vectors + bank metadata
@@ -65,7 +75,7 @@ _BENCH_TABLES: tuple[str, ...] = (
 async def reset_benchmark_state(
     *,
     dsn: str | None = None,
-    reset_age_graph: bool = True,
+    reset_age_graph: bool = False,  # M9 / ADR-008: AGE removed; param kept for API back-compat (no-op).
     age_graph_name: str = "astrocyte",
     extra_tables: Iterable[str] = (),
 ) -> None:
@@ -78,9 +88,13 @@ async def reset_benchmark_state(
     Args:
         dsn: Postgres DSN.  Defaults to ``DATABASE_URL`` env var.  When
             unset, the helper is a no-op (in-memory test provider path).
-        reset_age_graph: When ``True`` (default), drop + recreate the AGE
-            graph.  Silently skipped when AGE functions are not installed.
-        age_graph_name: AGE graph name; matches ``002_graph.sql`` migration.
+        reset_age_graph: DEPRECATED — Apache AGE was removed in M9 (ADR-008).
+            Param kept for API back-compat; the AGE drop/recreate path is
+            now a no-op even when ``True``. Will be removed in a future
+            release. Tier-2 graph state is just rows in ``section_links`` /
+            ``section_entities`` / ``unit_links`` / ``unit_entities`` and
+            is wiped by the table-truncate loop above.
+        age_graph_name: DEPRECATED — see ``reset_age_graph``.
         extra_tables: Additional tables to truncate (e.g. project-specific
             extensions registered outside the canonical adapter set).
     """
@@ -112,29 +126,12 @@ async def reset_benchmark_state(
             except Exception as exc:  # noqa: BLE001 - best-effort cleanup
                 skipped.append((table, f"{type(exc).__name__}: {exc!s}"[:120]))
 
-        if reset_age_graph:
-            try:
-                async with conn.cursor() as cur:
-                    # AGE functions live in the ag_catalog schema.  Use
-                    # fully-qualified names so we don't depend on
-                    # search_path being set on this admin connection.
-                    await cur.execute("LOAD 'age'")
-                    await cur.execute(
-                        "SELECT ag_catalog.drop_graph(%s, true)",
-                        [age_graph_name],
-                    )
-                    await cur.execute(
-                        "SELECT ag_catalog.create_graph(%s)",
-                        [age_graph_name],
-                    )
-                truncated.append(f"AGE graph '{age_graph_name}'")
-            except psycopg.errors.UndefinedFile:
-                # ``LOAD 'age'`` failed: AGE not installed.
-                skipped.append(("AGE graph", "AGE extension not installed"))
-            except psycopg.errors.UndefinedFunction:
-                skipped.append(("AGE graph", "AGE functions not in ag_catalog"))
-            except Exception as exc:  # noqa: BLE001 - best-effort cleanup
-                skipped.append((f"AGE graph '{age_graph_name}'", f"{type(exc).__name__}: {exc!s}"[:120]))
+        # M9 / ADR-008: AGE removal — the AGE drop/recreate block was here.
+        # Tier-2 graph state lives in flat tables (section_links/entities,
+        # unit_links/entities) which the truncate loop above already wipes.
+        # ``reset_age_graph`` and ``age_graph_name`` are accepted for API
+        # back-compat but no longer have any effect.
+        del reset_age_graph, age_graph_name  # silence unused-param lint
 
     logger.info(
         "reset_benchmark_state: truncated=%d skipped=%d",

@@ -36,7 +36,13 @@ from astrocyte.eval.metrics_collector import BenchmarkMetricsCollector
 from astrocyte.eval.rate_limiter import EvalRateLimiter
 from astrocyte.pipeline.tasks import COMPILE_PERSONA_PAGE, MemoryTask
 from astrocyte.pipeline.temporal import temporal_metadata
-from astrocyte.types import EvalMetrics, EvalResult, ForgetRequest, QueryResult, RetainRequest
+from astrocyte.types import (
+    EvalMetrics,
+    EvalResult,
+    ForgetRequest,
+    QueryResult,
+    RetainRequest,
+)
 
 # Minimum text overlap score to consider an answer correct.
 # Tuned empirically: 0.3 balances recall (catching paraphrases) against
@@ -1037,10 +1043,25 @@ class LoComoBenchmark:
                     recall_latencies.append(elapsed)
                     metrics_collector.record_recall_latency(elapsed)
 
-                    # Synthesis path — always run reflect so we have the model's
-                    # answer to score. Same tag scope as recall above.
+                    # Synthesis path — always run reflect so we have the
+                    # model's answer to score. Same tag scope as recall
+                    # above. We deliberately do NOT pass per-call
+                    # dispositions here: the v0.13.0 LoCoMo baseline
+                    # (config-fast-recall.yaml, 83.28%) ran with the
+                    # legacy ``adversarial_defense.abstention_enabled=true``
+                    # + ``abstention_floor=0.2`` path. Passing
+                    # ``Dispositions(skepticism=5)`` (Option-X 2026-05-06)
+                    # overrode that to an effective floor of 0.4 — too
+                    # aggressive, blocked legitimate single-hop and
+                    # multi-step retrievals. The bench leaves abstention
+                    # to config; per-call dispositions remain available
+                    # to production callers via the public reflect API.
                     reflect_t0 = time.monotonic()
-                    reflect_result = await self.brain.reflect(q.question, bank_id=bank_id, tags=convo_tags)
+                    reflect_result = await self.brain.reflect(
+                        q.question,
+                        bank_id=bank_id,
+                        tags=convo_tags,
+                    )
                     reflect_elapsed = (time.monotonic() - reflect_t0) * 1000
                     reflect_latencies.append(reflect_elapsed)
                     metrics_collector.record_reflect_latency(reflect_elapsed)
