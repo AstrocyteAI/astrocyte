@@ -24,8 +24,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import gzip
-import io
-import json
 import sys
 from pathlib import Path
 

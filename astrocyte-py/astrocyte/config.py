@@ -347,7 +347,13 @@ class StructuredFactExtractionConfig:
     """
 
     enabled: bool = False
-    extraction_mode: str = "verbatim"  # "verbatim" | "concise"
+    #: Only ``"verbatim"`` is supported; the ``"concise"`` mode was removed
+    #: in M9 because it caused severe recall_hit_rate degradation (the
+    #: 2026-05-02 finding — LLM-paraphrased ``what`` fields lost the
+    #: surface vocabulary that question embeddings share). The field is
+    #: kept so existing configs parse, but ``validate_astrocyte_config``
+    #: raises ``ConfigError`` if any other value is set.
+    extraction_mode: str = "verbatim"
     max_facts_per_call: int = 30
     #: Chunking strategy used by verbatim mode to pre-chunk the
     #: source text before LLM enrichment. SFE has different
@@ -1370,6 +1376,20 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
             "line from your config, then rebuild any AGE-backed banks from "
             "raw memory_units. See docs/_design/adr/adr-008-section-graph-"
             "replaces-age.md for rationale and the rebuild command."
+        )
+
+    # M9: ``extraction_mode: concise`` was removed. The legacy concise path
+    # paraphrased chunk text, which lost the surface vocabulary question
+    # embeddings rely on; recall_hit_rate dropped sharply (2026-05-02
+    # finding). Verbatim is now the only supported mode.
+    sfe_mode = (config.structured_fact_extraction.extraction_mode or "verbatim").strip().lower()
+    if sfe_mode != "verbatim":
+        raise ConfigError(
+            f"structured_fact_extraction.extraction_mode={sfe_mode!r} is not "
+            "supported. The 'concise' path was removed in M9 (it caused severe "
+            "recall_hit_rate degradation — see the 2026-05-02 finding). Drop "
+            "the extraction_mode line entirely (verbatim is the default), or "
+            "set extraction_mode: verbatim explicitly."
         )
 
     if config.sources:

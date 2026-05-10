@@ -697,63 +697,59 @@ class PipelineOrchestrator:
             return None, None, None, None
 
         try:
+            # Pre-chunk using the SAME strategy the legacy retain path
+            # would use (resolved from the extraction profile), then ask
+            # the LLM to enrich each chunk with metadata WITHOUT
+            # paraphrasing. Stored memory text = original chunk
+            # vocabulary at the granularity the profile specifies
+            # (e.g. dialogue turns for conversations, paragraphs for
+            # documents).
+            #
+            # The legacy "concise" path (``extract_facts``) was removed
+            # in M9 — it caused severe recall_hit_rate degradation
+            # because the LLM-paraphrased ``what`` field lost the
+            # surface vocabulary that question embeddings share. Verbatim
+            # is now the only supported mode; ``validate_astrocyte_config``
+            # rejects ``extraction_mode: concise`` at config load.
+            #
+            # Open-domain regression observed on 2026-05-02 traced to
+            # hardcoded "paragraph" strategy producing one giant chunk
+            # per LoCoMo session (no paragraph breaks in dialogue text).
+            # Profile-driven strategy fixes that.
+            from astrocyte.pipeline.chunking import chunk_text
             from astrocyte.pipeline.fact_extraction import (
-                extract_facts,
                 extract_facts_verbatim,
                 extract_facts_verbatim_parallel,
                 materialize_facts,
             )
 
-            verbatim = (self.structured_fact_extraction_mode or "verbatim") == "verbatim"
-            if verbatim:
-                # Pre-chunk using the SAME strategy the legacy retain
-                # path would use (resolved from the extraction profile),
-                # then ask the LLM to enrich each chunk with metadata
-                # WITHOUT paraphrasing. Stored memory text = original
-                # chunk vocabulary at the granularity the profile
-                # specifies (e.g. dialogue turns for conversations,
-                # paragraphs for documents).
-                #
-                # Open-domain regression observed on 2026-05-02 traced
-                # to hardcoded "paragraph" strategy producing one giant
-                # chunk per LoCoMo session (no paragraph breaks in
-                # dialogue text). Profile-driven strategy fixes that.
-                from astrocyte.pipeline.chunking import chunk_text
-
-                pre_chunk_kwargs: dict[str, int] = {}
-                if chunk_max_size is not None:
-                    pre_chunk_kwargs["max_chunk_size"] = chunk_max_size
-                if chunk_overlap is not None:
-                    pre_chunk_kwargs["overlap"] = chunk_overlap
-                chunks_local = chunk_text(
-                    prepared.text,
-                    strategy=chunk_strategy,
-                    **pre_chunk_kwargs,
-                )
-                # Phase 3: route to the per-chunk parallel path when
-                # opt-in. Drops cross-chunk causal_relations — pair
-                # with ``causal_links.enabled=false``.
-                if self.structured_fact_extraction_parallel_chunks:
-                    facts = await extract_facts_verbatim_parallel(
-                        chunks_local,
-                        self.llm_provider,
-                        event_date=request.occurred_at,
-                        max_concurrency=(
-                            self.structured_fact_extraction_parallel_chunks_max_concurrency
-                        ),
-                    )
-                else:
-                    facts = await extract_facts_verbatim(
-                        chunks_local,
-                        self.llm_provider,
-                        event_date=request.occurred_at,
-                    )
-            else:
-                facts = await extract_facts(
-                    prepared.text,
+            pre_chunk_kwargs: dict[str, int] = {}
+            if chunk_max_size is not None:
+                pre_chunk_kwargs["max_chunk_size"] = chunk_max_size
+            if chunk_overlap is not None:
+                pre_chunk_kwargs["overlap"] = chunk_overlap
+            chunks_local = chunk_text(
+                prepared.text,
+                strategy=chunk_strategy,
+                **pre_chunk_kwargs,
+            )
+            # Phase 3: route to the per-chunk parallel path when opt-in.
+            # Drops cross-chunk causal_relations — pair with
+            # ``causal_links.enabled=false``.
+            if self.structured_fact_extraction_parallel_chunks:
+                facts = await extract_facts_verbatim_parallel(
+                    chunks_local,
                     self.llm_provider,
                     event_date=request.occurred_at,
-                    max_facts=self.structured_fact_extraction_max_facts,
+                    max_concurrency=(
+                        self.structured_fact_extraction_parallel_chunks_max_concurrency
+                    ),
+                )
+            else:
+                facts = await extract_facts_verbatim(
+                    chunks_local,
+                    self.llm_provider,
+                    event_date=request.occurred_at,
                 )
         except Exception as exc:
             _logger.warning(
@@ -771,7 +767,7 @@ class PipelineOrchestrator:
             facts,
             bank_id=request.bank_id,
             occurred_at=request.occurred_at,
-            verbatim=verbatim,  # propagate so VectorItem.text uses raw chunk
+            verbatim=True,  # concise path was removed in M9 — always verbatim
         )
         fact_texts = [item.text for item in materialized.vector_items]
         entities = list(materialized.entities)

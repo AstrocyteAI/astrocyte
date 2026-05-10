@@ -2,10 +2,12 @@
 
 Two layers:
 
-1. ``extract_facts`` — LLM-driven structured extraction. Tests use a
-   scripted MockLLM with canned JSON responses to verify parsing,
-   field defaults, type validation, entity dedup, and causal-relation
-   parsing.
+1. ``extract_facts_verbatim`` — LLM-driven per-chunk metadata
+   extraction. Tests use a scripted MockLLM with canned JSON
+   responses to verify parsing, field defaults, type validation,
+   entity dedup, and causal-relation parsing. (The concise
+   ``extract_facts`` path was removed in M9 — see commit message
+   and ADR notes.)
 
 2. ``materialize_facts`` — pure-Python conversion of ExtractedFact
    list into VectorItems + Entities + MemoryLinks. Tests verify
@@ -23,7 +25,6 @@ from astrocyte.pipeline.fact_extraction import (
     ExtractedFact,
     FactCausalRelation,
     FactEntity,
-    extract_facts,
     extract_facts_verbatim,
     materialize_facts,
 )
@@ -60,157 +61,22 @@ class _ScriptedLLM(MockLLMProvider):
 
 
 # ---------------------------------------------------------------------------
-# extract_facts — parsing + field handling
+# extract_facts (legacy concise path) — REMOVED in M9.
+#
+# The TestExtractFacts class lived here. The legacy path caused severe
+# recall_hit_rate degradation (2026-05-02 finding) because LLM-paraphrased
+# chunk text lost the surface vocabulary that question embeddings rely on.
+# Verbatim is now the only supported extraction mode; config validation
+# rejects extraction_mode: concise with a pointer to this rationale.
+#
+# Coverage of the JSON parsing / field handling that TestExtractFacts
+# exercised is now provided by TestExtractFactsVerbatim below — both
+# paths share _parse_json_object / _parse_iso_datetime.
 # ---------------------------------------------------------------------------
 
 
-class TestExtractFacts:
-    @pytest.mark.asyncio
-    async def test_parses_full_5_dimension_fact(self):
-        """A complete fact with all 5 dimensions + entities + causal."""
-        llm = _ScriptedLLM(
-            '{"facts": [{'
-            '"what": "Alice joined Google",'
-            '"when": "last spring",'
-            '"where": "Mountain View",'
-            '"who": "Alice (subject)",'
-            '"why": "research opportunities",'
-            '"fact_type": "world",'
-            '"occurred_start": "2024-04-01T00:00:00Z",'
-            '"occurred_end": null,'
-            '"entities": [{"name": "Alice", "entity_type": "PERSON"},'
-            '             {"name": "Google", "entity_type": "ORG"}],'
-            '"causal_relations": [{"target_fact_index": 1, "strength": 0.9}]'
-            '}]}'
-        )
-
-        facts = await extract_facts("source text", llm)
-
-        assert len(facts) == 1
-        f = facts[0]
-        assert f.what == "Alice joined Google"
-        assert f.when == "last spring"
-        assert f.where == "Mountain View"
-        assert f.who == "Alice (subject)"
-        assert f.why == "research opportunities"
-        assert f.fact_type == "world"
-        assert f.occurred_start == datetime(2024, 4, 1, tzinfo=UTC)
-        assert f.occurred_end is None
-        assert len(f.entities) == 2
-        assert f.entities[0].name == "Alice"
-        assert f.entities[0].entity_type == "PERSON"
-        assert len(f.causal_relations) == 1
-        assert f.causal_relations[0].target_fact_index == 1
-        assert f.causal_relations[0].strength == 0.9
-
-    @pytest.mark.asyncio
-    async def test_missing_what_drops_fact(self):
-        """``what`` is required — facts without it are silently dropped."""
-        llm = _ScriptedLLM(
-            '{"facts": ['
-            '{"when": "today"},'  # no what → drop
-            '{"what": "Bob ran a marathon"}'
-            ']}'
-        )
-
-        facts = await extract_facts("source", llm)
-
-        assert len(facts) == 1
-        assert facts[0].what == "Bob ran a marathon"
-
-    @pytest.mark.asyncio
-    async def test_defaults_for_missing_dimensions(self):
-        """Missing dimensions default to "N/A"; missing fact_type
-        defaults to "experience"."""
-        llm = _ScriptedLLM('{"facts": [{"what": "Alice likes Python"}]}')
-
-        facts = await extract_facts("text", llm)
-
-        assert facts[0].when == "N/A"
-        assert facts[0].where == "N/A"
-        assert facts[0].who == "N/A"
-        assert facts[0].why == "N/A"
-        assert facts[0].fact_type == "experience"
-        assert facts[0].entities == []
-        assert facts[0].causal_relations == []
-
-    @pytest.mark.asyncio
-    async def test_invalid_fact_type_normalizes_to_experience(self):
-        """Unknown fact_type strings fall back to "experience"."""
-        llm = _ScriptedLLM(
-            '{"facts": [{"what": "X", "fact_type": "garbage"}]}'
-        )
-
-        facts = await extract_facts("text", llm)
-
-        assert facts[0].fact_type == "experience"
-
-    @pytest.mark.asyncio
-    async def test_max_facts_caps_output(self):
-        """``max_facts`` enforces a hard cap on returned facts."""
-        big = '{"facts": [' + ",".join(
-            f'{{"what": "fact {i}"}}' for i in range(50)
-        ) + "]}"
-        llm = _ScriptedLLM(big)
-
-        facts = await extract_facts("text", llm, max_facts=5)
-
-        assert len(facts) == 5
-
-    @pytest.mark.asyncio
-    async def test_malformed_json_returns_empty(self):
-        llm = _ScriptedLLM("not JSON")
-        assert await extract_facts("text", llm) == []
-
-    @pytest.mark.asyncio
-    async def test_empty_text_skips_llm(self):
-        llm = _ScriptedLLM("{}")
-        assert await extract_facts("", llm) == []
-        assert llm.call_count == 0
-
-    @pytest.mark.asyncio
-    async def test_event_date_passed_into_user_prompt(self):
-        """When ``event_date`` is supplied, the prompt includes it as a
-        reference for resolving relative time expressions."""
-        llm = _ScriptedLLM('{"facts": []}')
-        ref_date = datetime(2024, 6, 15, tzinfo=UTC)
-
-        await extract_facts("text", llm, event_date=ref_date)
-
-        assert llm.last_user_prompt is not None
-        assert "2024-06-15" in llm.last_user_prompt
-
-    @pytest.mark.asyncio
-    async def test_iso_with_z_suffix_parses(self):
-        """ISO timestamps ending in 'Z' parse correctly (Python 3.11+
-        handles it, but we're explicit)."""
-        llm = _ScriptedLLM(
-            '{"facts": [{"what": "X", "occurred_start": "2024-04-01T00:00:00Z"}]}'
-        )
-        facts = await extract_facts("text", llm)
-        assert facts[0].occurred_start == datetime(2024, 4, 1, tzinfo=UTC)
-
-    @pytest.mark.asyncio
-    async def test_invalid_iso_becomes_none(self):
-        """Garbage timestamps become None instead of raising."""
-        llm = _ScriptedLLM(
-            '{"facts": [{"what": "X", "occurred_start": "not a date"}]}'
-        )
-        facts = await extract_facts("text", llm)
-        assert facts[0].occurred_start is None
-
-    @pytest.mark.asyncio
-    async def test_handles_code_fences(self):
-        """LLM response wrapped in ```json ... ``` is unwrapped."""
-        llm = _ScriptedLLM(
-            '```json\n{"facts": [{"what": "X"}]}\n```'
-        )
-        facts = await extract_facts("text", llm)
-        assert len(facts) == 1
-
-
 # ---------------------------------------------------------------------------
-# materialize_facts — translation to retain artefacts
+# extract_facts_verbatim — chunk text + LLM-derived metadata
 # ---------------------------------------------------------------------------
 
 
@@ -739,6 +605,32 @@ class TestMaterializeFacts:
 
         assert result.vector_items[0].occurred_at == fact_time
         assert result.vector_items[1].occurred_at == default_time
+
+
+class TestSFEConciseModeRejection:
+    """The concise extraction_mode was removed in M9. validate_astrocyte_config
+    must raise ConfigError with a pointer to the migration path."""
+
+    def test_concise_mode_raises_with_migration_hint(self):
+        from astrocyte.config import (
+            AstrocyteConfig,
+            ConfigError,
+            validate_astrocyte_config,
+        )
+
+        cfg = AstrocyteConfig()
+        cfg.structured_fact_extraction.extraction_mode = "concise"
+        with pytest.raises(ConfigError, match="concise"):
+            validate_astrocyte_config(cfg)
+
+    def test_verbatim_mode_passes(self):
+        from astrocyte.config import AstrocyteConfig, validate_astrocyte_config
+
+        cfg = AstrocyteConfig()
+        # Default and explicit should both validate cleanly.
+        validate_astrocyte_config(cfg)
+        cfg.structured_fact_extraction.extraction_mode = "verbatim"
+        validate_astrocyte_config(cfg)
 
 
 class TestSFEConfigWiring:

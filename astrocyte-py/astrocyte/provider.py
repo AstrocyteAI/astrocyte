@@ -561,7 +561,6 @@ class PageIndexStore(Protocol):
         Why this exists: D.7's LLM-based link extraction over-emits on
         LoCoMo and severely under-emits on LME (5 vs 100 links/doc).
         kNN restores dense topical bridging for graph_expand."""
-        ...
 
     # ── PR2 commit B: query methods for the 5 parallel strategies ──
     #

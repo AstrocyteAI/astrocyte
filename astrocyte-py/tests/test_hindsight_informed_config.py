@@ -71,18 +71,6 @@ def test_named_benchmark_presets_parse(monkeypatch) -> None:
             # over-fetch latency penalty.
             "cross_encoder": True,
         },
-        "config-hindsight-parity.yaml": {
-            "sfe": True,
-            "semantic_links": True,
-            "agentic": True,
-            "cross_encoder": True,
-        },
-        "config-hindsight-balanced.yaml": {
-            "sfe": True,
-            "semantic_links": True,
-            "agentic": True,
-            "cross_encoder": True,
-        },
         "config-quality-max.yaml": {
             "sfe": True,
             "semantic_links": True,
@@ -109,7 +97,7 @@ def test_ablation_matrix_references_existing_presets() -> None:
     matrix = json.loads((_BENCHMARKS_DIR / "ablation-matrix.json").read_text())
     scenario_ids = {scenario["id"] for scenario in matrix["scenarios"]}
 
-    assert {"baseline", "fast-recall", "hindsight-parity", "hindsight-balanced", "quality-max"} <= scenario_ids
+    assert {"baseline", "fast-recall", "quality-max"} <= scenario_ids
     for scenario in matrix["scenarios"]:
         assert (_BENCHMARKS_DIR / scenario["config"]).exists()
 
