@@ -335,6 +335,19 @@ class Astrocyte:
         pipeline.structured_fact_extraction_max_facts = sfe_cfg.max_facts_per_call
         pipeline.structured_fact_extraction_mode = sfe_cfg.extraction_mode
         pipeline.structured_fact_extraction_chunk_strategy = sfe_cfg.chunk_strategy
+        pipeline.structured_fact_extraction_chunk_max_size = sfe_cfg.chunk_max_size
+        pipeline.structured_fact_extraction_parallel_chunks = sfe_cfg.parallel_chunks
+        pipeline.structured_fact_extraction_parallel_chunks_max_concurrency = (
+            sfe_cfg.parallel_chunks_max_concurrency
+        )
+
+        # Entity co-occurrence link cap (2026-05-06 retain-profile fix).
+        # The all-pairs Cartesian product was 34% of retain wall on the
+        # LME profile; capping the entity set bounds it to O(K²) per
+        # retain regardless of corpus size.
+        coocc_cfg = self._config.entity_cooccurrence
+        pipeline.entity_cooccurrence_enabled = coocc_cfg.enabled
+        pipeline.entity_cooccurrence_max_entities = coocc_cfg.max_entities_per_memory
 
         # Query analyzer (temporal constraint extraction at recall time).
         qa_cfg = self._config.query_analyzer

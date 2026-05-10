@@ -220,6 +220,18 @@ class AdversarialDefenseConfig:
        ``0.2`` is conservative — only fires when retrieval is genuinely
        disconnected from the question.
 
+       **DEPRECATED:** ``abstention_enabled`` (the bool) is now a
+       fallback for callers that don't pass per-call
+       :class:`~astrocyte.types.Dispositions`. The orchestrator
+       derives the effective abstention floor from
+       ``dispositions.skepticism`` (1=trust→never abstain,
+       5=skeptical→aggressive). Migration path: set the disposition
+       on the bank or per-request instead of toggling this bool. The
+       legacy mapping is ``abstention_enabled=True`` ⇔ skepticism=3,
+       ``abstention_enabled=False`` ⇔ skepticism=1. ``abstention_floor``
+       (the float) remains the BASE that gets scaled by skepticism —
+       see :func:`astrocyte.pipeline.orchestrator._abstention_floor_for_skepticism`.
+
     2. ``premise_verification_enabled`` — pre-loop premise extraction +
        per-claim verification. The question is decomposed into atomic
        claims; each is verified against memory before answering. Adds
@@ -346,6 +358,62 @@ class StructuredFactExtractionConfig:
     #: overall, 8.4 pts on open-domain). Override per workload.
     #: Available: ``"paragraph"``, ``"dialogue"``, ``"sentence"``.
     chunk_strategy: str = "paragraph"
+    #: Per-chunk character budget for verbatim SFE pre-chunking. When
+    #: None, falls through to the orchestrator's default chunk size
+    #: (512 chars for Astrocyte legacy compat). Bumping this reduces
+    #: chunk count per session, which is the dominant retain throughput
+    #: lever — the LLM produces one ``facts[]`` entry per chunk and
+    #: gpt-4o-mini latency is roughly linear in output tokens. 2048 is
+    #: a measured sweet spot for LongMemEval-shaped traffic
+    #: (avg ~12.7 KB per session → ~6 chunks instead of ~25).
+    #:
+    #: This overrides any chunk-size set by extraction profile or MIP
+    #: rules for the SFE path specifically; legacy chunking for non-SFE
+    #: retain is unaffected.
+    chunk_max_size: int | None = None
+    #: Per-chunk parallel verbatim extraction (Phase 3 of cost-control
+    #: port). When ``True``, sends one LLM call per chunk in parallel
+    #: (asyncio.gather with a semaphore), instead of one batched call
+    #: that asks for all N chunks' metadata at once. Drops cross-chunk
+    #: causal_relations — set ``causal_links.enabled: false`` to be
+    #: explicit. Default off so existing deployments are unaffected.
+    parallel_chunks: bool = False
+    #: Max in-flight LLM calls per session when ``parallel_chunks`` is
+    #: True. Should be ≤ avg chunks/session for the workload. 6 is the
+    #: sweet spot for LongMemEval-shaped traffic at chunk_max_size=2048
+    #: (~6 chunks per session).
+    parallel_chunks_max_concurrency: int = 6
+
+
+@dataclass
+class EntityCooccurrenceConfig:
+    """Co-occurrence link creation between entities in the same memory.
+
+    When retain extracts N entities from a single memory, the
+    orchestrator creates ``co_occurs`` ``EntityLink`` rows between
+    them so spreading activation at recall time can hop across these
+    edges (Hindsight parity).
+
+    The all-pairs Cartesian product is **O(N²) per retain**. The
+    2026-05-06 LME profile measured this stage at 34% of total retain
+    wall time, with per-call cost growing as the entity-link table
+    grew (52s tail latency on a single retain at session 100). Capping
+    the number of entities used to form co-occurrence pairs bounds the
+    work to O(K²) per retain regardless of corpus size.
+
+    ``max_entities_per_memory=5`` (default) produces ``C(5,2)=10``
+    links per retain — a 43× reduction vs the unbounded 30-entity
+    sessions LME emits. Top-K entities are selected by their order in
+    the extraction result (typically tracks prominence in the source
+    text). When N ≤ K the cap is a no-op.
+
+    Disable entirely (``enabled=False``) to skip co-occurrence link
+    creation altogether — useful for retain-heavy bench runs where
+    spreading activation isn't the critical recall signal.
+    """
+
+    enabled: bool = True
+    max_entities_per_memory: int = 5
 
 
 @dataclass
@@ -754,6 +822,11 @@ class AstrocyteConfig:
     # when unset, vectors remain anonymous flat rows (backward compatible).
     source_store: str | None = None
     source_store_config: dict[str, str | int | float | bool | None] | None = None
+    # M9 Tier-2 recall — PageIndex tree + section graph. Optional.
+    # When unset, tier-2 recall is disabled and ``recall_strategy: tier2``
+    # raises ConfigError. See docs/_design/tier-2-recall.md.
+    pageindex_store: str | None = None
+    pageindex_store_config: dict[str, str | int | float | bool | None] | None = None
 
     # LLM
     llm_provider: str | None = None
@@ -787,6 +860,7 @@ class AstrocyteConfig:
     cross_encoder_rerank: CrossEncoderRerankConfig = field(default_factory=CrossEncoderRerankConfig)
     spreading_activation: SpreadingActivationConfig = field(default_factory=SpreadingActivationConfig)
     causal_links: CausalLinksConfig = field(default_factory=CausalLinksConfig)
+    entity_cooccurrence: EntityCooccurrenceConfig = field(default_factory=EntityCooccurrenceConfig)
     structured_fact_extraction: StructuredFactExtractionConfig = field(default_factory=StructuredFactExtractionConfig)
     query_analyzer: QueryAnalyzerConfig = field(default_factory=QueryAnalyzerConfig)
     semantic_link_graph: SemanticLinkGraphConfig = field(default_factory=SemanticLinkGraphConfig)
@@ -1134,6 +1208,8 @@ _SCALAR_CONFIG_FIELDS = (
     "mental_model_store_config",
     "source_store",
     "source_store_config",
+    "pageindex_store",
+    "pageindex_store_config",
     "llm_provider",
     "llm_provider_config",
     "embedding_provider",
@@ -1155,6 +1231,7 @@ _SIMPLE_SECTION_MAP: dict[str, type] = {
     "cross_encoder_rerank": CrossEncoderRerankConfig,
     "spreading_activation": SpreadingActivationConfig,
     "causal_links": CausalLinksConfig,
+    "entity_cooccurrence": EntityCooccurrenceConfig,
     "structured_fact_extraction": StructuredFactExtractionConfig,
     "query_analyzer": QueryAnalyzerConfig,
     "semantic_link_graph": SemanticLinkGraphConfig,
@@ -1281,6 +1358,20 @@ def _resolve_agent_bank_ids(
 
 def validate_astrocyte_config(config: AstrocyteConfig) -> None:
     """Cross-field checks for ADR-003 sections (v0.5.0 with M1)."""
+    # M9 / ADR-008: Apache AGE was removed entirely. Existing configs that
+    # still set ``graph_store: age`` must be migrated. There is no migration
+    # tool — operators rebuild banks from raw memory_units. See
+    # docs/_design/adr/adr-008-section-graph-replaces-age.md.
+    if (config.graph_store or "").strip().lower() == "age":
+        raise ConfigError(
+            "graph_store: age was removed in M9. Apache AGE is no longer "
+            "supported; the recall path now uses flat tables + SQL CTEs "
+            "(Hindsight pattern). To upgrade: remove the `graph_store: age` "
+            "line from your config, then rebuild any AGE-backed banks from "
+            "raw memory_units. See docs/_design/adr/adr-008-section-graph-"
+            "replaces-age.md for rationale and the rebuild command."
+        )
+
     if config.sources:
         from astrocyte.pipeline.extraction import merged_extraction_profiles
 

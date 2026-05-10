@@ -14,6 +14,7 @@ ENTRY_POINT_GROUPS = {
     "wiki_stores": "astrocyte.wiki_stores",
     "mental_model_stores": "astrocyte.mental_model_stores",
     "source_stores": "astrocyte.source_stores",
+    "pageindex_stores": "astrocyte.pageindex_stores",  # M9 Tier-2 recall
     "engine_providers": "astrocyte.engine_providers",
     "llm_providers": "astrocyte.llm_providers",
     "outbound_transports": "astrocyte.outbound_transports",
