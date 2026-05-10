@@ -544,6 +544,25 @@ class PageIndexStore(Protocol):
         """Bulk-insert section-link rows. Idempotent on the composite
         primary key. Returns rows written. PR2 commit B/D populates."""
 
+    async def populate_semantic_knn_links(
+        self,
+        document_id: str,
+        *,
+        top_k: int = 5,
+        min_similarity: float = 0.5,
+    ) -> int:
+        """PR2 D.7.1: Populate ``section_links`` with kNN edges over
+        ``summary_embedding``. For each section, link to its top_k
+        most-similar OTHER sections in the same document with
+        ``link_type='semantic_knn'`` and weight = cosine similarity.
+
+        Pure SQL — no LLM call. Idempotent. Returns rows inserted.
+
+        Why this exists: D.7's LLM-based link extraction over-emits on
+        LoCoMo and severely under-emits on LME (5 vs 100 links/doc).
+        kNN restores dense topical bridging for graph_expand."""
+        ...
+
     # ── PR2 commit B: query methods for the 5 parallel strategies ──
     #
     # These are pure read methods that the Tier-2 recall orchestrator
