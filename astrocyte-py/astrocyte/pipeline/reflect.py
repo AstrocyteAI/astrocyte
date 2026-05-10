@@ -13,6 +13,8 @@ from astrocyte.pipeline.query_plan import build_query_plan
 from astrocyte.types import Dispositions, MemoryHit, Message, ReflectResult
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from astrocyte.provider import LLMProvider
 
 
@@ -43,18 +45,25 @@ _DEFAULT_PROMPT = (
 _TEMPORAL_AWARE_PROMPT = (
     "You are a memory synthesis agent answering a question about events over time. "
     "Answer ONLY from what is explicitly stated in the provided memories. "
+    "Each memory carries a date in square brackets in its prefix (e.g. ``[Memory 3] [2023-05-20]``). "
+    "Use those dates as the source of truth for any duration, ordering, or recency reasoning. "
     "If the specific information is not present, respond with: "
     "'This information is not available in my memories.'\n\n"
+    "Workflow for computing answers (apply when the question asks "
+    "'how many days/weeks/months', 'how long ago', 'in what order', "
+    "'before/after', 'first/last', or any duration / ordering / age):\n"
+    "  1. Extract the relevant dates from the memory prefixes.\n"
+    "  2. Show the dates explicitly in your reasoning (e.g. ``Memory 1 = 2023-05-20, Memory 3 = 2023-05-27``).\n"
+    "  3. Compute the answer step-by-step (subtraction, ordering, calendar math).\n"
+    "  4. State the final answer clearly.\n\n"
     "Guidelines:\n"
     "- Treat timestamps as load-bearing: order memories chronologically before answering.\n"
     "- When a question asks about ordering ('before', 'after', 'first', 'last'), justify the answer with the relevant dates.\n"
     "- Distinguish between when an event occurred and when it was recorded.\n"
-    "- Normalize relative temporal phrases against the memory timestamp: 'last week', 'previous Friday', "
-    "'yesterday', 'two weekends ago', and similar phrases should be resolved from the recorded date.\n"
-    "- If the memory says an event happened last week, answer in that relative form when useful "
-    "(for example, 'the week before 9 June 2023') instead of saying it happened on the record date.\n"
+    "- Resolve relative phrases ('yesterday', 'last week', 'two weekends ago') against the memory's prefix date AND the user's reference date if provided in <reference_date>.\n"
+    "- If a relative phrase like 'last week' appears, do the math: 'last week' from a memory dated 2023-06-09 means 2023-06-02 to 2023-06-08.\n"
     "- If timestamps are missing or ambiguous, say so rather than guessing.\n"
-    "- Do not infer a timeline from unrelated clues; only compute dates from explicit temporal phrases and memory timestamps."
+    "- Do not infer a timeline from unrelated clues; only compute from explicit dates."
 )
 
 _EVIDENCE_STRICT_PROMPT = (
@@ -177,11 +186,30 @@ def _format_memories(
         prefix = f"[Memory {i}]"
         if hit.fact_type:
             prefix += f" ({hit.fact_type})"
-        # Prefer occurred_at timestamp; fall back to date_time from metadata
-        if hit.occurred_at:
-            prefix += f" [{hit.occurred_at.isoformat()}]"
-        elif hit.metadata and hit.metadata.get("date_time"):
-            prefix += f" [{hit.metadata['date_time']}]"
+        # Prefer occurred_at; fall back to common metadata date keys.
+        # ``session_date`` covers LongMemEval-style retain (chat
+        # sessions stamped with their conversation date); ``date_time``
+        # covers LoCoMo. Without explicit dates in the prefix, the
+        # synthesis LLM has no anchor to compute durations or order
+        # events when the body text uses relative phrases ("today",
+        # "yesterday"). Dating every memory closed the gap on temporal
+        # questions in the May 2026 LME post-mortem.
+        #
+        # ``ASTROCYTE_LEGACY_MEMORY_FORMAT=1`` env disables the date
+        # prefix entirely — used by the LoCoMo bisection (2026-05-08)
+        # to test whether the date-prefix synthesis fix regressed
+        # LoCoMo accuracy. LoCoMo's ``metadata['date_time']`` is a
+        # SESSION date which may not match the event date a question
+        # asks about, potentially confusing the LLM.
+        import os as _os_local
+        _legacy_format = _os_local.environ.get("ASTROCYTE_LEGACY_MEMORY_FORMAT") == "1"
+        if not _legacy_format:
+            if hit.occurred_at:
+                prefix += f" [{hit.occurred_at.isoformat()}]"
+            elif hit.metadata and hit.metadata.get("date_time"):
+                prefix += f" [{hit.metadata['date_time']}]"
+            elif hit.metadata and hit.metadata.get("session_date"):
+                prefix += f" [{hit.metadata['session_date']}]"
         if hit.metadata and hit.metadata.get("resolved_date"):
             prefix += (
                 f" {{temporal_phrase={hit.metadata.get('temporal_phrase')}, "
@@ -206,6 +234,7 @@ async def synthesize(
     model: str | None = None,
     authority_context: str | None = None,
     mip_reflect: ReflectSpec | None = None,
+    query_reference_date: "datetime | None" = None,
 ) -> ReflectResult:
     """Synthesize an answer from recall hits using LLM.
 
@@ -229,6 +258,20 @@ async def synthesize(
     memories_text = _format_memories(hits, promote_metadata=promote_metadata)
     query_plan = build_query_plan(query)
     user_prompt = f"<memories>\n{memories_text}\n</memories>\n\n<query>\n{query}\n</query>"
+    # ``query_reference_date`` anchors relative phrases ("yesterday",
+    # "X weeks ago") in the question to the question's contemporaneous
+    # date — required when the dataset predates the run wall-clock
+    # (e.g. LongMemEval is 2023-vintage, evaluated in 2026+). Without
+    # this anchor, "yesterday" resolves against the LLM's training
+    # prior of "now", which is wrong by years on bench runs. The
+    # temporal_aware prompt variant explicitly references this block.
+    if query_reference_date is not None:
+        anchor = (
+            query_reference_date.isoformat()
+            if hasattr(query_reference_date, "isoformat")
+            else str(query_reference_date)
+        )
+        user_prompt = f"<reference_date>\n{anchor}\n</reference_date>\n\n" + user_prompt
     if query_plan.guidance:
         user_prompt = (
             f"<query_guidance>\n{query_plan.guidance}\n</query_guidance>\n\n"

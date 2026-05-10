@@ -119,6 +119,7 @@ class OpenAIProvider:
         temperature: float = 0.0,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = None,
+        response_format: dict | None = None,
     ) -> Completion:
         oai_messages = [_to_oai_message(m) for m in messages]
         use_model = model or self._model
@@ -133,6 +134,15 @@ class OpenAIProvider:
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        # Structured outputs (Phase 2 of Hindsight cost-control port).
+        # When set, forwards ``response_format`` straight to the OpenAI
+        # ``chat.completions.create`` call. Eliminates malformed-JSON
+        # failures by constraining the decoder to the supplied schema.
+        # Caller is responsible for the schema shape; we don't validate
+        # it here so any future ``response_format`` variant (json_object,
+        # json_schema, custom) works without an SDK bump.
+        if response_format is not None:
+            kwargs["response_format"] = response_format
         if tools:
             kwargs["tools"] = [
                 {

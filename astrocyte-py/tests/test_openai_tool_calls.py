@@ -194,3 +194,53 @@ class TestToolCallParsing:
 
         assert completion.tool_calls is None
         assert completion.text == "just text"
+
+
+class TestResponseFormatPassthrough:
+    """Phase 2 of cost-control port: ``response_format`` (OpenAI's
+    structured-outputs envelope) is forwarded verbatim to
+    ``chat.completions.create`` so the SFE verbatim path can pin the
+    decoder to its JSON Schema and eliminate malformed-JSON failures.
+    """
+
+    @pytest.mark.asyncio
+    async def test_response_format_forwarded_to_sdk(self):
+        """When ``response_format`` is set, the provider passes it
+        straight through to the OpenAI SDK's ``create()`` kwargs."""
+        provider = OpenAIProvider(api_key="test")
+        _patch_openai_client(provider, _mock_openai_response('{"facts": []}'))
+
+        rf = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "verbatim_facts",
+                "strict": True,
+                "schema": {"type": "object", "properties": {}},
+            },
+        }
+        await provider.complete(
+            [Message(role="user", content="hi")],
+            response_format=rf,
+        )
+
+        kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert kwargs["response_format"] == rf, (
+            "OpenAIProvider did not forward response_format to the SDK "
+            "verbatim — Phase 2 structured outputs would be a no-op."
+        )
+
+    @pytest.mark.asyncio
+    async def test_response_format_omitted_when_none(self):
+        """Default path (``response_format=None``) must NOT include the
+        kwarg in the SDK call so the OpenAI client falls back to its
+        legacy text response."""
+        provider = OpenAIProvider(api_key="test")
+        _patch_openai_client(provider, _mock_openai_response("plain text"))
+
+        await provider.complete([Message(role="user", content="hi")])
+
+        kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert "response_format" not in kwargs, (
+            "Provider passed response_format=None to the SDK; should be "
+            "omitted entirely so the SDK applies its default."
+        )

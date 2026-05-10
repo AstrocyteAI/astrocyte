@@ -86,6 +86,17 @@ _TEMPORAL_PATTERNS: tuple[tuple[str, float], ...] = (
     (r"\b(before|after|since|until|during)\b", 0.4),
     (r"\b\d{4}\b", 0.2),  # bare year like "2023"
     (r"\b(earlier|later|latest|oldest|newest|first|last)\b", 0.3),
+    # LongMemEval-style temporal questions — typical shapes
+    # ("how many days between X and Y", "in what order", etc.).  Without
+    # these, the canonical LME temporal-reasoning question class
+    # silently fell through to the default synthesis prompt and never
+    # got the temporal-aware date-arithmetic guidance.
+    (r"\bhow\s+(many|long)\s+(days?|weeks?|months?|years?|hours?|minutes?)\b", 0.8),
+    (r"\b(days?|weeks?|months?|years?)\s+(between|elapsed|passed|apart)\b", 0.7),
+    (r"\bin\s+(what|which)\s+(order|sequence)\b", 0.7),
+    (r"\bhappened\s+(first|last|before|after|in\s+order)\b", 0.6),
+    (r"\b(duration|interval|time\s+frame|time\s+span)\b", 0.5),
+    (r"\bhow\s+(many|long)\s+(days?|weeks?|months?|years?)\s+ago\b", 0.8),
 )
 
 _RELATIONAL_PATTERNS: tuple[tuple[str, float], ...] = (
