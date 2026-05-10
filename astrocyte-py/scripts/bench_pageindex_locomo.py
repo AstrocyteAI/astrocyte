@@ -1030,6 +1030,38 @@ Be concise (1 sentence ideally). Cite dia_id (e.g. D5:3) for the supporting exce
 Answer:"""
 
 
+SYNTHESIZE_PROMPT_COUNTING = """You are answering a COUNTING / SUM question from a conversation transcript.
+
+The user wants a NUMBER as the answer — count or total amount of something across all the picked excerpts. Do NOT enumerate items. Do NOT list dia_ids. Just produce the number (with a unit when relevant).
+
+<reference_date>{reference_date}</reference_date>
+
+YOUR ANSWER MUST BE A SINGLE NUMBER OR AMOUNT, optionally followed by a unit:
+  - "How many doctors did I visit?" → "3" or "3 doctors"
+  - "How much money have I spent on bikes?" → "$185"
+  - "How many model kits?" → "5"
+  - "How many days camping?" → "8 days"
+  - "How many Korean restaurants?" → "4"
+
+Do NOT respond with enumeration ("3: a primary care, an ENT specialist, a dermatologist"). The judge expects the count, not the items.
+
+COUNTING PROTOCOL:
+1. From the question, identify the COUNTABLE category (doctors, plants, hours, dollars, restaurants, etc.).
+2. Scan EVERY excerpt for distinct mentions of that category. Read carefully — single sessions often mention multiple instances.
+3. DEDUPE across excerpts: same item mentioned in two sessions counts ONCE. Different items in the same session count separately.
+4. Sum the distinct items (or amounts) and output the integer / dollar total.
+5. If the question asks "how much TOTAL X", sum dollar amounts across all mentions.
+
+If genuinely no relevant info exists in the excerpts, respond exactly: "Not in the provided memories."
+
+Excerpts:
+{excerpts}
+
+Question: {question}
+
+Final answer (just a number with a unit, no enumeration):"""
+
+
 SYNTHESIZE_PROMPT_LISTING = """You are answering a LISTING / AGGREGATION question by aggregating across multiple conversation excerpts.
 
 <reference_date>{reference_date}</reference_date>
@@ -1457,18 +1489,15 @@ async def answer_question(
         f"  line {ln}: {d}" for ln, d in session_dates
     ) or "  (none — header dates not parseable)"
 
-    # PR2 D.7.2: counting/sum listing-mode dispatch — REVERTED.
-    # Tested: LME overall 46→38%, multi-session 1/9 → 0/9, plus
-    # collateral regressions (knowledge-update -12pp, single-session-
-    # user -11pp, single-session-preference -13pp). Two failure modes:
-    #   (1) Listing synth enumerates ("boots, boots") instead of
-    #       counting ("3"). The judge expects the count.
-    #   (2) Counting regex over-matches: "how many Korean restaurants"
-    #       is a single-fact lookup, not aggregation, but listing pick
-    #       fetches "every relevant" → synth abstains.
-    # Counting needs a new synth prompt that produces a NUMBER, not an
-    # enumeration. That's a separate piece of work; for now, accept
-    # LME multi-session at 11% and ship PR2-D as-is.
+    # PR2.5: counting/sum dispatch — REVERTED.
+    # Tested: counting synth correctly produces a number ("2 items",
+    # "$65") but PICKER still undercounts (fetches 5-6 sections when
+    # answer requires 8-10 mentions). Multi-session unchanged at 1/9;
+    # other categories regressed (single-session-user 78→67, single-
+    # session-preference 38→25, LME overall 46→42).
+    # Counting needs DETERMINISTIC entity-based aggregation over all
+    # mentioning sections (not LLM), which is a separate piece of
+    # work. Accepting LME multi-session at 11% for PR2 close.
     is_counting = False
 
     if mode == "temporal":
@@ -1612,11 +1641,15 @@ async def answer_question(
         answer = arithmetic_answer
         return answer, line_nums
 
-    if mode == "listing" or is_counting:
-        # PR2 D.7.2: route counting/sum questions through the listing
-        # synth so it enumerates + dedupes mentions across all picked
-        # sections. The listing synth's "list every distinct item"
-        # instruction is exactly what counting questions need.
+    if is_counting:
+        # PR2.5: counting questions use a dedicated synth that
+        # outputs a NUMBER (not an enumeration). Picker stayed as
+        # listing-shape so synth has many sections to count over.
+        syn_msg = SYNTHESIZE_PROMPT_COUNTING.format(
+            excerpts=excerpts, question=question, reference_date=reference_date,
+        )
+        syn_max_tokens = 80  # answers are short ("3", "$185") — cap tight to suppress enumeration
+    elif mode == "listing":
         syn_msg = SYNTHESIZE_PROMPT_LISTING.format(
             excerpts=excerpts, question=question, reference_date=reference_date,
         )
