@@ -29,6 +29,10 @@ from astrocyte.types import (
     MemoryHit,
     MentalModel,
     Message,
+    PageIndexDocument,
+    PageIndexSection,
+    PageIndexSectionEntity,
+    PageIndexSectionLink,
     RecallRequest,
     RecallResult,
     ReflectRequest,
@@ -804,6 +808,323 @@ class InMemoryWikiStore:
 
 
 # ---------------------------------------------------------------------------
+# In-Memory PageIndex Store (M9 — Tier-2 recall; see ADR-006/007)
+# ---------------------------------------------------------------------------
+
+
+class InMemoryPageIndexStore:
+    """Fully functional in-memory PageIndex store for testing (M9 Tier-2).
+
+    Holds documents (one per conversation), sections (tree nodes), entity
+    mentions per section, and section-to-section links. PR1 only exercises
+    the document/section path; PR2 populates entities and links.
+
+    See :class:`~astrocyte.provider.PageIndexStore` for the SPI.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
+    def __init__(self) -> None:
+        # (bank_id, source_id) → PageIndexDocument
+        self._documents: dict[tuple[str, str], PageIndexDocument] = {}
+        # document_id → list[PageIndexSection], ordered by line_num
+        self._sections: dict[str, list[PageIndexSection]] = {}
+        # document_id → list[PageIndexSectionEntity]
+        self._section_entities: dict[str, list[PageIndexSectionEntity]] = {}
+        # document_id → list[PageIndexSectionLink]
+        self._section_links: dict[str, list[PageIndexSectionLink]] = {}
+
+    async def save_document(self, doc: PageIndexDocument) -> str:
+        # Upsert keyed on (bank_id, source_id). Behaviour matches the
+        # Postgres adapter:
+        #   - If an existing row matches the key, preserve its id so
+        #     child rows (sections, links) remain valid.
+        #   - If no existing row AND the input id is empty/falsy,
+        #     assign a fresh UUID (mirrors gen_random_uuid() default).
+        #   - Otherwise honour the caller-supplied id.
+        import uuid as _uuid
+        from dataclasses import replace as _replace
+
+        key = (doc.bank_id, doc.source_id)
+        existing = self._documents.get(key)
+        if existing is not None:
+            doc = _replace(doc, id=existing.id)
+        elif not doc.id:
+            doc = _replace(doc, id=str(_uuid.uuid4()))
+        self._documents[key] = doc
+        return doc.id
+
+    async def save_sections(
+        self,
+        document_id: str,
+        sections: list[PageIndexSection],
+    ) -> int:
+        # Atomic replace — drop any prior sections for this document
+        # before writing the new tree. This matches the SQL adapter's
+        # DELETE + INSERT pattern; partial trees are never observable.
+        sorted_sections = sorted(sections, key=lambda s: s.line_num)
+        self._sections[document_id] = sorted_sections
+        # Cascading wipe of dependent rows mirrors the FK ON DELETE CASCADE
+        # in migration 015. PR2 will repopulate these.
+        self._section_entities.pop(document_id, None)
+        self._section_links.pop(document_id, None)
+        return len(sorted_sections)
+
+    async def load_document(
+        self,
+        bank_id: str,
+        source_id: str,
+    ) -> PageIndexDocument | None:
+        return self._documents.get((bank_id, source_id))
+
+    async def load_skeleton(self, document_id: str) -> list[PageIndexSection]:
+        # Return a shallow copy without summary_embedding to mirror the
+        # SQL adapter's projection (the picker doesn't need embeddings).
+        from dataclasses import replace as _replace
+        return [
+            _replace(s, summary_embedding=None)
+            for s in self._sections.get(document_id, [])
+        ]
+
+    async def save_section_embeddings(
+        self,
+        document_id: str,
+        embeddings: list[tuple[int, list[float]]],
+    ) -> int:
+        # Update existing PageIndexSection rows in place. PR2 commit A
+        # mirrors the Postgres adapter's UPDATE pattern: skip rows with
+        # no matching line_num (we don't auto-create sections from
+        # embeddings — the tree-build step is the source of truth).
+        from dataclasses import replace as _replace
+
+        sections = self._sections.get(document_id, [])
+        if not sections:
+            return 0
+        wanted = dict(embeddings)  # line_num → vec
+        n = 0
+        new_sections: list[PageIndexSection] = []
+        for s in sections:
+            vec = wanted.pop(s.line_num, None)
+            if vec is not None:
+                new_sections.append(_replace(s, summary_embedding=list(vec)))
+                n += 1
+            else:
+                new_sections.append(s)
+        if n > 0:
+            self._sections[document_id] = new_sections
+        return n
+
+    async def save_section_entities(
+        self,
+        entities: list[PageIndexSectionEntity],
+    ) -> int:
+        n = 0
+        for e in entities:
+            bucket = self._section_entities.setdefault(e.document_id, [])
+            # Idempotent on the composite key.
+            if not any(
+                existing.line_num == e.line_num and existing.entity_name == e.entity_name
+                for existing in bucket
+            ):
+                bucket.append(e)
+                n += 1
+        return n
+
+    async def save_section_links(
+        self,
+        links: list[PageIndexSectionLink],
+    ) -> int:
+        n = 0
+        for link in links:
+            bucket = self._section_links.setdefault(link.from_doc, [])
+            key = (link.from_line, link.to_doc, link.to_line, link.link_type)
+            if not any(
+                (existing.from_line, existing.to_doc, existing.to_line, existing.link_type) == key
+                for existing in bucket
+            ):
+                bucket.append(link)
+                n += 1
+        return n
+
+    async def populate_semantic_knn_links(
+        self,
+        document_id: str,
+        *,
+        top_k: int = 5,
+        min_similarity: float = 0.5,
+    ) -> int:
+        """PR2 D.7.1 in-memory implementation: pure cosine similarity
+        over each pair of sections in the document. Mirrors the SQL
+        adapter's LATERAL kNN — for each section, link to top_k
+        most-similar OTHER sections (cosine sim ≥ ``min_similarity``)."""
+        sections = self._sections.get(document_id, [])
+        embedded = [s for s in sections if s.summary_embedding]
+        if len(embedded) < 2:
+            return 0
+
+        new_links: list[PageIndexSectionLink] = []
+        for s1 in embedded:
+            scored: list[tuple[float, PageIndexSection]] = []
+            for s2 in embedded:
+                if s2.line_num == s1.line_num:
+                    continue
+                sim = _cosine_sim(s1.summary_embedding, s2.summary_embedding)
+                if sim >= min_similarity:
+                    scored.append((sim, s2))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            for sim, s2 in scored[:top_k]:
+                new_links.append(
+                    PageIndexSectionLink(
+                        from_doc=document_id,
+                        from_line=s1.line_num,
+                        to_doc=document_id,
+                        to_line=s2.line_num,
+                        link_type="semantic_knn",
+                        weight=float(sim),
+                    )
+                )
+        # Reuse save_section_links for idempotent insert semantics.
+        return await self.save_section_links(new_links)
+
+    # ── PR2 commit B: parallel-strategy query methods ─────────────────
+
+    def _docs_in_bank(self, bank_id: str) -> set[str]:
+        return {
+            d.id for (b, _src), d in self._documents.items() if b == bank_id
+        }
+
+    async def search_sections_semantic(
+        self,
+        bank_id: str,
+        query_embedding: list[float],
+        *,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        if not query_embedding:
+            return []
+        doc_ids = self._docs_in_bank(bank_id)
+        scored: list[tuple[str, int, float]] = []
+        for doc_id in doc_ids:
+            for s in self._sections.get(doc_id, []):
+                if not s.summary_embedding:
+                    continue
+                # Cosine similarity (Postgres adapter uses 1 - distance).
+                score = _cosine_sim(query_embedding, s.summary_embedding)
+                scored.append((doc_id, s.line_num, score))
+        scored.sort(key=lambda x: x[2], reverse=True)
+        return scored[:top_k]
+
+    async def search_sections_keyword(
+        self,
+        bank_id: str,
+        query: str,
+        *,
+        top_k: int = 20,
+        speaker: str | None = None,
+    ) -> list[tuple[str, int, float]]:
+        if not query.strip():
+            return []
+        # Lightweight in-memory keyword scoring: count distinct query
+        # tokens that appear in title+summary (case-insensitive).
+        # Mirrors the spirit of ts_rank_cd's "more matched terms = higher
+        # score" without re-implementing the full tsvector machinery.
+        terms = [t for t in query.lower().split() if t]
+        if not terms:
+            return []
+        doc_ids = self._docs_in_bank(bank_id)
+        scored: list[tuple[str, int, float]] = []
+        for doc_id in doc_ids:
+            for s in self._sections.get(doc_id, []):
+                if speaker is not None and s.speaker != speaker:
+                    continue
+                haystack = (
+                    (s.title or "").lower() + " " + (s.summary or "").lower()
+                )
+                hits = sum(1 for t in terms if t in haystack)
+                if hits > 0:
+                    scored.append((doc_id, s.line_num, float(hits)))
+        scored.sort(key=lambda x: x[2], reverse=True)
+        return scored[:top_k]
+
+    async def search_sections_by_entities(
+        self,
+        bank_id: str,
+        entity_names: list[str],
+        *,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        if not entity_names:
+            return []
+        # Hindsight's CTE pattern: count distinct matching entities per
+        # section. Case-insensitive match on entity_name.
+        wanted = {n.lower() for n in entity_names if n and n.strip()}
+        if not wanted:
+            return []
+        doc_ids = self._docs_in_bank(bank_id)
+        per_section: dict[tuple[str, int], set[str]] = {}
+        for doc_id in doc_ids:
+            for e in self._section_entities.get(doc_id, []):
+                low = e.entity_name.lower()
+                if low in wanted:
+                    per_section.setdefault((doc_id, e.line_num), set()).add(low)
+        scored = [
+            (doc_id, line_num, float(len(matches)))
+            for (doc_id, line_num), matches in per_section.items()
+        ]
+        scored.sort(key=lambda x: x[2], reverse=True)
+        return scored[:top_k]
+
+    async def search_sections_temporal(
+        self,
+        bank_id: str,
+        date_range,
+        *,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        start, end = date_range
+        doc_ids = self._docs_in_bank(bank_id)
+        scored: list[tuple[str, int, float]] = []
+        for doc_id in doc_ids:
+            for s in self._sections.get(doc_id, []):
+                sd = s.session_date
+                if sd is not None and start <= sd <= end:
+                    scored.append((doc_id, s.line_num, 1.0))
+        scored.sort(key=lambda x: (x[0], x[1]))  # stable order
+        return scored[:top_k]
+
+    async def expand_section_links(
+        self,
+        seeds: list[tuple[str, int]],
+        *,
+        link_types: list[str] | None = None,
+        top_k: int = 20,
+    ) -> list[tuple[str, int, float]]:
+        if not seeds:
+            return []
+        seed_set = {(d, ln) for d, ln in seeds}
+        type_filter = set(link_types) if link_types else None
+        weights: dict[tuple[str, int], float] = {}
+        for doc_id, links in self._section_links.items():
+            for link in links:
+                if type_filter is not None and link.link_type not in type_filter:
+                    continue
+                # Outgoing edge from a seed
+                if (link.from_doc, link.from_line) in seed_set:
+                    key = (link.to_doc, link.to_line)
+                    weights[key] = weights.get(key, 0.0) + link.weight
+                # Incoming edge to a seed
+                if (link.to_doc, link.to_line) in seed_set:
+                    key = (link.from_doc, link.from_line)
+                    weights[key] = weights.get(key, 0.0) + link.weight
+        scored = [(d, ln, w) for (d, ln), w in weights.items()]
+        scored.sort(key=lambda x: x[2], reverse=True)
+        return scored[:top_k]
+
+    async def health(self) -> HealthStatus:
+        return HealthStatus(healthy=True, message="in-memory pageindex store")
+
+
+# ---------------------------------------------------------------------------
 # In-Memory Mental Model Store (M9 — first-class, replaces wiki piggyback)
 # ---------------------------------------------------------------------------
 
@@ -1079,6 +1400,7 @@ class MockLLMProvider:
         temperature: float = 0.0,
         tools: list = None,  # list[ToolDefinition] | None — kept untyped to avoid import cycle
         tool_choice: str | None = None,
+        response_format: dict | None = None,
     ) -> Completion:
         self._call_count += 1
         for m in reversed(messages):
