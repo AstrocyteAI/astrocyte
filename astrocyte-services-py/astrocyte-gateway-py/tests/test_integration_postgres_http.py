@@ -1,4 +1,8 @@
-"""HTTP integration against the astrocyte-postgres stack (Postgres + pgvector + AGE) when DATABASE_URL is set."""
+"""HTTP integration against the astrocyte-postgres stack (Postgres + pgvector) when DATABASE_URL is set.
+
+AGE was removed in M9 (ADR-008); this test exercises the Postgres-only reference
+stack now used in production. The graph-store dimension is covered by Tier-2's
+flat-table pattern (section_links / unit_links) — see migration 016."""
 
 from __future__ import annotations
 
@@ -35,7 +39,6 @@ def test_gateway_retain_recall_health_postgres(monkeypatch: pytest.MonkeyPatch, 
         f"""
 provider_tier: storage
 vector_store: postgres
-graph_store: age
 wiki_store: postgres
 llm_provider: mock
 llm_provider_config:
@@ -43,8 +46,6 @@ llm_provider_config:
 vector_store_config:
   embedding_dimensions: {embedding_dimensions}
   bootstrap_schema: {str(not migrated).lower()}
-graph_store_config:
-  bootstrap_schema: true
 wiki_store_config:
   bootstrap_schema: {str(not migrated).lower()}
 wiki_compile:
@@ -68,8 +69,8 @@ access_control:
         encoding="utf-8",
     )
     monkeypatch.setenv("ASTROCYTE_CONFIG_PATH", str(cfg))
-    # PostgresStore reads DATABASE_URL from environment
-    _skip_if_age_unavailable(os.environ["DATABASE_URL"])
+    # PostgresStore reads DATABASE_URL from environment.
+    # AGE removed in M9 (ADR-008) — no extension dependency to skip on.
     from astrocyte_gateway.app import create_app
 
     app = create_app()
@@ -115,14 +116,6 @@ access_control:
         assert "hits" in body
 
     _assert_reference_stack_rows(os.environ["DATABASE_URL"], bank)
-
-
-def _skip_if_age_unavailable(dsn: str) -> None:
-    try:
-        with psycopg.connect(dsn) as conn:
-            conn.execute("LOAD 'age'")
-    except Exception as exc:
-        pytest.skip(f"Apache AGE is not available for full reference-stack integration test: {exc}")
 
 
 def _embedding_dimensions_for_database(dsn: str) -> int:

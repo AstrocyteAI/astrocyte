@@ -4,16 +4,16 @@ Optional Python packages beside the core [`astrocyte-py`](../astrocyte-py/) libr
 
 | Package | Role |
 |---------|------|
-| [`astrocyte-gateway-py/`](astrocyte-gateway-py/README.md) | Standalone **HTTP gateway** (`astrocyte.yaml` + optional `mip.yaml`). **CLI:** `astrocyte-gateway-py`. **Python module:** `astrocyte_gateway`. Optional **`[pgvector]`** and **`[age]`** extras install [`astrocyte-postgres`](../adapters-storage-py/astrocyte-postgres/README.md) and `astrocyte-age` for the reference Postgres memory stack. |
+| [`astrocyte-gateway-py/`](astrocyte-gateway-py/README.md) | Standalone **HTTP gateway** (`astrocyte.yaml` + optional `mip.yaml`). **CLI:** `astrocyte-gateway-py`. **Python module:** `astrocyte_gateway`. Optional **`[postgres]`** extra installs [`astrocyte-postgres`](../adapters-storage-py/astrocyte-postgres/README.md) for the reference Postgres memory stack. (M9 / [ADR-008](../docs/_design/adr/adr-008-section-graph-replaces-age.md): Apache AGE removed; Tier-2 graph operations now run on flat tables in the Postgres adapter.) |
 | [`adapters-storage-py/astrocyte-postgres/`](../adapters-storage-py/astrocyte-postgres/README.md) | **`pgvector`** [`VectorStore`](../docs/_plugins/provider-spi.md) for PostgreSQL + [pgvector](https://github.com/pgvector/pgvector). **Schema:** SQL under [`migrations/`](../adapters-storage-py/astrocyte-postgres/migrations/) + [`migrate.sh`](../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh) (`psql`, no Python migrator). |
 
-**Docker:** [`docker-compose.yml`](docker-compose.yml) in this directory runs **Postgres with pgvector + Apache AGE + `astrocyte-gateway-py`**. Copy **[`.env.example`](.env.example)** to `.env` to override Postgres credentials, ports, and REST settings. Run from here: `docker compose up --build`, or from the repo root: `docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build`. Details: [`astrocyte-gateway-py/README.md`](astrocyte-gateway-py/README.md).
+**Docker:** [`docker-compose.yml`](docker-compose.yml) in this directory runs **Postgres with pgvector + `astrocyte-gateway-py`**. Copy **[`.env.example`](.env.example)** to `.env` to override Postgres credentials, ports, and REST settings. Run from here: `docker compose up --build`, or from the repo root: `docker compose -f astrocyte-services-py/docker-compose.yml --env-file astrocyte-services-py/.env up --build`. Details: [`astrocyte-gateway-py/README.md`](astrocyte-gateway-py/README.md).
 
 ---
 
 ## Runbook
 
-Use this for a **production-shaped** local or demo deploy: SQL migrations (including **HNSW**), then **`astrocyte-gateway-py`** with **`bootstrap_schema: false`** ([`config.runbook.example.yaml`](config.runbook.example.yaml)). This is the default Hindsight-informed reference stack: one PostgreSQL instance provides dense vectors (pgvector), durable wiki pages/revisions/provenance, entity graph traversal (Apache AGE with SQL-owned entity/link truth), normalized temporal facts, bank/access metadata, and PgQueuer-backed async memory tasks.
+Use this for a **production-shaped** local or demo deploy: SQL migrations (including **HNSW**), then **`astrocyte-gateway-py`** with **`bootstrap_schema: false`** ([`config.runbook.example.yaml`](config.runbook.example.yaml)). This is the default Hindsight-informed reference stack: one PostgreSQL instance provides dense vectors (pgvector), durable wiki pages/revisions/provenance, entity/link graph traversal (Tier-2 flat tables: `section_links`, `section_entities`, `unit_links`, `unit_entities` — replaced Apache AGE in M9, see [ADR-008](../docs/_design/adr/adr-008-section-graph-replaces-age.md)), normalized temporal facts, bank/access metadata, and PgQueuer-backed async memory tasks.
 
 ### One command
 

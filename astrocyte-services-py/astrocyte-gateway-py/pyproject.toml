@@ -23,11 +23,11 @@ dev = [
     "httpx>=0.27",
     "astrocyte[worker]",
     "astrocyte-postgres",
-    "astrocyte-age",
+    # astrocyte-age removed in M9; see ADR-008
     "psycopg[binary]>=3.1",
 ]
 postgres = ["astrocyte-postgres"]
-age = ["astrocyte-age"]
+# `age` extra removed in M9 (see ADR-008)
 worker = [
     "astrocyte[worker]",
     "psycopg[binary]>=3.1",
@@ -45,7 +45,6 @@ otel = [
 [tool.uv.sources]
 astrocyte = { path = "../../astrocyte-py", editable = true }
 astrocyte-postgres = { path = "../../adapters-storage-py/astrocyte-postgres", editable = true }
-astrocyte-age = { path = "../../adapters-storage-py/astrocyte-age", editable = true }
 astrocyte-ingestion-s3 = { path = "../../adapters-ingestion-py/astrocyte-ingestion-s3", editable = true }
 astrocyte-ingestion-document = { path = "../../adapters-ingestion-py/astrocyte-ingestion-document", editable = true }
 

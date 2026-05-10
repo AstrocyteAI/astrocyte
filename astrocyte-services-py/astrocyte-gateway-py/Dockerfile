@@ -8,7 +8,7 @@ FROM python:3.11-slim AS builder
 WORKDIR /build
 COPY astrocyte-py /build/astrocyte-py
 COPY adapters-storage-py/astrocyte-postgres /build/astrocyte-postgres
-COPY adapters-storage-py/astrocyte-age /build/astrocyte-age
+# astrocyte-age removed in M9 (ADR-008)
 COPY astrocyte-services-py/astrocyte-gateway-py /build/astrocyte-gateway-py
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -22,7 +22,6 @@ RUN python -m venv /venv \
     && /venv/bin/pip install --upgrade pip \
     && /venv/bin/pip install /build/astrocyte-py \
     && /venv/bin/pip install /build/astrocyte-postgres \
-    && /venv/bin/pip install /build/astrocyte-age \
     && /venv/bin/pip install /build/astrocyte-gateway-py \
     && rm -rf /build
 

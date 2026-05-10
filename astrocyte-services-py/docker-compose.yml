@@ -35,7 +35,9 @@ services:
       # a backwards-compat alias on the vector store; the wiki store has no
       # alias, so the canonical `postgres` is required there.
       ASTROCYTE_VECTOR_STORE: ${ASTROCYTE_VECTOR_STORE:-postgres}
-      ASTROCYTE_GRAPH_STORE: ${ASTROCYTE_GRAPH_STORE:-age}
+      # ASTROCYTE_GRAPH_STORE is no longer set — Apache AGE was removed in M9
+      # (ADR-008). Tier-2 graph operations live inside the Postgres adapter as
+      # flat tables; setting graph_store: age now raises ConfigError on startup.
       ASTROCYTE_WIKI_STORE: ${ASTROCYTE_WIKI_STORE:-postgres}
       ASTROCYTE_WIKI_COMPILE_ENABLED: ${ASTROCYTE_WIKI_COMPILE_ENABLED:-true}
       ASTROCYTE_WIKI_COMPILE_AUTO_START: ${ASTROCYTE_WIKI_COMPILE_AUTO_START:-true}
