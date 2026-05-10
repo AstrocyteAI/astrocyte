@@ -237,7 +237,7 @@ Cost shape per session: ~3-4 LLM calls + 1 embedding. Same order as M8's SFE+ent
 ## 6. Recall pipeline
 
 ```python
-async def tier2_recall(question: str, bank_id: UUID) -> Answer:
+async def section_recall(question: str, bank_id: UUID) -> Answer:
     mode = await classify(question)               # 1-token LLM call
 
     # Strategy fan-out (parallel SQL queries; no LLM calls)

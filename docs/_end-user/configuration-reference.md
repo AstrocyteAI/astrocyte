@@ -16,7 +16,7 @@ All string values support `${ENV_VAR}` substitution — unresolved vars are left
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `provider_tier` | `"storage"` \| `"engine"` | `"engine"` | **Tier 1** (storage) uses Astrocyte's built-in pipeline with your own backends. **Tier 2** (engine) delegates to a full memory engine (Mystique, Mem0, Zep, etc.) |
+| `provider_tier` | `"storage"` \| `"engine"` | `"engine"` | **`storage`** uses Astrocyte's built-in pipeline with your own storage adapters (vector store, wiki store, etc.). **`engine`** delegates the entire pipeline to a full memory engine (Mystique, Mem0, Zep, etc.) |
 | `profile` | string \| null | `null` | Built-in profile name (`minimal`, `personal`, `research`, `coding`, `support`) or path to custom profile file (`./my-profile.yaml`) |
 | `compliance_profile` | string \| null | `null` | Pre-built compliance preset: `gdpr`, `hipaa`, or `pdpa`. Sets barriers, lifecycle, access control, and DLP automatically |
 | `fallback_strategy` | `"error"` \| `"local_llm"` \| `"degrade"` | `"error"` | How to handle provider failures |

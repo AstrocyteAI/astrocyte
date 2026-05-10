@@ -148,20 +148,20 @@ Policies are configured in `astrocyte.yaml` at the instance level and can be ove
 
 ## Providers (pluggable backends)
 
-Astrocyte uses a **two-tier provider model**:
+Astrocyte supports **two kinds of providers**:
 
-**Tier 1 — Storage providers** (you pick your backend):
+**Storage providers** (you pick your backend; Astrocyte's pipeline owns recall):
 - **VectorStore** — semantic search (pgvector, Qdrant, Elasticsearch)
 - **GraphStore** — relationship queries (Neo4j)
 - **DocumentStore** — full-text / keyword search (Elasticsearch, BM25)
 
 Astrocyte runs its own pipeline (chunking, embedding, reranking, synthesis) and calls providers for storage and retrieval.
 
-**Tier 2 — Memory engine providers** (the engine owns the pipeline):
+**Engine providers** (the engine owns the pipeline):
 - Full memory engines like Mem0 or custom implementations
 - Astrocyte delegates retain/recall to the engine and applies policy around it
 
-Most users start with Tier 1. See [Storage backend setup](storage-backend-setup/) for configuring backends.
+Most users start with storage providers. See [Storage backend setup](storage-backend-setup/) for configuring backends.
 
 ---
 

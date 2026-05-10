@@ -1,7 +1,7 @@
-"""Tests for Astrocyte class with Tier 2 engine provider.
+"""Tests for Astrocyte class with an engine provider.
 
 Regression target for ``provider_tier: engine`` + :class:`~astrocyte.provider.EngineProvider`.
-For Tier-2 + Tier-1 **hybrid** merge behavior see ``tests/test_hybrid_engine.py`` and
+For engine + storage **hybrid** merge behavior see ``tests/test_hybrid_engine.py`` and
 ``astrocyte.hybrid.HybridEngineProvider``.
 """
 

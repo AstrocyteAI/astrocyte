@@ -807,7 +807,7 @@ class AstrocyteConfig:
     # Profile
     profile: str | None = None
 
-    # Tier 2: Engine
+    # Engine provider
     provider: str | None = None
     provider_config: dict[str, str | int | float | bool | None] | None = None
 

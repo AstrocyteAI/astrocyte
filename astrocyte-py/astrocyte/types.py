@@ -271,7 +271,7 @@ class DocumentHit:
 
 
 # ---------------------------------------------------------------------------
-# Tier 2: Engine Provider — requests / results
+# Engine Provider — requests / results
 # ---------------------------------------------------------------------------
 
 
@@ -1247,7 +1247,7 @@ class CompileResult:
 
 
 # ---------------------------------------------------------------------------
-# Tier-2 recall (M9): PageIndex tree + section graph
+# Section recall (M9): PageIndex tree + section graph
 # ---------------------------------------------------------------------------
 
 

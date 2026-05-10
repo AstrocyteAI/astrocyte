@@ -209,7 +209,7 @@ When `brain.recall(bank_id="user-123")` is called and the bank doesn't exist, th
 
 ---
 
-## 8. Hybrid Tier-2 engine + Tier-1 pipeline (same `bank_id`)
+## 8. Hybrid engine + storage pipeline (same `bank_id`)
 
 When both a hosted **engine** and a local **pipeline** (vector / graph / document path) should answer for the **same** logical bank, use `HybridEngineProvider` (`astrocyte-py`). It implements `EngineProvider`: `recall` fans out to both backends, applies optional per-source weights, dedupes by text (highest score wins), then ranks and applies the request token budget. `retain` targets exactly one backend via `retain_target="engine"` or `"pipeline"`.
 
@@ -217,7 +217,7 @@ When both a hosted **engine** and a local **pipeline** (vector / graph / documen
 from astrocyte import Astrocyte, HybridEngineProvider
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 
-engine = ...  # Tier-2 EngineProvider
+engine = ...  # EngineProvider instance
 pipeline = PipelineOrchestrator(vector_store=..., llm_provider=...)
 hybrid = HybridEngineProvider(
     engine=engine,

@@ -808,12 +808,12 @@ class InMemoryWikiStore:
 
 
 # ---------------------------------------------------------------------------
-# In-Memory PageIndex Store (M9 — Tier-2 recall; see ADR-006/007)
+# In-Memory PageIndex Store (M9 — section recall; see ADR-006/007)
 # ---------------------------------------------------------------------------
 
 
 class InMemoryPageIndexStore:
-    """Fully functional in-memory PageIndex store for testing (M9 Tier-2).
+    """Fully functional in-memory PageIndex store for testing (M9 section recall).
 
     Holds documents (one per conversation), sections (tree nodes), entity
     mentions per section, and section-to-section links. PR1 only exercises

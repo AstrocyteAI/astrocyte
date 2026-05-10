@@ -172,7 +172,7 @@ def _conv_tree_dict(
     callers shouldn't construct this by hand.
 
     PR2 commit E: ``document_id`` is the store-assigned UUID for this
-    sample's ``PageIndexDocument`` — used by the Tier-2 recall path to
+    sample's ``PageIndexDocument`` — used by the section recall path to
     address rows in section_entities / section_links queries. ``None``
     for the file backend.
     """
@@ -189,7 +189,7 @@ def _conv_tree_dict(
         # We pick the latest session as "now" because LoCoMo questions
         # are framed as if the user is looking back over the chat.
         "reference_date": session_dates[-1][1] if session_dates else None,
-        # PR2-E: document_id for Tier-2 recall lookup. None on file backend.
+        # PR2-E: document_id for section recall lookup. None on file backend.
         "document_id": document_id,
     }
 
@@ -539,7 +539,7 @@ def _enrich_nodes_with_dates(nodes: list | dict) -> list[tuple[int, str]]:
 # ── Tree ↔ PageIndexSection conversion (PR1 commit D) ─────────────────────
 #
 # The picker operates on a nested-dict tree (post-``_strip_node_text``); the
-# Tier-2 store holds the same data as flat ``PageIndexSection`` rows. Two
+# section recall store holds the same data as flat ``PageIndexSection`` rows. Two
 # helpers bridge the shapes so we can persist trees to Postgres without
 # touching the agent loop:
 #
@@ -640,7 +640,7 @@ def _sections_to_compact_tree(
     (root nodes have ``parent_node=None``) and emits the same key shape
     the picker prompt has been consuming (title, node_id, line_num,
     summary, date, nested ``nodes``). The cache-hit path through the
-    Tier-2 store goes through this function.
+    section recall store goes through this function.
     """
     by_parent: dict[str | None, list[PageIndexSection]] = {}
     for s in sections:
@@ -887,7 +887,7 @@ def _detect_question_mode(
     temporal-reasoning question, which is why those categories scored
     0% in the PR2 LME gate.
 
-    Returned modes are passed verbatim to ``tier2_recall``'s
+    Returned modes are passed verbatim to ``section_recall``'s
     ``select_strategies_for_mode``; both ends agree on the same string
     constants.
     """
@@ -1323,7 +1323,7 @@ async def answer_question(
     question: str,
     model: str,
     *,
-    store=None,  # PageIndexStore | None — when set, use Tier-2 recall path (PR2-E)
+    store=None,  # PageIndexStore | None — when set, use section recall path (PR2-E)
     bank_id: str | None = None,
     cross_encoder=None,  # CrossEncoderProtocol | None
     category: str | None = None,  # PR2-D.1: dataset-provided category label
@@ -1334,7 +1334,7 @@ async def answer_question(
 
     PR2 commit E: when ``store`` + ``bank_id`` are provided AND the
     conv_tree carries a ``document_id``, the picker operates on a
-    constrained skeleton produced by ``tier2_recall`` → cross-encoder
+    constrained skeleton produced by ``section_recall`` → cross-encoder
     rerank (top-15). Without those, falls back to the PR1 picker-on-
     full-skeleton path.
 
@@ -1357,19 +1357,19 @@ async def answer_question(
     # the regex heuristic mis-routes LME's category names entirely.
     mode = _detect_question_mode(question, category=category)
 
-    # PR2-E: Tier-2 recall pre-filter. Run when the store backend has
+    # PR2-E: section recall pre-filter. Run when the store backend has
     # populated entity + embedding indexes (PR2-A) so the orchestrator
     # has real signal to fuse. The picker still operates on a nested-
     # dict skeleton; we just narrow it to the top-15 reranked sections.
     document_id = conv_tree.get("document_id")
     # PR2 D.5.5: ``sections_by_key`` is hoisted to the outer scope so
     # the temporal-arithmetic short-circuit (later in this function)
-    # can reach it. Built inside the Tier-2 block; defaults to {}.
+    # can reach it. Built inside the section recall block; defaults to {}.
     sections_by_key: dict[tuple[str, int], PageIndexSection] = {}
     if store is not None and bank_id and document_id:
         from astrocyte.pipeline.question_annotator import annotate_question
-        from astrocyte.pipeline.tier2_recall import tier2_recall  # local import to avoid heavy load on file backend
-        from astrocyte.pipeline.tier2_rerank import (
+        from astrocyte.pipeline.section_recall import section_recall  # local import to avoid heavy load on file backend
+        from astrocyte.pipeline.section_rerank import (
             build_constrained_skeleton,
             rerank_fused_hits,
         )
@@ -1409,14 +1409,14 @@ async def answer_question(
                 date_range = (min(parsed), max(parsed) + timedelta(days=1))
 
         try:
-            recall_result = await tier2_recall(
+            recall_result = await section_recall(
                 store=store, bank_id=bank_id, question=question, mode=mode,
                 embedding_provider=provider,
                 question_entities=question_entities or None,
                 date_range=date_range,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"  [pageindex] tier2_recall failed for q={question[:40]!r}: {type(exc).__name__}: {exc}")
+            print(f"  [pageindex] section_recall failed for q={question[:40]!r}: {type(exc).__name__}: {exc}")
             recall_result = None
 
         if recall_result and recall_result.fused:
@@ -1606,7 +1606,7 @@ async def answer_question(
     # dates structured in section.session_date — compute in Python.
     #
     # Only fires when:
-    #   - The store-backed Tier-2 path was taken (sections_by_key was built).
+    #   - The store-backed section recall path was taken (sections_by_key was built).
     #   - mode is temporal/temporal-reasoning (gates against false-positive
     #     regex matches in non-temporal questions).
     #   - The arithmetic module recognizes the question shape AND finds
@@ -1619,7 +1619,7 @@ async def answer_question(
         from astrocyte.pipeline.temporal_arithmetic import (
             compute_temporal_arithmetic_answer,
         )
-        # ``sections_by_key`` was built earlier in the Tier-2 block;
+        # ``sections_by_key`` was built earlier in the section recall block;
         # reach for it from the outer scope. ``reference_date_dt`` is
         # parsed from conv_tree.reference_date (a string).
         ref_dt = _parse_session_date(reference_date) if reference_date != "unknown" else None
@@ -1804,7 +1804,7 @@ async def main() -> None:
     #
     # ``postgres``: ``PostgresPageIndexStore``; persisted across runs in
     # a real DB. Requires DATABASE_URL or ASTROCYTE_PG_DSN. The
-    # production path Tier-2 will use; bench gate runs on this.
+    # production path section recall will use; bench gate runs on this.
     parser.add_argument(
         "--backend",
         choices=("file", "memory", "postgres"),

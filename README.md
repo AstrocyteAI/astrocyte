@@ -16,8 +16,8 @@ This project uses that picture as **engineering metaphor**, not as a literal sim
 
 ## Goals
 
-- **Memory as a first-class product.** Expose a clear API for retaining, recalling, and synthesizing memories, with a **built-in intelligence pipeline** when you use Tier 1 retrieval providers (embedding, multi-strategy retrieval, fusion, reranking, and related stages) so the core stays useful with “just Astrocyte + a database,” not only with a full external memory engine.
-- **Pluggable infrastructure.** Support a **two-tier provider model**: Tier 1 **retrieval** adapters (vector, graph, document stores) and Tier 2 **memory engine** providers that own the full pipeline; the framework negotiates behavior and still applies **policy** and **access control**.
+- **Memory as a first-class product.** Expose a clear API for retaining, recalling, and synthesizing memories, with a **built-in intelligence pipeline** when you use storage providers (embedding, multi-strategy retrieval, fusion, reranking, and related stages) so the core stays useful with “just Astrocyte + a database,” not only with a full external memory engine.
+- **Pluggable infrastructure.** Support **two kinds of providers**: **storage providers** (vector, graph, document stores) used by the framework's built-in pipeline, and **engine providers** that own the full pipeline themselves; the framework negotiates behavior and still applies **policy** and **access control**.
 - **Governance and safety by design.** Enforce a **policy layer** (homeostasis, barriers, pruning, signal quality, observability) inspired by the project’s design principles, so behavior stays controlled regardless of which backend is plugged in.
 - **Identity and authorization at the boundary.** Consume an **opaque principal** from your app’s authentication story; enforce **per-bank authorization** in the framework, with optional hooks to external policy engines when enterprises require them.
 - **Operational reality.** Optional **outbound transport** plugins for credential gateways and enterprise HTTP/TLS/proxy setups, shared by outbound calls that need them.

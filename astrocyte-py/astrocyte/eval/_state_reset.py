@@ -48,7 +48,7 @@ _BENCH_TABLES: tuple[str, ...] = (
     "astrocyte_entity_links",
     "astrocyte_entity_aliases",
     "astrocyte_entities",
-    # Tier-2 recall (M9): PageIndex tree + section graph
+    # Section recall (M9): PageIndex tree + section graph
     "astrocyte_pi_wiki_provenance",
     "astrocyte_pi_wiki_contradictions",
     "astrocyte_pi_section_links",
@@ -91,7 +91,7 @@ async def reset_benchmark_state(
         reset_age_graph: DEPRECATED — Apache AGE was removed in M9 (ADR-008).
             Param kept for API back-compat; the AGE drop/recreate path is
             now a no-op even when ``True``. Will be removed in a future
-            release. Tier-2 graph state is just rows in ``section_links`` /
+            release. Section-graph state is just rows in ``section_links`` /
             ``section_entities`` / ``unit_links`` / ``unit_entities`` and
             is wiped by the table-truncate loop above.
         age_graph_name: DEPRECATED — see ``reset_age_graph``.
@@ -127,7 +127,7 @@ async def reset_benchmark_state(
                 skipped.append((table, f"{type(exc).__name__}: {exc!s}"[:120]))
 
         # M9 / ADR-008: AGE removal — the AGE drop/recreate block was here.
-        # Tier-2 graph state lives in flat tables (section_links/entities,
+        # Section-graph state lives in flat tables (section_links/entities,
         # unit_links/entities) which the truncate loop above already wipes.
         # ``reset_age_graph`` and ``age_graph_name`` are accepted for API
         # back-compat but no longer have any effect.

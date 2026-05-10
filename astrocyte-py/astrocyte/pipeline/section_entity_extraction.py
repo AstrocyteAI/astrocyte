@@ -1,4 +1,4 @@
-"""PR2 commit A: per-section entity extraction for Tier-2 retrieval.
+"""PR2 commit A: per-section entity extraction for section recall.
 
 Extracts named entities (people, places, organisations, products,
 notable concepts) from a PageIndex tree section's text. Output rows go
@@ -30,7 +30,7 @@ Design notes:
   entity-resolution pass if the bench shows it matters.
 
 See:
-  - docs/_design/tier-2-recall.md §5 (retain pipeline) and §8.1
+  - docs/_design/recall.md §5 (retain pipeline) and §8.1
   - docs/_design/adr/adr-007-pageindex-tree-as-section-primitive.md
 """
 

@@ -1,6 +1,8 @@
-"""Astrocyte built-in intelligence pipeline (Tier 1).
+"""Astrocyte built-in intelligence pipeline.
 
-Active when provider_tier = "storage". Steps aside for Tier 2 engine providers.
+Active when ``provider_tier = "storage"`` — the framework owns retain/recall
+over storage adapters. Steps aside when ``provider_tier = "engine"`` so a
+full-stack engine provider (Mem0, Zep, Mystique) owns the pipeline instead.
 See docs/_design/built-in-pipeline.md.
 """
 

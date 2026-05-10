@@ -17,7 +17,7 @@ Retain, recall, and synthesize — with pluggable backends, built-in governance,
 Astrocyte gives AI agents **persistent memory** — store what matters, retrieve what's relevant, synthesize answers from accumulated knowledge. It sits between your agents and their storage, providing:
 
 - **Three operations:** `retain()`, `recall()`, `reflect()` — one API for every agent and every backend
-- **Pluggable backends:** Tier 1 storage (pgvector, Pinecone, Qdrant, Neo4j) or Tier 2 engines (Mystique, Mem0, Zep, Letta)
+- **Pluggable backends:** storage providers (pgvector, Pinecone, Qdrant, Neo4j) or engine providers (Mystique, Mem0, Zep, Letta)
 - **Built-in governance:** PII scanning, rate limits, token budgets, circuit breakers, access control, observability
 - **18 framework integrations:** LangGraph, CrewAI, OpenAI, Claude Agent SDK, Google ADK, AutoGen, and more
 - **MCP server:** Any MCP-capable agent (Claude Code, Cursor, Windsurf) gets memory with zero code

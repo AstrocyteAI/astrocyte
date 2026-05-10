@@ -1,4 +1,4 @@
-"""PostgreSQL adapter for Astrocyte Tier 1 + Tier-2.
+"""PostgreSQL adapter for Astrocyte storage and section recall.
 
 Backed by pgvector (HNSW vector index) and tsvector (BM25 keyword search).
 Provides VectorStore, DocumentStore, WikiStore, MentalModelStore,

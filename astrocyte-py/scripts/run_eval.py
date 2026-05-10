@@ -122,7 +122,7 @@ async def main(suite: str, output: str | None) -> None:
     # Print summary
     m = result.metrics
     print(f"Suite:            {result.suite}")
-    print(f"Provider:         {result.provider} (Tier: {result.provider_tier})")
+    print(f"Provider:         {result.provider} (kind: {result.provider_tier})")
     print(f"Recall precision: {m.recall_precision:.4f}")
     print(f"Recall hit rate:  {m.recall_hit_rate:.4f}")
     print(f"Recall MRR:       {m.recall_mrr:.4f}")

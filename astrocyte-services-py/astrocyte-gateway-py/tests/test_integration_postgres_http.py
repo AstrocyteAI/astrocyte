@@ -1,8 +1,8 @@
 """HTTP integration against the astrocyte-postgres stack (Postgres + pgvector) when DATABASE_URL is set.
 
 AGE was removed in M9 (ADR-008); this test exercises the Postgres-only reference
-stack now used in production. The graph-store dimension is covered by Tier-2's
-flat-table pattern (section_links / unit_links) — see migration 016."""
+stack now used in production. The graph-store dimension is covered by the
+section recall flat-table pattern (section_links / unit_links) — see migration 016."""
 
 from __future__ import annotations
 

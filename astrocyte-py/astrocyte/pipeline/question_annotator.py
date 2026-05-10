@@ -42,7 +42,7 @@ logger = logging.getLogger("astrocyte.pipeline.question_annotator")
 
 @dataclass
 class QuestionAnnotation:
-    """One question's parsed structure for the Tier-2 retrieval driver.
+    """One question's parsed structure for the section recall driver.
 
     Both fields are optional. ``entities=[]`` skips the entity
     strategy; ``date_range=None`` skips the temporal strategy."""

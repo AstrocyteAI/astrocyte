@@ -1,7 +1,7 @@
 """Curated recall — post-retrieval re-scoring by freshness, reliability, and salience.
 
 Applied after retrieval and fusion, before returning to the caller.
-Provider-agnostic — works with any Tier 1 or Tier 2 backend.
+Provider-agnostic — works with any storage or engine backend.
 
 Sync, pure computation — Rust migration candidate.
 """

@@ -344,7 +344,7 @@ from astrocyte._discovery import available_providers, discover_entry_points
 # All non-empty groups: {"vector_stores": {...}, "engine_providers": {...}, ...}
 available_providers()
 
-# Single group, same shape as YAML short names (e.g. Tier-2 `provider:` keys)
+# Single group, same shape as YAML short names (e.g. engine `provider:` keys)
 discover_entry_points("engine_providers")
 # → {"mystique": <class MystiqueProvider>, ...}
 ```

@@ -1,13 +1,14 @@
-"""Hybrid Tier-2 engine + Tier-1 pipeline as a single :class:`~astrocyte.provider.EngineProvider`.
+"""Hybrid engine + storage pipeline as a single :class:`~astrocyte.provider.EngineProvider`.
 
 **Selection rules (summary)**
 
 1. **Retain path** — Exactly one backend receives writes, chosen by ``retain_target``:
-   ``"engine"`` → Tier-2 ``EngineProvider.retain`` (requires ``engine=``);
+   ``"engine"`` → ``EngineProvider.retain`` (requires ``engine=``);
    ``"pipeline"`` → ``PipelineOrchestrator.retain`` (requires ``pipeline=``).
 
 2. **Recall path** — If both sides are configured, ``recall`` runs them **concurrently**
-   (``asyncio.gather``), tags hits with ``source`` ``tier2_engine`` vs ``tier1_pipeline``,
+   (``asyncio.gather``), tags hits with ``source`` ``tier2_engine`` vs ``tier1_pipeline``
+   (legacy tag values, kept for back-compat with downstream filters),
    optionally **dedupes** by text (keeping best score), then applies per-source **weights**
    (``engine_recall_weight`` / ``pipeline_recall_weight``). Results are sorted by weighted
    score and trimmed to ``max_results`` / token budget.
@@ -21,7 +22,7 @@
    or raise ``NotImplementedError`` (see implementation).
 
 When changing merge semantics or router heuristics, update **tests**:
-``tests/test_astrocyte_tier2.py`` (Tier-2 engine), ``tests/test_hybrid_engine.py`` (merge +
+``tests/test_astrocyte_tier2.py`` (engine provider), ``tests/test_hybrid_engine.py`` (merge +
 ``retain_target``), and ``tests/test_phase2_innovations.py`` (adaptive router).
 """
 
@@ -63,7 +64,7 @@ def _dedupe_hits_prefer_score(hits: list[MemoryHit]) -> list[MemoryHit]:
 
 
 class HybridEngineProvider:
-    """Merges recall from a Tier-2 ``EngineProvider`` and a Tier-1 ``PipelineOrchestrator``.
+    """Merges recall from an ``EngineProvider`` and a ``PipelineOrchestrator``.
 
     Typical use: long-lived agent memory in the hosted engine plus local embeddings / RAG
     in the pipeline, both indexed for the same logical ``bank_id``.

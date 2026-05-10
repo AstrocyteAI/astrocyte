@@ -1,7 +1,7 @@
-"""PostgreSQL-backed PageIndexStore for the Tier-2 recall stack (M9).
+"""PostgreSQL-backed PageIndexStore for the section recall stack (M9).
 
 Backs the three-layer recall design described in
-``docs/_design/tier-2-recall.md`` — the section-grain SQL adapter that
+``docs/_design/recall.md`` — the section-grain SQL adapter that
 holds the PageIndex tree (one document per conversation, sections as
 tree nodes), Hindsight-style entity-mention rows, and section-to-section
 links.
@@ -53,7 +53,7 @@ def _embedding_param(vec: list[float] | None) -> str | None:
 
 
 class PostgresPageIndexStore:
-    """Durable PageIndexStore using the Tier-2 schema (migration 015).
+    """Durable PageIndexStore using the section recall schema (migration 015).
 
     Per-tenant aware via :func:`astrocyte.tenancy.fq_table` — the active
     tenant schema prefixes every table name. Same connection-pool /
@@ -532,8 +532,8 @@ class PostgresPageIndexStore:
     # ── PR2 commit B: parallel-strategy query methods ───────────────────
     #
     # Each method is a single SQL round-trip returning ranked
-    # ``(document_id, line_num, score)`` tuples. The Tier-2 recall
-    # orchestrator (``astrocyte.pipeline.tier2_recall``) calls them in
+    # ``(document_id, line_num, score)`` tuples. The section recall
+    # orchestrator (``astrocyte.pipeline.section_recall``) calls them in
     # parallel via asyncio.gather, then fuses via RRF.
 
     async def search_sections_semantic(

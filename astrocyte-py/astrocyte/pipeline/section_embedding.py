@@ -1,4 +1,4 @@
-"""PR2 commit A: per-section summary embeddings for the Tier-2 semantic strategy.
+"""PR2 commit A: per-section summary embeddings for the section recall semantic strategy.
 
 Embeds the ``summary`` text of each PageIndex tree section using the
 configured embedding provider (typically ``text-embedding-3-small`` at

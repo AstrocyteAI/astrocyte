@@ -1,7 +1,8 @@
-"""Tests for Astrocyte class with Tier 1 pipeline (in-memory stores).
+"""Tests for Astrocyte class with the storage pipeline (in-memory stores).
 
 Regression target for `provider_tier: storage` + built-in pipeline. When retain/recall
-trace semantics change, update tests and `docs/_design/built-in-pipeline.md` (Tier 1 section).
+trace semantics change, update tests and `docs/_design/built-in-pipeline.md`
+(storage-pipeline section).
 """
 
 from astrocyte._astrocyte import Astrocyte

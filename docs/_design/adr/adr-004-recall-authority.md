@@ -20,7 +20,7 @@ Fused recall (semantic + graph + keyword) returns a single ranked list. Downstre
 
 3. **Runtime — recall**: After DLP scanning on `Astrocyte.recall`, when enabled, `apply_recall_authority` sets `RecallResult.authority_context`.
 
-4. **Runtime — reflect**: Tier-1 `PipelineOrchestrator.reflect` and multi-bank `Astrocyte.reflect` apply the same formatter when `apply_to_reflect` is true and pass the string into `synthesize`. **`ReflectResult.authority_context`** echoes that block for tools and UIs. Tier-2 engine **native** `reflect` is unchanged (no automatic injection); use pipeline reflect or keyword-only flows if you need authority in synthesis.
+4. **Runtime — reflect**: The storage `PipelineOrchestrator.reflect` and multi-bank `Astrocyte.reflect` apply the same formatter when `apply_to_reflect` is true and pass the string into `synthesize`. **`ReflectResult.authority_context`** echoes that block for tools and UIs. Engine-provider **native** `reflect` is unchanged (no automatic injection); use the storage reflect or keyword-only flows if you need authority in synthesis.
 
 ## Consequences
 

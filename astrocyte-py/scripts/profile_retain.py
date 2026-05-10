@@ -133,7 +133,7 @@ async def _run(config_path: str, lme_path: str, max_questions: int) -> None:
     if pipeline is not None and hasattr(pipeline, "_profiler"):
         pipeline._profiler.report()
     else:
-        print("  [profile] WARNING: no pipeline profiler attached (Tier 2 deployment?)")
+        print("  [profile] WARNING: no pipeline profiler attached (engine-provider deployment?)")
 
 
 def main() -> None:

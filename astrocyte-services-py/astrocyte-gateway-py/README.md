@@ -85,7 +85,7 @@ On GitHub: **Actions → Benchmark gateway overhead → Run workflow** (manual d
 
 **PostgreSQL reference stack (pgvector + durable wiki + PgQueuer):** Install the optional adapters (`uv sync --extra dev --extra postgres --extra worker`) and run Postgres. The fastest path is **Docker Compose** at **[`../docker-compose.yml`](../docker-compose.yml)** (repo **`astrocyte-services-py/`**), which starts the combined Postgres image + this service together. The Compose defaults select `pgvector`, `wiki_store: postgres`, wiki compile, entity resolution, and PgQueuer-backed async tasks. For Postgres only on the host, see [`astrocyte-postgres`](../../adapters-storage-py/astrocyte-postgres/README.md).
 
-> **M9 / ADR-008:** Apache AGE was removed; Tier-2 graph operations now run on flat tables + SQL CTEs inside the Postgres adapter. Setting `graph_store: age` raises a `ConfigError` on startup. See [`docs/_design/adr/adr-008-section-graph-replaces-age.md`](../../docs/_design/adr/adr-008-section-graph-replaces-age.md).
+> **M9 / ADR-008:** Apache AGE was removed; section-graph operations now run on flat tables + SQL CTEs inside the Postgres adapter. Setting `graph_store: age` raises a `ConfigError` on startup. See [`docs/_design/adr/adr-008-section-graph-replaces-age.md`](../../docs/_design/adr/adr-008-section-graph-replaces-age.md).
 
 Then set `vector_store: postgres`, `wiki_store: postgres`, and `async_tasks.backend: pgqueuer` in YAML, or use the equivalent `ASTROCYTE_*` environment variables, and pass a DSN via provider config or `DATABASE_URL` / `ASTROCYTE_PG_DSN`.
 

@@ -183,7 +183,7 @@ class Astrocyte:
         return cls(config)
 
     def set_engine_provider(self, provider: EngineProvider) -> None:
-        """Set the Tier 2 engine provider (for programmatic setup)."""
+        """Set the engine provider (for programmatic setup)."""
         from astrocyte.provider import check_spi_version
 
         check_spi_version(provider, "EngineProvider")

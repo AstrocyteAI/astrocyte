@@ -1,4 +1,4 @@
-"""Built-in entry points for Tier 1 providers (see `pyproject.toml`)."""
+"""Built-in entry points for storage providers (see `pyproject.toml`)."""
 
 import pytest
 

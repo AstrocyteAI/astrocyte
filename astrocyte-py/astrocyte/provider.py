@@ -820,20 +820,20 @@ class SourceStore(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Tier 2: Engine Provider
+# Engine Provider
 # ---------------------------------------------------------------------------
 
 
 @runtime_checkable
 class EngineProvider(Protocol):
-    """SPI for full-stack memory engines (Tier 2).
+    """SPI for full-stack memory engines.
 
-    Tier 2 engines own the entire memory pipeline — embedding, storage,
+    Engine providers own the entire memory pipeline — embedding, storage,
     retrieval, and synthesis. Astrocyte delegates retain/recall/reflect
     to the engine but still enforces its policy layer (PII, rate limits,
     access control) around every call.
 
-    Examples of Tier 2 engines: Mem0, Zep, Mystique/Hindsight.
+    Examples: Mem0, Zep, Mystique/Hindsight.
     """
 
     SPI_VERSION: ClassVar[int] = 1
@@ -884,10 +884,10 @@ class EngineProvider(Protocol):
 class LLMProvider(Protocol):
     """SPI for LLM access needed by the Astrocyte core pipeline.
 
-    Tier 1 deployments require an LLMProvider for embedding generation
-    and (optionally) for reflect-time synthesis. Tier 2 engines typically
-    bring their own LLM access, but Astrocyte may still use this for
-    MIP intent routing or policy evaluation.
+    Storage-pipeline deployments require an LLMProvider for embedding
+    generation and (optionally) for reflect-time synthesis. Engine
+    providers typically bring their own LLM access, but Astrocyte may
+    still use this for MIP intent routing or policy evaluation.
     """
 
     SPI_VERSION: ClassVar[int] = 1
