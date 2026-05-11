@@ -4,6 +4,10 @@ title: Benchmark presets and the v1 default
 
 # Benchmark presets and the v1 default
 
+:::caution[Operational recipes stale (M12 PageIndex bench)]
+The ``make bench-locomo-fair`` recipes below ran against the old ``scripts/run_benchmarks.py`` harness which was removed in the M12 PageIndex refactor. The preset analysis (fast-recall as v1 default, the rationale, the matrix) is still accurate as a historical decision record, but to reproduce numbers you now use ``make bench-locomo`` (Postgres + Doppler) — see the README for current invocation.
+:::
+
 Astrocyte ships **fast-recall** as the v1 default benchmark configuration
 (`benchmarks/config.yaml`), selected after the five-preset ablation matrix
 described below. This page explains the trade-offs each preset embodies, the

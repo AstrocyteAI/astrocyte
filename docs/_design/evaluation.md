@@ -2,6 +2,17 @@
 
 Astrocyte ships built-in tools to measure memory quality, compare providers, and monitor accuracy over time. This enables data-driven provider selection and regression detection.
 
+:::caution[Doc is partially stale (M12 PageIndex bench refactor)]
+The M9–M12 PageIndex bench replaced the old ``scripts/run_benchmarks.py`` harness. The Make targets ``bench-smoke``, ``bench-locomo-quick``, ``bench-locomo-fair``, ``bench-longmemeval-quick``, ``bench-builtin``, ``bench-full``, ``bench-gate``, and ``bench-compare`` referenced below **no longer exist**. The current bench surface is:
+
+- ``make bench-locomo`` (Postgres + Doppler; pass ``LOCOMO_MAX_Q=5`` for quick iteration)
+- ``make bench-longmemeval`` (same shape; ``LME_MAX_SAMPLES=50`` for quick)
+- ``make bench-parallel`` (LoCoMo + LME on two Postgres containers)
+- ``make bench-archive-*`` (Cloudflare R2 archive of results)
+
+Results are archived to R2 instead of regressing in CI — see `docs/_design/bench-archive.md`. This document's API + concepts sections remain accurate; the operational recipes need a full rewrite.
+:::
+
 ---
 
 ## 1. Why evaluation matters

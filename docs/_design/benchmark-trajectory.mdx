@@ -27,9 +27,9 @@ The **per-category accuracy** chart breaks the same runs down by category. For L
 ## How a run becomes a point on the chart
 
 ```text
-make bench-locomo-fair / bench-longmemeval / bench-full
-   ↓ (writes results-*.json locally)
-scripts/run_benchmarks.py  ← post-run hook
+make bench-locomo / bench-longmemeval / bench-parallel
+   ↓ (writes results-*.json under benchmark-results/pageindex/)
+scripts/bench_pageindex_{locomo,lme}.py  ← post-run hook
    ↓ (R2_* env vars present?)
 scripts/archive_bench_results.py
    ↓ (gzip + put_object × 2 buckets)

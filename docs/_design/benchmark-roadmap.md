@@ -3,6 +3,10 @@
 > **Status**: Living document. Updated 2026-04-25.
 > Current adapters: LoCoMo ✅ LongMemEval ✅ | Planned: AMA-Bench · MemoryArena
 
+:::caution[Operational recipes stale (M12 PageIndex bench)]
+References to ``make bench-full`` and ``scripts/run_benchmarks.py`` below predate the M12 PageIndex refactor. The current invocation is ``make bench-locomo`` / ``make bench-longmemeval`` / ``make bench-parallel`` (requires Postgres + Doppler). See the [astrocyte-py README](https://github.com/AstrocyteAI/astrocyte/blob/main/astrocyte-py/README.md#quick-start) for current commands. Roadmap intent and benchmark selection remain accurate.
+:::
+
 ---
 
 ## 1. Why three tiers of benchmarks
