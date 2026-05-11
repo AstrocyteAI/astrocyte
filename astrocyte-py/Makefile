@@ -511,8 +511,8 @@ bench-archive-pageindex:
 	echo "archiving stage=$(STAGE)"; \
 	echo "  LME    -> $$latest_lme"; \
 	echo "  LoCoMo -> $$latest_locomo"; \
-	uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench longmemeval --files "$$latest_lme" && \
-	uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench locomo --files "$$latest_locomo"
+	doppler run --config bench -- uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench longmemeval --files "$$latest_lme" && \
+	doppler run --config bench -- uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench locomo --files "$$latest_locomo"
 
 # ---------------------------------------------------------------------------
 # Cleanup
