@@ -1,15 +1,13 @@
-"""Astrocyte evaluation harness — benchmark suites, provider comparison, regression detection.
+"""Astrocyte evaluation utilities.
 
-Usage:
-    from astrocyte.eval import MemoryEvaluator, compare_providers
-
-    evaluator = MemoryEvaluator(brain)
-    results = await evaluator.run_suite("basic", bank_id="eval-bank")
-    print(results.summary())
-
-See docs/_design/evaluation.md for the full specification.
+Used by the PageIndex bench scripts in ``scripts/bench_pageindex_*.py``.
+Surface is intentionally minimal — just the LLM judges and the
+terminal-error classifier. The v0.x bench harness
+(``scripts/run_benchmarks.py``) and its supporting modules
+(``MemoryEvaluator``, ``compare_providers``, etc.) were removed in May
+2026; see ``docs/_design/benchmark-comparison-methodology.md``.
 """
 
-from astrocyte.eval.evaluator import MemoryEvaluator, compare_providers
+from astrocyte.eval._terminal_error import is_terminal_error
 
-__all__ = ["MemoryEvaluator", "compare_providers"]
+__all__ = ["is_terminal_error"]

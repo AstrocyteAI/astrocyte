@@ -18,7 +18,6 @@ from astrocyte.pipeline.extraction import (
     resolve_retain_fact_type,
 )
 from astrocyte.pipeline.tasks import (
-    ANALYZE_BENCHMARK_FAILURES,
     COMPILE_BANK,
     COMPILE_PERSONA_PAGE,
     INDEX_WIKI_PAGE_VECTOR,
@@ -41,7 +40,6 @@ __all__ = [
     "BUILTIN_EXTRACTION_PROFILES",
     "ChunkingDecision",
     "PreparedRetainInput",
-    "ANALYZE_BENCHMARK_FAILURES",
     "COMPILE_BANK",
     "COMPILE_PERSONA_PAGE",
     "INDEX_WIKI_PAGE_VECTOR",

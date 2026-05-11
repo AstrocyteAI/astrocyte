@@ -48,15 +48,15 @@ BENCH_VECTOR_EXTENSION ?= pgvectorscale
 
 # ---------------------------------------------------------------------------
 # Second benchmark database — for running LoCoMo + LME in parallel without
-# state-reset interference. Each `run_benchmarks.py` invocation TRUNCATEs all
-# bench tables on startup; sharing one DB between two processes makes the
-# second TRUNCATE wipe the first run's in-flight retain. Two containers on
-# different ports give each run an isolated PgQueuer queue, observation
-# table, mental_model table, and entity graph.
+# DB contention or bank-id collisions. PageIndex bank rows persist across
+# runs (resume semantics), so two containers on different ports let each
+# leg keep its own warm cache.
 #
 # Run pattern:
-#   Terminal A: doppler run -- make bench-locomo            (DB on :5433)
-#   Terminal B: doppler run -- make bench-longmemeval-on-2  (DB on :5434)
+#   Single command:  make bench-parallel
+#   Or two terminals:
+#     Terminal A: make bench-locomo            (DB on :5433)
+#     Terminal B: make bench-longmemeval-on-2  (DB on :5434)
 BENCH_PG_2_CONTAINER := astrocyte-bench-pg-2
 BENCH_PG_2_PORT      := 5434
 BENCH_DATABASE_URL_2 := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0.1:$(BENCH_PG_2_PORT)/$(BENCH_PG_DB)
@@ -99,7 +99,7 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # Benchmarks
 # ---------------------------------------------------------------------------
 
-.PHONY: bench-db-start bench-db-stop bench-db-reset bench-db-start-2 bench-db-stop-2 bench-db-reset-2 bench bench-full bench-gate bench-locomo bench-locomo-fair bench-locomo-quick bench-compare bench-longmemeval bench-longmemeval-quick bench-longmemeval-on-2 bench-longmemeval-quick-on-2 bench-builtin bench-smoke
+.PHONY: bench-db-start bench-db-stop bench-db-reset bench-db-start-2 bench-db-stop-2 bench-db-reset-2 bench-locomo bench-longmemeval bench-longmemeval-on-2 bench-parallel
 
 # Start the benchmark Postgres container (astrocyte-postgres).
 # Pulls from GHCR first; falls back to building locally from the Dockerfile.
@@ -207,212 +207,90 @@ bench-db-stop-2:
 
 bench-db-reset-2: bench-db-stop-2 bench-db-start-2
 
-# Full LoCoMo benchmark (requires OPENAI_API_KEY, ~30-60 min)
-# Pass RESUME=1 to continue an interrupted run: make bench-locomo RESUME=1
+# ---------------------------------------------------------------------------
+# Benchmarks — PageIndex canonical harness (v1.x)
+# ---------------------------------------------------------------------------
+#
+# The v0.x harness (scripts/run_benchmarks.py + benchmarks/config-*.yaml) was
+# deprecated and removed in May 2026 in favour of PageIndex section-grain +
+# fact-grain retrieval (M9–M12). `bench-locomo` / `bench-longmemeval` /
+# `bench-parallel` now run PageIndex. `bench-archive` ships the canonical
+# pair of LME+LoCoMo result JSONs to R2 under a single STAGE label.
+#
+# Targets:
+#   bench-locomo              LoCoMo, primary DB :5433
+#   bench-longmemeval         LongMemEval-S, primary DB :5433
+#   bench-longmemeval-on-2    LongMemEval-S, secondary DB :5434 (for parallel)
+#   bench-parallel            LoCoMo on :5433 + LME on :5434, true parallel
+#   bench-archive STAGE=foo   Push latest LME + LoCoMo JSON to R2
+#
+# Knobs:
+#   LOCOMO_MAX_Q=N            questions per LoCoMo conversation (default 20 → 200 total)
+#   LME_MAX_SAMPLES=N         LME samples (default 200, full set = 500)
+#
+# All targets self-bootstrap Doppler (`doppler run -- env DATABASE_URL=... uv ...`).
+# DBs are auto-started via bench-db-start / bench-db-start-2 deps.
+# Resume semantics: PageIndex bank persistence IS resume — re-running with
+# the same --bank-id skips re-extraction of any docs already in the bank.
+# No RESUME flag needed.
+
+LOCOMO_MAX_Q     ?= 20
+LME_MAX_SAMPLES  ?= 200
+LOCOMO_BANK_ID   ?= bench-pageindex-locomo
+LME_BANK_ID      ?= bench-pageindex-lme
+
+.PHONY: bench-locomo bench-longmemeval bench-longmemeval-on-2 bench-parallel
+
 bench-locomo: fetch-locomo bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data \
-		--canonical-judge \
-		$(if $(MULTI_QUERY),--multi-query,) \
-		$(if $(RESUME),--resume,)
+	@mkdir -p $(RESULTS_DIR)/pageindex/locomo
+	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
+	  uv run python scripts/bench_pageindex_locomo.py \
+	    --backend postgres \
+	    --max-questions-per-conversation $(LOCOMO_MAX_Q) \
+	    --bank-id $(LOCOMO_BANK_ID)
 
-# Quick LoCoMo subset (50 questions, ~2-3 min)
-bench-locomo-quick: fetch-locomo bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data \
-		--max-questions 50 \
-		--canonical-judge
-
-# Fair-coverage fast LoCoMo: 20 questions × 10 conversations = 200 total
-# with EVERY conversation represented. Recommended fast-iteration sample
-# — replaces the prior bench-locomo-200 (head-slice) which over-weighted
-# early conversations and obscured per-category signal.
-# ~15-20 min wall time, ~$1 cost.
-bench-locomo-fair: fetch-locomo bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data \
-		--max-questions-per-conversation 20 \
-		--canonical-judge \
-		$(if $(RETAIN_CONCURRENCY),--retain-concurrency $(RETAIN_CONCURRENCY),) \
-		$(if $(RESUME),--resume,)
-
-# Full LongMemEval benchmark (requires OPENAI_API_KEY, ~2-4 hrs for all 500 questions)
-# Pass RESUME=1 to continue an interrupted run: make bench-longmemeval RESUME=1
 bench-longmemeval: fetch-longmemeval bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks longmemeval \
-		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
-		--canonical-judge \
-		$(if $(RESUME),--resume,)
+	@mkdir -p $(RESULTS_DIR)/pageindex/lme
+	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
+	  uv run python scripts/bench_pageindex_lme.py \
+	    --backend postgres \
+	    --max-samples $(LME_MAX_SAMPLES) \
+	    --bank-id $(LME_BANK_ID)
 
-# Quick LongMemEval subset (100 questions, stratified across all categories, ~30-60 min)
-bench-longmemeval-quick: fetch-longmemeval bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks longmemeval \
-		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
-		--max-questions 100 \
-		--canonical-judge
-
-# LongMemEval pointed at the SECOND DB — for parallel runs alongside `make bench-locomo`.
-# Output dir is separate so result files don't collide.
-# Pass RESUME=1 to continue an interrupted run.
 bench-longmemeval-on-2: fetch-longmemeval bench-db-start-2
-	DATABASE_URL="$(BENCH_DATABASE_URL_2)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL_2)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks longmemeval \
-		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
-		--canonical-judge \
-		--output-dir $(RESULTS_DIR)/lme-on-2 \
-		$(if $(MULTI_QUERY),--multi-query,) \
-		$(if $(RESUME),--resume,)
+	@mkdir -p $(RESULTS_DIR)/pageindex/lme
+	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' \
+	  uv run python scripts/bench_pageindex_lme.py \
+	    --backend postgres \
+	    --max-samples $(LME_MAX_SAMPLES) \
+	    --bank-id $(LME_BANK_ID)
 
-# Quick LongMemEval subset on the SECOND DB (100q, ~30-60 min) — for fast smoke tests
-# while a LoCoMo run is in flight on the primary DB.
-bench-longmemeval-quick-on-2: fetch-longmemeval bench-db-start-2
-	DATABASE_URL="$(BENCH_DATABASE_URL_2)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL_2)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks longmemeval \
-		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
-		--max-questions 100 \
-		--canonical-judge \
-		--output-dir $(RESULTS_DIR)/lme-on-2 \
-		$(if $(MULTI_QUERY),--multi-query,)
-
-# ---------------------------------------------------------------------------
-# Single-command parallel run with full process-level isolation.
-# ---------------------------------------------------------------------------
-# Backgrounds bench-locomo (DB :5433) and bench-longmemeval-on-2 (DB :5434)
-# under one make target.  Each gets its own Postgres container, python
-# process, and log file — one crash does not affect the other.  ``wait``
-# blocks the parent shell until BOTH children finish, so make returns
-# only when both runs complete.
+# True parallel: LoCoMo on :5433 + LME on :5434. Each leg gets its own
+# Postgres container, Python process, and log file — one crash does not
+# affect the other. `wait` returns only when both children finish.
 #
-# Live progress: in another terminal,
-#     tail -f $(RESULTS_DIR)/parallel/locomo.log
-#     tail -f $(RESULTS_DIR)/parallel/lme.log
+# Live progress: tail -f $(RESULTS_DIR)/parallel/{locomo,lme}.log
 #
-# Usage:
-#     doppler run -- make bench-parallel-isolated
-#     doppler run -- make bench-parallel-isolated CONFIG=benchmarks/config-foo.yaml
-#     doppler run -- make bench-parallel-isolated RESUME=1
-#
-# Per-leg config override (LoCoMo and LME need different
-# adversarial_defense settings — LoCoMo's adversarial bucket scores
-# by abstaining, LME has no such bucket):
-#     doppler run -- make bench-parallel-isolated \
-#         LOCOMO_CONFIG=benchmarks/config-X-locomo.yaml \
-#         LME_CONFIG=benchmarks/config-X-lme.yaml
-#
-# CONFIG, LOCOMO_CONFIG, LME_CONFIG precedence: per-leg overrides
-# CONFIG. When neither is set, falls back to the bench-locomo /
-# bench-longmemeval-on-2 defaults.
-#
-# Requires fresh-or-resumed state on each DB.  Use ``make bench-db-reset``
-# and ``make bench-db-reset-2`` first when starting a new experiment.
-.PHONY: bench-parallel-isolated
-bench-parallel-isolated: fetch-datasets bench-db-start bench-db-start-2
-	@mkdir -p $(RESULTS_DIR)/parallel
+# Cache state: bank rows persist across runs. First run on :5434 for
+# LME will be a cold start (~2-3hr full extraction). Subsequent runs
+# hit cache and only re-score (~30-60min).
+bench-parallel: fetch-datasets bench-db-start bench-db-start-2
+	@mkdir -p $(RESULTS_DIR)/pageindex/locomo $(RESULTS_DIR)/pageindex/lme $(RESULTS_DIR)/parallel
 	@echo "  [parallel] LoCoMo on :5433 + LME on :5434"
-	@echo "  [parallel] LoCoMo config: $(or $(LOCOMO_CONFIG),$(CONFIG))"
-	@echo "  [parallel]    LME config: $(or $(LME_CONFIG),$(CONFIG))"
 	@echo "  [parallel] Logs: $(RESULTS_DIR)/parallel/{locomo,lme}.log"
 	@echo "  [parallel] Watch live: tail -f $(RESULTS_DIR)/parallel/locomo.log"
-	@( $(MAKE) bench-locomo CONFIG=$(or $(LOCOMO_CONFIG),$(CONFIG)) $(if $(MULTI_QUERY),MULTI_QUERY=1,) $(if $(RESUME),RESUME=1,) > $(RESULTS_DIR)/parallel/locomo.log 2>&1 ; \
-	   echo "  [parallel] locomo exited ($$?)" ) & \
-	 ( $(MAKE) bench-longmemeval-on-2 CONFIG=$(or $(LME_CONFIG),$(CONFIG)) $(if $(MULTI_QUERY),MULTI_QUERY=1,) $(if $(RESUME),RESUME=1,) > $(RESULTS_DIR)/parallel/lme.log 2>&1 ; \
-	   echo "  [parallel] lme exited ($$?)" ) & \
+	@( doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
+	     uv run python scripts/bench_pageindex_locomo.py --backend postgres \
+	       --max-questions-per-conversation $(LOCOMO_MAX_Q) --bank-id $(LOCOMO_BANK_ID) \
+	     > $(RESULTS_DIR)/parallel/locomo.log 2>&1 ; \
+	     echo "  [parallel] locomo exited ($$?)" ) & \
+	 ( doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' \
+	     uv run python scripts/bench_pageindex_lme.py --backend postgres \
+	       --max-samples $(LME_MAX_SAMPLES) --bank-id $(LME_BANK_ID) \
+	     > $(RESULTS_DIR)/parallel/lme.log 2>&1 ; \
+	     echo "  [parallel] lme exited ($$?)" ) & \
 	 wait
-	@echo "  [parallel] Both done. Results: $(RESULTS_DIR)/latest.json (locomo) + $(RESULTS_DIR)/lme-on-2/latest.json (lme)"
-
-# For LiteLLM provider, use: make bench-locomo CONFIG=benchmarks/config-litellm.yaml
-# (or any other bench-locomo-* / bench-longmemeval-* target with the CONFIG override).
-
-# Side-by-side: built-in OpenAI vs LiteLLM adapter (50 questions each)
-bench-compare: fetch-locomo bench-db-start
-	@echo "=== Built-in OpenAI provider ==="
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config.yaml \
-		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data \
-		--max-questions 50 \
-		--output-dir $(RESULTS_DIR)/openai
-	@echo ""
-	@echo "=== LiteLLM adapter ==="
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config benchmarks/config-litellm.yaml \
-		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data \
-		--max-questions 50 \
-		--output-dir $(RESULTS_DIR)/litellm
-	@echo ""
-	@echo "Results: $(RESULTS_DIR)/openai/latest.json vs $(RESULTS_DIR)/litellm/latest.json"
-
-# Built-in eval suites (basic + accuracy)
-bench-builtin: bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks builtin
-
-# All benchmarks
-bench: fetch-datasets bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks builtin longmemeval locomo \
-		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
-		--locomo-path $(LOCOMO_DIR)/data
-
-# Full canonical run — LME + LoCoMo in parallel, LLM-judge, competitor-comparable numbers.
-# Requires API key (use: doppler run -- make bench-full)
-# Pass RESUME=1 to continue an interrupted run: doppler run -- make bench-full RESUME=1
-bench-full: fetch-datasets bench-db-start
-	DATABASE_URL="$(BENCH_DATABASE_URL)" ASTROCYTE_TASKS_DSN="$(BENCH_DATABASE_URL)" $(BENCH_UV_RUN) python scripts/run_benchmarks.py \
-		--config $(CONFIG) \
-		--benchmarks longmemeval locomo \
-		--longmemeval-path $(LONGMEMEVAL_DIR)/data \
-		--locomo-path $(LOCOMO_DIR)/data \
-		--canonical-judge \
-		$(if $(RESUME),--resume,)
-
-# Release gate for Hindsight-informed capability claims.
-# Expects benchmark-results/latest.json from run_benchmarks.py.
-bench-gate:
-	uv run python scripts/check_benchmark_gates.py \
-		--gates benchmarks/gates-hindsight-informed.json \
-		--results $(RESULTS_DIR)/latest.json
-
-# Baseline-config gate. Run with:
-#   make bench-locomo-fair CONFIG=benchmarks/config-baseline.yaml
-#   make bench-gate-baseline
-.PHONY: bench-gate-baseline
-
-bench-gate-baseline:
-	uv run python scripts/check_benchmark_gates.py \
-		--gates benchmarks/gates-baseline.json \
-		--results $(RESULTS_DIR)/latest.json
-
-# Smoke test — in-memory providers, no API key needed.
-# Uses the real LoCoMo dataset with category-stratified sampling so the
-# regression gate covers all five categories (multi-hop, temporal,
-# open-domain, single-hop, adversarial) without paying for the full
-# 1986-question run. With ``--max-questions-per-conversation 5`` we get
-# ceil(5/5)=1 question per category per conversation × 10 conversations
-# = ~50 questions, every category represented. With the mock provider
-# this runs in well under a minute. Bump the per-conv number if a
-# regression slips through this sample.
-bench-smoke: fetch-locomo
-	uv run python scripts/run_benchmarks.py \
-		--provider test \
-		--benchmarks locomo \
-		--locomo-path $(LOCOMO_DIR)/data \
-		--max-questions-per-conversation 5
+	@echo "  [parallel] Both done. Results: $(RESULTS_DIR)/pageindex/{locomo,lme}/"
 
 # ---------------------------------------------------------------------------
 # CodeQL
@@ -451,10 +329,9 @@ codeql:
 # All targets here require the six R2_* env vars from Doppler config `bench`.
 # See docs/_design/bench-archive.md and docs/_plugins/benchmarks-doppler-setup.md.
 
-.PHONY: bench-archive-selftest bench-archive-push bench-archive-fetch \
+.PHONY: bench-archive bench-archive-selftest bench-archive-fetch \
 	bench-archive-trajectory bench-archive-rebuild-trajectory \
-	bench-archive-backfill-dry bench-archive-backfill \
-	bench-archive-pageindex
+	bench-archive-backfill-dry bench-archive-backfill
 
 # STAGE label (defaults to local-ad-hoc) and BENCH selector pass through.
 STAGE ?= local-ad-hoc
@@ -463,14 +340,6 @@ BENCH ?= locomo
 # Round-trip a small object against both buckets to verify creds + CORS reach.
 bench-archive-selftest:
 	uv run python -m scripts.archive_bench_results --selftest
-
-# Manually archive every results-*.json in benchmark-results/ under STAGE.
-# Usually unnecessary: scripts/run_benchmarks.py archives via the post-run
-# hook on every successful run. Use this for backfilling a single label.
-bench-archive-push:
-	uv run python -m scripts.archive_bench_results \
-		--stage $(STAGE) \
-		--files $(RESULTS_DIR)/results-*.json
 
 # Pull the latest archived run for one bench down to benchmark-results/_r2/.
 bench-archive-fetch:
@@ -499,11 +368,11 @@ bench-archive-backfill:
 # matching --bench override (results are "unwrapped" — bench name isn't
 # inside the JSON, so the archive script needs it on the CLI).
 #
-#   make bench-archive-pageindex STAGE=m12-close
+#   make bench-archive STAGE=m12-close
 #
 # Fails the whole target if either upload fails; partial archives are
 # undesirable for trajectory continuity.
-bench-archive-pageindex:
+bench-archive:
 	@latest_lme="$$(ls -t $(RESULTS_DIR)/pageindex/lme/results-*.json 2>/dev/null | head -1)"; \
 	latest_locomo="$$(ls -t $(RESULTS_DIR)/pageindex/locomo/results-*.json 2>/dev/null | head -1)"; \
 	if [ -z "$$latest_lme" ]; then echo "no LME results in $(RESULTS_DIR)/pageindex/lme/" >&2; exit 1; fi; \

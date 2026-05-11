@@ -12,14 +12,8 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from astrocyte.eval.failure_analysis import (
-    analyze_failures,
-    load_benchmark_result,
-    stable_question_slice,
-)
 from astrocyte.pipeline.temporal import temporal_metadata
 from astrocyte.types import (
     Entity,
@@ -43,7 +37,6 @@ INDEX_WIKI_PAGE_VECTOR = "index_wiki_page_vector"
 PROJECT_ENTITY_EDGES = "project_entity_edges"
 NORMALIZE_TEMPORAL_FACTS = "normalize_temporal_facts"
 LINT_WIKI_PAGE = "lint_wiki_page"
-ANALYZE_BENCHMARK_FAILURES = "analyze_benchmark_failures"
 
 
 @dataclass
@@ -194,8 +187,6 @@ class MemoryTaskDispatcher:
             return await self._normalize_temporal_facts(task)
         if task.task_type == LINT_WIKI_PAGE:
             return await self._lint_wiki_page(task)
-        if task.task_type == ANALYZE_BENCHMARK_FAILURES:
-            return await self._analyze_benchmark_failures(task)
         raise ValueError(f"Unknown memory task type: {task.task_type}")
 
     async def _compile_bank(self, task: MemoryTask) -> dict[str, Any]:
@@ -429,20 +420,6 @@ class MemoryTaskDispatcher:
             "elapsed_ms": result.elapsed_ms,
             "error": result.error,
         }
-
-    async def _analyze_benchmark_failures(self, task: MemoryTask) -> dict[str, Any]:
-        result_path = Path(_required_str(task.payload, "result_path"))
-        result = load_benchmark_result(result_path)
-        analysis = analyze_failures(result)
-        analysis["stable_question_slice"] = stable_question_slice(
-            result,
-            size=int(task.payload.get("slice_size", 200)),
-            seed=str(task.payload.get("seed", "locomo-v1")),
-        )
-        output_path = task.payload.get("output_path")
-        if output_path:
-            Path(str(output_path)).write_text(json.dumps(analysis, indent=2, sort_keys=True), encoding="utf-8")
-        return analysis
 
     async def _build_persona_page(
         self,

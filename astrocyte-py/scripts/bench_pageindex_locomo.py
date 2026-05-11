@@ -1737,9 +1737,9 @@ async def answer_question(
             # through every multi-session question for the rest of the
             # run while the real failure (out of credits / bad key)
             # stayed hidden.
-            from astrocyte.eval.benchmarks.locomo import _is_terminal_error
+            from astrocyte.eval._terminal_error import is_terminal_error
 
-            if _is_terminal_error(exc):
+            if is_terminal_error(exc):
                 raise
             print(
                 f"  [pageindex] reflect failed for q={question[:40]!r}: "
@@ -1895,6 +1895,11 @@ async def answer_question(
             # capping at 12. Bi-encoder cosine often ranks topically
             # related facts above question-answering ones; the cross-
             # encoder reads both jointly and reorders accordingly.
+            #
+            # M12.4 entity-graph expansion was wired in here but reverted —
+            # see ``astrocyte.pipeline.fact_entity_expansion`` module
+            # docstring for the regression mode (LME -4.5pp, multi-session
+            # 11.8→2.9% from cross-session noise injection).
             if relevant:
                 try:
                     from astrocyte.pipeline.fact_rerank import rerank_fact_hits  # noqa: PLC0415

@@ -30,10 +30,10 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from scripts._r2_client import R2Config, r2_client  # type: ignore  # noqa: E402
-    from scripts.archive_bench_results import _list_keys, _get_json  # type: ignore
+    from scripts.archive_bench_results import _get_json, _list_keys  # type: ignore
 else:
     from ._r2_client import R2Config, r2_client
-    from .archive_bench_results import _list_keys, _get_json
+    from .archive_bench_results import _get_json, _list_keys
 
 
 DEFAULT_OUT = Path("benchmark-results") / "_r2"

@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from astrocyte.pipeline.tasks import (
-    ANALYZE_BENCHMARK_FAILURES,
     COMPILE_BANK,
     COMPILE_PERSONA_PAGE,
     INDEX_WIKI_PAGE_VECTOR,
@@ -34,7 +33,6 @@ TASK_ENTRYPOINTS = (
     PROJECT_ENTITY_EDGES,
     NORMALIZE_TEMPORAL_FACTS,
     LINT_WIKI_PAGE,
-    ANALYZE_BENCHMARK_FAILURES,
 )
 
 

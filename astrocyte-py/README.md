@@ -135,40 +135,31 @@ Astrocyte includes adapters for two academic memory benchmarks plus built-in eva
 |---|---|---|
 | **LoCoMo** (ECAI 2025) | Long-term conversational memory — single-hop, multi-hop, temporal, open-domain QA | [snap-research/locomo](https://github.com/snap-research/locomo) |
 | **LongMemEval** | Long-context memory extraction, reasoning, temporal ordering | [xiaowu0162/LongMemEval](https://github.com/xiaowu0162/LongMemEval) |
-| **Built-in suites** | `basic` (quick validation) and `accuracy` (retrieval quality with ground truth) | Included |
 
 ### Quick start
 
-```bash
-# Smoke test — no API key needed, in-memory providers
-make bench-smoke
-
-# With real LLM providers (requires OPENAI_API_KEY)
-export OPENAI_API_KEY=sk-...
-
-# Datasets are fetched automatically on first run
-make bench-locomo-quick       # LoCoMo, 50 questions (~2-3 min)
-make bench-locomo             # LoCoMo, full dataset (~30-60 min)
-make bench-longmemeval        # LongMemEval
-make bench-builtin            # Built-in suites only
-make bench                    # All benchmarks
-make bench-gate               # Check latest results against release gates
-```
-
-### LLM adapter comparison
-
-Compare the built-in OpenAI provider against the LiteLLM adapter (same models, isolates the adapter as the variable):
+The PageIndex bench (M9+) requires Postgres + a real LLM provider; secrets are
+loaded via [Doppler](https://www.doppler.com/) (`DOPPLER_TOKEN` set in your
+environment or `doppler login` once locally). The Makefile already runs
+`doppler run --` for every bench target.
 
 ```bash
-pip install astrocyte-llm-litellm   # or: uv pip install -e ../adapters-llm-py/astrocyte-llm-litellm
-make bench-compare                  # Runs 50 LoCoMo questions through each
+# Full LoCoMo run (200 stratified questions by default, ~$1 in API costs)
+make bench-locomo
+
+# Quick variant — cap to ~50 questions for fast iteration
+make bench-locomo LOCOMO_MAX_Q=5
+
+# LongMemEval (200 samples by default; ~$5 in API costs)
+make bench-longmemeval
+make bench-longmemeval LME_MAX_SAMPLES=50      # quick
+
+# Parallel run on two Postgres containers (locomo on :5433, lme on :5434)
+make bench-parallel
 ```
 
-Results are written to `benchmark-results/openai/latest.json` and `benchmark-results/litellm/latest.json`.
-
-### Release gates
-
-Use `make bench-gate` after a benchmark run to enforce the Hindsight-informed release thresholds in `benchmarks/gates-hindsight-informed.json`. These gates check minimum quality plus p95 retain/recall latency before making external parity claims.
+Results land under `benchmark-results/pageindex/{locomo,lme}/` and are
+automatically uploaded to the R2 archive (see `make bench-archive-*` targets).
 
 ### Dataset management
 

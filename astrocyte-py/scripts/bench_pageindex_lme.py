@@ -57,6 +57,7 @@ if str(_PAGEINDEX_ROOT) not in sys.path:
 # different markdown renderer.
 _BENCH_LOCOMO = Path(__file__).resolve().parent / "bench_pageindex_locomo.py"
 import importlib.util  # noqa: E402
+
 _spec = importlib.util.spec_from_file_location("bench_pi_locomo", _BENCH_LOCOMO)
 _BENCH = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_BENCH)
@@ -64,7 +65,6 @@ _spec.loader.exec_module(_BENCH)
 from astrocyte.eval.judges.longmemeval_judge import LongMemEvalJudge  # noqa: E402
 from astrocyte.providers.openai import OpenAIProvider  # noqa: E402
 from astrocyte.testing.in_memory import InMemoryPageIndexStore  # noqa: E402
-
 
 # ── Markdown renderer (LME-specific) ─────────────────────────────────────
 

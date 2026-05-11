@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
 
 from astrocyte.pipeline.lint import LintEngine
 from astrocyte.pipeline.tasks import (
-    ANALYZE_BENCHMARK_FAILURES,
     COMPILE_PERSONA_PAGE,
     LINT_WIKI_PAGE,
     NORMALIZE_TEMPORAL_FACTS,
@@ -294,31 +292,3 @@ async def test_lint_wiki_page_returns_filtered_issues() -> None:
     assert result["issues"][0]["action"] == "archive"
 
 
-async def test_analyze_benchmark_failures_task(tmp_path) -> None:
-    result_path = tmp_path / "result.json"
-    result_path.write_text(
-        json.dumps({
-            "per_question": [
-                {
-                    "question": "When did Alice hike?",
-                    "expected_answer": "yesterday",
-                    "category": "temporal",
-                    "correct": False,
-                    "_evidence_id_hit": True,
-                    "_relevant_found": 1,
-                    "_reciprocal_rank": 0.1,
-                }
-            ]
-        }),
-        encoding="utf-8",
-    )
-
-    result = await _dispatcher(InMemoryVectorStore()).run(MemoryTask(
-        task_type=ANALYZE_BENCHMARK_FAILURES,
-        bank_id="bench",
-        payload={"result_path": str(result_path), "slice_size": 1},
-    ))
-
-    assert result["total_failed"] == 1
-    assert result["buckets"]["temporal_normalization_miss"]["count"] == 1
-    assert result["stable_question_slice"] == [0]
