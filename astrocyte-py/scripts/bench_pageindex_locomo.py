@@ -205,6 +205,7 @@ async def build_or_load_tree(
     provider=None,  # PR2 commit A: LLMProvider for entity + embedding pass
     entity_model: str | None = None,
     embedding_model: str | None = None,
+    mental_model_store=None,  # M11.2: MentalModelStore for compile hook
 ) -> dict:
     """Build a PageIndex tree for one conversation (or reuse cache).
 
@@ -245,6 +246,7 @@ async def build_or_load_tree(
             provider=provider,
             entity_model=entity_model,
             embedding_model=embedding_model,
+            mental_model_store=mental_model_store,
         )
 
     # ── File-backend path (unchanged from Phase A) ──
@@ -272,6 +274,7 @@ async def _build_or_load_via_store(
     provider=None,
     entity_model: str | None = None,
     embedding_model: str | None = None,
+    mental_model_store=None,
 ) -> dict:
     """PR1 commit D: tree-build path that persists through the
     ``PageIndexStore`` SPI. Cache key is ``(bank_id, sample_id)`` plus
@@ -336,6 +339,7 @@ async def _build_or_load_via_store(
             entity_model=entity_model,
             embedding_model=embedding_model,
             bank_id=bank_id,
+            mental_model_store=mental_model_store,
         )
 
     return _conv_tree_dict(
@@ -354,6 +358,7 @@ async def _populate_section_index(
     entity_model: str | None,
     embedding_model: str | None,
     bank_id: str | None = None,
+    mental_model_store=None,  # M11.2: optional MentalModelStore for compile hook
 ) -> None:
     """PR2 commit A + D.7: extract entities + embed summaries +
     extract section links for every section in a freshly-built tree.
@@ -473,13 +478,38 @@ async def _populate_section_index(
         except Exception as exc:  # noqa: BLE001
             print(f"  [pageindex] wiki compile failed for doc={document_id}: {type(exc).__name__}: {exc}")
 
+    # M11.2: compile mental models for this document (stable user
+    # profile statements). Generic across benches — one LLM call per
+    # document extracts preferences/persona/habits. Idempotent via the
+    # store's upsert semantics.
+    n_mm = 0
+    if (
+        mental_model_store is not None
+        and bank_id
+        and n_embeddings >= 2  # need real content to compile against
+    ):
+        from astrocyte.pipeline.mental_model_compile import compile_mental_models_for_document  # noqa: PLC0415
+        try:
+            mm_ids = await compile_mental_models_for_document(
+                page_index_store=store,
+                mental_model_store=mental_model_store,
+                bank_id=bank_id,
+                document_id=document_id,
+                provider=provider,
+                model=entity_model,
+            )
+            n_mm = len(mm_ids)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [pageindex] mental_model compile failed for doc={document_id}: {type(exc).__name__}: {exc}")
+
     print(
         f"  [pageindex] indexed doc={document_id}: "
         f"{len(all_entities)} entities, "
         f"{n_embeddings} embeddings, "
         f"{len(all_links)} llm-links, "
         f"{n_knn} knn-links, "
-        f"{n_wiki} wiki-pages"
+        f"{n_wiki} wiki-pages, "
+        f"{n_mm} mental-models"
     )
 
 
@@ -1352,6 +1382,7 @@ async def answer_question(
     cross_encoder=None,  # CrossEncoderProtocol | None
     category: str | None = None,  # PR2-D.1: dataset-provided category label
     reflect_provider: OpenAIProvider | None = None,  # PR2.6 1b: optional stronger model for reflect
+    mental_model_store=None,  # M11.2: MentalModelStore for [USER PROFILE] context
 ) -> tuple[str, list[int]]:
     """Run the 2-step PageIndex agent loop for one question, with an
     iterative-expansion fallback when the first pick yields "Not in
@@ -1782,6 +1813,25 @@ async def answer_question(
         )
         excerpts = f"{wiki_block}\n\n---\n\n{excerpts}"
 
+    # M11.2: surface mental models (stable user profile statements)
+    # as a structured ``[USER PROFILE]`` block. Generic across benches
+    # and across question categories — the synth decides whether the
+    # question's wording asks about a stable profile fact. Compiled
+    # per-document at retain time (see mental_model_compile.py).
+    if mental_model_store is not None and bank_id and document_id:
+        try:
+            mms = await mental_model_store.list(
+                bank_id, scope=f"document:{document_id}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [pageindex] mental_model list failed: {type(exc).__name__}: {exc}")
+            mms = []
+        if mms:
+            profile_block = "[USER PROFILE]\n" + "\n".join(
+                f"- {m.title}: {m.content}" for m in mms
+            )
+            excerpts = f"{profile_block}\n\n---\n\n{excerpts}"
+
     # M10.3 (REVERTED): an earlier attempt added ``prefers:<aspect>=<value>``
     # entity labels at retain and surfaced them as ``[USER PREFERENCES]``
     # injection here for ss-preference / open-domain / inference modes.
@@ -2060,14 +2110,21 @@ async def main() -> None:
 
     # ── Backend dispatch ──
     store = None
+    mental_model_store = None
     if args.backend == "memory":
         store = InMemoryPageIndexStore()
+        from astrocyte.testing.in_memory import InMemoryMentalModelStore  # noqa: PLC0415
+        mental_model_store = InMemoryMentalModelStore()
         print(f"  [pageindex] Backend: in-memory (bank_id={args.bank_id!r})")
     elif args.backend == "postgres":
         # Lazy import so the file/memory paths don't pay for the
         # adapter dep chain (psycopg pool, etc).
-        from astrocyte_postgres import PostgresPageIndexStore  # noqa: PLC0415
+        from astrocyte_postgres import (  # noqa: PLC0415
+            PostgresMentalModelStore,
+            PostgresPageIndexStore,
+        )
         store = PostgresPageIndexStore(bootstrap_schema=True)
+        mental_model_store = PostgresMentalModelStore(bootstrap_schema=True)
         print(f"  [pageindex] Backend: postgres (bank_id={args.bank_id!r})")
     else:
         print(f"  [pageindex] Backend: file ({workspace})")
@@ -2114,6 +2171,7 @@ async def main() -> None:
             provider=provider if store is not None else None,
             entity_model=args.model,
             embedding_model=None,  # use provider's default embedding model
+            mental_model_store=mental_model_store,
         )
     build_elapsed = time.monotonic() - t_build
     print(f"  [pageindex] All trees ready in {build_elapsed:.1f}s")
@@ -2146,6 +2204,7 @@ async def main() -> None:
                 cross_encoder=None,  # PR2-C: default Hindsight model lazy-loaded inside reranker
                 category=cat_label,
                 reflect_provider=reflect_provider,
+                mental_model_store=mental_model_store,
             )
         except Exception as exc:  # noqa: BLE001 — single-Q failure mustn't tank the run
             print(f"  [pageindex] Q{i} failed: {exc}")

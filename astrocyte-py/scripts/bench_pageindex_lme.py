@@ -130,6 +130,7 @@ async def build_lme_tree(
     provider=None,
     entity_model: str | None = None,
     embedding_model: str | None = None,
+    mental_model_store=None,
 ) -> dict:
     """LME-side build wrapper. Same SPI as the LoCoMo bench's
     ``build_or_load_tree`` but rendered from LME's haystack_sessions
@@ -155,6 +156,7 @@ async def build_lme_tree(
             provider=provider,
             entity_model=entity_model,
             embedding_model=embedding_model,
+            mental_model_store=mental_model_store,
         )
     else:
         # File backend
@@ -184,6 +186,7 @@ async def _build_lme_tree_via_store(
     provider=None,
     entity_model: str | None = None,
     embedding_model: str | None = None,
+    mental_model_store=None,
 ) -> dict:
     """LME equivalent of bench_pageindex_locomo._build_or_load_via_store."""
     cached_doc = await store.load_document(bank_id, sample_id)
@@ -234,6 +237,7 @@ async def _build_lme_tree_via_store(
             entity_model=entity_model,
             embedding_model=embedding_model,
             bank_id=bank_id,
+            mental_model_store=mental_model_store,
         )
 
     return _BENCH._conv_tree_dict(
@@ -344,12 +348,19 @@ async def main() -> None:
 
     # ── Backend dispatch ──
     store = None
+    mental_model_store = None
     if args.backend == "memory":
         store = InMemoryPageIndexStore()
+        from astrocyte.testing.in_memory import InMemoryMentalModelStore  # noqa: PLC0415
+        mental_model_store = InMemoryMentalModelStore()
         print(f"  [pi-lme] Backend: in-memory (bank_id={args.bank_id!r})")
     elif args.backend == "postgres":
-        from astrocyte_postgres import PostgresPageIndexStore  # noqa: PLC0415
+        from astrocyte_postgres import (  # noqa: PLC0415
+            PostgresMentalModelStore,
+            PostgresPageIndexStore,
+        )
         store = PostgresPageIndexStore(bootstrap_schema=True)
+        mental_model_store = PostgresMentalModelStore(bootstrap_schema=True)
         print(f"  [pi-lme] Backend: postgres (bank_id={args.bank_id!r})")
     else:
         print(f"  [pi-lme] Backend: file ({workspace})")
@@ -387,6 +398,7 @@ async def main() -> None:
                 provider=provider if store is not None else None,
                 entity_model=args.model,
                 embedding_model=None,
+                mental_model_store=mental_model_store,
             )
         except Exception as exc:  # noqa: BLE001 — single-sample failure mustn't tank PR1 smoke
             print(f"  [pi-lme] Sample {sample_id}: tree build failed — {type(exc).__name__}: {exc}")
@@ -423,6 +435,7 @@ async def main() -> None:
                     cross_encoder=None,
                     category=question_type,
                     reflect_provider=reflect_provider,
+                    mental_model_store=mental_model_store,
                 )
             except Exception as exc:  # noqa: BLE001 — single-Q failure mustn't tank the run
                 print(f"  [pi-lme] Q{i} ({sample_id}) failed: {exc}")
