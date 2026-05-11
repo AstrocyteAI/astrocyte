@@ -9,9 +9,9 @@ on:
         default: "false"
         type: boolean
       benchmarks:
-        description: "Which benchmarks to run (comma-separated: builtin,longmemeval,locomo)"
+        description: "Which benchmarks to run (comma-separated: longmemeval,locomo). 'builtin' is accepted for backwards-compat but no-ops."
         required: false
-        default: "builtin,longmemeval,locomo"
+        default: "longmemeval,locomo"
         type: string
   schedule:
     # Weekly Monday 6am UTC — always full run
@@ -32,7 +32,7 @@ jobs:
     steps:
       - id: set-matrix
         run: |
-          INPUT="${{ inputs.benchmarks || 'builtin,longmemeval,locomo' }}"
+          INPUT="${{ inputs.benchmarks || 'longmemeval,locomo' }}"
           # Convert comma-separated string to JSON array
           JSON=$(echo "$INPUT" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -sc .)
           echo "matrix={\"benchmark\":$JSON}" >> "$GITHUB_OUTPUT"
@@ -77,24 +77,27 @@ jobs:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_BENCHMARK_TOKEN }}
         run: |
           # Scheduled runs are always full; manual runs respect the quick input.
+          # The Makefile exposes question-count knobs (LOCOMO_MAX_Q,
+          # LME_MAX_SAMPLES) — quick mode caps each leg to a small sample
+          # for fast iteration; full mode uses the defaults.
           QUICK="${{ inputs.quick || 'false' }}"
           case "${{ matrix.benchmark }}" in
             locomo)
               if [ "$QUICK" = "true" ]; then
-                doppler run -- make bench-locomo-quick
+                make bench-locomo LOCOMO_MAX_Q=5
               else
-                doppler run -- make bench-locomo
+                make bench-locomo
               fi
               ;;
             longmemeval)
               if [ "$QUICK" = "true" ]; then
-                doppler run -- make bench-longmemeval-quick
+                make bench-longmemeval LME_MAX_SAMPLES=100
               else
-                doppler run -- make bench-longmemeval
+                make bench-longmemeval
               fi
               ;;
             builtin)
-              doppler run -- make bench-builtin
+              echo "::warning::'builtin' benchmark was removed in the PageIndex bench refactor — skipping."
               ;;
           esac
 
