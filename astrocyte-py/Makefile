@@ -453,7 +453,8 @@ codeql:
 
 .PHONY: bench-archive-selftest bench-archive-push bench-archive-fetch \
 	bench-archive-trajectory bench-archive-rebuild-trajectory \
-	bench-archive-backfill-dry bench-archive-backfill
+	bench-archive-backfill-dry bench-archive-backfill \
+	bench-archive-pageindex
 
 # STAGE label (defaults to local-ad-hoc) and BENCH selector pass through.
 STAGE ?= local-ad-hoc
@@ -491,6 +492,27 @@ bench-archive-backfill-dry:
 # One-shot historical backfill — actually upload everything.
 bench-archive-backfill:
 	uv run python -m scripts.backfill_archive --execute
+
+# Archive the LATEST result JSON for BOTH PageIndex benches (LME + LoCoMo)
+# under a single STAGE label. Picks the most recent file from each
+# benchmark-results/pageindex/<bench>/ subdirectory and uploads with the
+# matching --bench override (results are "unwrapped" — bench name isn't
+# inside the JSON, so the archive script needs it on the CLI).
+#
+#   make bench-archive-pageindex STAGE=m12-close
+#
+# Fails the whole target if either upload fails; partial archives are
+# undesirable for trajectory continuity.
+bench-archive-pageindex:
+	@latest_lme="$$(ls -t $(RESULTS_DIR)/pageindex/lme/results-*.json 2>/dev/null | head -1)"; \
+	latest_locomo="$$(ls -t $(RESULTS_DIR)/pageindex/locomo/results-*.json 2>/dev/null | head -1)"; \
+	if [ -z "$$latest_lme" ]; then echo "no LME results in $(RESULTS_DIR)/pageindex/lme/" >&2; exit 1; fi; \
+	if [ -z "$$latest_locomo" ]; then echo "no LoCoMo results in $(RESULTS_DIR)/pageindex/locomo/" >&2; exit 1; fi; \
+	echo "archiving stage=$(STAGE)"; \
+	echo "  LME    -> $$latest_lme"; \
+	echo "  LoCoMo -> $$latest_locomo"; \
+	uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench longmemeval --files "$$latest_lme" && \
+	uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench locomo --files "$$latest_locomo"
 
 # ---------------------------------------------------------------------------
 # Cleanup
