@@ -1443,7 +1443,21 @@ async def answer_question(
                 # we don't pull pre-aggregated facts from sibling LME
                 # conversations. Threshold tuned conservatively (0.55)
                 # — only fire when the wiki page genuinely matches.
-                wiki_enabled=True,
+                # T2.2: wiki tier is gated to aggregation-shape
+                # questions. Specific-fact questions (ss-user,
+                # ss-assistant, ss-preference, default single-hop)
+                # already have what they need from section excerpts;
+                # the [OBSERVATION] prefix on those would just
+                # introduce off-topic context. Modes that DO benefit:
+                # multi-session (counting), multi-hop (bridging),
+                # temporal/temporal-reasoning (event timelines),
+                # listing (enumeration), knowledge-update (stale-fact
+                # supersession).
+                wiki_enabled=mode in {
+                    "multi-session", "multi-hop",
+                    "temporal", "temporal-reasoning",
+                    "listing", "knowledge-update",
+                },
                 wiki_document_id=document_id,
                 # text-embedding-3-small produces cosine sims in the
                 # 0.20-0.45 range for related-but-not-identical text;
@@ -1709,10 +1723,38 @@ async def answer_question(
                     seen_ln.add(ln)
 
     # Step 2: fetch sections.
+    # M11.1.x: prepend a structured date header per section when both
+    # ``session_date`` and ``occurred_start`` are populated. The synth
+    # gets both signals and disambiguates per question wording — the
+    # Hindsight pattern (see ``hindsight-api-slim/.../think_utils.py``
+    # ``format_facts_for_prompt`` — every fact carries occurred_start /
+    # mentioned_at as structured fields). No hardcoded preference at
+    # this layer; the LLM decides whether the question asks about the
+    # EVENT date or the SESSION date.
+    def _render_section(ln: int) -> str:
+        body = _slice_section_around_line(conv_tree["md_text"], ln)
+        section = sections_by_key.get((document_id, ln)) if document_id else None
+        if section is None:
+            return body
+        parts: list[str] = []
+        if section.session_date is not None:
+            parts.append(f"session={section.session_date.strftime('%Y-%m-%d')}")
+        if section.occurred_start is not None:
+            parts.append(
+                f"event={section.occurred_start.strftime('%Y-%m-%d')}"
+            )
+            if section.occurred_end is not None and section.occurred_end != section.occurred_start:
+                parts.append(
+                    f"event_end={section.occurred_end.strftime('%Y-%m-%d')}"
+                )
+        if not parts:
+            return body
+        header = f"[line={ln}, {', '.join(parts)}]"
+        return f"{header}\n{body}"
+
     if line_nums:
         excerpts = "\n\n---\n\n".join(
-            _slice_section_around_line(conv_tree["md_text"], ln)
-            for ln in line_nums
+            _render_section(ln) for ln in line_nums
         ).strip()
     else:
         excerpts = ""

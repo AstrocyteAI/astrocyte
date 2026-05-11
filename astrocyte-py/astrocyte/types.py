@@ -1288,6 +1288,14 @@ class PageIndexSection:
     session_date: datetime | None = None
     parent_node: str | None = None
     depth: int = 0
+    # M11.1: structured event time the section's most-prominent
+    # discussed event happened. Different from ``session_date`` —
+    # "Yesterday I went to the doctor" in a session dated May 8
+    # has ``session_date=May 8`` but ``occurred_start=May 7``.
+    # Populated by per-section LLM extraction at retain time;
+    # ``None`` when the LLM didn't surface a specific event.
+    occurred_start: datetime | None = None
+    occurred_end: datetime | None = None
 
 
 @dataclass

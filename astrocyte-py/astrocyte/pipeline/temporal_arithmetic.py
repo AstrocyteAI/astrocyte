@@ -315,8 +315,19 @@ async def find_event_date(
         if doc_id != document_id:
             continue
         section = sections_by_key.get((doc_id, line_num))
-        if section is not None and section.session_date is not None:
+        if section is None:
+            continue
+        # M11.1.x: the per-section ``occurred_start`` field IS available
+        # but we don't bake a preference here — Hindsight's pattern is
+        # to surface BOTH temporal signals to the synth and let the
+        # LLM disambiguate per-question. ``find_event_date`` returns
+        # ``session_date`` (the stable signal); the synth-context block
+        # carries ``occurred_start`` as supplementary structure when
+        # the section excerpt is rendered.
+        if section.session_date is not None:
             return section.session_date
+        if section.occurred_start is not None:
+            return section.occurred_start
     return None
 
 

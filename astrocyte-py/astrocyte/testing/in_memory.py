@@ -1164,6 +1164,30 @@ class InMemoryPageIndexStore:
         ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
         return ordered[: max(1, limit)]
 
+    async def save_section_event_dates(
+        self,
+        document_id: str,
+        event_dates,
+    ) -> int:
+        if not event_dates:
+            return 0
+        from dataclasses import replace as _replace
+        sections = self._sections.get(document_id) or []
+        if not sections:
+            return 0
+        date_by_line = {line_num: (start, end) for line_num, start, end in event_dates}
+        updated = 0
+        new_list = []
+        for s in sections:
+            if s.line_num in date_by_line:
+                start, end = date_by_line[s.line_num]
+                new_list.append(_replace(s, occurred_start=start, occurred_end=end))
+                updated += 1
+            else:
+                new_list.append(s)
+        self._sections[document_id] = new_list
+        return updated
+
     # ── M10.1 wiki / consolidation ─────────────────────────────────
 
     async def load_sections_with_embeddings(

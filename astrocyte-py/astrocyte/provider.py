@@ -637,6 +637,19 @@ class PageIndexStore(Protocol):
         seeds. ``link_types`` filters to e.g. ['semantic_knn', 'causal'];
         None means all types. Score is link weight."""
 
+    async def save_section_event_dates(
+        self,
+        document_id: str,
+        event_dates: list[tuple[int, datetime, datetime | None]],
+    ) -> int:
+        """M11.1: update ``occurred_start`` / ``occurred_end`` on
+        existing section rows.
+
+        ``event_dates`` is a list of ``(line_num, start, end_or_None)``
+        tuples. Rows not in the list are left untouched. Returns the
+        number of rows updated. Used by the bench retain pipeline
+        after section_event_extraction runs."""
+
     async def load_sections_with_embeddings(
         self,
         bank_id: str,

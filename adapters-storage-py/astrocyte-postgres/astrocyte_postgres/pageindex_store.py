@@ -813,6 +813,33 @@ class PostgresPageIndexStore:
                 rows = await cur.fetchall()
         return [(str(r[0]), int(r[1])) for r in rows]
 
+    async def save_section_event_dates(
+        self,
+        document_id: str,
+        event_dates,
+    ) -> int:
+        if not event_dates:
+            return 0
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                rows = [
+                    (start, end, document_id, line_num)
+                    for line_num, start, end in event_dates
+                ]
+                await cur.executemany(
+                    f"""
+                    UPDATE {self._fq('astrocyte_pi_sections')}
+                    SET occurred_start = %s, occurred_end = %s
+                    WHERE document_id = %s AND line_num = %s
+                    """,
+                    rows,
+                )
+                # psycopg returns -1 for executemany; assume all rows
+                # matched (caller scoped them to known sections).
+                return len(rows)
+
     # ── M10.1 wiki / consolidation ──────────────────────────────────────
 
     async def load_sections_with_embeddings(
@@ -830,7 +857,7 @@ class PostgresPageIndexStore:
                     f"""
                     SELECT line_num, node_id, title, summary,
                            summary_embedding, speaker, session_date,
-                           parent_node, depth
+                           parent_node, depth, occurred_start, occurred_end
                     FROM {self._fq('astrocyte_pi_sections')}
                     WHERE document_id = %s
                     ORDER BY line_num
@@ -852,6 +879,8 @@ class PostgresPageIndexStore:
                 session_date=r[6],
                 parent_node=r[7],
                 depth=r[8] or 0,
+                occurred_start=r[9],
+                occurred_end=r[10],
             ))
         return out
 
