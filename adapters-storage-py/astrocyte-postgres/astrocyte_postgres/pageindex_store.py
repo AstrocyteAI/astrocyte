@@ -813,6 +813,234 @@ class PostgresPageIndexStore:
                 rows = await cur.fetchall()
         return [(str(r[0]), int(r[1])) for r in rows]
 
+    # ── M12.1 fact-grain ───────────────────────────────────────────
+
+    async def save_facts(self, facts) -> int:
+        if not facts:
+            return 0
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        rows = []
+        for f in facts:
+            rows.append((
+                f.id, f.bank_id, f.document_id, f.line_num,
+                f.text, f.fact_type, f.speaker,
+                f.occurred_start, f.occurred_end,
+                list(f.entities or []),
+                _embedding_param(f.embedding) if f.embedding else None,
+            ))
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    f"""
+                    INSERT INTO {self._fq('astrocyte_pi_facts')}
+                        (id, bank_id, document_id, line_num,
+                         fact_text, fact_type, speaker,
+                         occurred_start, occurred_end, entities, embedding)
+                    VALUES (%s, %s, %s::uuid, %s,
+                            %s, %s, %s,
+                            %s, %s, %s, %s::vector)
+                    """,
+                    rows,
+                )
+        return len(rows)
+
+    async def update_fact_embeddings(self, embeddings) -> int:
+        if not embeddings:
+            return 0
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        rows = [(_embedding_param(emb), fid) for fid, emb in embeddings if emb]
+        if not rows:
+            return 0
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    f"""
+                    UPDATE {self._fq('astrocyte_pi_facts')}
+                    SET embedding = %s::vector
+                    WHERE id = %s::uuid
+                    """,
+                    rows,
+                )
+        return len(rows)
+
+    async def search_facts_semantic(
+        self,
+        bank_id: str,
+        query_embedding: list[float],
+        *,
+        top_k: int = 20,
+        document_id: str | None = None,
+        fact_type: str | None = None,
+    ):
+        from astrocyte.types import PageIndexFactHit
+        if not query_embedding:
+            return []
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        params: list = [_embedding_param(query_embedding), bank_id]
+        doc_clause = ""
+        if document_id:
+            doc_clause = "AND document_id = %s::uuid"
+            params.append(document_id)
+        type_clause = ""
+        if fact_type:
+            type_clause = "AND fact_type = %s"
+            params.append(fact_type)
+        params.extend([_embedding_param(query_embedding), top_k])
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT id, document_id, line_num, fact_text, fact_type,
+                           speaker, occurred_start, occurred_end, entities,
+                           1 - (embedding <=> %s::vector) AS score
+                    FROM {self._fq('astrocyte_pi_facts')}
+                    WHERE bank_id = %s
+                      AND embedding IS NOT NULL
+                      {doc_clause}
+                      {type_clause}
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = await cur.fetchall()
+        return [
+            PageIndexFactHit(
+                fact_id=str(r[0]), document_id=str(r[1]), line_num=r[2],
+                text=r[3], fact_type=r[4], speaker=r[5],
+                occurred_start=r[6], occurred_end=r[7],
+                entities=list(r[8] or []), score=float(r[9]),
+            )
+            for r in rows
+        ]
+
+    async def search_facts_by_entity(
+        self,
+        bank_id: str,
+        entity_name: str,
+        *,
+        top_k: int = 50,
+        document_id: str | None = None,
+    ):
+        from astrocyte.types import PageIndexFactHit
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        params: list = [bank_id, [entity_name]]
+        doc_clause = ""
+        if document_id:
+            doc_clause = "AND document_id = %s::uuid"
+            params.append(document_id)
+        params.append(top_k)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT id, document_id, line_num, fact_text, fact_type,
+                           speaker, occurred_start, occurred_end, entities
+                    FROM {self._fq('astrocyte_pi_facts')}
+                    WHERE bank_id = %s
+                      AND entities && %s::text[]
+                      {doc_clause}
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = await cur.fetchall()
+        return [
+            PageIndexFactHit(
+                fact_id=str(r[0]), document_id=str(r[1]), line_num=r[2],
+                text=r[3], fact_type=r[4], speaker=r[5],
+                occurred_start=r[6], occurred_end=r[7],
+                entities=list(r[8] or []), score=1.0,
+            )
+            for r in rows
+        ]
+
+    async def search_facts_temporal(
+        self,
+        bank_id: str,
+        date_range,
+        *,
+        top_k: int = 50,
+        document_id: str | None = None,
+    ):
+        from astrocyte.types import PageIndexFactHit
+        start, end = date_range
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        params: list = [bank_id, start, end]
+        doc_clause = ""
+        if document_id:
+            doc_clause = "AND document_id = %s::uuid"
+            params.append(document_id)
+        params.append(top_k)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT id, document_id, line_num, fact_text, fact_type,
+                           speaker, occurred_start, occurred_end, entities
+                    FROM {self._fq('astrocyte_pi_facts')}
+                    WHERE bank_id = %s
+                      AND occurred_start IS NOT NULL
+                      AND occurred_start BETWEEN %s AND %s
+                      {doc_clause}
+                    ORDER BY occurred_start
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = await cur.fetchall()
+        return [
+            PageIndexFactHit(
+                fact_id=str(r[0]), document_id=str(r[1]), line_num=r[2],
+                text=r[3], fact_type=r[4], speaker=r[5],
+                occurred_start=r[6], occurred_end=r[7],
+                entities=list(r[8] or []), score=1.0,
+            )
+            for r in rows
+        ]
+
+    async def count_facts_matching(
+        self,
+        bank_id: str,
+        document_id: str,
+        *,
+        entity_pattern: str | None = None,
+        fact_type: str | None = None,
+    ) -> int:
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        params: list = [bank_id, document_id]
+        clauses = []
+        if entity_pattern is not None:
+            # ILIKE-match any element of the entities array.
+            clauses.append(
+                "EXISTS (SELECT 1 FROM unnest(entities) AS e WHERE e ILIKE %s)"
+            )
+            ilike = entity_pattern if "%" in entity_pattern else f"%{entity_pattern}%"
+            params.append(ilike)
+        if fact_type is not None:
+            clauses.append("fact_type = %s")
+            params.append(fact_type)
+        where_extra = (" AND " + " AND ".join(clauses)) if clauses else ""
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM {self._fq('astrocyte_pi_facts')}
+                    WHERE bank_id = %s AND document_id = %s::uuid
+                    {where_extra}
+                    """,
+                    tuple(params),
+                )
+                row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
     async def save_section_event_dates(
         self,
         document_id: str,

@@ -502,6 +502,52 @@ async def _populate_section_index(
         except Exception as exc:  # noqa: BLE001
             print(f"  [pageindex] mental_model compile failed for doc={document_id}: {type(exc).__name__}: {exc}")
 
+    # M12.1: fact-grain extraction per section. One LLM call per section
+    # produces atomic facts with structured metadata (type, event date,
+    # speaker, entities). Sections remain the picker's primitive; facts
+    # are queried by the agent's counting / temporal / entity tools.
+    n_facts = 0
+    if (
+        bank_id
+        and hasattr(store, "save_facts")
+        and provider is not None
+    ):
+        from astrocyte.pipeline.section_fact_extraction import extract_facts_for_section  # noqa: PLC0415
+        fact_coros = [
+            extract_facts_for_section(
+                provider, s, _slice_section_around_line(md_text, s.line_num),
+                bank_id=bank_id, model=entity_model,
+            )
+            for s in sections
+        ]
+        fact_results = await asyncio.gather(*fact_coros, return_exceptions=True)
+        all_facts = []
+        for r in fact_results:
+            if isinstance(r, Exception):
+                continue
+            all_facts.extend(r)
+        if all_facts:
+            try:
+                await store.save_facts(all_facts)
+                n_facts = len(all_facts)
+                # Batched embedding pass for the fact texts.
+                try:
+                    fact_texts = [f.text for f in all_facts]
+                    fact_embeds = await provider.embed(
+                        fact_texts, model=embedding_model,
+                    )
+                    pairs = [
+                        (f.id, e)
+                        for f, e in zip(all_facts, fact_embeds)
+                        if e
+                    ]
+                    if pairs:
+                        await store.update_fact_embeddings(pairs)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  [pageindex] fact embedding failed doc={document_id}: {type(exc).__name__}: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"  [pageindex] save_facts failed doc={document_id}: {type(exc).__name__}: {exc}")
+
     print(
         f"  [pageindex] indexed doc={document_id}: "
         f"{len(all_entities)} entities, "
@@ -509,7 +555,8 @@ async def _populate_section_index(
         f"{len(all_links)} llm-links, "
         f"{n_knn} knn-links, "
         f"{n_wiki} wiki-pages, "
-        f"{n_mm} mental-models"
+        f"{n_mm} mental-models, "
+        f"{n_facts} facts"
     )
 
 
@@ -1812,6 +1859,51 @@ async def answer_question(
             for h in wiki_hits
         )
         excerpts = f"{wiki_block}\n\n---\n\n{excerpts}"
+
+    # M12.1: surface atomic facts from the picker's selected sections
+    # as a structured ``[FACTS]`` block. Each fact is self-contained
+    # with type / event_date / entities — the synth uses these for
+    # precision answers (counting, temporal, preference). Generic
+    # across benches.
+    if (
+        store is not None and bank_id and document_id
+        and line_nums
+        and hasattr(store, "search_facts_by_entity")
+    ):
+        # Cheapest cross-grain join: pull facts for the picker's lines
+        # via a direct read against the in-memory fact-store API. The
+        # SPI doesn't yet expose `list_facts_for_lines`; use a single
+        # semantic search anchored on the question to pull top facts
+        # for the document, then keep only those whose line_num is in
+        # the picker's selection.
+        try:
+            qvec = (await provider.embed([question]))[0]
+            fact_hits = await store.search_facts_semantic(
+                bank_id, qvec, top_k=30, document_id=document_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [pageindex] fact search failed: {type(exc).__name__}: {exc}")
+            fact_hits = []
+        if fact_hits:
+            picker_lines = set(line_nums)
+            relevant = [
+                h for h in fact_hits if h.line_num in picker_lines
+            ]
+            # Cap at 12 facts in the synth context — keeps token cost
+            # bounded; the picker already narrowed sections.
+            if relevant:
+                lines = []
+                for h in relevant[:12]:
+                    parts = [f"type={h.fact_type}"]
+                    if h.speaker:
+                        parts.append(f"speaker={h.speaker}")
+                    if h.occurred_start:
+                        parts.append(
+                            f"occurred={h.occurred_start.strftime('%Y-%m-%d')}"
+                        )
+                    lines.append(f"- [{', '.join(parts)}] {h.text}")
+                facts_block = "[FACTS]\n" + "\n".join(lines)
+                excerpts = f"{facts_block}\n\n---\n\n{excerpts}"
 
     # M11.2: surface mental models (stable user profile statements)
     # as a structured ``[USER PROFILE]`` block. Generic across benches

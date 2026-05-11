@@ -30,6 +30,7 @@ from astrocyte.types import (
     MentalModel,
     Message,
     PageIndexDocument,
+    PageIndexFact,
     PageIndexSection,
     PageIndexSectionEntity,
     PageIndexSectionLink,
@@ -837,6 +838,8 @@ class InMemoryPageIndexStore:
         # page_id → list[(document_id, line_num)]
         self._wiki_pages: dict[str, list[tuple["WikiPage", list[float] | None]]] = {}
         self._wiki_provenance: dict[str, list[tuple[str, int]]] = {}
+        # M12.1: document_id → list[PageIndexFact]
+        self._facts: dict[str, list["PageIndexFact"]] = {}
 
     async def save_document(self, doc: PageIndexDocument) -> str:
         # Upsert keyed on (bank_id, source_id). Behaviour matches the
@@ -1163,6 +1166,150 @@ class InMemoryPageIndexStore:
         # Order by count desc, then name asc for determinism.
         ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
         return ordered[: max(1, limit)]
+
+    # ── M12.1 fact-grain ───────────────────────────────────────────
+
+    async def save_facts(self, facts) -> int:
+        if not facts:
+            return 0
+        for f in facts:
+            self._facts.setdefault(f.document_id, []).append(f)
+        return len(facts)
+
+    async def update_fact_embeddings(self, embeddings) -> int:
+        from dataclasses import replace as _replace
+        if not embeddings:
+            return 0
+        emb_by_id = dict(embeddings)
+        updated = 0
+        for doc_id, bucket in self._facts.items():
+            for i, f in enumerate(bucket):
+                if f.id in emb_by_id:
+                    bucket[i] = _replace(f, embedding=emb_by_id[f.id])
+                    updated += 1
+        return updated
+
+    async def search_facts_semantic(
+        self,
+        bank_id: str,
+        query_embedding: list[float],
+        *,
+        top_k: int = 20,
+        document_id: str | None = None,
+        fact_type: str | None = None,
+    ):
+        from astrocyte.types import PageIndexFactHit
+        if not query_embedding:
+            return []
+
+        def _cos(a, b):
+            import math
+            dot = sum(x * y for x, y in zip(a, b))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            return dot / (na * nb) if na > 0 and nb > 0 else 0.0
+
+        scored: list[tuple[float, "PageIndexFact"]] = []
+        scope = self._facts.get(document_id, []) if document_id else [
+            f for bucket in self._facts.values() for f in bucket
+        ]
+        for f in scope:
+            if f.bank_id != bank_id:
+                continue
+            if fact_type is not None and f.fact_type != fact_type:
+                continue
+            if not f.embedding:
+                continue
+            scored.append((_cos(query_embedding, f.embedding), f))
+        scored.sort(key=lambda kv: kv[0], reverse=True)
+        return [
+            PageIndexFactHit(
+                fact_id=f.id, document_id=f.document_id, line_num=f.line_num,
+                text=f.text, fact_type=f.fact_type, speaker=f.speaker,
+                occurred_start=f.occurred_start, occurred_end=f.occurred_end,
+                entities=list(f.entities or []), score=float(s),
+            )
+            for s, f in scored[:max(1, top_k)]
+        ]
+
+    async def search_facts_by_entity(
+        self,
+        bank_id: str,
+        entity_name: str,
+        *,
+        top_k: int = 50,
+        document_id: str | None = None,
+    ):
+        from astrocyte.types import PageIndexFactHit
+        needle = entity_name.casefold()
+        scope = self._facts.get(document_id, []) if document_id else [
+            f for bucket in self._facts.values() for f in bucket
+        ]
+        hits: list["PageIndexFactHit"] = []
+        for f in scope:
+            if f.bank_id != bank_id:
+                continue
+            if not any(needle in (e or "").casefold() for e in (f.entities or [])):
+                continue
+            hits.append(PageIndexFactHit(
+                fact_id=f.id, document_id=f.document_id, line_num=f.line_num,
+                text=f.text, fact_type=f.fact_type, speaker=f.speaker,
+                occurred_start=f.occurred_start, occurred_end=f.occurred_end,
+                entities=list(f.entities or []), score=1.0,
+            ))
+            if len(hits) >= top_k:
+                break
+        return hits
+
+    async def search_facts_temporal(
+        self,
+        bank_id: str,
+        date_range,
+        *,
+        top_k: int = 50,
+        document_id: str | None = None,
+    ):
+        from astrocyte.types import PageIndexFactHit
+        start, end = date_range
+        scope = self._facts.get(document_id, []) if document_id else [
+            f for bucket in self._facts.values() for f in bucket
+        ]
+        hits: list["PageIndexFactHit"] = []
+        for f in scope:
+            if f.bank_id != bank_id or f.occurred_start is None:
+                continue
+            if not (start <= f.occurred_start <= end):
+                continue
+            hits.append(PageIndexFactHit(
+                fact_id=f.id, document_id=f.document_id, line_num=f.line_num,
+                text=f.text, fact_type=f.fact_type, speaker=f.speaker,
+                occurred_start=f.occurred_start, occurred_end=f.occurred_end,
+                entities=list(f.entities or []), score=1.0,
+            ))
+            if len(hits) >= top_k:
+                break
+        return hits
+
+    async def count_facts_matching(
+        self,
+        bank_id: str,
+        document_id: str,
+        *,
+        entity_pattern: str | None = None,
+        fact_type: str | None = None,
+    ) -> int:
+        count = 0
+        for f in self._facts.get(document_id, []):
+            if f.bank_id != bank_id:
+                continue
+            if fact_type is not None and f.fact_type != fact_type:
+                continue
+            if entity_pattern is not None:
+                needle = entity_pattern.lower().replace("%", "")
+                if not any(needle in (e or "").lower() for e in (f.entities or [])):
+                    continue
+            count += 1
+        return count
 
     async def save_section_event_dates(
         self,

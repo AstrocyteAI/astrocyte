@@ -44,6 +44,8 @@ if TYPE_CHECKING:
         MentalModel,
         Message,
         PageIndexDocument,
+        PageIndexFact,
+        PageIndexFactHit,
         PageIndexSection,
         PageIndexSectionEntity,
         PageIndexSectionLink,
@@ -636,6 +638,80 @@ class PageIndexStore(Protocol):
         ``section_links`` from the given ``(document_id, line_num)``
         seeds. ``link_types`` filters to e.g. ['semantic_knn', 'causal'];
         None means all types. Score is link weight."""
+
+    # ── M12.1: fact-grain layer (atomic facts alongside sections) ───────
+
+    async def save_facts(self, facts: list["PageIndexFact"]) -> int:
+        """M12.1: persist atomic facts extracted from sections.
+
+        Each fact's ``embedding`` may be ``None`` (caller embeds in a
+        separate batched pass) or populated. Returns the number of rows
+        inserted. Implementations should validate that
+        ``(document_id, line_num)`` references an existing section and
+        let the FK cascade handle deletion."""
+
+    async def update_fact_embeddings(
+        self,
+        embeddings: list[tuple[str, list[float]]],
+    ) -> int:
+        """M12.1: write the embedding column for a batch of facts.
+
+        ``embeddings`` is ``[(fact_id, embedding_vector), ...]``.
+        Returns the number of rows updated. Separated from
+        :meth:`save_facts` so the bench can extract facts and embed
+        them in two parallel passes — Hindsight's retain shape."""
+
+    async def search_facts_semantic(
+        self,
+        bank_id: str,
+        query_embedding: list[float],
+        *,
+        top_k: int = 20,
+        document_id: str | None = None,
+        fact_type: str | None = None,
+    ) -> list["PageIndexFactHit"]:
+        """M12.1: cosine-similarity search over fact embeddings."""
+
+    async def search_facts_by_entity(
+        self,
+        bank_id: str,
+        entity_name: str,
+        *,
+        top_k: int = 50,
+        document_id: str | None = None,
+    ) -> list["PageIndexFactHit"]:
+        """M12.1: list facts whose ``entities`` array contains
+        ``entity_name`` (or a case-insensitive variant). Used by the
+        agent's counting tool — e.g. for "how many doctors" the agent
+        queries ``entity_name="role:doctor"`` and counts the rows."""
+
+    async def search_facts_temporal(
+        self,
+        bank_id: str,
+        date_range: tuple[datetime, datetime],
+        *,
+        top_k: int = 50,
+        document_id: str | None = None,
+    ) -> list["PageIndexFactHit"]:
+        """M12.1: list facts whose ``occurred_start`` falls in the
+        date range. Powers temporal-arithmetic queries that previously
+        had to resort to keyword search over section summaries."""
+
+    async def count_facts_matching(
+        self,
+        bank_id: str,
+        document_id: str,
+        *,
+        entity_pattern: str | None = None,
+        fact_type: str | None = None,
+    ) -> int:
+        """M12.1: deterministic count of facts matching the given
+        filters. ``entity_pattern`` is a substring (case-insensitive)
+        matched against any element of the ``entities`` array. Used
+        by the agent's counting tool for questions like "how many
+        doctors did I visit?" — agent calls with
+        ``entity_pattern="role:doctor"`` and gets back the exact
+        count."""
 
     async def save_section_event_dates(
         self,

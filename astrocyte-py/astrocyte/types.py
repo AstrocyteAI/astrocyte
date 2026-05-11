@@ -1299,6 +1299,48 @@ class PageIndexSection:
 
 
 @dataclass
+class PageIndexFact:
+    """M12.1: an atomic fact extracted from a PageIndex section.
+
+    Mirrors Hindsight's per-memory-unit grain on top of the
+    PageIndex tree. Sections remain the picker's navigation primitive
+    (one section = one chat session); facts give precision for
+    counting / temporal / preference queries.
+
+    Each fact references its parent section via ``(document_id, line_num)``.
+    Section deletion cascades to its facts.
+    """
+
+    id: str
+    bank_id: str
+    document_id: str
+    line_num: int
+    text: str
+    fact_type: str  # 'experience' | 'preference' | 'world' | 'plan' | 'opinion'
+    speaker: str | None = None
+    occurred_start: datetime | None = None
+    occurred_end: datetime | None = None
+    entities: list[str] | None = None
+    embedding: list[float] | None = None
+
+
+@dataclass
+class PageIndexFactHit:
+    """A fact returned from a fact-grain search strategy."""
+
+    fact_id: str
+    document_id: str
+    line_num: int
+    text: str
+    fact_type: str
+    speaker: str | None
+    occurred_start: datetime | None
+    occurred_end: datetime | None
+    entities: list[str]
+    score: float
+
+
+@dataclass
 class PageIndexSectionEntity:
     """A (section, entity) tuple — Hindsight's unit_entities pattern at section grain."""
 
