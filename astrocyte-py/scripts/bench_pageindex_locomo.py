@@ -1878,8 +1878,10 @@ async def answer_question(
         # the picker's selection.
         try:
             qvec = (await provider.embed([question]))[0]
+            # M12.3: widen the candidate pool to 60 so the cross-encoder
+            # rerank has enough to work with after the picker-line filter.
             fact_hits = await store.search_facts_semantic(
-                bank_id, qvec, top_k=30, document_id=document_id,
+                bank_id, qvec, top_k=60, document_id=document_id,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  [pageindex] fact search failed: {type(exc).__name__}: {exc}")
@@ -1889,6 +1891,24 @@ async def answer_question(
             relevant = [
                 h for h in fact_hits if h.line_num in picker_lines
             ]
+            # M12.3: cross-encoder rerank the picker-line subset before
+            # capping at 12. Bi-encoder cosine often ranks topically
+            # related facts above question-answering ones; the cross-
+            # encoder reads both jointly and reorders accordingly.
+            if relevant:
+                try:
+                    from astrocyte.pipeline.fact_rerank import rerank_fact_hits  # noqa: PLC0415
+
+                    relevant = rerank_fact_hits(
+                        relevant, question,
+                        rerank_top_k=30, output_top_k=12,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(
+                        f"  [pageindex] fact rerank failed: "
+                        f"{type(exc).__name__}: {exc} — falling back to "
+                        f"semantic order"
+                    )
             # Cap at 12 facts in the synth context — keeps token cost
             # bounded; the picker already narrowed sections.
             if relevant:
