@@ -52,3 +52,5 @@ target/
 
 # IDE (optional)
 .idea/
+astrocyte-py/logs/
+astrocyte-py/logs/ # if not already there

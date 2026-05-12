@@ -293,6 +293,133 @@ bench-parallel: fetch-datasets bench-db-start bench-db-start-2
 	@echo "  [parallel] Both done. Results: $(RESULTS_DIR)/pageindex/{locomo,lme}/"
 
 # ---------------------------------------------------------------------------
+# Mem0-harness benchmarks (M13.1)
+# ---------------------------------------------------------------------------
+#
+# Runs Astrocyte through the upstream Mem0 memory-benchmarks harness for
+# apples-to-apples comparison against Mem0's own published numbers.
+# Uses the same dataset loader, judge prompt, and metric aggregation as
+# Mem0's runners; only swaps Mem0Client → AstrocyteClient.
+#
+# Knobs:
+#   MEM0_HARNESS_PROJECT  project label written into results JSON
+#   MEM0_HARNESS_MAX_WORKERS  parallel conversations / questions (default 4)
+#   MEM0_HARNESS_TOP_K        candidate list depth (default 200)
+#   MEM0_HARNESS_USER_PROFILE pass --user-profile when set (default on)
+#
+# Both legs require Postgres + Doppler. LoCoMo lands on :5433, LME on
+# :5434 — distinct DBs so they don't contend on a shared bank-id
+# namespace. The AstrocyteClient subclasses already prefix banks with
+# m13.1.locomo / m13.1.lme so even on a single DB they wouldn't collide,
+# but the two-DB pattern matches our native bench-parallel.
+
+MEM0_HARNESS_PROJECT          ?= astrocyte-m13.2
+MEM0_HARNESS_MAX_WORKERS      ?= 4
+MEM0_HARNESS_TOP_K            ?= 200
+MEM0_HARNESS_USER_PROFILE     ?= 1
+# Default to gpt-4o-mini — matches Hindsight's AMB defaults
+# (hindsight-dev/benchmarks/common/benchmark_runner.py:228) so our numbers
+# are directly comparable to Hindsight's published 92-94%. ~16× cheaper
+# than gpt-4o per question. Override to gpt-4o for apples-to-apples with
+# Mem0's paper Table 1 (which uses gpt-4o).
+MEM0_HARNESS_ANSWERER_MODEL   ?= gpt-4o-mini
+MEM0_HARNESS_JUDGE_MODEL      ?= gpt-4o-mini
+
+# Optional question-cap knobs for fair-sample iteration:
+#   LOCOMO_MAX_Q  caps questions per LoCoMo conversation (e.g. 20 → 200 q total)
+#   LME_PER_TYPE  caps LME questions per question_type (default 5 → 30 q;
+#                 bump to 10/20 for sharper per-category signal, --all-questions
+#                 for full 500 q)
+# Empty = harness default (full LoCoMo, --per-type 5 LME).
+MEM0_HARNESS_LOCOMO_MAX_Q     ?=
+MEM0_HARNESS_LME_PER_TYPE     ?=
+
+.PHONY: bench-mem0-harness-locomo bench-mem0-harness-lme bench-mem0-harness-parallel
+
+_MEM0_HARNESS_USER_PROFILE_FLAG := $(if $(MEM0_HARNESS_USER_PROFILE),--user-profile,)
+_MEM0_HARNESS_LOCOMO_MAX_Q_FLAG := $(if $(MEM0_HARNESS_LOCOMO_MAX_Q),--max-questions $(MEM0_HARNESS_LOCOMO_MAX_Q),)
+_MEM0_HARNESS_LME_PER_TYPE_FLAG := $(if $(MEM0_HARNESS_LME_PER_TYPE),--per-type $(MEM0_HARNESS_LME_PER_TYPE),)
+
+bench-mem0-harness-locomo: bench-db-start
+	@mkdir -p $(RESULTS_DIR)/mem0_harness/locomo
+	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
+	  uv run python scripts/mem0_harness/run_locomo.py \
+	    --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
+	    --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
+	    --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider openai \
+	    --max-workers $(MEM0_HARNESS_MAX_WORKERS) --rpm 60 \
+	    --top-k $(MEM0_HARNESS_TOP_K) --top-k-cutoffs 10,20,50,200 \
+	    $(_MEM0_HARNESS_USER_PROFILE_FLAG) \
+	    $(_MEM0_HARNESS_LOCOMO_MAX_Q_FLAG) \
+	    --output-dir $(RESULTS_DIR)/mem0_harness/locomo/$(MEM0_HARNESS_PROJECT)
+
+bench-mem0-harness-lme: bench-db-start-2
+	@mkdir -p $(RESULTS_DIR)/mem0_harness/lme
+	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' \
+	  uv run python scripts/mem0_harness/run_lme.py \
+	    --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
+	    --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
+	    --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider openai \
+	    --max-workers $(MEM0_HARNESS_MAX_WORKERS) --rpm 60 \
+	    --top-k $(MEM0_HARNESS_TOP_K) \
+	    $(_MEM0_HARNESS_USER_PROFILE_FLAG) \
+	    $(_MEM0_HARNESS_LME_PER_TYPE_FLAG) \
+	    --output-dir $(RESULTS_DIR)/mem0_harness/lme/$(MEM0_HARNESS_PROJECT)
+
+# True parallel: LoCoMo on :5433 + LME on :5434, distinct logs, single
+# command. Same shape as bench-parallel for the native PageIndex bench.
+bench-mem0-harness-parallel: bench-db-start bench-db-start-2
+	@mkdir -p $(RESULTS_DIR)/mem0_harness/locomo $(RESULTS_DIR)/mem0_harness/lme $(RESULTS_DIR)/parallel
+	@echo "  [mem0-parallel] LoCoMo on :5433 + LME on :5434 (project=$(MEM0_HARNESS_PROJECT))"
+	@echo "  [mem0-parallel] judge=$(MEM0_HARNESS_JUDGE_MODEL)  answerer=$(MEM0_HARNESS_ANSWERER_MODEL)"
+	@echo "  [mem0-parallel] Logs: $(RESULTS_DIR)/parallel/mem0_{locomo,lme}.log"
+	@( doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
+	     uv run python scripts/mem0_harness/run_locomo.py \
+	       --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
+	       --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
+	       --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider openai \
+	       --max-workers $(MEM0_HARNESS_MAX_WORKERS) --rpm 60 \
+	       --top-k $(MEM0_HARNESS_TOP_K) --top-k-cutoffs 10,20,50,200 \
+	       $(_MEM0_HARNESS_USER_PROFILE_FLAG) \
+	       $(_MEM0_HARNESS_LOCOMO_MAX_Q_FLAG) \
+	       --output-dir $(RESULTS_DIR)/mem0_harness/locomo/$(MEM0_HARNESS_PROJECT) \
+	     > $(RESULTS_DIR)/parallel/mem0_locomo.log 2>&1 ; \
+	     echo "  [mem0-parallel] locomo exited ($$?)" ) & \
+	 ( doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' \
+	     uv run python scripts/mem0_harness/run_lme.py \
+	       --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
+	       --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
+	       --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider openai \
+	       --max-workers $(MEM0_HARNESS_MAX_WORKERS) --rpm 60 \
+	       --top-k $(MEM0_HARNESS_TOP_K) \
+	       $(_MEM0_HARNESS_USER_PROFILE_FLAG) \
+	       $(_MEM0_HARNESS_LME_PER_TYPE_FLAG) \
+	       --output-dir $(RESULTS_DIR)/mem0_harness/lme/$(MEM0_HARNESS_PROJECT) \
+	     > $(RESULTS_DIR)/parallel/mem0_lme.log 2>&1 ; \
+	     echo "  [mem0-parallel] lme exited ($$?)" ) & \
+	 wait
+	@echo "  [mem0-parallel] Both done. Results: $(RESULTS_DIR)/mem0_harness/{locomo,lme}/$(MEM0_HARNESS_PROJECT)/"
+
+# Archive the LATEST Mem0-harness result JSON for BOTH benches under
+# a single STAGE label. Picks the most recent file from each
+# benchmark-results/mem0_harness/<bench>/$(MEM0_HARNESS_PROJECT)/
+# directory and uploads with the matching --bench override.
+#
+# Usage: make bench-archive-mem0 STAGE=m13-close
+#        make bench-archive-mem0 STAGE=m14-1-close MEM0_HARNESS_PROJECT=astrocyte-m14.1
+.PHONY: bench-archive-mem0
+bench-archive-mem0:
+	@latest_lme="$$(ls -t $(RESULTS_DIR)/mem0_harness/lme/$(MEM0_HARNESS_PROJECT)/longmemeval_results_*.json 2>/dev/null | head -1)"; \
+	latest_locomo="$$(ls -t $(RESULTS_DIR)/mem0_harness/locomo/$(MEM0_HARNESS_PROJECT)/locomo_results_*.json 2>/dev/null | head -1)"; \
+	if [ -z "$$latest_lme" ]; then echo "no LME results in $(RESULTS_DIR)/mem0_harness/lme/$(MEM0_HARNESS_PROJECT)/" >&2; exit 1; fi; \
+	if [ -z "$$latest_locomo" ]; then echo "no LoCoMo results in $(RESULTS_DIR)/mem0_harness/locomo/$(MEM0_HARNESS_PROJECT)/" >&2; exit 1; fi; \
+	echo "archiving stage=$(STAGE) project=$(MEM0_HARNESS_PROJECT)"; \
+	echo "  LME    -> $$latest_lme"; \
+	echo "  LoCoMo -> $$latest_locomo"; \
+	doppler run --config bench -- uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench longmemeval --files "$$latest_lme" && \
+	doppler run --config bench -- uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench locomo --files "$$latest_locomo"
+
+# ---------------------------------------------------------------------------
 # CodeQL
 # ---------------------------------------------------------------------------
 
