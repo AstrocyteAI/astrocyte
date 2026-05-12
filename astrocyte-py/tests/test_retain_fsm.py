@@ -246,8 +246,12 @@ class TestInMemoryCheckpoint:
     async def test_delete(self) -> None:
         cp = InMemoryCheckpoint()
         await cp.save(_ctx())
-        assert await cp.delete("b1", "s1") is True
-        assert await cp.delete("b1", "s1") is False
+        # Hoist awaits out of asserts so the delete still runs under
+        # `python -O` (which strips assertions).
+        first = await cp.delete("b1", "s1")
+        assert first is True
+        second = await cp.delete("b1", "s1")
+        assert second is False
         assert await cp.load("b1", "s1") is None
 
 
@@ -293,8 +297,12 @@ class TestFileCheckpoint:
     async def test_file_delete(self, tmp_path: Path) -> None:
         cp = FileCheckpoint(tmp_path)
         await cp.save(_ctx())
-        assert await cp.delete("b1", "s1") is True
-        assert await cp.delete("b1", "s1") is False
+        # Hoist awaits out of asserts so the delete still runs under
+        # `python -O` (which strips assertions).
+        first = await cp.delete("b1", "s1")
+        assert first is True
+        second = await cp.delete("b1", "s1")
+        assert second is False
 
 
 # ── Engine + checkpoint integration: resume ────────────────────────────

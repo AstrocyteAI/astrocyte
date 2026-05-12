@@ -839,7 +839,7 @@ class InMemoryPageIndexStore:
         self._wiki_pages: dict[str, list[tuple["WikiPage", list[float] | None]]] = {}
         self._wiki_provenance: dict[str, list[tuple[str, int]]] = {}
         # M12.1: document_id → list[PageIndexFact]
-        self._facts: dict[str, list["PageIndexFact"]] = {}
+        self._facts: dict[str, list[PageIndexFact]] = {}
 
     async def save_document(self, doc: PageIndexDocument) -> str:
         # Upsert keyed on (bank_id, source_id). Behaviour matches the
@@ -1209,7 +1209,7 @@ class InMemoryPageIndexStore:
             nb = math.sqrt(sum(x * x for x in b))
             return dot / (na * nb) if na > 0 and nb > 0 else 0.0
 
-        scored: list[tuple[float, "PageIndexFact"]] = []
+        scored: list[tuple[float, PageIndexFact]] = []
         scope = self._facts.get(document_id, []) if document_id else [
             f for bucket in self._facts.values() for f in bucket
         ]

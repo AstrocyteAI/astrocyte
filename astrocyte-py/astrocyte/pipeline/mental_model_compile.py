@@ -139,11 +139,11 @@ def _format_sections_for_prompt(sections, max_sections: int = 60) -> str:
 
 async def compile_mental_models_for_document(
     *,
-    page_index_store: "PageIndexStore",
-    mental_model_store: "MentalModelStore",
+    page_index_store: PageIndexStore,
+    mental_model_store: MentalModelStore,
     bank_id: str,
     document_id: str,
-    provider: "LLMProvider",
+    provider: LLMProvider,
     model: str | None = None,
 ) -> list[str]:
     """Extract mental models for one document and persist via
