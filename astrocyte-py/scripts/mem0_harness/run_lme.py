@@ -48,6 +48,7 @@ from scripts.mem0_harness.astrocyte_client import (  # noqa: E402
     format_search_results,
 )
 
+
 # Distinct bank prefix so LME and LoCoMo banks don't collide on a
 # shared DB. The dispatch should also use a different DB port, but this
 # is defence-in-depth.

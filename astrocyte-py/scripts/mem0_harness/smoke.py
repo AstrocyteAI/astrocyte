@@ -92,7 +92,6 @@ async def main() -> None:
         # 2. add() per session.
         ingest_start = time.monotonic()
         for sk in session_keys:
-            session_idx = int(sk.split("_")[1])
             date_str = conv.get(f"{sk}_date_time")
             ts = _session_timestamp(date_str)
             turns = conv.get(sk) or []
@@ -132,8 +131,8 @@ async def main() -> None:
         # 4. delete_user() round-trip.
         ok = await client.delete_user(user_id)
         assert ok, "delete_user() returned False"
-        print(f"\n  [smoke] delete_user() returned True")
-        print(f"  [smoke] ✓ adapter smoke passed")
+        print("\n  [smoke] delete_user() returned True")
+        print("  [smoke] ✓ adapter smoke passed")
 
 
 if __name__ == "__main__":

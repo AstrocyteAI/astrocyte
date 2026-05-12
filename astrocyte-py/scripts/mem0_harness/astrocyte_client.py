@@ -49,8 +49,9 @@ _PAGEINDEX_ROOT = Path("/Users/calvin/AstrocyteAI/PageIndex")
 if str(_PAGEINDEX_ROOT) not in sys.path:
     sys.path.insert(0, str(_PAGEINDEX_ROOT))
 
-from astrocyte.types import PageIndexDocument  # noqa: E402
 from pageindex.page_index_md import md_to_tree  # noqa: E402
+
+from astrocyte.types import PageIndexDocument  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,7 @@ class AstrocyteClient:
             PostgresMentalModelStore,
             PostgresPageIndexStore,
         )
+
         from astrocyte.providers.openai import OpenAIProvider  # noqa: PLC0415
 
         if not (os.environ.get("DATABASE_URL") or os.environ.get("ASTROCYTE_PG_DSN")):
