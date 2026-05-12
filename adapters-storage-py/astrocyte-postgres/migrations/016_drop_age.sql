@@ -58,5 +58,19 @@ CREATE INDEX IF NOT EXISTS ix_unit_links_to
 -- Idempotent: deployments without AGE installed skip cleanly.
 -- CASCADE removes any AGE-created graph schemas (per-bank graph instances
 -- created by the M5 _ensure_label / per-(bank, label) partition pattern).
+--
+-- Wrapped in DO/EXCEPTION because `DROP EXTENSION ... CASCADE` can leave
+-- the pg_catalog in an inconsistent state on partial prior removals
+-- (ag_graph reference dangling without the extension marker); the bare
+-- DROP fails with "table ag_graph does not exist" on re-run.
 
-DROP EXTENSION IF EXISTS age CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'age') THEN
+        DROP EXTENSION age CASCADE;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    -- AGE catalog state inconsistent or already partially removed; safe
+    -- to swallow on re-run. Fresh deploys without AGE never hit this.
+    NULL;
+END $$;
