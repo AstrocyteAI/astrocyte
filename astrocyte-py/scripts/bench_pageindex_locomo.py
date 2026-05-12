@@ -1853,6 +1853,36 @@ async def answer_question(
         if (recall_result is not None and getattr(recall_result, "wiki_hits", None))
         else []
     )
+
+    # M12.5 (Karpathy gap): wiki lint pass — for each surfaced wiki,
+    # check whether its content is contradicted by top facts in the
+    # same scope. Contradicted wikis are filtered out before they reach
+    # the synth context. Inline per-question (only lints the 1-2 wikis
+    # that recall surfaced; bounded cost).
+    if wiki_hits and store is not None and bank_id and document_id:
+        try:
+            from astrocyte.pipeline.wiki_lint import lint_one_wiki  # noqa: PLC0415
+
+            qvec = (await provider.embed([question]))[0]
+            anchor_facts = await store.search_facts_semantic(
+                bank_id, qvec, top_k=8, document_id=document_id,
+            )
+            fact_texts = [f.text for f in anchor_facts]
+            clean_wiki_hits = []
+            for w in wiki_hits:
+                issue = await lint_one_wiki(
+                    page_id=w.page_id, title=w.title, content=w.content,
+                    facts=fact_texts, llm_provider=provider,
+                )
+                if issue is None:
+                    clean_wiki_hits.append(w)
+            wiki_hits = clean_wiki_hits
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"  [pageindex] wiki lint failed: "
+                f"{type(exc).__name__}: {exc} — keeping all wiki hits"
+            )
+
     if wiki_hits:
         wiki_block = "\n\n".join(
             f"[OBSERVATION: {h.title}]\n{h.content}"
