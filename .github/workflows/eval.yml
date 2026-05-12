@@ -35,7 +35,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: astrocyte-py
-        run: uv sync --extra dev
+        # ``bench`` is the eval / benchmark extra (test tooling + adapter
+        # stack + bench-script deps). ``dev`` is contributor-slim and
+        # excludes the adapter packages this run needs.
+        run: uv sync --extra bench
 
       - name: Run evaluation suite
         working-directory: astrocyte-py

@@ -28,7 +28,11 @@ BENCH_PG_PASSWORD  := astrocyte
 BENCH_PG_DB        := astrocyte_bench
 BENCH_EMBEDDING_DIMENSIONS := 1536
 BENCH_DATABASE_URL := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0.1:$(BENCH_PG_PORT)/$(BENCH_PG_DB)
-BENCH_UV_RUN := uv run --extra dev --extra rerank
+# Bench runs need the full adapter stack (Postgres, ingestion connectors,
+# OpenAI, aiobotocore) plus the cross-encoder reranker. Pre-0.14 these were
+# all in ``dev``; after the split ``dev`` is contributor-slim and ``bench``
+# is the full bench stack. See pyproject.toml ``[project.optional-dependencies]``.
+BENCH_UV_RUN := uv run --extra bench --extra rerank
 # ANN backend for the bench Postgres images. Drives the migration's
 # CREATE EXTENSION + USING clause for vector indexes.
 #   pgvectorscale  (default)  — DiskANN indexes. Better concurrent-insert

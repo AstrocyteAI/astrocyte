@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocyte-stack"
+version = "0.1.0"
+description = "Convenience meta-package: pulls Astrocyte's default production stack (astrocyte + astrocyte-postgres)."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [
+    { name = "Calvin Cheng", email = "linchuan.cheng@gmail.com" },
+]
+keywords = ["astrocyte", "agent-memory", "meta-package"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+# This package has no Python code of its own. It exists so that
+# ``pip install astrocyte-stack`` is the one-liner for the recommended
+# "just works" install, equivalent to ``pip install astrocyte[default]``.
+# Defined here as a separate package (rather than only as an extra) so:
+#   - the install command is shorter and easier to copy from docs
+#   - the default stack can evolve without ``astrocyte`` itself adding
+#     deps (e.g. flipping the default vector backend in 18 months changes
+#     this file, not ``astrocyte``)
+#   - dependency-pinning consumers can ``astrocyte-stack==X.Y.Z`` to lock
+#     the whole stack at once
+dependencies = [
+    "astrocyte[default]>=0.13.1,<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/AstrocyteAI/astrocyte"
+Documentation = "https://AstrocyteAI.github.io/astrocyte/"
+Source = "https://github.com/AstrocyteAI/astrocyte"
+Issues = "https://github.com/AstrocyteAI/astrocyte/issues"
+
+# Source layout: empty src/ tree. Hatchling needs *something* to package;
+# an empty Python module ``astrocyte_stack/__init__.py`` satisfies that.
+[tool.hatch.build.targets.wheel]
+packages = ["src/astrocyte_stack"]
+
+# Local-dev source resolution — only used by ``uv sync`` inside this repo.
+# Drops out of the published wheel.
+[tool.uv.sources]
+astrocyte = { path = "../../astrocyte-py", editable = true }
+
+[tool.ruff]
+line-length = 100

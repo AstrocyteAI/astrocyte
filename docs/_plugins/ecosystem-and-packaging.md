@@ -13,6 +13,7 @@ Astrocyte follows an **open-core** distribution model with a two-tier provider a
 | Layer | License | Value |
 |---|---|---|
 | `astrocyte` (core framework) | Apache 2.0 | Built-in intelligence pipeline, policy layer, profiles, observability |
+| `astrocyte-stack` (default-stack meta) | Apache 2.0 | One-line install for the recommended Postgres-backed stack; no Python code of its own |
 | `astrocyte-{storage}` (Tier 1 adapters; package slug) | Apache 2.0 | Retrieval Provider SPI - vector DBs, graph DBs, document stores |
 | `astrocyte-{engine}` (Tier 2 community) | Apache 2.0 | Community-maintained adapters for full-stack memory engines |
 | `astrocyte-{llm}` (LLM adapters) | Apache 2.0 | LLM provider adapters for pipeline + policy operations |
@@ -28,10 +29,53 @@ Astrocyte follows an **open-core** distribution model with a two-tier provider a
 
 | Stage | Stack | Cost |
 |---|---|---|
-| Getting started | `astrocyte` + `astrocyte-postgres` + built-in `openai` provider | Free (+ LLM API costs) |
+| Getting started | `astrocyte-stack` (meta-package: `astrocyte` + `astrocyte-postgres` + built-in `openai` provider) | Free (+ LLM API costs) |
 | Add graph retrieval | + `astrocyte-neo4j` | Free |
 | Want a managed engine | Planned Tier 2 provider such as `astrocyte-mem0` | Free (+ Mem0 cloud costs) |
 | Want best-in-class | Planned `astrocyte-mystique` | Paid |
+
+### Install matrix
+
+The `astrocyte` package keeps its core install thin (~11 packages, framework + in-memory backends only). Storage and ingestion backends ship as **separate adapter packages**, with narrow extras on `astrocyte` that pull exactly one adapter each. Pick the install shape that matches your use case:
+
+| Command | What you get | Use for |
+|---|---|---|
+| `pip install astrocyte` | Pure framework + in-memory adapters. ~11 packages. | Tests, evals, embedded library use, custom backends. |
+| `pip install astrocyte-stack` | `astrocyte` + `astrocyte-postgres`. ~18 packages. | **Recommended default** — what the quick-start assumes. |
+| `pip install "astrocyte[default]"` | Same as `astrocyte-stack`. | Equivalent — prefer `astrocyte-stack` for the shorter copy-paste. |
+| `pip install "astrocyte[postgres]"` | Just the Postgres adapter. | Explicit single-backend install. |
+| `pip install "astrocyte[qdrant]"` | Just the Qdrant adapter. | Qdrant-backed deployments. |
+| `pip install "astrocyte[neo4j]"` | Just the Neo4j adapter. | Neo4j-backed deployments. |
+| `pip install "astrocyte[elasticsearch]"` | Just the Elasticsearch adapter. | Elasticsearch-backed deployments. |
+| `pip install "astrocyte[litellm]"` | LiteLLM multi-provider LLM adapter. | Routing across multiple LLM vendors. |
+| `pip install "astrocyte[kafka]"` | Kafka stream-ingestion adapter. | Real-time event streams. |
+| `pip install "astrocyte[redis]"` | Redis stream-ingestion adapter. | Redis Streams ingestion. |
+| `pip install "astrocyte[github]"` | GitHub poll-ingestion adapter. | GitHub repos / issues / PRs ingestion. |
+| `pip install "astrocyte[s3-ingest]"` | S3 batch-ingestion adapter. | S3 bucket → bank ingestion. |
+| `pip install "astrocyte[documents]"` | Document parser (PDF, Markdown, plaintext). | File-based ingestion. |
+| `pip install "astrocyte[tavus]"` | Tavus video integration. | Conversational video memory. |
+| `pip install "astrocyte[mcp]"` | MCP server (`astrocyte-mcp` CLI). | Wiring memory into Claude Code / Cursor / Codex. |
+| `pip install "astrocyte[gateway]"` | FastAPI gateway deps. | Embedding the gateway directly. Most users want `astrocyte-gateway-py` instead. |
+| `pip install "astrocyte[rerank]"` | Cross-encoder reranker (`sentence-transformers`, pulls torch ~700 MB). | High-quality reflect; opt-in due to size. |
+| `pip install "astrocyte[eval]"` | LoCoMo + LongMemEval judges. | Running the bundled benchmark suite. |
+| `pip install "astrocyte[otel]"` | OpenTelemetry instrumentation. | Observability stacks. |
+| `pip install "astrocyte[prometheus]"` | Prometheus metrics. | Prometheus-shaped observability. |
+| `pip install "astrocyte[worker]"` | Async task backend (pgqueuer). | Async retain / compile workloads. |
+| `pip install "astrocyte[all]"` | Every extra except `dev` and `bench`. | "Give me everything." |
+
+Aliases for back-compat (prefer the narrow per-adapter forms above):
+
+| Alias | Resolves to |
+|---|---|
+| `astrocyte[stream]` | `astrocyte[kafka,redis]` |
+| `astrocyte[poll]` | `astrocyte[github]` |
+
+Developer / contributor extras (not for end users):
+
+| Extra | Purpose |
+|---|---|
+| `astrocyte[dev]` | Pure test + lint tooling + the built-in feature extras (`mcp`, `eval`, `gateway`, `worker`) the unit-test suite imports. ~134 packages. Use for unit-test work and PR CI. |
+| `astrocyte[bench]` | `dev` + the adapter stack the `make bench-*` flow runs against (`postgres`, `kafka`, `redis`, `github`, `openai`) + `aiobotocore` for the R2 archive scripts. ~150 packages. |
 
 ---
 

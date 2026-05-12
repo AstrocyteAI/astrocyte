@@ -18,12 +18,18 @@ dependencies = [
     # exploitable here. The python-dotenv>=1.2.2 floor is therefore dropped;
     # resolution will land on whatever python-dotenv litellm requires.
     #
-    # Revisit when litellm publishes a release that relaxes the dotenv pin back
-    # to >=1.2.2 (or drops it), at which point we can restore the floor.
-    "litellm>=1.83.7",
-    # Security floor for aiohttp — litellm pulls it transitively. Pinned
-    # here (not left to transitive resolution) because several GHSA
-    # advisories affect versions <3.13.5 (header smuggling, SSRF, DoS).
+    # The upper bound (<1.83.8) is a TEMPORARY mitigation for upstream
+    # https://github.com/BerriAI/litellm/issues/26190 — litellm 1.83.8+
+    # regressed its ``aiohttp`` pin from ``==3.13.5`` to ``==3.13.3`` / ``==3.13.4``,
+    # which carry CVE advisories that 3.13.5 fixed. Versions 1.83.5–1.83.7
+    # pin ``aiohttp==3.13.5`` directly, so the secure window is narrow but
+    # consistent. When litellm 1.83.15+ ships with aiohttp re-floored to
+    # >=3.13.5 (or the strict pin dropped), widen this bound.
+    "litellm>=1.83.7,<1.83.8",
+    # Security floor for aiohttp — litellm pulls it transitively. With the
+    # narrow litellm window above this is already satisfied by litellm's own
+    # ``aiohttp==3.13.5`` pin, but the floor here is kept as belt-and-suspenders
+    # so the floor moves with the adapter, not silently with the transitive.
     # Revisit on every Dependabot aiohttp alert; bump this floor.
     "aiohttp>=3.13.5",
 ]

@@ -36,20 +36,27 @@ jobs:
     uses: ./.github/workflows/publish-astrocyte-postgres.yml
     secrets: inherit
 
-  publish-age:
-    needs: publish-astrocyte
+  # astrocyte-stack is a thin meta-package that pins ``astrocyte[default]``,
+  # which transitively pins ``astrocyte-postgres``. It must publish AFTER
+  # both so the version it references is resolvable on PyPI at install time.
+  publish-stack:
+    needs:
+      - publish-astrocyte
+      - publish-postgres
     permissions:
       contents: read
       id-token: write
       attestations: write
       packages: write
-    uses: ./.github/workflows/publish-astrocyte-age.yml
+    uses: ./.github/workflows/publish-astrocyte-stack.yml
     secrets: inherit
+
+  # publish-age removed in M9 (ADR-008): Apache AGE is no longer a supported
+  # graph backend. The astrocyte-age package + publish workflow were deleted.
 
   publish-postgres-image:
     needs:
       - publish-postgres
-      - publish-age
     permissions:
       contents: read
       packages: write

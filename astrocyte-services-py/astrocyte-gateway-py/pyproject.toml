@@ -41,7 +41,9 @@ otel = [
     "opentelemetry-exporter-otlp-proto-http>=1.20",
 ]
 
-# `astrocyte` is not published to PyPI yet; resolve it from the sibling package when using uv.
+# Local-dev source resolution — sibling packages resolve from this monorepo,
+# not PyPI. The published wheel uses the version pin in [project.dependencies]
+# (``astrocyte`` is on PyPI as of 0.13.1).
 [tool.uv.sources]
 astrocyte = { path = "../../astrocyte-py", editable = true }
 astrocyte-postgres = { path = "../../adapters-storage-py/astrocyte-postgres", editable = true }

@@ -37,6 +37,9 @@ PyPI = "https://pypi.org/project/astrocyte/"
 Repository = "https://github.com/AstrocyteAI/astrocyte"
 
 [project.optional-dependencies]
+# ---------------------------------------------------------------------------
+# Built-in feature extras — pure framework code, no external adapter packages.
+# ---------------------------------------------------------------------------
 otel = [
     "opentelemetry-api>=1.20",
     "opentelemetry-sdk>=1.20",
@@ -70,13 +73,71 @@ gateway = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
 ]
-stream = [
-    "astrocyte-ingestion-kafka>=0.1.0,<1",
-    "astrocyte-ingestion-redis>=0.1.0,<1",
+worker = [
+    "pgqueuer>=0.26.3",
 ]
-poll = [
-    "astrocyte-ingestion-github>=0.1.0,<1",
+
+# ---------------------------------------------------------------------------
+# Per-adapter extras — each pulls exactly one published adapter package.
+# Use these for thin installs (e.g. ``pip install astrocyte[postgres]``).
+# ---------------------------------------------------------------------------
+postgres = ["astrocyte-postgres>=0.8.0,<2"]
+qdrant = ["astrocyte-qdrant>=0.1.0,<1"]
+neo4j = ["astrocyte-neo4j>=0.1.0,<1"]
+elasticsearch = ["astrocyte-elasticsearch>=0.1.0,<1"]
+# litellm extra removed: ``astrocyte-llm-litellm`` is incompatible with the
+# ``mcp`` extra. The adapter pins litellm to the secure-aiohttp window
+# (1.83.5–1.83.7) per https://github.com/BerriAI/litellm/issues/26190, and
+# litellm in that window pins ``python-dotenv==1.0.1`` while ``fastmcp>=3.0``
+# (the mcp extra) requires ``python-dotenv>=1.1.0``. Declaring extras as
+# mutually exclusive via [tool.uv] conflicts works for the direct pair
+# (litellm vs mcp), but ``dev`` / ``bench`` / ``all`` transitively pull
+# ``mcp``, which makes lockfile generation unmanageable.
+#
+# Until upstream litellm relaxes its dotenv pin (the parent issue), users
+# who want LiteLLM install the adapter directly alongside astrocyte:
+#
+#     pip install astrocyte-stack astrocyte-llm-litellm
+#
+# Confirm your install does NOT also pull the mcp / fastmcp extras.
+kafka = ["astrocyte-ingestion-kafka>=0.1.0,<1"]
+redis = ["astrocyte-ingestion-redis>=0.1.0,<1"]
+github = ["astrocyte-ingestion-github>=0.1.0,<1"]
+s3-ingest = ["astrocyte-ingestion-s3>=0.1.0,<1"]
+documents = ["astrocyte-ingestion-document>=0.1.0,<1"]
+tavus = ["astrocyte-integration-tavus>=0.1.0,<1"]
+
+# ---------------------------------------------------------------------------
+# Aggregate / convenience extras
+# ---------------------------------------------------------------------------
+# ``default`` is the "just works" production stack. ``pip install astrocyte[default]``
+# (or ``pip install astrocyte-stack``) gives you the Postgres-backed brain that
+# the quick-start assumes.
+default = ["astrocyte[postgres]"]
+
+# ``stream`` / ``poll`` aliases retained for back-compat with docs and
+# pre-0.14 installs. New code should prefer the narrow per-adapter extras.
+stream = ["astrocyte[kafka,redis]"]
+poll = ["astrocyte[github]"]
+
+# ``all`` is everything published to PyPI today, except ``dev`` / ``bench``.
+# Local-only adapters (``litellm``, ``s3-ingest``, ``documents``) are excluded
+# until their publish workflows ship — otherwise ``pip install astrocyte[all]``
+# from PyPI fails to resolve. The narrow per-adapter extras above keep working
+# for in-repo dev via ``[tool.uv.sources]``.
+all = [
+    "astrocyte[otel,prometheus,mcp,eval,openai,rerank,gateway,worker,postgres,qdrant,neo4j,elasticsearch,kafka,redis,github,tavus]",
 ]
+
+# ---------------------------------------------------------------------------
+# Developer / contributor extras
+# ---------------------------------------------------------------------------
+# ``dev`` is the contributor default: test + lint + the built-in feature
+# extras the unit-test suite actually imports (mcp, eval, gateway, worker).
+# What it intentionally does NOT pull: external adapter packages (Postgres,
+# Kafka, Redis, GitHub) or anything dragging torch (rerank). Those live in
+# ``bench`` so plain unit-test CI doesn't pay for them. Pre-0.14 these
+# were conflated, which is why ``dev`` used to be ~148 packages.
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -85,26 +146,21 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.4",
     "pre-commit>=4.0",
-    "fastmcp>=3.0",
-    "deepeval>=2.0",
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
-    "astrocyte-ingestion-kafka>=0.1.0,<1",
-    "astrocyte-ingestion-redis>=0.1.0,<1",
-    "astrocyte-ingestion-github>=0.1.0,<1",
-    "snowballstemmer>=2.2",
-    "pgqueuer>=0.26.3",
-    # Storage adapters — needed for benchmark runs against the real stack
-    "astrocyte-postgres>=0.8.0,<2",
-    # astrocyte-age removed in M9; see docs/_design/adr/adr-008-section-graph-replaces-age.md
+    # Built-in feature extras that ``tests/test_mcp.py``,
+    # ``tests/test_eval_judges.py`` etc. import directly.
+    "astrocyte[mcp,eval,gateway,worker]",
+]
+
+# ``bench`` adds everything the ``make bench-*`` and weekly bench CI need:
+# the real adapter stack the benches run against (Postgres + ingestion
+# connectors), the OpenAI provider, and the R2 archive scripts' async
+# S3 client. ``rerank`` (sentence-transformers/torch, ~700 MB) is opt-in
+# even from bench — add ``[bench,rerank]`` when a config enables it.
+bench = [
+    "astrocyte[dev,postgres,openai,kafka,redis,github]",
     # R2 archive scripts (scripts/archive_bench_results.py et al.) — async S3 client.
     "aiobotocore>=2.13",
-]
-all = [
-    "astrocyte[otel,prometheus,mcp,eval,openai,gateway,stream,poll,worker]",
-]
-worker = [
-    "pgqueuer>=0.26.3",
+    # astrocyte-age removed in M9; see docs/_design/adr/adr-008-section-graph-replaces-age.md
 ]
 
 [project.scripts]
@@ -147,11 +203,20 @@ packages = ["astrocyte"]
 [tool.hatch.build.targets.wheel.force-include]
 "astrocyte/pipeline/extraction_builtin.yaml" = "astrocyte/pipeline/extraction_builtin.yaml"
 
+# Local-dev source resolution for sibling adapter packages. Every adapter
+# referenced by an extra above must have either (a) an entry here OR (b)
+# a published version on PyPI, otherwise lockfile generation fails.
 [tool.uv.sources]
 astrocyte-postgres = { path = "../adapters-storage-py/astrocyte-postgres", editable = true }
+astrocyte-qdrant = { path = "../adapters-storage-py/astrocyte-qdrant", editable = true }
+astrocyte-neo4j = { path = "../adapters-storage-py/astrocyte-neo4j", editable = true }
+astrocyte-elasticsearch = { path = "../adapters-storage-py/astrocyte-elasticsearch", editable = true }
 astrocyte-ingestion-kafka = { path = "../adapters-ingestion-py/astrocyte-ingestion-kafka", editable = true }
 astrocyte-ingestion-redis = { path = "../adapters-ingestion-py/astrocyte-ingestion-redis", editable = true }
 astrocyte-ingestion-github = { path = "../adapters-ingestion-py/astrocyte-ingestion-github", editable = true }
+astrocyte-ingestion-s3 = { path = "../adapters-ingestion-py/astrocyte-ingestion-s3", editable = true }
+astrocyte-ingestion-document = { path = "../adapters-ingestion-py/astrocyte-ingestion-document", editable = true }
+astrocyte-integration-tavus = { path = "../adapters-integration-py/astrocyte-integration-tavus", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

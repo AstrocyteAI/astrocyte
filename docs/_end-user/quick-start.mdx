@@ -24,8 +24,22 @@ Embed Astrocyte directly in your Python application. No separate server — memo
 **Best for:** prototyping, single-process agents, notebooks, custom orchestrators.
 
 ```bash
-pip install -e astrocyte-py/
+# Recommended — installs astrocyte + astrocyte-postgres (the default stack).
+pip install astrocyte-stack
+
+# Or pick a specific backend:
+pip install "astrocyte[postgres]"        # same as above, explicit
+pip install "astrocyte[qdrant]"          # Qdrant vector store
+pip install "astrocyte[neo4j]"           # Neo4j graph store
+pip install "astrocyte[elasticsearch]"   # Elasticsearch document store
+
+# Or in-memory only (tests, evals, embedded use; no DB required):
+pip install astrocyte
 ```
+
+The default stack (`astrocyte-stack`) is what the rest of this guide assumes.
+See [ecosystem and packaging](/plugins/ecosystem-and-packaging/) for the full
+matrix of optional dependencies.
 
 <LibraryQuickStart />
 

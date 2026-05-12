@@ -62,7 +62,9 @@ jobs:
 
       - name: Install dependencies
         working-directory: astrocyte-py
-        run: uv sync --extra dev
+        # ``bench`` extra adds the Postgres + ingestion + OpenAI + aiobotocore
+        # stack the benchmark run needs on top of the slim ``dev`` extra.
+        run: uv sync --extra bench
 
       - name: Install Doppler CLI
         # Doppler is the source of truth for secrets (see astrocyte prd
