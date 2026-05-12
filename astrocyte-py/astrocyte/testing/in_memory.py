@@ -1416,6 +1416,15 @@ class InMemoryPageIndexStore:
         scope = f"document:{document_id}"
         return sum(1 for p, _ in bucket if p.scope == scope)
 
+    async def list_wiki_pages_for_doc(
+        self,
+        bank_id: str,
+        document_id: str,
+    ) -> list[WikiPage]:
+        bucket = self._wiki_pages.get(bank_id, [])
+        scope = f"document:{document_id}"
+        return [p for p, _ in bucket if p.scope == scope]
+
     async def health(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="in-memory pageindex store")
 

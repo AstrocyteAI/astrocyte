@@ -57,9 +57,16 @@ _logger = logging.getLogger("astrocyte.pipeline.section_compile")
 
 _OBSERVATION_PROMPT = """\
 You are an observation synthesizer. You will be given several sections \
-from a conversation that all discuss the same topic. Your job: write \
-ONE concise observation that aggregates the user's experience or \
-stable facts across these sections.
+from a conversation that all discuss the same topic, presented in \
+CHRONOLOGICAL ORDER (oldest first). Your job: write ONE concise \
+observation that aggregates the user's experience or stable facts \
+across these sections, reflecting the LATEST stable state.
+
+Pay attention to LATER sections that may supersede earlier ones. If \
+the user changes their mind, switches providers, or adds new items \
+over time, the observation should reflect the LATEST state. Capture \
+the chronological progression when it matters (e.g. "previously did \
+X, now does Y") rather than averaging across time.
 
 Output a JSON object with EXACTLY two fields:
 - "title": a 5-10 word summary that uses CATEGORY nouns the reader \
@@ -70,7 +77,8 @@ kit / trip / restaurant / etc.) so the wiki search can match it.
 followed by a colon-separated enumeration. The reader will use your \
 content as the answer to questions like "how many X?" / "total Y?" \
 / "list of Z?". DO NOT generalize or theme — enumerate the actual \
-distinct items.
+distinct items. When listing items added over time, the order is \
+chronological (earliest first).
 
 REQUIRED CONTENT SHAPE:
 "User <verb>ed N distinct <category>s: <item1> (<context>), \
@@ -135,10 +143,23 @@ async def _synthesize_observation(
     model: str | None,
     sections: list[PageIndexSection],
 ) -> tuple[str, str] | None:
-    """LLM call — returns (title, content) or None on parse failure."""
+    """LLM call — returns (title, content) or None on parse failure.
+
+    M12.6: sections are sorted by ``session_date`` (with ``line_num``
+    fallback) so the synth prompt sees them in chronological order.
+    The Karpathy "latest state wins" guidance in the prompt requires
+    this ordering to be meaningful.
+    """
     if not sections:
         return None
-    rendered = "\n\n".join(_format_section_for_prompt(s) for s in sections)
+    ordered = sorted(
+        sections,
+        key=lambda s: (
+            s.session_date or datetime.min.replace(tzinfo=timezone.utc),
+            s.line_num,
+        ),
+    )
+    rendered = "\n\n".join(_format_section_for_prompt(s) for s in ordered)
     msg = _OBSERVATION_PROMPT.format(sections=rendered)
     try:
         completion = await provider.complete(
@@ -166,6 +187,221 @@ async def _synthesize_observation(
     if not title or not content:
         return None
     return title, content
+
+
+# ── Revision pass (Karpathy incremental update, M12.6) ─────────────
+
+
+_REVISION_PROMPT = """\
+You are revising a knowledge-base entry to reflect the LATEST stable \
+state across its source sections.
+
+Current entry (titled "{title}", revision {revision}):
+{content}
+
+Source sections in CHRONOLOGICAL ORDER (oldest first):
+{sections}
+
+Examine the sections in time order. If a LATER section supersedes, \
+contradicts, or extends an earlier claim, the entry should reflect \
+the latest state. If the entry already does, no revision is needed.
+
+Common revision triggers:
+- Entry says "User visited 3 doctors" but a later section adds a 4th → bump count
+- Entry says "User prefers brand X" but later sections say switched to Y → "User now prefers Y (previously X)"
+- Entry uses past tense for an ongoing thing → use ongoing tense
+- Entry omits items that appear in later sections → add them
+- Entry includes superseded items as if current → mark as previous
+
+If revising: the new content follows the SAME shape as initial compile \
+(lead with explicit COUNT and colon-separated enumeration; cite dates / \
+entities when present).
+
+Respond as JSON only:
+{{
+  "verdict": "OK" or "REVISE",
+  "revised_title": "<5-10 words; only when REVISE>",
+  "revised_content": "<1-3 sentences; only when REVISE>"
+}}
+"""
+
+
+async def _revise_observation(
+    *,
+    provider: LLMProvider,
+    model: str | None,
+    page: WikiPage,
+    sections: list[PageIndexSection],
+) -> tuple[str, str] | None:
+    """LLM call — returns (new_title, new_content) if revised, ``None``
+    if the page already reflects the latest state.
+
+    Sections must be sorted chronologically by the caller. Resilient
+    to LLM / parse failures (returns ``None``).
+    """
+    if not sections or not page.content.strip():
+        return None
+    rendered = "\n\n".join(_format_section_for_prompt(s) for s in sections)
+    msg = _REVISION_PROMPT.format(
+        title=page.title,
+        revision=page.revision,
+        content=page.content,
+        sections=rendered,
+    )
+    try:
+        completion = await provider.complete(
+            [Message(role="user", content=msg)],
+            model=model,
+            max_tokens=400,
+            temperature=0.0,
+            response_format={"type": "json_object"},
+        )
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "section_compile.revise: LLM call failed for page=%s (%s)",
+            page.page_id, exc,
+        )
+        return None
+    try:
+        data = json.loads(completion.text)
+    except json.JSONDecodeError as exc:
+        _logger.warning(
+            "section_compile.revise: JSON parse failed for page=%s (%s) text=%r",
+            page.page_id, exc, completion.text[:200],
+        )
+        return None
+    verdict = str(data.get("verdict", "")).strip().upper()
+    if verdict != "REVISE":
+        return None
+    new_title = str(data.get("revised_title", "")).strip()
+    new_content = str(data.get("revised_content", "")).strip()
+    if not new_title or not new_content:
+        return None
+    if new_title == page.title and new_content == page.content:
+        return None
+    return new_title, new_content
+
+
+async def revise_wikis_for_document(
+    *,
+    store: PageIndexStore,
+    bank_id: str,
+    document_id: str,
+    provider: LLMProvider,
+    model: str | None = None,
+    embedding_model: str | None = None,
+) -> int:
+    """Karpathy-style revision pass — for each existing wiki of this
+    document, re-check it against its provenance sections in
+    chronological order and persist any revisions.
+
+    Returns: number of pages actually revised.
+
+    Idempotent: if no page needs revision, the call is a no-op (just
+    one LLM call per page). Subsequent calls on already-revised pages
+    should converge to no-op as the wiki stabilises.
+    """
+    try:
+        pages = await store.list_wiki_pages_for_doc(bank_id, document_id)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "revise_wikis: list_wiki_pages_for_doc failed for doc=%s (%s)",
+            document_id, exc,
+        )
+        return 0
+    if not pages:
+        return 0
+
+    try:
+        all_sections = await store.load_sections_with_embeddings(bank_id, document_id)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "revise_wikis: load_sections failed for doc=%s (%s)",
+            document_id, exc,
+        )
+        return 0
+    section_by_line = {s.line_num: s for s in all_sections}
+
+    revised_count = 0
+    for page in pages:
+        # Resolve provenance source_ids back to sections.
+        provenance_lines: list[int] = []
+        for src in (page.source_ids or []):
+            # source_ids are formatted "docId:lineNum"
+            if ":" not in src:
+                continue
+            _, _, line_str = src.rpartition(":")
+            try:
+                provenance_lines.append(int(line_str))
+            except ValueError:
+                continue
+        prov_sections = [
+            section_by_line[ln] for ln in provenance_lines
+            if ln in section_by_line
+        ]
+        if not prov_sections:
+            continue
+        # Sort chronologically — session_date first, line_num fallback.
+        prov_sections.sort(
+            key=lambda s: (
+                s.session_date or datetime.min.replace(tzinfo=timezone.utc),
+                s.line_num,
+            ),
+        )
+        result = await _revise_observation(
+            provider=provider, model=model,
+            page=page, sections=prov_sections,
+        )
+        if result is None:
+            continue
+        new_title, new_content = result
+
+        # Save as a new revision. ``save_wiki_page`` upserts the page row
+        # and inserts a new revision row keyed by (page_uuid, revision_number).
+        revised_page = WikiPage(
+            page_id=page.page_id,
+            bank_id=page.bank_id,
+            kind=page.kind,
+            title=new_title,
+            content=new_content,
+            scope=page.scope,
+            source_ids=list(page.source_ids or []),
+            cross_links=list(page.cross_links or []),
+            revision=page.revision + 1,
+            revised_at=datetime.now(tz=timezone.utc),
+            tags=page.tags,
+            metadata=page.metadata,
+        )
+        try:
+            new_embedding = (
+                await provider.embed(
+                    [f"{new_title}\n\n{new_content}"], model=embedding_model,
+                )
+            )[0]
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "revise_wikis: embed failed for page=%s (%s)", page.page_id, exc,
+            )
+            new_embedding = None
+
+        provenance_pairs = [(s.document_id, s.line_num) for s in prov_sections]
+        try:
+            await store.save_wiki_page(
+                page=revised_page, embedding=new_embedding,
+                provenance=provenance_pairs,
+            )
+            revised_count += 1
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "revise_wikis.save failed for page=%s (%s)", page.page_id, exc,
+            )
+
+    if revised_count:
+        _logger.info(
+            "revise_wikis: doc=%s revised %d/%d pages",
+            document_id, revised_count, len(pages),
+        )
+    return revised_count
 
 
 # ── Public entry point ─────────────────────────────────────────────
@@ -209,9 +445,23 @@ async def compile_sections_for_document(
         existing = 0
     if existing > 0:
         _logger.debug(
-            "section_compile: doc=%s already has %d pages — skip",
+            "section_compile: doc=%s already has %d pages — skip initial compile, run revision pass only",
             document_id, existing,
         )
+        # M12.6: even when initial compile is skipped, run the Karpathy
+        # revision pass against the existing pages. Lets a code change
+        # (e.g. new prompt) take effect against cached banks without a
+        # full re-extraction.
+        try:
+            await revise_wikis_for_document(
+                store=store, bank_id=bank_id, document_id=document_id,
+                provider=provider, model=model, embedding_model=embedding_model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "revise_wikis: cache-hit revision pass failed for doc=%s (%s)",
+                document_id, exc,
+            )
         return []
 
     # Load sections with embeddings populated.
@@ -319,4 +569,20 @@ async def compile_sections_for_document(
         "section_compile: doc=%s created %d pages from %d clusters",
         document_id, len(created_page_ids), len(clusters),
     )
+
+    # M12.6: Karpathy-style revision pass over the freshly compiled
+    # pages. Catches "latest state" patterns that single-shot synthesis
+    # missed (e.g. counts that grow over time, providers that change).
+    # Idempotent — pages already at latest state are unchanged.
+    try:
+        await revise_wikis_for_document(
+            store=store, bank_id=bank_id, document_id=document_id,
+            provider=provider, model=model, embedding_model=embedding_model,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "revise_wikis: post-initial revision pass failed for doc=%s (%s)",
+            document_id, exc,
+        )
+
     return created_page_ids

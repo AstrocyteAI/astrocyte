@@ -1271,6 +1271,79 @@ class PostgresPageIndexStore:
                 row = await cur.fetchone()
         return int(row[0]) if row else 0
 
+    async def list_wiki_pages_for_doc(
+        self,
+        bank_id: str,
+        document_id: str,
+    ):
+        """M12.6: enumerate current-revision wiki pages for one document.
+
+        Returns WikiPage rows joined with their current revision's
+        markdown content. Used by the revision pass to revise existing
+        pages against their provenance sections in chronological order.
+        """
+        from datetime import datetime, timezone
+
+        from astrocyte.types import WikiPage
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT p.page_id, p.title, p.kind, p.scope,
+                           r.markdown, r.revision_number, r.created_at,
+                           p.bank_id
+                    FROM {self._fq('astrocyte_wiki_pages')} AS p
+                    LEFT JOIN {self._fq('astrocyte_wiki_revisions')} AS r
+                        ON r.id = p.current_revision_id
+                    WHERE p.bank_id = %s
+                      AND p.scope = %s
+                      AND p.deleted_at IS NULL
+                    ORDER BY p.page_id
+                    """,
+                    (bank_id, f"document:{document_id}"),
+                )
+                rows = await cur.fetchall()
+                # Pull provenance for these pages in one query.
+                page_ids = [r[0] for r in rows]
+                provenance_by_page: dict[str, list[str]] = {}
+                if page_ids:
+                    await cur.execute(
+                        f"""
+                        SELECT p.page_id, prov.document_id, prov.line_num
+                        FROM {self._fq('astrocyte_wiki_pages')} AS p
+                        JOIN {self._fq('astrocyte_pi_wiki_provenance')} AS prov
+                            ON prov.wiki_page_id = p.id
+                        WHERE p.bank_id = %s
+                          AND p.page_id = ANY(%s)
+                        """,
+                        (bank_id, page_ids),
+                    )
+                    for prov_row in await cur.fetchall():
+                        provenance_by_page.setdefault(prov_row[0], []).append(
+                            f"{prov_row[1]}:{prov_row[2]}",
+                        )
+
+        pages: list[WikiPage] = []
+        for r in rows:
+            revised_at = r[6] if r[6] is not None else datetime.now(tz=timezone.utc)
+            pages.append(WikiPage(
+                page_id=r[0],
+                bank_id=r[7] or bank_id,
+                kind=r[2] or "topic",
+                title=r[1] or "",
+                content=r[4] or "",
+                scope=r[3] or "",
+                source_ids=provenance_by_page.get(r[0], []),
+                cross_links=[],
+                revision=int(r[5]) if r[5] is not None else 1,
+                revised_at=revised_at,
+                tags=None,
+                metadata=None,
+            ))
+        return pages
+
     # ── health ──────────────────────────────────────────────────────────
 
     async def health(self) -> HealthStatus:

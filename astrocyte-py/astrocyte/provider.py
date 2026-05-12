@@ -784,6 +784,22 @@ class PageIndexStore(Protocol):
         ``compile_sections_for_document`` skips work when this returns
         > 0."""
 
+    async def list_wiki_pages_for_doc(
+        self,
+        bank_id: str,
+        document_id: str,
+    ) -> list["WikiPage"]:
+        """M12.6: enumerate current-revision wiki pages with
+        ``scope = 'document:<id>'``. Returns full WikiPage rows with
+        markdown content populated; used by the revision pass to load
+        existing pages, send them through an LLM update, and persist
+        bumped revisions.
+
+        Default implementation returns ``[]`` for stores that don't
+        yet implement wiki enumeration — the revision pass becomes a
+        no-op on those backends rather than crashing."""
+        return []
+
     async def list_distinct_entities(
         self,
         bank_id: str,
