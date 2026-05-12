@@ -39,7 +39,20 @@ if TYPE_CHECKING:
 _logger = logging.getLogger("astrocyte.pipeline.section_fact_extraction")
 
 
-_VALID_FACT_TYPES = {"experience", "preference", "world", "plan", "opinion"}
+_VALID_FACT_TYPES = {
+    "experience",
+    "preference",
+    "world",
+    "plan",
+    "opinion",
+    # M14.1: the assistant said / recommended / explained something
+    # worth recalling. Distinct from `world` (facts the user mentioned)
+    # — `assistant_statement` preserves the assistant's phrasing so
+    # answer-side recall can quote it directly. Targets LME's
+    # single-session-assistant category where M13.3 showed a -34pp gap
+    # when downgrading the answerer from gpt-4o to gpt-4o-mini.
+    "assistant_statement",
+}
 _MAX_FACTS_PER_SECTION = 12  # cap to keep retain cost bounded
 
 
@@ -47,7 +60,8 @@ _EXTRACT_PROMPT = """\
 You are extracting ATOMIC FACTS from one section of a conversation \
 transcript. Each fact = ONE self-contained statement. The reader will \
 query these facts directly for "how many X", "when did Y", "what does \
-the user prefer for Z" type questions.
+the user prefer for Z", "what did the assistant say about W" type \
+questions.
 
 The section's conversation date is ``{session_date}``. Anchor relative \
 time phrases ("yesterday", "last week", "3 days ago") against this \
@@ -63,12 +77,18 @@ fact objects. Each fact has:
 - "fact_type": one of:
     - "experience" — something the user did or that happened to them
     - "preference" — stable taste, opinion, or choice the user holds
-    - "world" — external fact about a non-user entity
+    - "world" — external fact the user mentioned about a non-user entity
     - "plan" — intention, future action, goal
     - "opinion" — value judgment or stance the user expressed
-- "speaker": "user" or "assistant" — who stated this fact
+    - "assistant_statement" — something the ASSISTANT said: a \
+      recommendation given, an answer provided, a fact explained, \
+      advice offered. Preserve the assistant's phrasing so the reader \
+      can quote it directly when asked "what did the assistant say \
+      about X" / "what did the agent recommend for Y".
+- "speaker": "user" or "assistant" — who stated this fact. Must be \
+  "assistant" when fact_type is "assistant_statement".
 - "occurred_start": ISO-8601 date of when the event happened, or null \
-  for non-event facts (preferences, plans, opinions)
+  for non-event facts (preferences, plans, opinions, assistant_statement)
 - "occurred_end": ISO-8601 date for multi-day events, else null
 - "entities": array of entity strings. Mix proper nouns ("Dr. Patel", \
   "Nordstrom", "MoMA") and key:value labels for countable categories \
@@ -78,6 +98,9 @@ Rules:
 - Cap at {max_facts} facts per section. Prefer the most-specific facts.
 - DO NOT emit "user mentioned X" / "they discussed Y" meta-facts — \
   only the actual atomic facts being discussed.
+- DO emit `assistant_statement` rows when the ASSISTANT gives substantive \
+  content (a recommendation, a fact, an answer, advice). Skip pure \
+  question-asking by the assistant.
 - If a fact says "user visited 3 doctors", emit 3 SEPARATE fact rows \
   (one per doctor), not one aggregated fact.
 - Skip greetings, small talk, agentic confirmations.
@@ -86,8 +109,9 @@ Rules:
 Examples:
 
 Section: "[user] Yesterday I went to Dr. Patel for a nasal spray. \
-[assistant] How long have you been seeing Dr. Patel? [user] About 6 \
-months. I prefer his clinic over the previous one."
+[assistant] Have you tried the saline rinse I mentioned last visit? \
+It clears post-nasal drip too. [user] About 6 months. I prefer his \
+clinic over the previous one."
 session_date=2023-05-08
 
 Output:
@@ -103,7 +127,11 @@ Output:
   {{"text": "User prefers Dr. Patel's clinic over their previous one.", \
 "fact_type": "preference", "speaker": "user", \
 "occurred_start": null, "occurred_end": null, \
-"entities": ["Dr. Patel", "role:doctor"]}}
+"entities": ["Dr. Patel", "role:doctor"]}},
+  {{"text": "Assistant recommended a saline rinse — clears post-nasal drip too.", \
+"fact_type": "assistant_statement", "speaker": "assistant", \
+"occurred_start": null, "occurred_end": null, \
+"entities": ["saline rinse", "post-nasal drip"]}}
 ]}}
 
 OUTPUT MUST BE VALID JSON. No prose around it.

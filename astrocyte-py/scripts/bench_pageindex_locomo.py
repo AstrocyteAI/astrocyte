@@ -548,6 +548,32 @@ async def _populate_section_index(
             except Exception as exc:  # noqa: BLE001
                 print(f"  [pageindex] save_facts failed doc={document_id}: {type(exc).__name__}: {exc}")
 
+    # M14.6: consolidate raw preference facts into preference-kind
+    # MentalModel rows. Distinct from M11.2's general mental_model_compile
+    # (which covers all profile dimensions) — this pass specifically
+    # produces structured preferences with qualifier/condition/context
+    # inline. Targets LME single-session-preference category.
+    n_pref_mm = 0
+    if (
+        mental_model_store is not None
+        and bank_id
+        and n_facts > 0
+        and provider is not None
+    ):
+        from astrocyte.pipeline.preference_compile import compile_preferences_for_document  # noqa: PLC0415
+        try:
+            pref_ids = await compile_preferences_for_document(
+                mental_model_store=mental_model_store,
+                bank_id=bank_id,
+                document_id=document_id,
+                facts=all_facts,
+                provider=provider,
+                model=entity_model,
+            )
+            n_pref_mm = len(pref_ids)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [pageindex] preference_compile failed doc={document_id}: {type(exc).__name__}: {exc}")
+
     print(
         f"  [pageindex] indexed doc={document_id}: "
         f"{len(all_entities)} entities, "
@@ -556,6 +582,7 @@ async def _populate_section_index(
         f"{n_knn} knn-links, "
         f"{n_wiki} wiki-pages, "
         f"{n_mm} mental-models, "
+        f"{n_pref_mm} preference-models, "
         f"{n_facts} facts"
     )
 

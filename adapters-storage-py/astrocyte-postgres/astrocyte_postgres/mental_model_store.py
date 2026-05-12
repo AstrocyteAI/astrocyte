@@ -136,9 +136,18 @@ class PostgresMentalModelStore:
                         refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         deleted_at   TIMESTAMPTZ,
+                        kind         TEXT       NOT NULL DEFAULT 'general',
                         PRIMARY KEY (bank_id, model_id)
                     )
                     """
+                )
+                # M14.6: backwards-compat for tables created before the kind
+                # column existed. Migration 022 covers operator-run migrations;
+                # this ALTER covers the in-process bootstrap path used by
+                # tests + bench runs.
+                await conn.execute(
+                    f"ALTER TABLE {models} "
+                    f"ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'general'"
                 )
                 await conn.execute(
                     f"""
@@ -238,8 +247,8 @@ class PostgresMentalModelStore:
                     f"""
                     INSERT INTO {models}
                         (bank_id, model_id, title, content, scope, source_ids,
-                         revision, metadata, refreshed_at, deleted_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)
+                         revision, metadata, refreshed_at, deleted_at, kind)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s)
                     ON CONFLICT (bank_id, model_id) DO UPDATE SET
                         title = EXCLUDED.title,
                         content = EXCLUDED.content,
@@ -248,7 +257,8 @@ class PostgresMentalModelStore:
                         revision = EXCLUDED.revision,
                         metadata = EXCLUDED.metadata,
                         refreshed_at = EXCLUDED.refreshed_at,
-                        deleted_at = NULL
+                        deleted_at = NULL,
+                        kind = EXCLUDED.kind
                     """,
                     [
                         bank_id,
@@ -260,6 +270,7 @@ class PostgresMentalModelStore:
                         new_revision,
                         Json({}),
                         now,
+                        model.kind,
                     ],
                 )
             await conn.commit()
@@ -288,6 +299,7 @@ class PostgresMentalModelStore:
         bank_id: str,
         *,
         scope: str | None = None,
+        kind: str | None = None,
     ) -> list[MentalModel]:
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
@@ -297,12 +309,15 @@ class PostgresMentalModelStore:
         if scope is not None:
             where.append("scope = %s")
             params.append(scope)
+        if kind is not None:
+            where.append("kind = %s")
+            params.append(kind)
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     f"""
                     SELECT model_id, bank_id, title, content, scope,
-                           source_ids, revision, refreshed_at
+                           source_ids, revision, refreshed_at, kind
                     FROM {models}
                     WHERE {" AND ".join(where)}
                     ORDER BY refreshed_at DESC, model_id
@@ -360,4 +375,5 @@ def _row_to_model(row: dict[str, Any]) -> MentalModel:
         source_ids=list(row["source_ids"] or []),
         revision=int(row["revision"]),
         refreshed_at=refreshed_at,
+        kind=row.get("kind") or "general",  # M14.6 — defaults for pre-migration rows
     )

@@ -475,19 +475,45 @@ class AstrocyteClient:
         if not models:
             return None
 
+        # M14.6: prefix preference-kind keys with "preference_" so Mem0's
+        # `snake_case → Title Case` renderer surfaces them as
+        # ``Preference …`` entries — visually distinct from general
+        # profile statements, and lexicographically grouped at the top
+        # of the formatted ``## User Profile`` block (dict iteration
+        # order is insertion-order in Python 3.7+; we insert preferences
+        # first below).
         profile: dict[str, str] = {}
         seen_keys: set[str] = set()
+
+        # Pass 1: preference-kind models first (most relevant for
+        # single-session-preference and related categories).
         for m in models:
+            if getattr(m, "kind", "general") != "preference":
+                continue
             title = (m.title or "").strip()
             content = (m.content or "").strip()
             if not title or not content:
                 continue
-            # snake_case key for Mem0's "snake_case → Title Case" renderer.
+            key = "preference_" + _slug_snake_case(title)
+            if not key or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            profile[key] = content
+
+        # Pass 2: general-kind models second.
+        for m in models:
+            if getattr(m, "kind", "general") == "preference":
+                continue
+            title = (m.title or "").strip()
+            content = (m.content or "").strip()
+            if not title or not content:
+                continue
             key = _slug_snake_case(title)
             if not key or key in seen_keys:
                 continue
             seen_keys.add(key)
             profile[key] = content
+
         return profile or None
 
     async def delete_user(self, user_id: str) -> bool:

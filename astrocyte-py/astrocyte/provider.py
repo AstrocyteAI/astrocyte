@@ -888,6 +888,7 @@ class MentalModelStore(Protocol):
         bank_id: str,
         *,
         scope: str | None = None,
+        kind: str | None = None,
     ) -> list["MentalModel"]:
         """List current-revision mental models in a bank.
 
@@ -895,6 +896,9 @@ class MentalModelStore(Protocol):
             bank_id: Tenant-scoped bank identifier.
             scope: If set, return only models with matching scope
                 (e.g. ``"person:alice"``, or the default ``"bank"``).
+            kind: M14.6 — if set, return only models of the given
+                sub-type (``"general"`` | ``"preference"``). When
+                ``None``, returns all kinds.
         """
         pass
 

@@ -1483,10 +1483,13 @@ class InMemoryMentalModelStore:
         bank_id: str,
         *,
         scope: str | None = None,
+        kind: str | None = None,
     ) -> list["MentalModel"]:
         models = list(self._models.get(bank_id, {}).values())
         if scope is not None:
             models = [m for m in models if m.scope == scope]
+        if kind is not None:
+            models = [m for m in models if m.kind == kind]
         return models
 
     async def delete(self, model_id: str, bank_id: str) -> bool:

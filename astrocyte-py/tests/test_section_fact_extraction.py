@@ -91,6 +91,57 @@ class TestExtractFactsForSection:
         )
         assert facts == []
 
+    async def test_assistant_statement_extracted(self, section) -> None:
+        """M14.1: ``assistant_statement`` is a first-class fact_type.
+
+        Targets LME single-session-assistant lift — when the assistant
+        says something substantive, the extractor produces a row
+        preserving the assistant's phrasing so the answerer can quote it
+        directly.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value=Completion(
+            text='{"facts": ['
+                 '{"text": "Assistant recommended a saline rinse for post-nasal drip.",'
+                 ' "fact_type": "assistant_statement", "speaker": "assistant",'
+                 ' "occurred_start": null, "occurred_end": null,'
+                 ' "entities": ["saline rinse", "post-nasal drip"]}'
+                 ']}',
+            model="gpt-4o-mini",
+        ))
+        facts = await extract_facts_for_section(
+            provider, section, "text", bank_id="b1",
+        )
+        assert len(facts) == 1
+        assert facts[0].fact_type == "assistant_statement"
+        assert facts[0].speaker == "assistant"
+        assert "saline rinse" in facts[0].entities
+
+    async def test_mixed_user_and_assistant_facts(self, section) -> None:
+        """Multi-output: one section yields rows of multiple fact_types
+        including assistant_statement — captures the realistic shape of
+        a back-and-forth dialogue turn.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value=Completion(
+            text='{"facts": ['
+                 '{"text": "User visited Dr. Patel.", "fact_type": "experience",'
+                 ' "speaker": "user", "entities": ["Dr. Patel"]},'
+                 '{"text": "User prefers clinic A.", "fact_type": "preference",'
+                 ' "speaker": "user", "entities": ["clinic A"]},'
+                 '{"text": "Assistant suggested switching to nasal spray.",'
+                 ' "fact_type": "assistant_statement", "speaker": "assistant",'
+                 ' "entities": ["nasal spray"]}'
+                 ']}',
+            model="gpt-4o-mini",
+        ))
+        facts = await extract_facts_for_section(
+            provider, section, "text", bank_id="b1",
+        )
+        assert len(facts) == 3
+        fact_types = {f.fact_type for f in facts}
+        assert fact_types == {"experience", "preference", "assistant_statement"}
+
     async def test_invalid_fact_type_dropped(self, section) -> None:
         provider = MagicMock()
         provider.complete = AsyncMock(return_value=Completion(

@@ -1113,6 +1113,11 @@ class MentalModel:
         revision: Monotonically increasing version number, starts at 1.
             Bumped by ``MentalModelStore.upsert`` on each refresh.
         refreshed_at: Timestamp of the most recent refresh.
+        kind: Sub-type discriminator (M14.6). Defaults to ``"general"``
+            for backwards compatibility with M11.2-era rows. Other
+            values: ``"preference"`` for consolidated user-preference
+            rows produced by ``astrocyte.pipeline.preference_compile``.
+            Mirrors Hindsight's ``mental_models.subtype`` column.
     """
 
     model_id: str
@@ -1123,6 +1128,7 @@ class MentalModel:
     source_ids: list[str]
     revision: int
     refreshed_at: datetime
+    kind: str = "general"
 
 
 # ---------------------------------------------------------------------------
@@ -1316,7 +1322,7 @@ class PageIndexFact:
     document_id: str
     line_num: int
     text: str
-    fact_type: str  # 'experience' | 'preference' | 'world' | 'plan' | 'opinion'
+    fact_type: str  # 'experience' | 'preference' | 'world' | 'plan' | 'opinion' | 'assistant_statement'
     speaker: str | None = None
     occurred_start: datetime | None = None
     occurred_end: datetime | None = None
