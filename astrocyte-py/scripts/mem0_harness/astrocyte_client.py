@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sys
 import time
 from collections import defaultdict
@@ -52,6 +53,7 @@ if str(_PAGEINDEX_ROOT) not in sys.path:
 from pageindex.page_index_md import md_to_tree  # noqa: E402
 
 from astrocyte.types import PageIndexDocument  # noqa: E402
+from scripts.mem0_harness._shape import is_recommendation_shape  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +100,6 @@ def _slug_snake_case(text: str) -> str:
     "Doctors visited" → "doctors_visited"
     "User's sleep habits" → "users_sleep_habits"
     """
-    import re
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()
     return slug[:64]
 
@@ -431,6 +432,67 @@ class AstrocyteClient:
                     "page_id": c["wiki"].page_id,
                 }
             out.append(entry)
+
+        # ── (5) B-1 / B-2a: preference-anchor pinning for recommendation-
+        # shape questions. See ``_is_recommendation_shape`` docstring for
+        # the rationale and the diagnostic that motivated this.
+        #
+        # We prepend up to 5 consolidated preference-kind MentalModels at
+        # the top of the candidate list with an inline instruction prefix
+        # (B-2a — "[Preference — apply this to your suggestion below]")
+        # so the answerer treats them as anchors rather than ordinary
+        # memories. They appear in BOTH the User Profile block AND the
+        # memories list — redundancy is intentional because the LME
+        # answerer rule #12 explicitly tells it to scan the top memories.
+        #
+        # Capped at 5 anchors so even at top_10 floor we still keep 5
+        # ranked candidates. The hard-trim to ``floor`` at the end ensures
+        # no caller sees an oversized list.
+        if (
+            self._mental_model_store is not None
+            and is_recommendation_shape(query)
+        ):
+            try:
+                pref_mms = await self._mental_model_store.list(
+                    bank_id,
+                    scope=f"document:{document_id}",
+                    kind="preference",
+                )
+            except TypeError:
+                # Older MentalModelStore SPI without ``kind`` kwarg.
+                all_mms = await self._mental_model_store.list(
+                    bank_id, scope=f"document:{document_id}",
+                )
+                pref_mms = [
+                    m for m in all_mms
+                    if getattr(m, "kind", "general") == "preference"
+                ]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "B-1 anchor list failed user=%s: %s", user_id, exc,
+                )
+                pref_mms = []
+
+            if pref_mms:
+                top_score = (out[0]["score"] if out else 0.0) + 1.0
+                anchor_entries: list[dict[str, Any]] = []
+                for m in pref_mms[:5]:
+                    title = (m.title or "").strip()
+                    content = (m.content or "").strip()
+                    if not title or not content:
+                        continue
+                    anchor_entries.append({
+                        "memory": (
+                            "[Preference — apply this to your suggestion "
+                            f"below] {title}: {content}"
+                        ),
+                        "score": float(top_score),
+                        "id": f"anchor:{m.model_id}",
+                        "metadata": {"grain": "anchor", "kind": "preference"},
+                    })
+                    top_score -= 0.001  # preserve insertion order on sort
+                if anchor_entries:
+                    out = (anchor_entries + out)[:floor]
         return out
 
     # ── delete_user ─────────────────────────────────────────────────────
