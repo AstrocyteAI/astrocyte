@@ -279,19 +279,28 @@ class TestChunkExpansion:
     async def test_expansion_no_op_when_vector_store_lacks_get_by_chunk_ids(self) -> None:
         """Older adapters without ``get_by_chunk_ids`` must degrade
         gracefully — chunk expansion silently skips, recall still works."""
-        # Subclass and shadow ``get_by_chunk_ids`` so ``hasattr()`` returns
-        # False on instances of the subclass. We shadow with a property
-        # that raises AttributeError because plain del-on-subclass doesn't
-        # remove the inherited attribute.
-        class _LegacyVectorStore(InMemoryVectorStore):
-            # Shadowing as a property that raises AttributeError is the
-            # whole point — simulates an older adapter that never defined
-            # this method. The intentional signature mismatch is ignored
-            # by CodeQL via ``paths-ignore: **/tests/**`` in
-            # ``.github/codeql/codeql-config.yml``.
-            @property
-            def get_by_chunk_ids(self):  # type: ignore[override]
-                raise AttributeError("legacy adapter does not implement get_by_chunk_ids")
+        # Composition over inheritance: ``_LegacyVectorStore`` wraps an
+        # ``InMemoryVectorStore`` and delegates every attribute through
+        # ``__getattr__`` EXCEPT ``get_by_chunk_ids``, which raises
+        # AttributeError to simulate an older adapter that never defined
+        # the method. ``hasattr(legacy_vs, "get_by_chunk_ids")`` returns
+        # False as required by the orchestrator's feature-detect gate.
+        #
+        # The earlier ``@property``-shadow-on-subclass pattern produced
+        # the same hasattr behaviour but triggered code-quality scanners
+        # for a signature mismatch vs the parent class's method — which
+        # was technically true but structurally meaningless (the property
+        # never runs). Composition sidesteps that.
+        class _LegacyVectorStore:
+            def __init__(self) -> None:
+                self._inner = InMemoryVectorStore()
+
+            def __getattr__(self, name: str):
+                if name == "get_by_chunk_ids":
+                    raise AttributeError(
+                        "legacy adapter does not implement get_by_chunk_ids"
+                    )
+                return getattr(self._inner, name)
 
         store = InMemorySourceStore()
         cfg = AstrocyteConfig()
