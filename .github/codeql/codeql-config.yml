@@ -14,3 +14,17 @@ name: "Astrocyte CodeQL config"
 paths-ignore:
   - "tooling/cookiecutter-astrocyte-adapter/**"
   - "**/{{cookiecutter.*}}/**"
+
+# Rule-level exclusions.
+query-filters:
+  # actions/unpinned-tag flags every ``uses: actions/checkout@v4`` style
+  # reference where the version is a tag rather than a SHA. SHA-pinning is
+  # GitHub's stated best practice for high-security workflows, but for an
+  # OSS project with Dependabot/Renovate managing action updates the
+  # maintenance burden (SHA bumps on every action release) outweighs the
+  # marginal threat model — third-party actions can also be retroactively
+  # rewritten under a tag, but our supply-chain mitigations live elsewhere
+  # (Dependabot, branch protection, required reviews). Disabled here so the
+  # ~56 workflow files don't drown out higher-signal findings.
+  - exclude:
+      id: actions/unpinned-tag
