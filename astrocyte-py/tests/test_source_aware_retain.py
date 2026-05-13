@@ -286,10 +286,11 @@ class TestChunkExpansion:
         class _LegacyVectorStore(InMemoryVectorStore):
             # Shadowing as a property that raises AttributeError is the
             # whole point — simulates an older adapter that never defined
-            # this method. The signature mismatch vs the parent is
-            # intentional; suppress CodeQL's inheritance-signature query.
+            # this method. The intentional signature mismatch is ignored
+            # by CodeQL via ``paths-ignore: **/tests/**`` in
+            # ``.github/codeql/codeql-config.yml``.
             @property
-            def get_by_chunk_ids(self):  # type: ignore[override]  # lgtm[py/inheritance/signature-mismatch]
+            def get_by_chunk_ids(self):  # type: ignore[override]
                 raise AttributeError("legacy adapter does not implement get_by_chunk_ids")
 
         store = InMemorySourceStore()

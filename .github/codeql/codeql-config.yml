@@ -14,6 +14,11 @@ name: "Astrocyte CodeQL config"
 paths-ignore:
   - "tooling/cookiecutter-astrocyte-adapter/**"
   - "**/{{cookiecutter.*}}/**"
+  # Test scaffolding (test doubles, mock stores, deliberate signature
+  # shadowing) generates findings that aren't real production risk —
+  # e.g. py/inheritance/signature-mismatch on InMemory* shadows used to
+  # simulate legacy adapters. CodeQL is scoped to production code.
+  - "**/tests/**"
 
 # Rule-level exclusions.
 query-filters:
