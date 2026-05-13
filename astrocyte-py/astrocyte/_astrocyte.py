@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from astrocyte._hooks import HookHandler, HookManager
+from astrocyte._log_safety import safe as _safe_log
 from astrocyte._multi_bank import MultiBankOrchestrator
 from astrocyte._output_scanner import OutputScanner
 from astrocyte._policy import PolicyEnforcer
@@ -1093,7 +1094,7 @@ class Astrocyte:
                 logging.getLogger("astrocyte.mip").warning(
                     "forget.mode=soft requested for bank=%s but engine %s does not "
                     "implement soft_delete(); falling back to hard delete",
-                    bank_id,
+                    _safe_log(bank_id),
                     type(self._engine_provider).__name__ if self._engine_provider else "pipeline",
                 )
 
@@ -1139,8 +1140,8 @@ class Astrocyte:
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning(
                 "min_age_days check skipped: recall failed for bank=%s: %s",
-                bank_id,
-                exc,
+                _safe_log(bank_id),
+                _safe_log(exc),
             )
             return []
 
@@ -1181,7 +1182,7 @@ class Astrocyte:
                 "lack `_created_at` metadata and were skipped",
                 missing_stamp,
                 len(seen),
-                bank_id,
+                _safe_log(bank_id),
             )
             # One increment per forget call that encountered unstamped records.
             # The warning log above carries the exact count; this counter
@@ -1260,15 +1261,15 @@ class Astrocyte:
         if result.error:
             logger.warning(
                 "compile failed for bank %s scope %s: %s",
-                bank_id,
-                scope or "auto",
-                result.error,
+                _safe_log(bank_id),
+                _safe_log(scope or "auto"),
+                _safe_log(result.error),
             )
         else:
             logger.info(
                 "compile complete bank=%s scope=%s pages_created=%d pages_updated=%d noise=%d tokens=%d elapsed_ms=%d",
-                bank_id,
-                scope or "auto",
+                _safe_log(bank_id),
+                _safe_log(scope or "auto"),
                 result.pages_created,
                 result.pages_updated,
                 result.noise_memories,
@@ -1561,14 +1562,14 @@ class Astrocyte:
                 if len(items) < scan_batch:
                     break
                 if scan_offset > 100_000:
-                    logger.warning("Lifecycle scan capped at 100k vectors for bank %s", bank_id)
+                    logger.warning("Lifecycle scan capped at 100k vectors for bank %s", _safe_log(bank_id))
                     break
         else:
             # Fallback for engine-only or stores without list_vectors
             logger.warning(
                 "Lifecycle scan using query='*' fallback for bank %s — "
                 "results may be incomplete. Use a pipeline with list_vectors support for full coverage.",
-                bank_id,
+                _safe_log(bank_id),
             )
             result = await self._dispatcher.recall(RecallRequest(query="*", bank_id=bank_id, max_results=10000))
             for hit in result.hits:

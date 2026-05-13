@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from astrocyte import Astrocyte
+from astrocyte._log_safety import safe as _safe_log
 from astrocyte.config import SourceConfig
 from astrocyte.errors import (
     AccessDenied,
@@ -914,7 +915,7 @@ def create_app(
             try:
                 summary = await source_instance.handle_webhook(raw, headers)
             except IngestError:
-                _logger.warning("Custom webhook ingest rejected source_id=%s", source_id, exc_info=True)
+                _logger.warning("Custom webhook ingest rejected source_id=%s", _safe_log(source_id), exc_info=True)
                 return JSONResponse(
                     content={"ok": False, "error": "webhook ingest rejected"},
                     status_code=400,

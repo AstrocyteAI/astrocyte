@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from astrocyte._log_safety import safe as _safe_log
 from astrocyte.policy.signal_quality import cosine_similarity
 
 if TYPE_CHECKING:
@@ -154,7 +155,7 @@ async def run_consolidation(
 
         # Safety: prevent runaway scans
         if offset > 100000:
-            logger.warning("Consolidation scan capped at 100k vectors for bank %s", bank_id)
+            logger.warning("Consolidation scan capped at 100k vectors for bank %s", _safe_log(bank_id))
             break
 
     # Delete duplicates
@@ -177,7 +178,7 @@ async def run_consolidation(
         try:
             orphaned_removed = await graph_store.remove_orphaned_entities(bank_id)
         except Exception:
-            logger.warning("Entity cleanup failed for bank %s", bank_id, exc_info=True)
+            logger.warning("Entity cleanup failed for bank %s", _safe_log(bank_id), exc_info=True)
 
     return ConsolidationResult(
         duplicates_removed=duplicates_removed,
