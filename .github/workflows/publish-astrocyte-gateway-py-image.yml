@@ -61,14 +61,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Wait for astrocyte, astrocyte-postgres and astrocyte-age on PyPI
+      - name: Wait for astrocyte and astrocyte-postgres on PyPI
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           # Poll via pip download — checks the simple index, the same path pip uses
           # at Docker build time. The JSON API can return 200 before the simple index
           # propagates to all CDN nodes, so JSON-only checks are unreliable here.
-          for pkg in astrocyte astrocyte-postgres astrocyte-age; do
+          # astrocyte-age removed from the wait list in M9 (ADR-008).
+          for pkg in astrocyte astrocyte-postgres; do
             echo "Waiting for ${pkg}==${VERSION} to be pip-downloadable..."
             for i in $(seq 1 40); do
               if pip download "${pkg}==${VERSION}" --no-deps -q -d /tmp/pypi-check; then

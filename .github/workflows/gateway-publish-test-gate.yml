@@ -127,15 +127,13 @@ jobs:
           uv sync --extra dev --extra postgres
           uv run python -m pytest tests/test_gateway_examples_smoke.py -v --tb=short
 
-  postgres-age-integration:
-    name: postgres + AGE integration (combined image)
+  postgres-integration:
+    name: postgres integration (combined image)
     permissions:
       contents: read
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
-      ASTROCYTE_AGE_DSN: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
-      ASTROCYTE_GRAPH_STORE: age
     steps:
       - uses: actions/checkout@v6
 
@@ -195,19 +193,16 @@ jobs:
         working-directory: adapters-storage-py/astrocyte-postgres
         run: uv sync --extra dev && uv run python -m pytest
 
-      - name: Test astrocyte-age (combined image)
-        working-directory: adapters-storage-py/astrocyte-age
-        env:
-          ASTROCYTE_AGE_TEST_DSN: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
-        run: uv sync --extra dev && uv run python -m pytest
+      # AGE integration removed in M9 (ADR-008): Apache AGE is no longer a
+      # supported graph backend. The astrocyte-age package, its CI job, and
+      # its publish workflow were all deleted. See
+      # adapters-storage-py/astrocyte-postgres/migrations/016_drop_age.sql.
 
-      - name: Gateway E2E (HTTP + postgres + AGE, combined image)
+      - name: Gateway E2E (HTTP + postgres, combined image)
         working-directory: astrocyte-services-py/astrocyte-gateway-py
         env:
           DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
-          ASTROCYTE_AGE_DSN: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
-          ASTROCYTE_GRAPH_STORE: age
           ASTROCYTE_GATEWAY_E2E_MIGRATED: "1"
         run: |
-          uv sync --extra dev --extra postgres --extra age
+          uv sync --extra dev --extra postgres
           uv run python -m pytest tests/test_integration_postgres_http.py -v --tb=short
