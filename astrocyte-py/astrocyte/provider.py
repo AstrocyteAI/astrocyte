@@ -800,6 +800,43 @@ class PageIndexStore(Protocol):
         no-op on those backends rather than crashing."""
         return []
 
+    async def list_wikis_affected_by_entities(
+        self,
+        bank_id: str,
+        entities: list[str],
+        *,
+        min_overlap: int = 1,
+        limit: int = 8,
+    ) -> list[tuple["WikiPage", int, list[str]]]:
+        """M14.2: find existing wiki pages whose provenance sections
+        share entities with a new source, returning fully-hydrated
+        WikiPage rows + overlap stats.
+
+        Backs Karpathy's update-affected-wikis op. The aggregation
+        ``HAVING`` cuts the wiki set down to the small subset (~5-15
+        per source) where the entity-overlap signal is real; returning
+        full rows means callers don't need a separate ``get_page``
+        round-trip per result.
+
+        Args:
+            bank_id: tenant scope.
+            entities: distinct entity names from the new source.
+            min_overlap: minimum shared entities to flag a wiki as
+                affected. ``1`` is the loosest threshold.
+            limit: cap on returned rows (top-N by overlap count).
+
+        Returns:
+            ``[(WikiPage, overlap_count, shared_entities), ...]``
+            sorted descending by ``overlap_count``, ties broken by
+            ``page_id`` ascending for stability.
+
+        Default implementation returns ``[]`` for stores that haven't
+        yet been migrated — the update pass becomes a no-op on those
+        backends rather than crashing.
+        """
+        _ = bank_id, entities, min_overlap, limit  # noqa: ARG002
+        return []
+
     async def list_distinct_entities(
         self,
         bank_id: str,

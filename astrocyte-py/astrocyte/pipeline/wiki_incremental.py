@@ -69,7 +69,7 @@ from typing import TYPE_CHECKING
 from astrocyte.types import Message
 
 if TYPE_CHECKING:
-    from astrocyte.provider import LLMProvider, PageIndexStore, WikiStore
+    from astrocyte.provider import LLMProvider, PageIndexStore
     from astrocyte.types import WikiPage
 
 _logger = logging.getLogger("astrocyte.pipeline.wiki_incremental")
@@ -178,7 +178,6 @@ OUTPUT MUST BE VALID JSON. No prose around it.
 
 async def update_affected_wikis_for_document(  # noqa: PLR0913
     *,
-    wiki_store: WikiStore,
     page_index_store: PageIndexStore,
     provider: LLMProvider,
     bank_id: str,
@@ -189,12 +188,11 @@ async def update_affected_wikis_for_document(  # noqa: PLR0913
     min_overlap: int = MIN_ENTITY_OVERLAP,
     max_updates: int = MAX_AFFECTED_WIKIS_PER_SOURCE,
 ) -> IncrementalUpdateReport:
-    """Run Karpathy update-affected-wikis for one retained document.
+    """Run Karpathy update-affected-wikis for one retained source.
 
     Args:
-        wiki_store: where existing wikis live and where revisions land.
-        page_index_store: source of the entity-overlap query
-            (``astrocyte_pi_section_entities`` × ``astrocyte_pi_wiki_provenance``).
+        page_index_store: source of the entity-overlap query AND wiki
+            persistence (``save_wiki_page`` for revised wikis).
         provider: LLM provider for the update calls.
         bank_id: tenant scope.
         document_id: the newly-retained document whose entities trigger
@@ -204,25 +202,14 @@ async def update_affected_wikis_for_document(  # noqa: PLR0913
         new_content_excerpts: ``entity_name → relevant excerpt`` from
             the new document; passed to the update LLM as evidence.
         model: LLM model name (defaults to provider's default).
-        min_overlap: minimum shared entities to flag a wiki as affected
-            (default 1).
-        max_updates: cap on update calls (default 8). Top-N by overlap
-            count.
+        min_overlap: minimum shared entities to flag a wiki as affected.
+        max_updates: cap on update calls (top-N by overlap count).
 
     Returns:
         :class:`IncrementalUpdateReport` with per-wiki outcomes.
 
-    Cost: one LLM call per affected wiki. Idempotent across re-runs
-    when the new document hasn't changed — the second invocation finds
-    that the wiki's revision already reflects the new state and emits
-    NO_CHANGE.
-
-    SKELETON: SPI for ``find_affected_wikis`` query is sketched below
-    against the existing Postgres tables but not yet wired through the
-    ``PageIndexStore`` protocol. The next implementation step adds
-    ``list_wikis_affected_by_entities(bank_id, entities, min_overlap)``
-    to the SPI and implements it in both ``InMemoryPageIndexStore`` and
-    ``PostgresPageIndexStore``.
+    Idempotent across re-runs: the second invocation finds the wiki's
+    revision already reflects the new state and emits NO_CHANGE.
     """
     report = IncrementalUpdateReport(
         document_id=document_id, affected_count=0,
@@ -235,20 +222,21 @@ async def update_affected_wikis_for_document(  # noqa: PLR0913
         )
         return report
 
-    # ── Find affected wikis via entity overlap ────────────────────────
-    # SPI call (to be implemented):
-    #   affected = await page_index_store.list_wikis_affected_by_entities(
-    #       bank_id, new_entities, min_overlap=min_overlap,
-    #   )
-    # Returns: list[tuple[wiki_page_id, overlap_count, list[entity_name]]]
-    # Sorted desc by overlap_count.
-    affected = await _list_wikis_affected_by_entities(
-        page_index_store=page_index_store,
-        wiki_store=wiki_store,
-        bank_id=bank_id,
-        entities=new_entities,
-        min_overlap=min_overlap,
-    )
+    # ── Find affected wikis via entity overlap (SPI returns full WikiPage rows) ──
+    try:
+        affected = await page_index_store.list_wikis_affected_by_entities(
+            bank_id, list(new_entities),
+            min_overlap=min_overlap,
+            limit=max_updates,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "wiki_incremental.spi: list_wikis_affected_by_entities "
+            "failed doc=%s (%s)",
+            document_id, exc,
+        )
+        return report
+
     report.affected_count = len(affected)
     if not affected:
         _logger.debug(
@@ -257,14 +245,11 @@ async def update_affected_wikis_for_document(  # noqa: PLR0913
         )
         return report
 
-    # Cap to max_updates by overlap rank.
-    affected = affected[:max_updates]
-
     # ── Per-wiki update calls ────────────────────────────────────────
-    for wiki, overlap_count, shared_entities in affected:
+    for wiki, _overlap_count, shared_entities in affected:
         result = await _update_one_wiki(
             wiki=wiki,
-            wiki_store=wiki_store,
+            page_index_store=page_index_store,
             provider=provider,
             shared_entities=shared_entities,
             new_content_excerpts=new_content_excerpts,
@@ -290,49 +275,10 @@ async def update_affected_wikis_for_document(  # noqa: PLR0913
 # ---------------------------------------------------------------------------
 
 
-async def _list_wikis_affected_by_entities(
-    *,
-    page_index_store: PageIndexStore,
-    wiki_store: WikiStore,
-    bank_id: str,
-    entities: list[str],
-    min_overlap: int,
-) -> list[tuple[WikiPage, int, list[str]]]:
-    """SKELETON entity-overlap join.
-
-    Target SPI (to be added to :class:`PageIndexStore`):
-
-        async def list_wikis_affected_by_entities(
-            self, bank_id: str, entities: list[str], *, min_overlap: int = 1,
-        ) -> list[tuple[str, int, list[str]]]:
-
-    Postgres implementation (sketch):
-
-        SELECT wp.wiki_page_id, COUNT(DISTINCT se.entity_name), array_agg(DISTINCT se.entity_name)
-        FROM astrocyte_pi_wiki_provenance wp
-        JOIN astrocyte_pi_section_entities se
-          ON se.document_id = wp.document_id AND se.line_num = wp.line_num
-        WHERE wp.bank_id = $1
-          AND se.entity_name = ANY($2)
-        GROUP BY wp.wiki_page_id
-        HAVING COUNT(DISTINCT se.entity_name) >= $3
-        ORDER BY 2 DESC
-
-    Until that SPI lands, this fallback iterates `wiki_store.list_pages`
-    and re-derives entities from each wiki's source sections via a
-    per-page lookup — O(n_wikis × n_entities) but functional for the
-    InMemory case + smoke testing.
-    """
-    _ = bank_id, entities, min_overlap, page_index_store, wiki_store  # noqa: ARG001
-    # TODO(m14.2): implement the SPI call. Returning empty list keeps
-    # callers safe during the skeleton phase — no spurious updates.
-    return []
-
-
 async def _update_one_wiki(  # noqa: PLR0913
     *,
     wiki: WikiPage,
-    wiki_store: WikiStore,
+    page_index_store: PageIndexStore,
     provider: LLMProvider,
     shared_entities: list[str],
     new_content_excerpts: dict[str, str],
@@ -407,8 +353,13 @@ async def _update_one_wiki(  # noqa: PLR0913
         )
     revised_title = (data.get("revised_title") or wiki.title).strip()
 
-    # Save as a new revision via ``WikiStore.upsert_page`` — its upsert
-    # semantics auto-increment revision + archive the old version.
+    # Save as a new revision via ``PageIndexStore.save_wiki_page`` — its
+    # upsert semantics auto-bump revision and archive the prior version.
+    # The wiki's existing provenance is preserved: we re-parse it from
+    # ``source_ids`` (M12.6 format: ``"<doc_id>:<line_num>"``) if present;
+    # otherwise we pass an empty list (provenance row already exists in
+    # ``astrocyte_pi_wiki_provenance`` from the initial compile and is
+    # untouched by content-only revisions).
     from dataclasses import replace  # noqa: PLC0415
     new_wiki = replace(
         wiki,
@@ -417,8 +368,18 @@ async def _update_one_wiki(  # noqa: PLR0913
         revision=wiki.revision + 1,
         revised_at=datetime.now(tz=timezone.utc),
     )
+    provenance: list[tuple[str, int]] = []
+    for sid in wiki.source_ids or []:
+        if ":" in sid:
+            doc_id, _, line_str = sid.rpartition(":")
+            try:
+                provenance.append((doc_id, int(line_str)))
+            except ValueError:
+                continue
     try:
-        await wiki_store.upsert_page(new_wiki, wiki.bank_id)
+        await page_index_store.save_wiki_page(
+            page=new_wiki, embedding=None, provenance=provenance,
+        )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "wiki_incremental.save: page=%s revision=%d failed (%s)",

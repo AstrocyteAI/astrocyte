@@ -574,6 +574,59 @@ async def _populate_section_index(
         except Exception as exc:  # noqa: BLE001
             print(f"  [pageindex] preference_compile failed doc={document_id}: {type(exc).__name__}: {exc}")
 
+    # M14.2: Karpathy update-affected-wikis. After the initial wiki
+    # compile + revision pass produced wiki pages from clustered
+    # sections, walk the doc's entities and check whether sections
+    # NOT in each wiki's provenance carry new state that should be
+    # folded in. Cross-cluster freshness — fixes the case where a
+    # later session updates a fact a wiki already captured (e.g. user
+    # moved cities, finished a project they were planning). Idempotent
+    # via NO_CHANGE verdict on re-run.
+    n_wiki_updates = 0
+    if (
+        bank_id
+        and n_wiki > 0
+        and n_facts > 0
+        and provider is not None
+        and hasattr(store, "list_wikis_affected_by_entities")
+    ):
+        from astrocyte.pipeline.wiki_incremental import (  # noqa: PLC0415
+            update_affected_wikis_for_document,
+        )
+        # Build per-entity excerpts from the section facts. Each
+        # entity gets a concatenated bag of fact texts that mention it
+        # — cheap proxy for "what's the latest the doc says about X".
+        entity_excerpts: dict[str, str] = {}
+        for f in all_facts:
+            for e in (f.entities or []):
+                if not e:
+                    continue
+                snippet = (f.text or "").strip()
+                if not snippet:
+                    continue
+                cur = entity_excerpts.get(e, "")
+                if cur:
+                    entity_excerpts[e] = (cur + " " + snippet)[:1200]
+                else:
+                    entity_excerpts[e] = snippet[:1200]
+        distinct_entities = sorted({
+            e.entity_name for e in all_entities if e.entity_name
+        })
+        if distinct_entities and entity_excerpts:
+            try:
+                report = await update_affected_wikis_for_document(
+                    page_index_store=store,
+                    provider=provider,
+                    bank_id=bank_id,
+                    document_id=document_id,
+                    new_entities=distinct_entities,
+                    new_content_excerpts=entity_excerpts,
+                    model=entity_model,
+                )
+                n_wiki_updates = len(report.updated)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  [pageindex] wiki_incremental failed doc={document_id}: {type(exc).__name__}: {exc}")
+
     print(
         f"  [pageindex] indexed doc={document_id}: "
         f"{len(all_entities)} entities, "
@@ -581,6 +634,7 @@ async def _populate_section_index(
         f"{len(all_links)} llm-links, "
         f"{n_knn} knn-links, "
         f"{n_wiki} wiki-pages, "
+        f"{n_wiki_updates} wiki-updates, "
         f"{n_mm} mental-models, "
         f"{n_pref_mm} preference-models, "
         f"{n_facts} facts"

@@ -1425,6 +1425,42 @@ class InMemoryPageIndexStore:
         scope = f"document:{document_id}"
         return [p for p, _ in bucket if p.scope == scope]
 
+    async def list_wikis_affected_by_entities(
+        self,
+        bank_id: str,
+        entities: list[str],
+        *,
+        min_overlap: int = 1,
+        limit: int = 8,
+    ) -> list[tuple[WikiPage, int, list[str]]]:
+        """M14.2: scan in-memory wiki provenance for entity overlap.
+
+        Mirrors the Postgres JOIN — for each wiki page in the bank,
+        intersect its provenance sections' entity sets with the input
+        entities. Returns the fully-hydrated ``WikiPage`` row, the
+        overlap count, and the shared entity names — sorted descending
+        by overlap count with page_id ascending as a tie-break.
+        """
+        if not entities:
+            return []
+        query_set = set(entities)
+        bucket = self._wiki_pages.get(bank_id, [])
+        results: list[tuple[WikiPage, int, list[str]]] = []
+        for page, _embedding in bucket:
+            prov = self._wiki_provenance.get(page.page_id, [])
+            if not prov:
+                continue
+            wiki_entities: set[str] = set()
+            for doc_id, line_num in prov:
+                for ent in self._section_entities.get(doc_id, []):
+                    if ent.line_num == line_num:
+                        wiki_entities.add(ent.entity_name)
+            shared = sorted(wiki_entities & query_set)
+            if len(shared) >= min_overlap:
+                results.append((page, len(shared), shared))
+        results.sort(key=lambda r: (-r[1], r[0].page_id))
+        return results[:limit]
+
     async def health(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="in-memory pageindex store")
 
