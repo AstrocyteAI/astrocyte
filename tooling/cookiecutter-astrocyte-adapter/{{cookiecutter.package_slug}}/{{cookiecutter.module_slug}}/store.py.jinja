@@ -162,10 +162,20 @@ class {{ cookiecutter.backend_name }}{{ cookiecutter.__class_suffix }}:
         seeds: list[tuple[str, int]],
         *,
         link_types: list[str] | None = None,
-        limit: int = 50,
+        top_k: int = 20,
     ) -> list[tuple[str, int, float]]:
-        """Expand from seed sections via section_links
-        (semantic_knn / causal / supersedes / elaborates)."""
+        """1-hop expansion through ``section_links`` from the given
+        ``(document_id, line_num)`` seeds.
+
+        Args:
+            seeds: ``(document_id, line_num)`` pairs to expand from.
+            link_types: filter to e.g. ``['semantic_knn', 'causal']``;
+                ``None`` means all types (semantic_knn / causal /
+                supersedes / elaborates).
+            top_k: maximum number of results to return, ranked by link
+                weight (score). Defaults match the reference
+                ``PostgresPageIndexStore``.
+        """
         raise NotImplementedError
 {% elif cookiecutter.spi_family == 'llm_providers' %}
     async def complete(self, messages: list[Message], **kwargs) -> Completion:

@@ -1,9 +1,23 @@
 """M14.2: wiki_incremental — entity-overlap update sweep tests.
 
-Exercises ``update_affected_wikis_for_document`` against the in-memory
-PageIndexStore so the entity-overlap JOIN, LLM update prompt parsing,
-idempotency, and graceful-degradation paths are all covered before the
-Postgres bench wiring lands.
+Verifies ``update_affected_wikis_for_document`` against the in-memory
+``PageIndexStore`` with focused coverage of:
+
+- **entity-overlap candidate selection** — the shared-entity JOIN that
+  picks which existing wiki pages are affected by a newly-ingested
+  document's entities;
+- **LLM update prompt / response parsing** — the prompt shape sent to
+  the provider and the rules for accepting / rejecting the returned
+  revision payload (well-formed JSON, content delta vs. no-op);
+- **idempotent / no-op behavior** — re-running with the same input or
+  with no effective changes must not bump revisions or emit fake
+  updates;
+- **graceful degradation on error paths** — provider failures, store
+  errors, and partial-batch failures all surface in the report without
+  raising.
+
+These tests give pre-Postgres confidence in incremental-update semantics
+and reporting before the Postgres bench wiring lands.
 """
 from __future__ import annotations
 
@@ -24,6 +38,14 @@ from astrocyte.types import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+def _make_source_id(doc_id: str, line_num: int) -> str:
+    """Build the canonical ``<doc_id>:<line_num>`` source-id used by wiki
+    provenance (M12.6 convention). Centralised so tests don't repeat the
+    format string and the convention is greppable.
+    """
+    return f"{doc_id}:{line_num}"
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────
@@ -49,7 +71,7 @@ async def _seed_one_wiki_with_entities(
         title=title,
         content=content,
         scope=f"document:{doc_id}",
-        source_ids=[f"{doc_id}:{line_num}"],
+        source_ids=[_make_source_id(doc_id, line_num)],
         cross_links=[],
         revision=1,
         revised_at=datetime.now(tz=timezone.utc),
@@ -81,15 +103,19 @@ def _provider(text: str) -> MagicMock:
 
 class TestSkeletonGuards:
     async def test_no_entities_returns_empty_report(self) -> None:
+        provider = _provider("")
         report = await update_affected_wikis_for_document(
             page_index_store=InMemoryPageIndexStore(),
-            provider=_provider(""),
+            provider=provider,
             bank_id="b1", document_id="doc-new",
             new_entities=[], new_content_excerpts={},
         )
         assert isinstance(report, IncrementalUpdateReport)
         assert report.affected_count == 0
         assert report.updated == report.skipped == report.failed == []
+        # Short-circuit assertion: with no entities there's nothing to
+        # join against, so the LLM must never be invoked.
+        provider.complete.assert_not_called()
 
     async def test_no_affected_wikis_skips_llm(self) -> None:
         """No wikis whose provenance contains shared entities → no LLM call."""
@@ -118,6 +144,14 @@ class TestSingleWikiUpdate:
             title="Alice", content="Alice lives in Paris.",
             doc_id="doc-old", line_num=3, entities=["Alice"],
         )
+        # Baseline persisted state before the update — pins the
+        # pre-condition we're comparing against (revision 1, Paris).
+        wikis_before = await store.list_wiki_pages_for_doc("b1", "doc-old")
+        assert len(wikis_before) == 1
+        assert wikis_before[0].page_id == "entity:alice"
+        assert wikis_before[0].revision == 1
+        assert wikis_before[0].content == "Alice lives in Paris."
+
         provider = _provider(
             '{"verdict": "UPDATE",'
             ' "revised_content": "Alice lives in Berlin (previously Paris)."}',
@@ -132,9 +166,12 @@ class TestSingleWikiUpdate:
         assert len(report.updated) == 1
         assert report.updated[0].page_id == "entity:alice"
         assert report.updated[0].new_revision == 2
-        # The wiki's content is now updated in the page-index-store bucket.
+        # The wiki's persisted content + revision are both updated in
+        # the page-index-store bucket — old state is replaced, not added.
         wikis = await store.list_wiki_pages_for_doc("b1", "doc-old")
         assert len(wikis) == 1
+        assert wikis[0].revision == 2
+        assert wikis[0].content != wikis_before[0].content
         assert "Berlin" in wikis[0].content
         assert "previously Paris" in wikis[0].content
         provider.complete.assert_called_once()
@@ -203,6 +240,10 @@ class TestErrorPaths:
         assert report.updated == []
         assert len(report.failed) == 1
         assert report.failed[0].verdict == "FAILED"
+        # The detail field must surface a JSON-parse diagnostic — bare
+        # FAILED with no context would defeat the graceful-degradation
+        # design (operators need to know why a wiki refused to update).
+        assert "json" in report.failed[0].detail.lower()
         wikis = await store.list_wiki_pages_for_doc("b1", "doc-old")
         assert wikis[0].content == "Alice lives in Paris."
 
