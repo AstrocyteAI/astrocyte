@@ -51,8 +51,11 @@ wiki_store_config:
 wiki_compile:
   enabled: true
   auto_start: true
-entity_resolution:
-  enabled: true
+# entity_resolution requires a graph_store provider, but the only one
+# (astrocyte-age) was removed in M9 / ADR-008. The section recall
+# flat-table pattern (section_links / unit_links) handles the same
+# graph-like queries on Postgres directly — see migration 016. Leaving
+# entity_resolution.enabled=true here would raise ConfigError at startup.
 async_tasks:
   enabled: true
   backend: pgqueuer
