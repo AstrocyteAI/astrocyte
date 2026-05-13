@@ -11,27 +11,26 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "astrocyte>=0.7.0,<2",
-    # litellm >=1.83.7 patches GHSA-xqmj-j6mv-4862 (SSTI in /prompts/test, High).
-    # 1.83.1+ strict-pins python-dotenv==1.0.1, which carries GHSA-mf9w-mj56-hr94
-    # (symlink following in set_key(), fixed in python-dotenv 1.2.2). Astrocyte
-    # never calls set_key() — we only read .env files — so that advisory is not
-    # exploitable here. The python-dotenv>=1.2.2 floor is therefore dropped;
-    # resolution will land on whatever python-dotenv litellm requires.
+    # litellm >=1.83.10 patches GHSA-wxxx-gvqv-xp7p (sandbox escape in custom-code
+    # guardrail, High) on top of the earlier GHSA-xqmj-j6mv-4862 SSTI fix shipped
+    # in 1.83.7. 1.83.1+ strict-pins python-dotenv==1.0.1, which carries
+    # GHSA-mf9w-mj56-hr94 (symlink following in set_key(), fixed in 1.2.2).
+    # Astrocyte never calls set_key() — we only read .env files — so that
+    # advisory is not exploitable here. The python-dotenv>=1.2.2 floor is
+    # therefore dropped; resolution lands on whatever python-dotenv litellm
+    # requires.
     #
-    # The upper bound (<1.83.8) is a TEMPORARY mitigation for upstream
-    # https://github.com/BerriAI/litellm/issues/26190 — litellm 1.83.8+
-    # regressed its ``aiohttp`` pin from ``==3.13.5`` to ``==3.13.3`` / ``==3.13.4``,
-    # which carry CVE advisories that 3.13.5 fixed. Versions 1.83.5–1.83.7
-    # pin ``aiohttp==3.13.5`` directly, so the secure window is narrow but
-    # consistent. When litellm 1.83.15+ ships with aiohttp re-floored to
-    # >=3.13.5 (or the strict pin dropped), widen this bound.
-    "litellm>=1.83.7,<1.83.8",
-    # Security floor for aiohttp — litellm pulls it transitively. With the
-    # narrow litellm window above this is already satisfied by litellm's own
-    # ``aiohttp==3.13.5`` pin, but the floor here is kept as belt-and-suspenders
-    # so the floor moves with the adapter, not silently with the transitive.
-    # Revisit on every Dependabot aiohttp alert; bump this floor.
-    "aiohttp>=3.13.5",
+    # Earlier the upper bound was <1.83.8 to avoid 1.83.8+'s aiohttp regression
+    # (pin moved from ==3.13.5 to ==3.13.3 / ==3.13.4). Dependabot has since
+    # marked the aiohttp advisories that worried us as fixed in 3.13.4 (vulnerable
+    # range <= 3.13.3 — see #16-#21), so 3.13.4 is acceptable. Widened to
+    # <1.84 to absorb the 1.83.10 security floor; bumps within 1.83.x are
+    # mechanical patch releases.
+    "litellm>=1.83.10,<1.84",
+    # Security floor for aiohttp — litellm pulls it transitively. The floor
+    # tracks the highest fixed-in version across known aiohttp advisories so it
+    # moves with the adapter rather than silently with the transitive.
+    "aiohttp>=3.13.4",
 ]
 
 [project.optional-dependencies]
@@ -62,14 +61,6 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I"]
-
-[tool.uv.audit]
-# python-dotenv 1.0.1 carries GHSA-mf9w-mj56-hr94 (symlink following in
-# set_key(), fixed in 1.2.2). litellm >=1.83.1 strict-pins python-dotenv==1.0.1
-# and the latest release (1.83.13) has not relaxed this pin. Astrocyte never
-# calls set_key() — litellm only calls load_dotenv() on import, which is safe.
-# Suppressed until litellm drops or relaxes the python-dotenv pin.
-ignore = ["GHSA-mf9w-mj56-hr94"]
 
 [tool.uv.sources]
 astrocyte = { path = "../../astrocyte-py", editable = true }
