@@ -243,9 +243,31 @@ LME_MAX_SAMPLES  ?= 200
 LOCOMO_BANK_ID   ?= bench-pageindex-locomo
 LME_BANK_ID      ?= bench-pageindex-lme
 
+# Bench-runner deps. These are NOT in the [bench] extra in pyproject.toml because:
+#   - PageIndex (vendored at /Users/calvin/AstrocyteAI/PageIndex) — needs litellm,
+#     PyPDF2, pymupdf. Sys.path-imported, not a pyproject dep.
+#   - memory-benchmarks (vendored at /Users/calvin/AstrocyteAI/memory-benchmarks) —
+#     needs aiolimiter, anthropic. Also sys.path-imported.
+#   - astrocyte-llm-litellm — incompatible with the ``mcp`` extra via
+#     litellm's dotenv pin (see comment in pyproject.toml ``[project.optional-dependencies]``).
+#
+# Bench targets below depend on ``bench-runner-deps``, which installs all of these
+# imperatively via ``uv pip install``. Idempotent — re-running is cheap.
+# Triggered automatically by every bench-* target; runs a smoke import that fails
+# fast if anything's missing.
+.PHONY: bench-runner-deps
+bench-runner-deps:
+	@uv run python -c "import litellm, PyPDF2, pymupdf, aiolimiter, anthropic" 2>/dev/null || ( \
+		echo "  [bench-runner-deps] installing missing runner deps..."; \
+		uv pip install -q --editable ../adapters-llm-py/astrocyte-llm-litellm; \
+		uv pip install -q PyPDF2 pymupdf aiolimiter; \
+		uv pip install -q -r /Users/calvin/AstrocyteAI/memory-benchmarks/requirements.txt; \
+		echo "  [bench-runner-deps] done"; \
+	)
+
 .PHONY: bench-locomo bench-longmemeval bench-longmemeval-on-2 bench-parallel
 
-bench-locomo: fetch-locomo bench-db-start
+bench-locomo: fetch-locomo bench-db-start bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/locomo
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
 	  uv run python scripts/bench_pageindex_locomo.py \
@@ -253,7 +275,7 @@ bench-locomo: fetch-locomo bench-db-start
 	    --max-questions-per-conversation $(LOCOMO_MAX_Q) \
 	    --bank-id $(LOCOMO_BANK_ID)
 
-bench-longmemeval: fetch-longmemeval bench-db-start
+bench-longmemeval: fetch-longmemeval bench-db-start bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/lme
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
 	  uv run python scripts/bench_pageindex_lme.py \
@@ -261,7 +283,7 @@ bench-longmemeval: fetch-longmemeval bench-db-start
 	    --max-samples $(LME_MAX_SAMPLES) \
 	    --bank-id $(LME_BANK_ID)
 
-bench-longmemeval-on-2: fetch-longmemeval bench-db-start-2
+bench-longmemeval-on-2: fetch-longmemeval bench-db-start-2 bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/lme
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' \
 	  uv run python scripts/bench_pageindex_lme.py \
@@ -278,7 +300,7 @@ bench-longmemeval-on-2: fetch-longmemeval bench-db-start-2
 # Cache state: bank rows persist across runs. First run on :5434 for
 # LME will be a cold start (~2-3hr full extraction). Subsequent runs
 # hit cache and only re-score (~30-60min).
-bench-parallel: fetch-datasets bench-db-start bench-db-start-2
+bench-parallel: fetch-datasets bench-db-start bench-db-start-2 bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/locomo $(RESULTS_DIR)/pageindex/lme $(RESULTS_DIR)/parallel
 	@echo "  [parallel] LoCoMo on :5433 + LME on :5434"
 	@echo "  [parallel] Logs: $(RESULTS_DIR)/parallel/{locomo,lme}.log"
@@ -344,7 +366,7 @@ _MEM0_HARNESS_USER_PROFILE_FLAG := $(if $(MEM0_HARNESS_USER_PROFILE),--user-prof
 _MEM0_HARNESS_LOCOMO_MAX_Q_FLAG := $(if $(MEM0_HARNESS_LOCOMO_MAX_Q),--max-questions $(MEM0_HARNESS_LOCOMO_MAX_Q),)
 _MEM0_HARNESS_LME_PER_TYPE_FLAG := $(if $(MEM0_HARNESS_LME_PER_TYPE),--per-type $(MEM0_HARNESS_LME_PER_TYPE),)
 
-bench-mem0-harness-locomo: bench-db-start
+bench-mem0-harness-locomo: bench-db-start bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/locomo
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
 	  uv run python scripts/mem0_harness/run_locomo.py \
@@ -357,7 +379,7 @@ bench-mem0-harness-locomo: bench-db-start
 	    $(_MEM0_HARNESS_LOCOMO_MAX_Q_FLAG) \
 	    --output-dir $(RESULTS_DIR)/mem0_harness/locomo/$(MEM0_HARNESS_PROJECT)
 
-bench-mem0-harness-lme: bench-db-start-2
+bench-mem0-harness-lme: bench-db-start-2 bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/lme
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' \
 	  uv run python scripts/mem0_harness/run_lme.py \
@@ -372,7 +394,7 @@ bench-mem0-harness-lme: bench-db-start-2
 
 # True parallel: LoCoMo on :5433 + LME on :5434, distinct logs, single
 # command. Same shape as bench-parallel for the native PageIndex bench.
-bench-mem0-harness-parallel: bench-db-start bench-db-start-2
+bench-mem0-harness-parallel: bench-db-start bench-db-start-2 bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/locomo $(RESULTS_DIR)/mem0_harness/lme $(RESULTS_DIR)/parallel
 	@echo "  [mem0-parallel] LoCoMo on :5433 + LME on :5434 (project=$(MEM0_HARNESS_PROJECT))"
 	@echo "  [mem0-parallel] judge=$(MEM0_HARNESS_JUDGE_MODEL)  answerer=$(MEM0_HARNESS_ANSWERER_MODEL)"
@@ -420,8 +442,8 @@ bench-archive-mem0:
 	echo "archiving stage=$(STAGE) project=$(MEM0_HARNESS_PROJECT)"; \
 	echo "  LME    -> $$latest_lme"; \
 	echo "  LoCoMo -> $$latest_locomo"; \
-	doppler run --config bench -- uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench longmemeval --files "$$latest_lme" && \
-	doppler run --config bench -- uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench locomo --files "$$latest_locomo"
+	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results --stage $(STAGE) --bench longmemeval --files "$$latest_lme" && \
+	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results --stage $(STAGE) --bench locomo --files "$$latest_locomo"
 
 # ---------------------------------------------------------------------------
 # CodeQL
@@ -511,8 +533,8 @@ bench-archive:
 	echo "archiving stage=$(STAGE)"; \
 	echo "  LME    -> $$latest_lme"; \
 	echo "  LoCoMo -> $$latest_locomo"; \
-	doppler run --config bench -- uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench longmemeval --files "$$latest_lme" && \
-	doppler run --config bench -- uv run python -m scripts.archive_bench_results --stage $(STAGE) --bench locomo --files "$$latest_locomo"
+	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results --stage $(STAGE) --bench longmemeval --files "$$latest_lme" && \
+	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results --stage $(STAGE) --bench locomo --files "$$latest_locomo"
 
 # ---------------------------------------------------------------------------
 # Cleanup
