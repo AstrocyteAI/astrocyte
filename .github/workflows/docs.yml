@@ -59,7 +59,7 @@ jobs:
           run-id: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
         continue-on-error: true  # Don't fail docs deploy if coverage isn't available yet
 
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/dist
 
