@@ -1,0 +1,35 @@
+{
+  "name": "astrocyte",
+  "version": "0.1.0",
+  "description": "Self-hosted agent memory for Codex. Adds retain / recall / reflect / forget / compile tools backed by a local astrocyte-mcp server.",
+  "author": {
+    "name": "Astrocyte",
+    "email": "linchuan.cheng@gmail.com"
+  },
+  "homepage": "https://AstrocyteAI.github.io/astrocyte/",
+  "repository": "https://github.com/AstrocyteAI/astrocyte",
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "mcpServers": "./.codex-mcp.json",
+  "interface": {
+    "displayName": "Astrocyte",
+    "shortDescription": "Self-hosted persistent memory for AI coding workflows",
+    "longDescription": "Astrocyte gives Codex long-term memory backed by your own Postgres. Store decisions, user preferences, project context, conversational history. Section-grain recall keeps conversation structure intact across long histories; multi-bank isolation lets one Codex instance serve many projects without leakage. Self-hosted — your data stays in your infrastructure.",
+    "developerName": "Astrocyte",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://AstrocyteAI.github.io/astrocyte/",
+    "privacyPolicyURL": "https://github.com/AstrocyteAI/astrocyte/blob/main/docs/_design/data-governance.md",
+    "termsOfServiceURL": "https://github.com/AstrocyteAI/astrocyte/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Recall what we decided about the auth flow last week",
+      "Remember that I prefer pgvectorscale over HNSW for vector indexes",
+      "What do we know about the M9 PageIndex migration?"
+    ],
+    "brandColor": "#7C3AED",
+    "logo": "./logo.svg"
+  }
+}

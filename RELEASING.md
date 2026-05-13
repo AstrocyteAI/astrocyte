@@ -98,6 +98,37 @@ Developer / contributor extras (not shipped to end users):
 
 - **Apache AGE** was removed in M9 (ADR-008). The `astrocyte-age` package, its publish workflow, and the `[age]` extra are deleted. Operators with AGE-backed banks rebuild from raw `memory_units`; no migration tool ships.
 
+## The MCP plugin (Claude Code / Cursor / Codex)
+
+The `mcp-plugins/astrocyte/` directory is **not a PyPI package**. It ships as part of the main repo and is distributed via:
+
+- **Claude Code:** the `.claude-plugin/marketplace.json` at the repo root makes this repo a discoverable plugin marketplace. Users install with `/plugin marketplace add AstrocyteAI/astrocyte && /plugin install astrocyte`.
+- **Cursor / Codex:** users `git clone` the repo (or the plugin dir specifically) and drop it under `~/.cursor/plugins/` or `~/.codex/plugins/`.
+
+To release a new plugin version:
+
+1. Bump the `version` field in **all four** of these files (keep them in sync):
+   - `.claude-plugin/marketplace.json` → `plugins[0].version`
+   - `mcp-plugins/astrocyte/.claude-plugin/plugin.json`
+   - `mcp-plugins/astrocyte/.cursor-plugin/plugin.json`
+   - `mcp-plugins/astrocyte/.codex-plugin/plugin.json`
+2. Update `mcp-plugins/astrocyte/README.md`'s "v0.1.0 scope / v0.2.0 path" section if scope changed.
+3. Tag the next repo-level `v*` release. Marketplace clients pick up the bump on next `/plugin update astrocyte`.
+
+The plugin's MCP server (`astrocyte-mcp`) is shipped via the regular PyPI fan-out (it's a console script in `astrocyte-py`); the plugin is just the editor-side wiring + the `astrocyte-memory` skill. No separate publish workflow is needed.
+
+## Scaffolding a new adapter
+
+Use the cookiecutter at `tooling/cookiecutter-astrocyte-adapter/` to generate the skeleton:
+
+```bash
+pip install cookiecutter
+cd adapters-storage-py            # or adapters-llm-py / adapters-ingestion-py
+cookiecutter ../tooling/cookiecutter-astrocyte-adapter
+```
+
+Prompts cover package slug, SPI family (`vector_stores` / `graph_stores` / `document_stores` / `pageindex_stores` / `wiki_stores` / `mental_model_stores` / `source_stores` / `llm_providers`), backend name + label. The generated package builds with `uv build` out of the box and is ready to wire into CI + `release.yml`. Full how-to in [`docs/_design/adapter-packages.md`](docs/_design/adapter-packages.md).
+
 ## Refreshing the lockfile
 
 ```bash

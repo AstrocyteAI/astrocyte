@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "{{ cookiecutter.package_slug }}"
+version = "0.1.0"
+description = "{{ cookiecutter.description }}"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "{{ cookiecutter.license }}"
+authors = [
+    { name = "{{ cookiecutter.author_name }}", email = "{{ cookiecutter.author_email }}" },
+]
+keywords = ["astrocyte", "agent-memory", "{{ cookiecutter.backend_label }}"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "astrocyte>={{ cookiecutter.astrocyte_min_version }},<2",
+    # TODO: add the backend's SDK with a tight upper bound:
+    # "{{ cookiecutter.backend_label }}-sdk>=X.Y,<Z",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+# The entry-point key (left of =) is what users put in astrocyte.yaml's
+# config field. The right-hand side is "module:class". See
+# docs/_design/adapter-packages.md for the full SPI family → entry-point
+# group mapping.
+[project.entry-points."astrocyte.{{ cookiecutter.spi_family }}"]
+{{ cookiecutter.backend_label }} = "{{ cookiecutter.module_slug }}.store:{{ cookiecutter.backend_name }}{% if cookiecutter.spi_family == 'vector_stores' %}VectorStore{% elif cookiecutter.spi_family == 'graph_stores' %}GraphStore{% elif cookiecutter.spi_family == 'document_stores' %}DocumentStore{% elif cookiecutter.spi_family == 'pageindex_stores' %}PageIndexStore{% elif cookiecutter.spi_family == 'wiki_stores' %}WikiStore{% elif cookiecutter.spi_family == 'mental_model_stores' %}MentalModelStore{% elif cookiecutter.spi_family == 'source_stores' %}SourceStore{% elif cookiecutter.spi_family == 'llm_providers' %}LLMProvider{% endif %}"
+
+[tool.hatch.build.targets.wheel]
+packages = ["{{ cookiecutter.module_slug }}"]
+
+# Local-dev source resolution — sibling packages resolve from this monorepo,
+# not PyPI. Drops out of the published wheel. Remove if your adapter lives
+# in its own repo (Option B in adapter-packages.md).
+[tool.uv.sources]
+astrocyte = { path = "../../astrocyte-py", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]

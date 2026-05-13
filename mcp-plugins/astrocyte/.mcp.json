@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "astrocyte": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "astrocyte-stack",
+        "astrocyte-mcp",
+        "--config",
+        "${ASTROCYTE_CONFIG:-$HOME/.config/astrocyte/astrocyte.yaml}"
+      ],
+      "env": {
+        "ASTROCYTE_CONFIG": "${ASTROCYTE_CONFIG}"
+      }
+    }
+  }
+}

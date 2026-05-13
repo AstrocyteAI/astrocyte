@@ -1,24 +1,54 @@
 # MCP server integration
 
-Astrocyte as a Model Context Protocol server for Claude Code, Cursor, Windsurf, and any MCP-capable agent.
+Astrocyte as a Model Context Protocol server for Claude Code, Cursor, Codex, Windsurf, and any MCP-capable agent.
 
 **Module:** `astrocyte.mcp`
 **Pattern:** MCP server — stdio or SSE transport, with tools gated by `mcp:` configuration
 **Framework dependency:** `fastmcp` (required for `astrocyte[mcp]`)
 
-## Install
+## Recommended path — one-command plugin install
+
+Astrocyte ships a packaged plugin at `mcp-plugins/astrocyte/` with marketplace metadata for all three editors. The plugin auto-wires the MCP server, drops in a `SessionStart` hook, and installs the `astrocyte-memory` skill that teaches the agent when to call which tool.
+
+### Claude Code
+
+From inside Claude Code:
 
 ```bash
-pip install astrocyte[mcp]
+/plugin marketplace add AstrocyteAI/astrocyte
+/plugin install astrocyte
 ```
 
-## Usage — Claude Code
+### Cursor / Codex
+
+Both Cursor and Codex read plugin manifests from a local directory:
+
+```bash
+git clone https://github.com/AstrocyteAI/astrocyte.git --depth 1 /tmp/astrocyte
+# Cursor:
+mkdir -p ~/.cursor/plugins && cp -r /tmp/astrocyte/mcp-plugins/astrocyte ~/.cursor/plugins/
+# Codex:
+mkdir -p ~/.codex/plugins && cp -r /tmp/astrocyte/mcp-plugins/astrocyte ~/.codex/plugins/
+```
+
+All three editors invoke the same command: `uvx --from astrocyte-stack astrocyte-mcp --config $ASTROCYTE_CONFIG`. No separate Python install required — `uv` handles the ephemeral venv.
+
+See [`mcp-plugins/astrocyte/README.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/mcp-plugins/astrocyte/README.md) for the full install + troubleshooting walkthrough.
+
+## Manual MCP wiring (without the plugin)
+
+If you'd rather wire the MCP server by hand:
+
+```bash
+pip install astrocyte[mcp]                                  # or: pip install astrocyte-stack
+```
+
+### Claude Code — `.claude/settings.json`
 
 ```json
-// .claude/settings.json
 {
   "mcpServers": {
-    "memory": {
+    "astrocyte": {
       "command": "astrocyte-mcp",
       "args": ["--config", "astrocyte.yaml"]
     }
@@ -26,7 +56,7 @@ pip install astrocyte[mcp]
 }
 ```
 
-## Usage — CLI
+### CLI
 
 ```bash
 # stdio (default — for local MCP clients)

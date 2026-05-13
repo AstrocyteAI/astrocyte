@@ -14,6 +14,7 @@ Astrocyte follows an **open-core** distribution model with a two-tier provider a
 |---|---|---|
 | `astrocyte` (core framework) | Apache 2.0 | Built-in intelligence pipeline, policy layer, profiles, observability |
 | `astrocyte-stack` (default-stack meta) | Apache 2.0 | One-line install for the recommended Postgres-backed stack; no Python code of its own |
+| `mcp-plugins/astrocyte/` (in-repo, not PyPI) | Apache 2.0 | Plugin manifests + memory protocol skill for Claude Code / Cursor / Codex. Distributed via repo marketplace, not pip. |
 | `astrocyte-{storage}` (Tier 1 adapters; package slug) | Apache 2.0 | Retrieval Provider SPI - vector DBs, graph DBs, document stores |
 | `astrocyte-{engine}` (Tier 2 community) | Apache 2.0 | Community-maintained adapters for full-stack memory engines |
 | `astrocyte-{llm}` (LLM adapters) | Apache 2.0 | LLM provider adapters for pipeline + policy operations |

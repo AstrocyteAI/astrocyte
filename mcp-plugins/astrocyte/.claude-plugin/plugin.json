@@ -1,0 +1,23 @@
+{
+  "name": "astrocyte",
+  "version": "0.1.0",
+  "description": "Self-hosted agent memory for Claude Code. Adds retain / recall / reflect / forget / compile tools backed by a local astrocyte-mcp server. Section-grain recall, multi-bank, full lifecycle controls.",
+  "author": {
+    "name": "Astrocyte",
+    "email": "linchuan.cheng@gmail.com"
+  },
+  "homepage": "https://AstrocyteAI.github.io/astrocyte/",
+  "repository": "https://github.com/AstrocyteAI/astrocyte",
+  "license": "Apache-2.0",
+  "keywords": [
+    "memory",
+    "agent-memory",
+    "mcp",
+    "self-hosted",
+    "postgres",
+    "section-recall"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}

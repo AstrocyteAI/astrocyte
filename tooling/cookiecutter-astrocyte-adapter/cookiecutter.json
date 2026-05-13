@@ -1,0 +1,32 @@
+{
+    "package_slug": "astrocyte-mybackend",
+    "module_slug": "{{ cookiecutter.package_slug.replace('-', '_') }}",
+    "backend_name": "MyBackend",
+    "backend_label": "{{ cookiecutter.package_slug.replace('astrocyte-', '') }}",
+    "description": "{{ cookiecutter.backend_name }} adapter for Astrocyte",
+    "spi_family": [
+        "vector_stores",
+        "graph_stores",
+        "document_stores",
+        "pageindex_stores",
+        "wiki_stores",
+        "mental_model_stores",
+        "source_stores",
+        "llm_providers"
+    ],
+    "astrocyte_min_version": "0.13",
+    "author_name": "Your Name",
+    "author_email": "you@example.com",
+    "license": "Apache-2.0",
+    "__prompts__": {
+        "package_slug": "PyPI package name (kebab-case, e.g. astrocyte-pinecone)",
+        "module_slug": "Python module name (auto-derived from package_slug; rarely override)",
+        "backend_name": "Display name of the backend (e.g. Pinecone)",
+        "backend_label": "Short config key users put in astrocyte.yaml (e.g. pinecone)",
+        "spi_family": "Which SPI Protocol does this adapter implement?",
+        "astrocyte_min_version": "Minimum astrocyte version this adapter supports",
+        "author_name": "Maintainer name",
+        "author_email": "Maintainer email",
+        "license": "License (default Apache-2.0)"
+    }
+}

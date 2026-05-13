@@ -1,0 +1,18 @@
+{
+  "_comment": "v0.1.0 — hooks are intentionally minimal. The SessionStart hook below logs a single line confirming Astrocyte is wired but does NOT auto-capture conversation turns into memory. Auto-capture (UserPromptSubmit, Stop, PreCompact) is planned for v0.2 once the MCP server gains a streaming /retain endpoint that can ingest dialog without an LLM round-trip per turn. Until then, retain is explicit — the SKILL.md teaches the agent when to call memory_retain.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/on_session_start.sh",
+            "statusMessage": "Astrocyte memory ready",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

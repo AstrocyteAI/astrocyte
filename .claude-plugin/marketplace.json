@@ -1,0 +1,18 @@
+{
+  "name": "astrocyte-plugins",
+  "owner": {
+    "name": "Astrocyte",
+    "email": "linchuan.cheng@gmail.com"
+  },
+  "metadata": {
+    "description": "Official Astrocyte plugins for AI coding agents"
+  },
+  "plugins": [
+    {
+      "name": "astrocyte",
+      "source": "./mcp-plugins/astrocyte",
+      "description": "Astrocyte memory layer — self-hosted agent memory with section-grain recall, three-layer storage (memory units + sections + wiki pages), and the full retain/recall/reflect/forget/compile API. Works in Claude Code, Cursor, and Codex via MCP.",
+      "version": "0.1.0"
+    }
+  ]
+}
