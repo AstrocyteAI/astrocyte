@@ -188,10 +188,17 @@ async def compile_preferences_for_document(
     )
 
     try:
+        # max_tokens=800 (M14.6) truncated JSON output mid-string on ~90% of
+        # LME documents (M14.7-b1.1 diagnostic 2026-05-13). At
+        # max_preferences=12, each preference body runs ~150-200 tokens of
+        # structured JSON, so 800 was undersized by ~2.5×. The truncation
+        # caused entire documents to land with 0 preference-models, which
+        # silently neutered the B-1 anchor pool for downstream questions.
+        # Bumped to 3000 with margin for ``source_fact_ids`` arrays.
         completion = await provider.complete(
             [Message(role="user", content=msg)],
             model=model,
-            max_tokens=800,
+            max_tokens=3000,
             temperature=0.0,
             response_format={"type": "json_object"},
         )

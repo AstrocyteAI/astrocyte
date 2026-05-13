@@ -53,7 +53,6 @@ if str(_PAGEINDEX_ROOT) not in sys.path:
 from pageindex.page_index_md import md_to_tree  # noqa: E402
 
 from astrocyte.types import PageIndexDocument  # noqa: E402
-from scripts.mem0_harness._shape import is_recommendation_shape  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -433,66 +432,17 @@ class AstrocyteClient:
                 }
             out.append(entry)
 
-        # ── (5) B-1 / B-2a: preference-anchor pinning for recommendation-
-        # shape questions. See ``_is_recommendation_shape`` docstring for
-        # the rationale and the diagnostic that motivated this.
-        #
-        # We prepend up to 5 consolidated preference-kind MentalModels at
-        # the top of the candidate list with an inline instruction prefix
-        # (B-2a — "[Preference — apply this to your suggestion below]")
-        # so the answerer treats them as anchors rather than ordinary
-        # memories. They appear in BOTH the User Profile block AND the
-        # memories list — redundancy is intentional because the LME
-        # answerer rule #12 explicitly tells it to scan the top memories.
-        #
-        # Capped at 5 anchors so even at top_10 floor we still keep 5
-        # ranked candidates. The hard-trim to ``floor`` at the end ensures
-        # no caller sees an oversized list.
-        if (
-            self._mental_model_store is not None
-            and is_recommendation_shape(query)
-        ):
-            try:
-                pref_mms = await self._mental_model_store.list(
-                    bank_id,
-                    scope=f"document:{document_id}",
-                    kind="preference",
-                )
-            except TypeError:
-                # Older MentalModelStore SPI without ``kind`` kwarg.
-                all_mms = await self._mental_model_store.list(
-                    bank_id, scope=f"document:{document_id}",
-                )
-                pref_mms = [
-                    m for m in all_mms
-                    if getattr(m, "kind", "general") == "preference"
-                ]
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "B-1 anchor list failed user=%s: %s", user_id, exc,
-                )
-                pref_mms = []
-
-            if pref_mms:
-                top_score = (out[0]["score"] if out else 0.0) + 1.0
-                anchor_entries: list[dict[str, Any]] = []
-                for m in pref_mms[:5]:
-                    title = (m.title or "").strip()
-                    content = (m.content or "").strip()
-                    if not title or not content:
-                        continue
-                    anchor_entries.append({
-                        "memory": (
-                            "[Preference — apply this to your suggestion "
-                            f"below] {title}: {content}"
-                        ),
-                        "score": float(top_score),
-                        "id": f"anchor:{m.model_id}",
-                        "metadata": {"grain": "anchor", "kind": "preference"},
-                    })
-                    top_score -= 0.001  # preserve insertion order on sort
-                if anchor_entries:
-                    out = (anchor_entries + out)[:floor]
+        # B-1 / B-1.1 / B-1.2 anchor injection removed (M14.7 revert,
+        # 2026-05-13). The Hindsight comparison showed that auto-extracted
+        # preferences injected into the answerer's context cause
+        # cross-category regression (single-session-user 5/5 → 1/5 on LME
+        # as profile bloated). Hindsight handles personalization via
+        # USER-CURATED ``directive`` mental_models instead — explicit
+        # hard-rule injection in the system prompt, not auto-extraction.
+        # The shape detector (``scripts/mem0_harness/_shape.py``) and
+        # M14.6 preference_compile pipeline are preserved as building
+        # blocks for a future user-curation path; they're just not wired
+        # into the bench retrieval/profile surface here.
         return out
 
     # ── delete_user ─────────────────────────────────────────────────────
@@ -537,34 +487,25 @@ class AstrocyteClient:
         if not models:
             return None
 
-        # M14.6: prefix preference-kind keys with "preference_" so Mem0's
-        # `snake_case → Title Case` renderer surfaces them as
-        # ``Preference …`` entries — visually distinct from general
-        # profile statements, and lexicographically grouped at the top
-        # of the formatted ``## User Profile`` block (dict iteration
-        # order is insertion-order in Python 3.7+; we insert preferences
-        # first below).
+        # M14.7 revert (2026-05-13): surface only ``kind='general'``
+        # mental models. The M14.6 path that surfaced
+        # ``kind='preference'`` rows (with a ``preference_`` key prefix)
+        # caused the LME single-session-user category to regress from
+        # 5/5 to 1/5 as preference_compile produced 12+ rows per doc and
+        # the answerer was overwhelmed by personalization context on
+        # non-preference questions.
+        #
+        # The Hindsight comparison showed that auto-extracted preferences
+        # injected into the answerer's prompt is a self-imposed problem
+        # — Hindsight surfaces only user-CURATED ``directive``-subtype
+        # mental_models as hard rules. We retain the M14.6
+        # ``preference_compile`` pipeline + ``kind`` discriminator as
+        # building blocks for a future user-curation path; the
+        # auto-surfacing in the bench profile is reverted.
         profile: dict[str, str] = {}
         seen_keys: set[str] = set()
-
-        # Pass 1: preference-kind models first (most relevant for
-        # single-session-preference and related categories).
         for m in models:
-            if getattr(m, "kind", "general") != "preference":
-                continue
-            title = (m.title or "").strip()
-            content = (m.content or "").strip()
-            if not title or not content:
-                continue
-            key = "preference_" + _slug_snake_case(title)
-            if not key or key in seen_keys:
-                continue
-            seen_keys.add(key)
-            profile[key] = content
-
-        # Pass 2: general-kind models second.
-        for m in models:
-            if getattr(m, "kind", "general") == "preference":
+            if getattr(m, "kind", "general") != "general":
                 continue
             title = (m.title or "").strip()
             content = (m.content or "").strip()
