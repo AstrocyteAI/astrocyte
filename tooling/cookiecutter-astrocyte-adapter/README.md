@@ -45,6 +45,8 @@ The prompts:
     └── test_smoke.py                # SPI Protocol-conformance assertion + ping test
 ```
 
+Note: in the source template tree these four files have a ``.py.jinja`` suffix so static analyzers don't try to parse Jinja placeholders as Python. The ``hooks/post_gen_project.py`` post-generation hook strips the ``.jinja`` suffix after rendering, so the generated project has plain ``.py`` files as expected.
+
 ## After scaffolding
 
 1. **Fill in the method bodies** in `<module_slug>/store.py`. The skeleton has the full SPI method signatures; each body is a `raise NotImplementedError`.

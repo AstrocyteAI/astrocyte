@@ -2,18 +2,11 @@ name: "Astrocyte CodeQL config"
 
 # Path exclusions for CodeQL analysis.
 #
-# Cookiecutter templates contain unrendered Jinja2 placeholders
-# (``{{ cookiecutter.foo }}``) inside ``.py`` files. They are not valid
-# Python until rendered, so CodeQL's parser correctly fails on them.
-# Exclude the template tree so default queries do not emit "could not
-# process some files due to syntax errors" warnings.
-#
-# The double-pattern below catches both the directory by name and any
-# nested templated subdirectory (defensive — cookiecutter conventionally
-# names its template root ``{{cookiecutter.<slug>}}``).
+# Cookiecutter templates live under ``tooling/cookiecutter-astrocyte-adapter/``
+# but use ``.py.jinja`` filenames (with a post-gen hook stripping the
+# ``.jinja`` suffix) so the raw templates never look like Python to any
+# scanner. No path-ignore needed for the template tree itself.
 paths-ignore:
-  - "tooling/cookiecutter-astrocyte-adapter/**"
-  - "**/{{cookiecutter.*}}/**"
   # Test scaffolding (test doubles, mock stores, deliberate signature
   # shadowing) generates findings that aren't real production risk —
   # e.g. py/inheritance/signature-mismatch on InMemory* shadows used to
