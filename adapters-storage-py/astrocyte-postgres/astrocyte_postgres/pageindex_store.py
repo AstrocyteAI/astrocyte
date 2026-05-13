@@ -858,6 +858,7 @@ class PostgresPageIndexStore:
                     """,
                     rows,
                 )
+            await conn.commit()
         return len(rows)
 
     async def update_fact_embeddings(self, embeddings) -> int:
@@ -878,6 +879,7 @@ class PostgresPageIndexStore:
                     """,
                     rows,
                 )
+            await conn.commit()
         return len(rows)
 
     async def search_facts_semantic(
@@ -1079,9 +1081,10 @@ class PostgresPageIndexStore:
                     """,
                     rows,
                 )
-                # psycopg returns -1 for executemany; assume all rows
-                # matched (caller scoped them to known sections).
-                return len(rows)
+            await conn.commit()
+            # psycopg returns -1 for executemany; assume all rows
+            # matched (caller scoped them to known sections).
+            return len(rows)
 
     # ── M10.1 wiki / consolidation ──────────────────────────────────────
 
