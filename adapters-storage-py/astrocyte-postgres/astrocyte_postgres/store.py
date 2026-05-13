@@ -333,6 +333,28 @@ class PostgresStore:
                 # ``astrocyte_vectors`` is added there too (as a backreference);
                 # it's optional and the bootstrap-only path leaves it absent.
                 #
+                # 015_tier2_recall.sql is intentionally NOT mirrored here — the
+                # PageIndex section / link / event tables are owned by
+                # ``astrocyte_postgres.pageindex_store.PostgresPageIndexStore``,
+                # which has its own ``_ensure_schema()``.
+                #
+                # 016_drop_age.sql has no schema to mirror — it removes the AGE
+                # extension (ADR-008). Bootstrap-only deployments never
+                # provisioned AGE, so the drop is a no-op for them.
+                #
+                # 017_pi_section_embedding.sql, 019_pi_section_event_date.sql,
+                # 020_pi_facts.sql, and 021_pi_fact_assistant_statement.sql are
+                # intentionally NOT mirrored here — they extend tables owned by
+                # ``astrocyte_postgres.pageindex_store.PostgresPageIndexStore``.
+                #
+                # 018_wiki_page_embedding.sql is intentionally NOT mirrored here
+                # — wiki tables are owned by
+                # ``astrocyte_postgres.wiki_store.PostgresWikiStore``.
+                #
+                # 022_mental_model_kind.sql is intentionally NOT mirrored here —
+                # mental-model tables are owned by
+                # ``astrocyte_postgres.mental_model_store.PostgresMentalModelStore``.
+                #
                 # Mirrors 008_entities_temporal.sql (temporal_facts table only;
                 # the entity_* tables in 008 are owned by the entity-resolution
                 # adapter, not this store).
