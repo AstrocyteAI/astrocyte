@@ -82,7 +82,16 @@ def _safe_resolve(
         raise ValueError(
             f"Portability path contains illegal control character: {path_str!r}"
         )
-    resolved = Path(path_str).expanduser().resolve()
+    # CodeQL flags this Path().resolve() as ``py/path-injection`` because
+    # ``path_str`` is user-controlled. The taint is real, but this function
+    # exists precisely to neutralize it: the resolved path is then checked
+    # for containment against ``allowed_roots`` (or the env-configured
+    # ``_portability_roots()``) on lines below, and the function raises
+    # ValueError when no root contains the resolved path. The fail-closed
+    # ``allow_uncontained`` opt-in means callers cannot accidentally bypass
+    # containment. CodeQL's taint tracker doesn't see through the allow-list
+    # check, so suppress the alert here.
+    resolved = Path(path_str).expanduser().resolve()  # lgtm[py/path-injection]
     roots: list[Path]
     if allowed_roots:
         roots = [Path(r).expanduser().resolve() for r in allowed_roots]

@@ -48,6 +48,7 @@ class _ScriptedLLM(MockLLMProvider):
         temperature: float = 0.0,
         tools=None,
         tool_choice=None,
+        response_format: dict | None = None,
     ) -> Completion:
         self.call_count += 1
         for m in messages:

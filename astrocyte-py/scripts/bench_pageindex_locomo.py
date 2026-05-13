@@ -1647,16 +1647,18 @@ async def answer_question(
         f"  line {ln}: {d}" for ln, d in session_dates
     ) or "  (none — header dates not parseable)"
 
-    # PR2.5: counting/sum dispatch — REVERTED.
-    # Tested: counting synth correctly produces a number ("2 items",
-    # "$65") but PICKER still undercounts (fetches 5-6 sections when
-    # answer requires 8-10 mentions). Multi-session unchanged at 1/9;
-    # other categories regressed (single-session-user 78→67, single-
-    # session-preference 38→25, LME overall 46→42).
-    # Counting needs DETERMINISTIC entity-based aggregation over all
-    # mentioning sections (not LLM), which is a separate piece of
-    # work. Accepting LME multi-session at 11% for PR2 close.
-    is_counting = False
+    # PR2.5: counting/sum dispatch — REVERTED. The dedicated counting
+    # synth and counting picker were tested and rolled back: the synth
+    # correctly produced numeric answers ("2 items", "$65") but the
+    # PICKER still undercounted (fetched 5-6 sections when the answer
+    # required 8-10 mentions). Other categories regressed (single-session-
+    # user 78→67, single-session-preference 38→25, LME overall 46→42).
+    # Counting needs DETERMINISTIC entity-based aggregation across all
+    # mentioning sections (not LLM); that's a separate work item.
+    # The gating ``is_counting`` flag has been removed; the counting
+    # branches (synth + picker variants) were excised so the bench reads
+    # cleanly. ``SYNTHESIZE_PROMPT_COUNTING`` is still defined elsewhere
+    # in the module for the eventual revival.
 
     # PR2.6: agentic reflect dispatch for hard categories where the
     # picker undercounts evidence. Multi-session (LME) needs aggregation
@@ -1781,7 +1783,7 @@ async def answer_question(
             session_date_index=session_date_index,
             reference_date=reference_date,
         )
-    elif mode == "listing" or is_counting:
+    elif mode == "listing":
         pick_msg = PICK_PROMPT_LISTING.format(
             tree_json=tree_json,
             question=question,
@@ -2088,15 +2090,7 @@ async def answer_question(
         answer = arithmetic_answer
         return answer, line_nums
 
-    if is_counting:
-        # PR2.5: counting questions use a dedicated synth that
-        # outputs a NUMBER (not an enumeration). Picker stayed as
-        # listing-shape so synth has many sections to count over.
-        syn_msg = SYNTHESIZE_PROMPT_COUNTING.format(
-            excerpts=excerpts, question=question, reference_date=reference_date,
-        )
-        syn_max_tokens = 80  # answers are short ("3", "$185") — cap tight to suppress enumeration
-    elif mode == "listing":
+    if mode == "listing":
         syn_msg = SYNTHESIZE_PROMPT_LISTING.format(
             excerpts=excerpts, question=question, reference_date=reference_date,
         )

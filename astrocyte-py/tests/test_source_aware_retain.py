@@ -284,8 +284,12 @@ class TestChunkExpansion:
         # that raises AttributeError because plain del-on-subclass doesn't
         # remove the inherited attribute.
         class _LegacyVectorStore(InMemoryVectorStore):
+            # Shadowing as a property that raises AttributeError is the
+            # whole point — simulates an older adapter that never defined
+            # this method. The signature mismatch vs the parent is
+            # intentional; suppress CodeQL's inheritance-signature query.
             @property
-            def get_by_chunk_ids(self):  # type: ignore[override]
+            def get_by_chunk_ids(self):  # type: ignore[override]  # lgtm[py/inheritance/signature-mismatch]
                 raise AttributeError("legacy adapter does not implement get_by_chunk_ids")
 
         store = InMemorySourceStore()
