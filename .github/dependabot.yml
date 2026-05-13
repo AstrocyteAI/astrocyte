@@ -1,0 +1,96 @@
+# Dependabot configuration for Astrocyte.
+#
+# Why this file exists: without it, Dependabot auto-discovers manifests
+# across the whole repo and tries to parse every ``pyproject.toml`` /
+# ``uv.lock`` / ``package.json``. That includes the cookiecutter template
+# under ``tooling/cookiecutter-astrocyte-adapter/`` whose files are
+# Jinja2-templated (``pyproject.toml.jinja`` after rename, but also
+# ``.cookiecutter/...`` style filenames downstream). Even with the
+# ``.jinja`` suffix Dependabot occasionally walks into the directory; the
+# explicit-allowlist approach below sidesteps that entirely.
+#
+# Each ``directory`` entry below corresponds to a real Python package /
+# JS app whose manifest Dependabot should monitor. The cookiecutter
+# template directory is NOT listed — its files are never installed.
+
+version: 2
+updates:
+  # Astrocyte core framework
+  - package-ecosystem: pip
+    directory: /astrocyte-py
+    schedule:
+      interval: weekly
+
+  # Standalone gateway service
+  - package-ecosystem: pip
+    directory: /astrocyte-services-py/astrocyte-gateway-py
+    schedule:
+      interval: weekly
+
+  # Storage adapters
+  - package-ecosystem: pip
+    directory: /adapters-storage-py/astrocyte-postgres
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /adapters-storage-py/astrocyte-qdrant
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /adapters-storage-py/astrocyte-neo4j
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /adapters-storage-py/astrocyte-elasticsearch
+    schedule:
+      interval: weekly
+
+  # Ingestion adapters
+  - package-ecosystem: pip
+    directory: /adapters-ingestion-py/astrocyte-ingestion-s3
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /adapters-ingestion-py/astrocyte-ingestion-github
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /adapters-ingestion-py/astrocyte-ingestion-kafka
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /adapters-ingestion-py/astrocyte-ingestion-redis
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /adapters-ingestion-py/astrocyte-ingestion-document
+    schedule:
+      interval: weekly
+
+  # LLM adapters
+  - package-ecosystem: pip
+    directory: /adapters-llm-py/astrocyte-llm-litellm
+    schedule:
+      interval: weekly
+
+  # Integration adapters
+  - package-ecosystem: pip
+    directory: /adapters-integration-py/astrocyte-integration-tavus
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /adapters-integration-py/astrocyte-integration-llm-wrapper
+    schedule:
+      interval: weekly
+
+  # Docs site (Astro + Starlight)
+  - package-ecosystem: npm
+    directory: /docs
+    schedule:
+      interval: weekly
+
+  # GitHub Actions workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
