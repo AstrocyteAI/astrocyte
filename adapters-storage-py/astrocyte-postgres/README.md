@@ -1,6 +1,6 @@
 # astrocyte-postgres
 
-**PostgreSQL** implementation of the Astrocyte **`VectorStore`** and **`WikiStore`** SPIs ([`provider-spi.md`](../../docs/_plugins/provider-spi.md)). Defaults to **[pgvectorscale](https://github.com/timescale/pgvectorscale)** (DiskANN) for ANN indexing; falls back to **[pgvector](https://github.com/pgvector/pgvector)** (HNSW) when the pgvectorscale binary isn't available, and supports **[VectorChord](https://github.com/tensorchord/VectorChord)** (vchordrq) as an opt-in alternative. See the [ANN backend](#schema-migrations-production) section.
+**PostgreSQL** implementation of the Astrocyte **`VectorStore`** and **`WikiStore`** SPIs ([`provider-spi.md`](../../docs/_plugins/provider-spi.md)). Uses **[pgvectorscale](https://github.com/timescale/pgvectorscale)** (DiskANN) for ANN indexing — pgvectorscale CASCADE-installs pgvector, so pgvector's `vector` type and `<=>` operator are available too. The shipped Docker image bakes pgvectorscale in; for self-host, use that image, Supabase, Neon, or Timescale Cloud.
 
 ## Install
 
@@ -56,35 +56,15 @@ After migrations are applied, set **`bootstrap_schema: false`** in `vector_store
 
 **Embedding width:** [`migrations/002_astrocyte_vectors.sql`](migrations/002_astrocyte_vectors.sql) creates `vector(${ASTROCYTE_EMBEDDING_DIMENSIONS:-128})`. That must match **`embedding_dimensions`** in config. For OpenAI `text-embedding-3-small`, run migrations with `ASTROCYTE_EMBEDDING_DIMENSIONS=1536`.
 
-**ANN backend (DiskANN by default; HNSW/VectorChord opt-in):** vector indexes are created with the backend selected by the **`VECTOR_EXTENSION`** env var:
-
-| `VECTOR_EXTENSION` | Backend | Index DDL | When to choose |
-|---|---|---|---|
-| `pgvectorscale` *(default)* | DiskANN (pgvectorscale) | `USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)` | Default for retain-heavy Astrocyte workloads. Better concurrent-insert throughput than HNSW (no per-page write-lock contention) and better pre-filtered query performance. OSS under the PostgreSQL License with no feature gates |
-| `pgvector` | HNSW (pgvector) | `USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)` | Fallback for environments where the pgvectorscale binary isn't available (vanilla Postgres images, restricted builds). Mature, widely deployed |
-| `vchord` | VectorChord (vchordrq) | `USING vchordrq (embedding vector_cosine_ops)` | Vendor-cited highest insert throughput. Apache-2.0 OSS. Requires `shared_preload_libraries` change (Postgres restart) |
+**ANN backend (DiskANN via pgvectorscale):** vector indexes are created with `USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)`. pgvectorscale CASCADE-installs pgvector, so application code using pgvector's `<=>` operator works unchanged. Astrocyte standardized on pgvectorscale in 2026-05 — the LongMemEval bench surfaced HNSW per-page write-lock drift (~1.0s → 2.0s/session as the index grew under concurrent retain), and DiskANN's graph layout serializes less aggressively. pgvectorscale is OSS under the PostgreSQL License with no feature gates.
 
 ```bash
-# Default (DiskANN) — pgvectorscale binary required.
 ./scripts/migrate.sh
-
-# HNSW fallback — for environments without pgvectorscale.
-VECTOR_EXTENSION=pgvector ./scripts/migrate.sh
-
-# VectorChord — requires the vchord .deb installed AND vchord in
-# shared_preload_libraries (Postgres restart). The shipped Dockerfile
-# does both; runtime CREATE EXTENSION is opt-in.
-VECTOR_EXTENSION=vchord ./scripts/migrate.sh
 ```
 
-All three backends use the **same operator class** (`vector_cosine_ops`) and accelerate the same query operator (`<=>`), so application code is identical regardless of which backend you choose. Only insert throughput, query latency at high recall, and disk footprint differ.
+**Supported deployment targets:** the shipped `ghcr.io/astrocyteai/astrocyte-postgres` image (bakes pgvectorscale in), Supabase, Neon, Timescale Cloud, or any Postgres with `postgresql-16-pgvectorscale` from Timescale's apt repo. AWS RDS, GCP Cloud SQL, and Azure Database for PostgreSQL do **not** ship pgvectorscale and are not supported targets — run the shipped image on ECS / GCE / a VM instead.
 
-The choice flips [`migrations/001_extension.sql`](migrations/001_extension.sql) (which `CREATE EXTENSION` fires) and [`migrations/003_indexes.sql`](migrations/003_indexes.sql) + [`migrations/009_entities_trigram_embedding.sql`](migrations/009_entities_trigram_embedding.sql) (which `USING` clause builds the index).
-
-The shipped [`docker/astrocyte-postgres/Dockerfile`](../../docker/astrocyte-postgres/Dockerfile) bakes all three extensions so an operator can switch backends with one env var without rebuilding the image. Caveats:
-- Switching backend requires wiping the DB and re-migrating — existing indexes can't be promoted/converted in place.
-- `vchord` requires `shared_preload_libraries = 'age,vchord'`; the Dockerfile sets this at first cluster init, but external Postgres images need the operator to add it manually before `CREATE EXTENSION vchord` can succeed.
-- The default switch from `pgvector` to `pgvectorscale` (2026-05-06) was driven by the LongMemEval bench observing HNSW per-page write-lock drift (~1.0s → 2.0s/session as the index grew under concurrent retain). DiskANN's graph layout serializes less aggressively under concurrent inserts.
+The DiskANN index DDL is in [`migrations/003_indexes.sql`](migrations/003_indexes.sql) and [`migrations/009_entities_trigram_embedding.sql`](migrations/009_entities_trigram_embedding.sql); the `CREATE EXTENSION vectorscale CASCADE` lives in [`migrations/001_extension.sql`](migrations/001_extension.sql).
 
 **Custom `table_name`:** The shipped SQL targets **`astrocyte_vectors`**. If you use another table name, copy and adjust the migration files accordingly.
 
@@ -97,7 +77,7 @@ The later migrations add the Hindsight-comparable Postgres substrate around vect
 | `dsn` | PostgreSQL connection URI (or set `DATABASE_URL` / `ASTROCYTE_PG_DSN`) |
 | `table_name` | Table name (default `astrocyte_vectors`; alphanumeric + underscore only) |
 | `embedding_dimensions` | Fixed `vector(N)` width; must match your embedding model and the **`vector(N)`** in SQL migrations (default **128**) |
-| `bootstrap_schema` | If **`true`** (default), create extension / table / btree index on first use (dev-friendly; no HNSW). If **`false`**, assume **`migrate.sh`** already applied [`migrations/`](migrations/) (production). |
+| `bootstrap_schema` | If **`true`** (default), create extension / table / btree index on first use (dev-friendly; no DiskANN). If **`false`**, assume **`migrate.sh`** already applied [`migrations/`](migrations/) (production). |
 
 ## How this fits `astrocyte_gateway`
 
@@ -142,6 +122,6 @@ cd astrocyte-services-py/astrocyte-gateway-py && uv sync --extra postgres
 
 ## Production notes
 
-- **HNSW** parameters (`m`, `ef_construction`) live in [`migrations/003_indexes.sql`](migrations/003_indexes.sql); tune with DBA guidance as load grows.
+- **DiskANN** parameters (`num_neighbors`) live in [`migrations/003_indexes.sql`](migrations/003_indexes.sql); tune with DBA guidance as load grows.
 - **Embedding dimension** must match the **`LLMProvider.embed()`** output used by the pipeline.
 - Use **secrets** for `dsn`, not committed YAML.

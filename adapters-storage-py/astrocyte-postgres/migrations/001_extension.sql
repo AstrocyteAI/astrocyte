@@ -1,28 +1,14 @@
 -- Vector extensions (idempotent).
 --
--- ``pgvector`` (extension name: ``vector``) is always created —
--- pgvector, pgvectorscale, and vchord all reuse pgvector's ``vector``
--- type and operators.
+-- pgvectorscale is the only supported vector backend (see ADR notes in
+-- the postgres adapter README). pgvectorscale CASCADE-installs pgvector
+-- automatically because it depends on pgvector's ``vector`` type and
+-- operator class — we don't issue a separate CREATE EXTENSION for it.
 --
--- ``pgvectorscale`` (extension name: ``vectorscale``) is created only
--- when migrate.sh sets the ``:install_vectorscale`` psql variable
--- (driven by ``VECTOR_EXTENSION=pgvectorscale``).
---
--- ``vchord`` (extension name: ``vchord``) is created only when
--- migrate.sh sets ``:install_vchord`` (driven by
--- ``VECTOR_EXTENSION=vchord``). vchord requires ``vchord.so`` to be
--- in ``shared_preload_libraries`` — see the shipped Dockerfile.
---
--- Either binary must be present in the Postgres install. If it isn't,
--- this ``CREATE EXTENSION`` fails fast with a clear error rather than
--- silently producing a broken schema.
+-- If pgvectorscale isn't installed in the running Postgres, this fails
+-- fast with a clear error rather than silently producing a broken
+-- schema. Use the shipped ``ghcr.io/astrocyteai/astrocyte-postgres``
+-- image, or install ``postgresql-16-pgvectorscale`` from Timescale's
+-- apt repo (also available on Supabase, Neon, and Timescale Cloud).
 
-CREATE EXTENSION IF NOT EXISTS vector;
-
-\if :{?install_vectorscale}
 CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;
-\endif
-
-\if :{?install_vchord}
-CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
-\endif

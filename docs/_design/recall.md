@@ -142,7 +142,7 @@ CREATE TABLE pageindex_sections (
 CREATE INDEX ix_pis_skeleton ON pageindex_sections (document_id, depth, line_num);
 CREATE INDEX ix_pis_date ON pageindex_sections (document_id, session_date)
     WHERE session_date IS NOT NULL;
-CREATE INDEX ix_pis_embed ON pageindex_sections USING vchordrq (summary_embedding);
+CREATE INDEX ix_pis_embed ON pageindex_sections USING diskann (summary_embedding vector_cosine_ops);
 CREATE INDEX ix_pis_speaker ON pageindex_sections (document_id, speaker)
     WHERE speaker IS NOT NULL;
 

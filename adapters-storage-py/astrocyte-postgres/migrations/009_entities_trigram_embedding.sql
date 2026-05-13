@@ -33,11 +33,12 @@ ALTER TABLE astrocyte_entities
     ADD COLUMN IF NOT EXISTS embedding vector(:embedding_dimensions);
 
 -- ANN index on the embedding column for sub-millisecond cosine lookups.
--- The backend (HNSW vs DiskANN) is selected via :vector_using_clause —
--- same knob as migration 003. Default HNSW m=16, ef_construction=64.
+-- DiskANN via pgvectorscale (same knob as migration 003); the fallback
+-- below applies when this migration is run with raw ``psql -f`` outside
+-- migrate.sh.
 \if :{?vector_using_clause}
 \else
-\set vector_using_clause 'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)'
+\set vector_using_clause 'USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)'
 \endif
 
 CREATE INDEX IF NOT EXISTS astrocyte_entities_embedding_idx
