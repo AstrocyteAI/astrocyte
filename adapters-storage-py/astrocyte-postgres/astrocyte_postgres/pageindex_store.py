@@ -130,6 +130,21 @@ class PostgresPageIndexStore:
                 await self._pool.open()
             return self._pool
 
+    async def close(self) -> None:
+        """Close the connection pool. Safe to call multiple times.
+
+        Mirrors ``PostgresStore.close()`` / ``PostgresWikiStore.close()`` /
+        ``PostgresMentalModelStore.close()``. Tests and long-running
+        processes should call this on shutdown so psycopg's background
+        pool-manager tasks unwind cleanly — without it, asyncio-runner
+        teardown can hang on dangling pool tasks (pytest-timeout fires
+        after 60s on otherwise-passing tests).
+        """
+        async with self._pool_lock:
+            if self._pool is not None:
+                await self._pool.close()
+                self._pool = None
+
     async def _ensure_schema(self, pool: AsyncConnectionPool) -> None:
         """Per-tenant-aware bootstrap. Mirrors migration 015 for the
         active tenant schema. Idempotent (CREATE TABLE IF NOT EXISTS)."""
@@ -1343,6 +1358,90 @@ class PostgresPageIndexStore:
                 metadata=None,
             ))
         return pages
+
+    async def list_wikis_affected_by_entities(
+        self,
+        bank_id: str,
+        entities: list[str],
+        *,
+        min_overlap: int = 1,
+        limit: int = 8,
+    ):
+        """M14.2: SQL entity-overlap JOIN over wiki provenance.
+
+        Cheap query — both legs are indexed:
+        - ``astrocyte_pi_wiki_provenance`` has ``ix_pi_wiki_provenance_section``
+          on ``(document_id, line_num)``.
+        - ``astrocyte_pi_section_entities`` (M9 PR2) carries the
+          per-section entity index used by ``list_distinct_entities``.
+
+        Returns the current-revision wikis for ``bank_id`` whose
+        provenance sections share at least ``min_overlap`` entities
+        with the input set. Joins back to ``astrocyte_wiki_revisions``
+        for ``markdown`` + ``revision_number`` so callers receive a
+        fully-hydrated ``WikiPage`` per row.
+
+        Sorted descending by overlap count then ascending by
+        ``page_id`` for stability.
+        """
+        if not entities:
+            return []
+        from datetime import datetime, timezone
+
+        from astrocyte.types import WikiPage
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT p.page_id,
+                           p.title, p.kind, p.scope,
+                           r.markdown, r.revision_number, r.created_at,
+                           p.bank_id,
+                           COUNT(DISTINCT se.entity_name) AS overlap_count,
+                           array_agg(DISTINCT se.entity_name
+                                     ORDER BY se.entity_name) AS shared_entities
+                    FROM {self._fq('astrocyte_wiki_pages')} AS p
+                    JOIN {self._fq('astrocyte_pi_wiki_provenance')} AS prov
+                        ON prov.wiki_page_id = p.id
+                    JOIN {self._fq('astrocyte_pi_section_entities')} AS se
+                        ON se.document_id = prov.document_id
+                       AND se.line_num    = prov.line_num
+                    LEFT JOIN {self._fq('astrocyte_wiki_revisions')} AS r
+                        ON r.id = p.current_revision_id
+                    WHERE p.bank_id = %s
+                      AND p.deleted_at IS NULL
+                      AND se.entity_name = ANY(%s)
+                    GROUP BY p.page_id, p.title, p.kind, p.scope,
+                             r.markdown, r.revision_number, r.created_at, p.bank_id
+                    HAVING COUNT(DISTINCT se.entity_name) >= %s
+                    ORDER BY overlap_count DESC, p.page_id ASC
+                    LIMIT %s
+                    """,
+                    (bank_id, list(entities), min_overlap, limit),
+                )
+                rows = await cur.fetchall()
+
+        results: list[tuple[WikiPage, int, list[str]]] = []
+        for r in rows:
+            revised_at = r[6] if r[6] is not None else datetime.now(tz=timezone.utc)
+            page = WikiPage(
+                page_id=r[0],
+                bank_id=r[7] or bank_id,
+                kind=r[2] or "topic",
+                title=r[1] or "",
+                content=r[4] or "",
+                scope=r[3] or "",
+                source_ids=[],
+                cross_links=[],
+                revision=int(r[5]) if r[5] is not None else 1,
+                revised_at=revised_at,
+                tags=None,
+                metadata=None,
+            )
+            results.append((page, int(r[8]), list(r[9])))
+        return results
 
     # ── health ──────────────────────────────────────────────────────────
 
