@@ -19,6 +19,15 @@ paths-ignore:
   # e.g. py/inheritance/signature-mismatch on InMemory* shadows used to
   # simulate legacy adapters. CodeQL is scoped to production code.
   - "**/tests/**"
+  # portability.py is Astrocyte's dedicated CWE-022 security primitive.
+  # py/path-injection flags the ``Path(path_str).expanduser().resolve()``
+  # call because path_str is user-controlled — but the function exists
+  # PRECISELY to neutralize that taint via allow-list containment with a
+  # fail-closed default. Restructuring to satisfy the taint tracker
+  # isn't possible (canonicalization must happen before containment can
+  # be checked; symlinks/`..` aren't apparent in the input string).
+  # Threat model is owned by tests/test_portability.py::TestPathContainment.
+  - "astrocyte-py/astrocyte/portability.py"
 
 # Rule-level exclusions.
 query-filters:
