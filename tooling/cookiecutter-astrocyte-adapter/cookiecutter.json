@@ -14,6 +14,8 @@
         "source_stores",
         "llm_providers"
     ],
+    "__class_suffix": "{{ {'vector_stores': 'VectorStore', 'graph_stores': 'GraphStore', 'document_stores': 'DocumentStore', 'pageindex_stores': 'PageIndexStore', 'wiki_stores': 'WikiStore', 'mental_model_stores': 'MentalModelStore', 'source_stores': 'SourceStore', 'llm_providers': 'LLMProvider'}[cookiecutter.spi_family] }}",
+    "__config_prefix": "{{ {'vector_stores': 'vector_store', 'graph_stores': 'graph_store', 'document_stores': 'document_store', 'pageindex_stores': 'pageindex_store', 'wiki_stores': 'wiki_store', 'mental_model_stores': 'mental_model_store', 'source_stores': 'source_store', 'llm_providers': 'llm_provider'}[cookiecutter.spi_family] }}",
     "astrocyte_min_version": "0.13",
     "author_name": "Your Name",
     "author_email": "you@example.com",

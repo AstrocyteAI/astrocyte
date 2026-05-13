@@ -39,7 +39,7 @@ dev = [
 # docs/_design/adapter-packages.md for the full SPI family → entry-point
 # group mapping.
 [project.entry-points."astrocyte.{{ cookiecutter.spi_family }}"]
-{{ cookiecutter.backend_label }} = "{{ cookiecutter.module_slug }}.store:{{ cookiecutter.backend_name }}{% if cookiecutter.spi_family == 'vector_stores' %}VectorStore{% elif cookiecutter.spi_family == 'graph_stores' %}GraphStore{% elif cookiecutter.spi_family == 'document_stores' %}DocumentStore{% elif cookiecutter.spi_family == 'pageindex_stores' %}PageIndexStore{% elif cookiecutter.spi_family == 'wiki_stores' %}WikiStore{% elif cookiecutter.spi_family == 'mental_model_stores' %}MentalModelStore{% elif cookiecutter.spi_family == 'source_stores' %}SourceStore{% elif cookiecutter.spi_family == 'llm_providers' %}LLMProvider{% endif %}"
+{{ cookiecutter.backend_label }} = "{{ cookiecutter.module_slug }}.store:{{ cookiecutter.backend_name }}{{ cookiecutter.__class_suffix }}"
 
 [tool.hatch.build.targets.wheel]
 packages = ["{{ cookiecutter.module_slug }}"]

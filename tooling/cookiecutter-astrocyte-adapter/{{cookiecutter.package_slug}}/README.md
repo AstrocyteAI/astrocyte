@@ -24,7 +24,7 @@ pageindex_store_config:
   url: ...{% elif cookiecutter.spi_family == 'llm_providers' %}provider: {{ cookiecutter.backend_label }}
 {{ cookiecutter.backend_label }}_config:
   model: ...
-  api_key: ${ {{ cookiecutter.backend_label|upper }}_API_KEY }{% else %}{{ cookiecutter.spi_family[:-1] }}: {{ cookiecutter.backend_label }}{% endif %}
+  api_key: ${ {{ cookiecutter.backend_label|upper }}_API_KEY }{% else %}{{ cookiecutter.__config_prefix }}: {{ cookiecutter.backend_label }}{% endif %}
 ```
 
 ## Development
@@ -43,7 +43,7 @@ uv run pytest
 
 ## SPI conformance
 
-Implements the [`{% if cookiecutter.spi_family == 'vector_stores' %}VectorStore{% elif cookiecutter.spi_family == 'graph_stores' %}GraphStore{% elif cookiecutter.spi_family == 'document_stores' %}DocumentStore{% elif cookiecutter.spi_family == 'pageindex_stores' %}PageIndexStore{% elif cookiecutter.spi_family == 'wiki_stores' %}WikiStore{% elif cookiecutter.spi_family == 'mental_model_stores' %}MentalModelStore{% elif cookiecutter.spi_family == 'source_stores' %}SourceStore{% elif cookiecutter.spi_family == 'llm_providers' %}LLMProvider{% endif %}`](https://AstrocyteAI.github.io/astrocyte/plugins/provider-spi/) Protocol from `astrocyte.provider`. Conformance tests run in CI against a live {{ cookiecutter.backend_name }} container.
+Implements the [`{{ cookiecutter.__class_suffix }}`](https://AstrocyteAI.github.io/astrocyte/plugins/provider-spi/) Protocol from `astrocyte.provider`. Conformance tests run in CI against a live {{ cookiecutter.backend_name }} container.
 
 ## License
 

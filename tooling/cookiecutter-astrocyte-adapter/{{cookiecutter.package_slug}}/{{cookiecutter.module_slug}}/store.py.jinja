@@ -1,5 +1,4 @@
-{% set class_suffix = {'vector_stores': 'VectorStore', 'graph_stores': 'GraphStore', 'document_stores': 'DocumentStore', 'pageindex_stores': 'PageIndexStore', 'wiki_stores': 'WikiStore', 'mental_model_stores': 'MentalModelStore', 'source_stores': 'SourceStore', 'llm_providers': 'LLMProvider'}[cookiecutter.spi_family] -%}
-"""Async {{ cookiecutter.backend_name }} implementation of :class:`~astrocyte.provider.{{ class_suffix }}`.
+"""Async {{ cookiecutter.backend_name }} implementation of :class:`~astrocyte.provider.{{ cookiecutter.__class_suffix }}`.
 
 Method signatures below are the SPI Protocol's required surface. Each
 method currently raises ``NotImplementedError``; fill in the body for
@@ -31,11 +30,11 @@ from astrocyte.types import Completion, Embedding, HealthStatus, Message
 from astrocyte.types import HealthStatus
 {% endif %}
 
-class {{ cookiecutter.backend_name }}{{ class_suffix }}:
-    """{{ class_suffix }} backed by {{ cookiecutter.backend_name }}.
+class {{ cookiecutter.backend_name }}{{ cookiecutter.__class_suffix }}:
+    """{{ cookiecutter.__class_suffix }} backed by {{ cookiecutter.backend_name }}.
 
     Configuration is passed via ``__init__`` kwargs from the
-    ``{{ cookiecutter.spi_family[:-1] }}_config`` block in ``astrocyte.yaml``.
+    ``{{ cookiecutter.__config_prefix }}_config`` block in ``astrocyte.yaml``.
     """
 
     # Bump on SPI major version changes — Astrocyte reads this at adapter
@@ -121,68 +120,52 @@ class {{ cookiecutter.backend_name }}{{ class_suffix }}:
         """Delete documents by ID."""
         raise NotImplementedError
 {% elif cookiecutter.spi_family == 'pageindex_stores' %}
-    async def save_document(self, document: PageIndexDocument) -> None:
-        """Upsert a PageIndex document (keyed on (bank_id, source_id))."""
+    # NOTE: PageIndexStore has a large surface. Signatures below are the
+    # subset most adapters need; consult ``astrocyte.provider.PageIndexStore``
+    # in astrocyte-py for the full Protocol (additional fact-grain,
+    # event-date, and wiki-affected methods may be required for full
+    # parity with the Postgres reference adapter).
+
+    async def save_document(self, doc: PageIndexDocument) -> str:
+        """Upsert a document. Returns the document id (UUID string).
+
+        Upsert keyed on ``(bank_id, source_id)`` — re-running tree-build
+        for the same conversation replaces the prior row.
+        """
         raise NotImplementedError
 
     async def save_sections(
         self,
-        bank_id: str,
         document_id: str,
         sections: list[PageIndexSection],
-        entities: list[PageIndexSectionEntity],
-        links: list[PageIndexSectionLink],
-    ) -> None:
-        """Atomic-replace all sections / entities / links for one document."""
+    ) -> int:
+        """Bulk-replace all sections for a document. Returns the count
+        written."""
         raise NotImplementedError
 
     async def load_document(
-        self, bank_id: str, document_id: str
-    ) -> PageIndexDocument | None:
-        """Load one PageIndex document or None if missing."""
-        raise NotImplementedError
-
-    async def load_skeleton(
-        self, bank_id: str, document_id: str
-    ) -> list[PageIndexSection]:
-        """Load sections WITHOUT ``summary_embedding`` (picker doesn't need it)."""
-        raise NotImplementedError
-
-    async def search_semantic(
         self,
-        query_vector: list[float],
         bank_id: str,
-        limit: int = 10,
-    ) -> list[tuple[str, int, float]]:
-        """Cosine search over section ``summary_embedding``."""
+        source_id: str,
+    ) -> PageIndexDocument | None:
+        """Load one document by ``(bank_id, source_id)`` or None if missing."""
         raise NotImplementedError
 
-    async def search_keyword(
-        self, query: str, bank_id: str, limit: int = 10
-    ) -> list[tuple[str, int, float]]:
-        """BM25 over section text."""
-        raise NotImplementedError
-
-    async def search_entity(
-        self, entity_names: list[str], bank_id: str, limit: int = 10
-    ) -> list[tuple[str, int, float]]:
-        """Sections matching the named entities."""
-        raise NotImplementedError
-
-    async def search_temporal(
-        self, start_iso: str, end_iso: str, bank_id: str, limit: int = 10
-    ) -> list[tuple[str, int, float]]:
-        """Sections whose temporal range overlaps the query window."""
+    async def load_skeleton(self, document_id: str) -> list[PageIndexSection]:
+        """Fetch all sections for a document, ordered by ``line_num``.
+        Returned sections do NOT carry ``summary_embedding`` (the picker
+        doesn't need it)."""
         raise NotImplementedError
 
     async def expand_section_links(
         self,
-        seed: list[tuple[str, int]],
-        bank_id: str,
+        seeds: list[tuple[str, int]],
+        *,
         link_types: list[str] | None = None,
         limit: int = 50,
     ) -> list[tuple[str, int, float]]:
-        """Expand from seed sections via section_links (semantic_knn / causal / supersedes / elaborates)."""
+        """Expand from seed sections via section_links
+        (semantic_knn / causal / supersedes / elaborates)."""
         raise NotImplementedError
 {% elif cookiecutter.spi_family == 'llm_providers' %}
     async def complete(self, messages: list[Message], **kwargs) -> Completion:
@@ -193,7 +176,7 @@ class {{ cookiecutter.backend_name }}{{ class_suffix }}:
         """Embed text into vectors."""
         raise NotImplementedError
 {% else %}
-    # TODO: implement the Protocol methods for {{ class_suffix }}. See
+    # TODO: implement the Protocol methods for {{ cookiecutter.__class_suffix }}. See
     # astrocyte-py/astrocyte/provider.py for the full signatures.
 {% endif %}
     async def health(self) -> HealthStatus:

@@ -1,5 +1,5 @@
 """{{ cookiecutter.description }}."""
 
-from {{ cookiecutter.module_slug }}.store import {{ cookiecutter.backend_name }}{% if cookiecutter.spi_family == 'vector_stores' %}VectorStore{% elif cookiecutter.spi_family == 'graph_stores' %}GraphStore{% elif cookiecutter.spi_family == 'document_stores' %}DocumentStore{% elif cookiecutter.spi_family == 'pageindex_stores' %}PageIndexStore{% elif cookiecutter.spi_family == 'wiki_stores' %}WikiStore{% elif cookiecutter.spi_family == 'mental_model_stores' %}MentalModelStore{% elif cookiecutter.spi_family == 'source_stores' %}SourceStore{% elif cookiecutter.spi_family == 'llm_providers' %}LLMProvider{% endif %}
+from {{ cookiecutter.module_slug }}.store import {{ cookiecutter.backend_name }}{{ cookiecutter.__class_suffix }}
 
-__all__ = ["{{ cookiecutter.backend_name }}{% if cookiecutter.spi_family == 'vector_stores' %}VectorStore{% elif cookiecutter.spi_family == 'graph_stores' %}GraphStore{% elif cookiecutter.spi_family == 'document_stores' %}DocumentStore{% elif cookiecutter.spi_family == 'pageindex_stores' %}PageIndexStore{% elif cookiecutter.spi_family == 'wiki_stores' %}WikiStore{% elif cookiecutter.spi_family == 'mental_model_stores' %}MentalModelStore{% elif cookiecutter.spi_family == 'source_stores' %}SourceStore{% elif cookiecutter.spi_family == 'llm_providers' %}LLMProvider{% endif %}"]
+__all__ = ["{{ cookiecutter.backend_name }}{{ cookiecutter.__class_suffix }}"]
