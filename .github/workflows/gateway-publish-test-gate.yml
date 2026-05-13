@@ -127,7 +127,7 @@ jobs:
           uv sync --extra dev --extra postgres
           uv run python -m pytest tests/test_gateway_examples_smoke.py -v --tb=short
 
-  postgres-integration:
+  postgres-integration-combined-image:
     name: postgres integration (combined image)
     permissions:
       contents: read
