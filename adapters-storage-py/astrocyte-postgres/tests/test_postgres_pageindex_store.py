@@ -77,10 +77,14 @@ async def store() -> PostgresPageIndexStore:
     """Fresh store + a unique bank_id per test (so tests can run in
     parallel without clobbering each other)."""
     s = PostgresPageIndexStore(bootstrap_schema=True)
-    yield s
-    # No teardown — bank_id isolation per test handles cleanup. If you
-    # want to wipe rows for repeatable runs, use
-    # ``astrocyte.eval._state_reset.reset_benchmark_state``.
+    try:
+        yield s
+    finally:
+        # Close the pool so the asyncio runner's teardown doesn't hang
+        # on dangling psycopg pool-manager tasks (pytest-timeout fired
+        # on the trailing test_health under CI load before this).
+        # Row-level isolation per bank_id; no DB cleanup needed.
+        await s.close()
 
 
 @pytest.fixture
