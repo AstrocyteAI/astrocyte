@@ -102,6 +102,37 @@ fetch-datasets: fetch-locomo fetch-longmemeval
 # ---------------------------------------------------------------------------
 # Benchmarks
 # ---------------------------------------------------------------------------
+#
+# DB lifecycle knob (BENCH_RESET, 2026-05-14):
+#
+#   BENCH_RESET=1   (default)  reset the bench DBs before every run
+#   BENCH_RESET=0              start the bench DBs but keep existing rows
+#                              (resume PageIndex bank-id cache, fast iter)
+#
+# Rationale for reset-by-default: without a reset, rows from prior bench
+# runs accumulate across the Postgres schema even though each run uses a
+# fresh ``bank_id``. After ~10 runs the query planner degraded and
+# per-question latency exploded from ~10s to ~315s in practice.
+#
+# When to opt into BENCH_RESET=0:
+#   - Iterating on code where you want the PageIndex bench's resume
+#     semantics (same --bank-id → skip re-extraction)
+#   - Debugging a specific question without re-paying the extraction cost
+#   - You've recently reset and just want a quick second run
+#
+# Examples:
+#   make bench-mem0-harness-parallel MEM0_HARNESS_PROJECT=foo            # resets
+#   make bench-mem0-harness-parallel MEM0_HARNESS_PROJECT=foo BENCH_RESET=0  # resumes
+#   make bench-locomo BENCH_RESET=0 LOCOMO_BANK_ID=my-cache              # resume bank
+BENCH_RESET ?= 1
+
+ifeq ($(BENCH_RESET),1)
+_BENCH_DB   := bench-db-reset
+_BENCH_DB_2 := bench-db-reset-2
+else
+_BENCH_DB   := bench-db-start
+_BENCH_DB_2 := bench-db-start-2
+endif
 
 .PHONY: bench-db-start bench-db-stop bench-db-reset bench-db-start-2 bench-db-stop-2 bench-db-reset-2 bench-locomo bench-longmemeval bench-longmemeval-on-2 bench-parallel
 
@@ -267,7 +298,7 @@ bench-runner-deps:
 
 .PHONY: bench-locomo bench-longmemeval bench-longmemeval-on-2 bench-parallel
 
-bench-locomo: fetch-locomo bench-db-start bench-runner-deps
+bench-locomo: fetch-locomo $(_BENCH_DB) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/locomo
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
 	  uv run python scripts/bench_pageindex_locomo.py \
@@ -275,7 +306,7 @@ bench-locomo: fetch-locomo bench-db-start bench-runner-deps
 	    --max-questions-per-conversation $(LOCOMO_MAX_Q) \
 	    --bank-id $(LOCOMO_BANK_ID)
 
-bench-longmemeval: fetch-longmemeval bench-db-start bench-runner-deps
+bench-longmemeval: fetch-longmemeval $(_BENCH_DB) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/lme
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
 	  uv run python scripts/bench_pageindex_lme.py \
@@ -283,7 +314,7 @@ bench-longmemeval: fetch-longmemeval bench-db-start bench-runner-deps
 	    --max-samples $(LME_MAX_SAMPLES) \
 	    --bank-id $(LME_BANK_ID)
 
-bench-longmemeval-on-2: fetch-longmemeval bench-db-start-2 bench-runner-deps
+bench-longmemeval-on-2: fetch-longmemeval $(_BENCH_DB_2) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/lme
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' \
 	  uv run python scripts/bench_pageindex_lme.py \
@@ -300,7 +331,7 @@ bench-longmemeval-on-2: fetch-longmemeval bench-db-start-2 bench-runner-deps
 # Cache state: bank rows persist across runs. First run on :5434 for
 # LME will be a cold start (~2-3hr full extraction). Subsequent runs
 # hit cache and only re-score (~30-60min).
-bench-parallel: fetch-datasets bench-db-start bench-db-start-2 bench-runner-deps
+bench-parallel: fetch-datasets $(_BENCH_DB) $(_BENCH_DB_2) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/locomo $(RESULTS_DIR)/pageindex/lme $(RESULTS_DIR)/parallel
 	@echo "  [parallel] LoCoMo on :5433 + LME on :5434"
 	@echo "  [parallel] Logs: $(RESULTS_DIR)/parallel/{locomo,lme}.log"
@@ -366,7 +397,7 @@ _MEM0_HARNESS_USER_PROFILE_FLAG := $(if $(MEM0_HARNESS_USER_PROFILE),--user-prof
 _MEM0_HARNESS_LOCOMO_MAX_Q_FLAG := $(if $(MEM0_HARNESS_LOCOMO_MAX_Q),--max-questions $(MEM0_HARNESS_LOCOMO_MAX_Q),)
 _MEM0_HARNESS_LME_PER_TYPE_FLAG := $(if $(MEM0_HARNESS_LME_PER_TYPE),--per-type $(MEM0_HARNESS_LME_PER_TYPE),)
 
-bench-mem0-harness-locomo: bench-db-start bench-runner-deps
+bench-mem0-harness-locomo: $(_BENCH_DB) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/locomo
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' \
 	  uv run python scripts/mem0_harness/run_locomo.py \
@@ -379,7 +410,7 @@ bench-mem0-harness-locomo: bench-db-start bench-runner-deps
 	    $(_MEM0_HARNESS_LOCOMO_MAX_Q_FLAG) \
 	    --output-dir $(RESULTS_DIR)/mem0_harness/locomo/$(MEM0_HARNESS_PROJECT)
 
-bench-mem0-harness-lme: bench-db-start-2 bench-runner-deps
+bench-mem0-harness-lme: $(_BENCH_DB_2) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/lme
 	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' \
 	  uv run python scripts/mem0_harness/run_lme.py \
@@ -394,7 +425,7 @@ bench-mem0-harness-lme: bench-db-start-2 bench-runner-deps
 
 # True parallel: LoCoMo on :5433 + LME on :5434, distinct logs, single
 # command. Same shape as bench-parallel for the native PageIndex bench.
-bench-mem0-harness-parallel: bench-db-start bench-db-start-2 bench-runner-deps
+bench-mem0-harness-parallel: $(_BENCH_DB) $(_BENCH_DB_2) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/locomo $(RESULTS_DIR)/mem0_harness/lme $(RESULTS_DIR)/parallel
 	@echo "  [mem0-parallel] LoCoMo on :5433 + LME on :5434 (project=$(MEM0_HARNESS_PROJECT))"
 	@echo "  [mem0-parallel] judge=$(MEM0_HARNESS_JUDGE_MODEL)  answerer=$(MEM0_HARNESS_ANSWERER_MODEL)"
