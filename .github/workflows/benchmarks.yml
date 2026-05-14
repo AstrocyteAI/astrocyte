@@ -71,7 +71,7 @@ jobs:
         # environment). The Astrocyte pattern is to run commands via
         # ``doppler run --`` locally and in CI — keeps secrets out of
         # workflow env blocks and under a single rotation story.
-        uses: dopplerhq/cli-action@v3
+        uses: dopplerhq/cli-action@v4
 
       - name: Run ${{ matrix.benchmark }} benchmark
         working-directory: astrocyte-py
