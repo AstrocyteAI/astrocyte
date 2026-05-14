@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
     "astrocyte>=0.7.0,<2",
-    "elasticsearch[async]>=8.12,<9",
+    "elasticsearch[async]>=8.12,<10",
 ]
 
 [project.optional-dependencies]
