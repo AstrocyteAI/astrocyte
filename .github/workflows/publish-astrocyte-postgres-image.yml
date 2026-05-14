@@ -79,7 +79,7 @@ jobs:
 
       - name: Attest image provenance
         if: steps.meta.outputs.version_tag != ''
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-postgres
           subject-digest: ${{ steps.push.outputs.digest }}

@@ -146,7 +146,7 @@ jobs:
             SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.meta.outputs.version }}
 
       - name: Attest image (SLSA provenance → GHCR)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py
           subject-digest: ${{ steps.push.outputs.digest }}

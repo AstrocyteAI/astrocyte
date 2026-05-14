@@ -81,7 +81,7 @@ jobs:
           name: dist-ingestion-github
           path: dist/
 
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/astrocyte_ingestion_github-*"
 
