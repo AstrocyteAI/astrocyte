@@ -64,7 +64,7 @@ jobs:
 
       - name: Build and push (latest + optional version tag)
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/astrocyte-postgres/Dockerfile

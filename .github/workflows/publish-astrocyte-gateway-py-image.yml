@@ -128,7 +128,7 @@ jobs:
 
       - name: Build and push
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release
