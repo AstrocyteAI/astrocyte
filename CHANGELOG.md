@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### M14 retain pipeline overhaul — cycle closed with null bench verdict (2026-05-15)
+
+The M14 cycle ran an architectural experiment (atomic-fact consolidation + entity canonicalization + query-analyzer wiring) modelled on Hindsight's design. Implementation was built as working-tree WIP, benched across 3 runs of the wikis-off configuration, and **torn down without commit** when the null bench verdict made the implementation bench-unnecessary. Full retrospective in [`docs/_design/m13-m14-roadmap.md`](docs/_design/m13-m14-roadmap.md) §§8-12.
+
+**What landed in HEAD:**
+
+- `Makefile` — `BENCH_RESET` knob (default `1`) on every `bench-*` target. Bench DBs are reset before every run unless `BENCH_RESET=0`. Fixes a silent 30× slowdown caused by accumulated state across re-runs (commit `d982fde`).
+- M14.7 revert — `wiki_incremental` bench wiring dropped from `bench_pageindex_locomo.py` (commit `6ec61ea`).
+- Methodology documentation — multi-run baseline policy, 2σ signal-detection thresholds, per-category attribution gate, 9-decision locked policy framework (in this doc's §§8-9).
+- Hindsight architectural critique + remaining-gap analysis ranked by expected bench impact (§§10, 12).
+
+**What did NOT land in HEAD (experiment torn down):**
+
+- `observation_consolidator.py` (atomic-fact consolidator), `consolidation_models.py` (Pydantic response schemas), `entity_canonicalization.py` (per-doc clustering), migrations 023 + 024, and the consolidator / canonicalization / query-analyzer bench wiring. These were built and tested but never committed; the experiment's design is preserved in §8.7 as a future-cycle blueprint.
+
+**Bench results (4-run baseline → 3-run wikis-off M14 experiment):**
+
+- LME top_20: 65.0% ±3.3pp → 68.9% ±5.0pp (+3.9pp; within 1σ; **doesn't clear locked 2σ gate of 71.6%**)
+- LoCoMo top_20: 78.25% ±1.5pp → 75.83% ±1.5pp (−2.4pp; borderline regression)
+
+The architectural overhaul is mechanically sound but doesn't yield bench-measurable signal at gpt-4o-mini answerer scale. The current operating point (HEAD at `6ec61ea`) is the M14 baseline — equal to what the experiment would have produced.
+
+**Dropped (accepted null-verdict implication):**
+
+- Phase 2.2 `multi_query`, Phase 2.3 HyDE, Phase 5 proof-count, Phase 6 per-fact recall trigger, Phase 7 bank-mission smuggle — all gated on Phase 4 success; superseded by null result.
+
+**Forward-looking analysis (§12):** the remaining Hindsight design gaps ranked by expected bench impact are tool-calling reflect agent (§12.1, +5-15pp LME), link-expansion graph retrieval (§12.3, +3-7pp LoCoMo multi-hop), and multiplicative score boosts (§12.2, +2-5pp). These are outside the M14 retain-pipeline scope; deferred to a future cycle.
+
 ### ⚠️ Breaking — Apache AGE removed (M9 / ADR-008)
 
 Apache AGE is no longer supported. M9's section-grain recall stack replaces AGE-backed graph operations with flat tables + SQL CTEs (Hindsight pattern), at section grain (`astrocyte_pi_section_links`, `astrocyte_pi_section_entities`) and at memory-unit grain (`astrocyte_unit_links`, `astrocyte_unit_entities`).

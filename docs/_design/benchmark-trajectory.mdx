@@ -10,6 +10,17 @@ Live time-series of Astrocyte's LoCoMo and LongMemEval scores. Data is read from
 
 The chart is rendered client-side from `trajectory/<bench>.json` in the public R2 bucket. See [bench-archive](./bench-archive/) for the bucket layout, the `archive` / `fetch` tooling, and how the trajectory artifact is regenerated on each run.
 
+## Current operating point (post-M14 close, 2026-05-15)
+
+Multi-run aggregates on the Mem0 harness, gpt-4o-mini judge + answerer, `--user-profile` enabled. HEAD is at commit `6ec61ea` (revert(m14.2)).
+
+| Bench | Cutoff | 4-run baseline at HEAD | M14 experiment WIP (3-run mean) |
+|---|---|---|---|
+| LME | top_20 | **65.0% ±3.3pp** | 68.9% ±5.0pp |
+| LoCoMo | top_20 | **78.25% ±1.5pp** | 75.83% ±1.5pp |
+
+The "M14 experiment WIP" column reflects bench runs of a working-tree implementation that was **never committed** — the experiment was torn down after replication invalidated the single-run +8.3pp LME lift. Current shipping state is the baseline (left column). Single-run highs from the M14 cycle (LME 73.3%, LoCoMo 81.0%) did NOT replicate; treat them as variance. See [`m13-m14-roadmap.md`](./m13-m14-roadmap.md) §§8.7-8.10 for the full retrospective and null-verdict explanation.
+
 ## LoCoMo
 
 <BenchTrajectory bench="locomo" />
