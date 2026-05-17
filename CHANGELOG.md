@@ -4,6 +4,102 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### M18b.2 follow-up (2026-05-18) — B3/B4/B1+B3 ablations + retrieval-ceiling finding
+
+Ran the three deferred M18b ablations overnight (autonomous queue, ~$6 spend, ~2 hours). All three are NULL or anti-composing; **none ship**. The combined M18b + M18b.2 evidence indicates we've hit a **retrieval-feature accuracy ceiling** — adding more parallel retrieval strategies to the shipped RRF fusion does not compose further.
+
+| Feature | Status | 2-run mean (where available) | Why not shipping |
+|---|---|---|---|
+| B3 spreading_activation | ❌ Null | LME 68.33% / LoCoMo 82.50% / total 185.5 (80.65%) | LoCoMo +2pp lift didn't replicate — r1 had temporal +4, r2 had temporal −1; net within noise |
+| B4 episodic_extract | ❌ Null | r1 only: total 182 (+1q vs B0) | Slight negative composition with rerank; temporal regression −4 on the single run |
+| B1+B3 stack | ❌ Anti-composes | r1 only: total 184 (+3q vs B0; −5q vs B1-dp+RRF alone) | Same shape as B5-stack: combined < best individual. Multi-hop +3 (RRF wins), temporal −3 (B3 loses) |
+
+**Retrieval-ceiling finding (banked for M19):** four parallel retrieval strategies tested as RRF siblings on top of shipped fact_recall (B2/B3/B4 individually plus all attempted stacks) — none compose with the shipped B1-dp+RRF (temporal + dateparser + RRF) for additional accuracy. The RRF fusion appears to have a saturation point: adding more strategies dilutes the cross-strategy agreement signal rather than reinforcing it.
+
+**This sharpens the M19 priority:**
+
+1. **Per-question-type prompt routing** (~1-2 weeks) — `prompt-only` was the strongest standalone feature in M18b (+9.5q combined vs +8q for B1-dp+RRF), but anti-composes with shipped B1-dp+RRF on multi-hop. Per-question-type prompt application would let us ship the prompt lift without the composition cost.
+2. **Hindsight `create_directive` MCP tool** (~1 week) — replaces B2's broken auto-compile with the architecturally correct user-authored hard-rule path (`mcp_tools.py:_register_create_directive`).
+3. **NEW retrieval STAGES** (not parallel siblings) — BM25 as a pre-RRF gating filter; Reflect agent iterative recall.
+4. **Document Engine bench** (untested at scale) — validate the M17 engine split with a real FinanceBench / DoubleBench run.
+
+M18b + M18b.2 cycle spend: ~$25 of $80 cap. Cycle CLOSED.
+
+### M18b cycle close (2026-05-17) — final ablation matrix + ship summary
+
+**M18b ablation series complete (5 conditions × 2 runs each, ~14 bench runs).** Full per-condition data in [`docs/_design/m18-quick-wins.md`](docs/_design/m18-quick-wins.md) §8.
+
+| Condition | LME (n=30) | LoCoMo (n=200) | Combined/230 | Ship? |
+|---|---|---|---|---|
+| B0 baseline | 66.67% | 80.5% | 78.70% | — |
+| **B1-dp+RRF** (shipped below) | 71.67% | **83.75%** | 82.17% | ✅ shipped |
+| B2 directive_compile | 70.00% | 82.75% | 81.09% | ❌ SSP regression replicated |
+| **prompt-only (Hindsight SSP)** | 78.33% | 83.50% | **82.83%** | ⏸️ validated but deferred (see below) |
+| **B5 stack (B1-dp+RRF + prompt)** | 76.67% | 80.75% | 80.22% | ❌ **anti-composition confirmed** |
+
+**Two new findings worth banking:**
+
+1. **B5 stacking actively anti-composes on multi-hop synthesis.** B1-dp+RRF alone lifted LoCoMo multi-hop +6q; prompt-only alone lifted +3q; *combined* gave −0.5q vs B0 (mean over 2 runs). The features compete for the same answerer attention — RRF wants synthesis across temporal candidates; the SSP prompt steers toward concrete user-grounded answers. Result: multi-hop questions get committed-but-shallow answers instead of synthesized ones. **Don't naively stack recall improvements with answerer-prompt steering** — the composition needs explicit per-question-type routing.
+
+2. **directive_compile is architecturally divergent from Hindsight.** Their `mental_models.subtype='directive'` rows are USER-AUTHORED hard rules installed via the `create_directive` MCP tool, not LLM-compiled from preference facts. Our auto-compile pass produces overconfident-rule failures on single-session-preference questions (−30pp on LME SSP, replicated both runs). The Hindsight SSP prompt block alone (no directive compile) recovers SSP and gives the cleanest single-feature lift we've measured (+11q vs B0 on combined). **Pivot path: ship the SSP prompt as standalone in M19 after the RRF/prompt interaction is properly investigated.**
+
+**M18b cycle spend:** ~14 bench runs × ~$1-2 each ≈ $20 of the $80 cap. M18b.2 (B3 spreading_activation, B4 episodic_extract) deferred.
+
+### M18b ship — B1-dp+RRF (dateparser Pass B + RRF fact fusion) (2026-05-17)
+
+The single feature shipped in M18b. 2-run LoCoMo mean **83.75%** clears M17+1σ ship gate (82.0%) by **+1.75pp**; combined LME+LoCoMo +8q vs B0 baseline. See earlier `## [Unreleased]` entries below for the architectural details (dateparser Pass B, RRF fusion, MemoryFact rename, migration 029).
+
+**What's NOT shipped (code present, flags OFF by default):**
+- `directive_compile` (B2) — `DirectiveCompileConfig.enabled=False`. Bench evidence: replicated SSP regression. Kept in-tree pending M19 pivot to user-authored `create_directive` MCP tool path.
+- Hindsight SSP prompt block — `scripts/mem0_harness/_hindsight_prompt.py` gated by `ASTROCYTE_M18_HINDSIGHT_SSP_PROMPT=1`. Bench evidence: standalone lift (+9.5q combined vs B0, 2-run mean) but **anti-composes with shipped B1-dp+RRF on multi-hop**. Kept in-tree pending M19 prompt-routing investigation.
+- `spreading_activation` (B3) — `SpreadingActivationConfig.enabled=False`. Not benched in M18b; defer to M18b.2.
+- `episodic_extract` (B4) — `EpisodicExtractConfig.enabled=False`. Not benched in M18b; defer to M18b.2.
+
+### M18b post-ship cleanup — Memory Engine naming + nullable section anchor (2026-05-17)
+
+Renamed the primary Memory-Engine fact type and relaxed its required document anchor to match Hindsight's :class:`MemoryUnit` semantics. Tightens conceptual coupling now that M17 split Astrocyte into 3 explicit engines (Memory / Document / Conversation).
+
+**Changes:**
+- `astrocyte/types.py`: `PageIndexFact` → `MemoryFact`, `PageIndexFactHit` → `MemoryFactHit`. Old names retained as backward-compat aliases (`PageIndexFact = MemoryFact`); the 15 existing call sites continue to work unchanged and can migrate gradually.
+- `MemoryFact.document_id` and `MemoryFact.line_num` are now `str | None = None` (were required). Top-level facts (no section anchor) are now constructible — matches Hindsight's `MemoryUnit.document_id` nullable semantics.
+- Postgres migration **029_pi_facts_nullable_document_id.sql**: `ALTER TABLE astrocyte_pi_facts ALTER COLUMN document_id DROP NOT NULL` + same for `line_num`. Idempotent (re-run safe). Existing composite FK kept; PG `MATCH SIMPLE` default treats either-NULL as passing.
+
+**Why this matters:** the name `PageIndexFact` was an M12.1 historical artifact (fact-grain was introduced bolted to PageIndex sections). The type's actual role is the Memory Engine's primary fact unit — Hindsight's `MemoryUnit` analogue. The rename + nullable change make it clear that section anchoring is an *implementation* (cheap context-expansion + cascade-delete), not a *requirement*, and unblocks future top-level retain APIs.
+
+**Tests:** `tests/test_memory_fact.py` (8 new) — alias equivalence, anchored construction, top-level construction with no anchor, in-memory round-trip. 2665 total tests pass.
+
+### M18b-B1 dateparser + RRF fact fusion — SHIPPED (2026-05-17)
+
+Promoted to default after the M18b ablation bench confirmed a real LoCoMo accuracy lift. The combined "B1-dp+RRF" feature shipped is *one architecturally cohesive change*, not two independent ones — they validate jointly.
+
+**Components shipped:**
+- `astrocyte/pipeline/temporal_dateparser.py` (NEW) — Hindsight-parity Pass B wide-net date extractor (`dateparser.search.search_dates`, defensive try/except, false-positive filter for short common words). Wired in as the LAST branch of `_regex_temporal_pass` chain when `enable_temporal_expansion=True`.
+- `astrocyte/pipeline/fact_recall.py` (REFACTOR) — semantic + episodic + temporal now run as **PARALLEL SIBLINGS** via `asyncio.gather` and merge via Reciprocal Rank Fusion (RRF k=60). Replaces the old "append everything, let the cross-encoder sort it out" pool-build that was source-blind and high-variance.
+- `astrocyte/config.py` — `QueryAnalyzerConfig.enable_temporal_expansion` default flipped to `True`. Bench env override `ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION=0` still works for ablation.
+- `pyproject.toml` — `dateparser>=1.2` in `[bench]` extras. Graceful no-op when absent.
+
+**Bench results (M18b 2-run mean vs B0 single run, gpt-4o-mini answerer + judge, fair-sample):**
+
+| Bench | B0 (no temporal) | B1-dp+RRF 2-run mean | Δ |
+|---|---|---|---|
+| LME top_20 (n=30) | 66.67% | 71.67% | +5.0pp (within n=30 ±5pp noise) |
+| LoCoMo top_20 (n=200) | 80.50% | **83.75%** | **+3.25pp** (+2.17σ vs M17 baseline mean) |
+
+**Ship-gate verdict:** LoCoMo 2-run mean clears M17 + 1σ gate (82.0%) by 1.75pp. LME variance (66.7% / 76.7% per run swing) is dominated by single-session-preference category at n=5; LME doesn't independently confirm but doesn't refute either.
+
+**Where the lift came from** (per-category Δ vs B0, replicated across both runs):
+- LoCoMo **multi-hop +4** (B0 67/79 → mean 71/79, +5pp on the largest category)
+- LoCoMo open-domain +2
+- LoCoMo temporal +0.5 (modest; the named subcategory was less-affected than expected)
+
+The mechanism is NOT primarily "answering temporal questions better." It's "dateparser surfaces date references in synthesis questions (e.g., 'what did X say in March about Y'), RRF rewards facts that appear in both semantic AND temporal strategies, sharpening the candidate set for the cross-encoder."
+
+**Two architectural lessons banked:**
+1. **`dateparser` (Hindsight Pass B) is the right wide-net temporal extractor** — pure-regex Pass A alone missed most real date refs.
+2. **RRF fusion of parallel strategies is structurally necessary** — without it, the previous append-then-rerank approach showed phantom +13pp lifts on LME that didn't replicate. Cross-strategy agreement is what makes recall robust to false-positive dateparser hits.
+
+Full M18b cycle log in [`docs/_design/m18-quick-wins.md`](docs/_design/m18-quick-wins.md). Test additions: `tests/test_temporal_dateparser.py` (4) + `tests/test_fact_recall.py` (rewritten, 12).
+
 ### M17 PageIndex-style ingestion + Conversation Engine — SHIPPED (2026-05-17)
 
 The M17 cycle delivered three composable engines (Memory, Document, Conversation) plus a composition layer, with a measurable bench lift over the M14-close baseline. Full design + cycle-close in [`docs/_design/m17-pageindex-ingestion.md`](docs/_design/m17-pageindex-ingestion.md). M18 quick-wins scoping in [`docs/_design/m18-quick-wins.md`](docs/_design/m18-quick-wins.md).
