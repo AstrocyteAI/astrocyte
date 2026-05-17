@@ -645,6 +645,50 @@ async def _regenerate_trajectory(client, cfg: R2Config) -> dict[str, int]:
 
 _BENCH_LABEL = {"locomo": "LoCoMo", "longmemeval": "LongMemEval"}
 
+# Headline package whose latest release drives the badge label when
+# BENCH_PARITY.yaml has entries. Other released packages (postgres,
+# gateway-py, ...) typically ship the same cycle simultaneously so this
+# choice is mostly cosmetic — the score is the same regardless.
+_BADGE_HEADLINE_PACKAGE = "astrocyte"
+
+
+def _find_repo_root_for_parity() -> Path | None:
+    """Walk up from this script until finding BENCH_PARITY.yaml. None if missing."""
+    cur = Path(__file__).resolve()
+    for parent in (cur, *cur.parents):
+        candidate = parent / "BENCH_PARITY.yaml"
+        if candidate.exists():
+            return parent
+    return None
+
+
+def _latest_release_for_badge(bench: str) -> dict[str, Any] | None:
+    """Return the latest astrocyte release row that has scores for ``bench``,
+    or None if BENCH_PARITY.yaml is missing / empty / lacks the bench.
+    """
+    root = _find_repo_root_for_parity()
+    if root is None:
+        return None
+    try:
+        import yaml  # local import — only needed when YAML is present
+    except ImportError:
+        return None
+    try:
+        body = yaml.safe_load((root / "BENCH_PARITY.yaml").read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    releases = body.get("releases") or []
+    # Prefer the headline package; fall back to any package if absent.
+    headline = [r for r in releases if r.get("package") == _BADGE_HEADLINE_PACKAGE]
+    candidates = headline or releases
+    # Filter to releases that recorded the requested bench
+    candidates = [r for r in candidates if bench in ((r.get("scores") or {}))]
+    if not candidates:
+        return None
+    # Already sorted desc on disk, but be defensive.
+    candidates.sort(key=lambda r: (r.get("released_at", ""), r.get("package", "")), reverse=True)
+    return candidates[0]
+
 
 def _badge_color(acc: float) -> str:
     return (
@@ -685,16 +729,39 @@ def _pick_shipped_group(runs: list[dict[str, Any]]) -> list[dict[str, Any]] | No
 def _build_badge_payload(bench: str, runs_sorted: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Compute the shields.io endpoint badge JSON for one bench.
 
-    Strategy:
-    1. If any run carries a ``ship_label``, pick the most-recent label
-       group and mean its overall scores. Label encodes the cycle (e.g.
-       'M18b'); badge message is the mean accuracy + sample size.
-    2. Otherwise fall back to the most recent run with non-null overall.
-       This keeps the badge live before the first cycle close marks
-       its shipped pair.
+    Strategy (in priority order):
+    1. **Released-package parity** — if ``BENCH_PARITY.yaml`` has a row
+       for the headline package (``astrocyte``), display its frozen
+       scores with a ``v<version>`` label. This is what the README
+       should show: "what `pip install astrocyte` produces".
+    2. **Most-recent ship_label group** — if any run carries a
+       ``ship_label``, pick the most-recent label group and mean its
+       overall scores. Use this before the first release-mark.
+    3. **Latest non-null overall** — fallback for pre-curation runs.
     """
     label = _BENCH_LABEL.get(bench, bench)
     bench_runs = [r for r in runs_sorted if isinstance(r.get("overall"), (int, float))]
+
+    # Priority 1: latest release
+    release = _latest_release_for_badge(bench)
+    if release:
+        score_body = release["scores"][bench]
+        acc = float(score_body["overall"])
+        n = score_body.get("n_questions")
+        runs = score_body.get("runs", 1)
+        pkg = release["package"]
+        ver = release["version"]
+        n_block = f"n={n}" if n else ""
+        runs_block = f"{runs} runs" if runs and runs > 1 else ""
+        parts = [p for p in (n_block, runs_block) if p]
+        suffix = f" ({', '.join(parts)})" if parts else ""
+        return {
+            "schemaVersion": 1,
+            "label": f"{label} ({pkg} v{ver}){suffix}",
+            "message": f"{acc * 100:.1f}%",
+            "color": _badge_color(acc),
+        }
+
     if not bench_runs:
         return None
 

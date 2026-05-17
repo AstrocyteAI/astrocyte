@@ -583,6 +583,70 @@ bench-refresh-labels:
 		--refresh-labels \
 		$(if $(DRY),--dry-run,)
 
+# Record a released package version's bench-cycle parity. Appends a row
+# to BENCH_PARITY.yaml at the repo root (read by the README badge writer
+# so the badge displays the released package's score, not whatever cycle
+# ran last). Optionally creates the corresponding annotated release tag.
+#
+# Required: PACKAGE=<name> VERSION=X.Y.Z CYCLE=<bench-label>
+# Optional: TAG=1 to also create <package>-v<VERSION> at HEAD
+#           DRY=1 to preview, FORCE=1 to overwrite existing entry, ALLOW_DIRTY=1
+#
+#   make release-mark PACKAGE=astrocyte VERSION=0.13.0 CYCLE=m18b TAG=1
+release-mark:
+	@[ -n "$(PACKAGE)" ] || { echo "ERROR: PACKAGE=<name> required" >&2; exit 2; }
+	@[ -n "$(VERSION)" ] || { echo "ERROR: VERSION=X.Y.Z required" >&2; exit 2; }
+	@[ -n "$(CYCLE)" ] || { echo "ERROR: CYCLE=<bench-label> required" >&2; exit 2; }
+	uv run python -m scripts.release_mark \
+		--package $(PACKAGE) \
+		--version $(VERSION) \
+		--cycle $(CYCLE) \
+		$(if $(TAG),--tag,) \
+		$(if $(COMMIT),--commit $(COMMIT),) \
+		$(if $(DRY),--dry-run,) \
+		$(if $(FORCE),--force,) \
+		$(if $(ALLOW_DIRTY),--allow-dirty,)
+
+# Lockstep release-mark — same VERSION + CYCLE applied to all three
+# user-facing ship surfaces (astrocyte / astrocyte-postgres /
+# astrocyte-gateway-py). Override by setting RELEASE_PACKAGES if you
+# want a different list this cycle (e.g. RELEASE_PACKAGES="astrocyte
+# astrocyte-postgres astrocyte-gateway-py astrocyte-qdrant").
+#
+#   make release-mark-all VERSION=0.13.0 CYCLE=m18b TAG=1
+RELEASE_PACKAGES ?= astrocyte astrocyte-postgres astrocyte-gateway-py
+release-mark-all:
+	@[ -n "$(VERSION)" ] || { echo "ERROR: VERSION=X.Y.Z required" >&2; exit 2; }
+	@[ -n "$(CYCLE)" ] || { echo "ERROR: CYCLE=<bench-label> required" >&2; exit 2; }
+	@for pkg in $(RELEASE_PACKAGES); do \
+		echo "===  $$pkg v$(VERSION) <- $(CYCLE)  ==="; \
+		$(MAKE) --no-print-directory release-mark \
+			PACKAGE=$$pkg VERSION=$(VERSION) CYCLE=$(CYCLE) \
+			TAG=$(TAG) COMMIT=$(COMMIT) DRY=$(DRY) FORCE=$(FORCE) ALLOW_DIRTY=$(ALLOW_DIRTY) \
+			|| exit $$?; \
+	done
+
+# Create an annotated git tag bench/<LABEL> anchoring a shipped cycle.
+# Reads the labelled project dirs locally to compose the tag message
+# (scores + rationale + run names). Refuses if working tree is dirty
+# unless ALLOW_DIRTY=1.
+#
+#   make bench-tag-shipped LABEL=m18b                  # tag HEAD
+#   make bench-tag-shipped LABEL=m18b COMMIT=a1b2c3d   # retroactive
+#   make bench-tag-shipped LABEL=m18b DRY=1            # preview message
+#   make bench-tag-shipped LABEL=m18b FORCE=1          # overwrite
+#
+# Tag is NOT pushed automatically. Push when ready:
+#   git push origin bench/<LABEL>
+bench-tag-shipped:
+	@[ -n "$(LABEL)" ] || { echo "ERROR: LABEL=<cycle-label> required" >&2; exit 2; }
+	uv run python -m scripts.tag_shipped \
+		--label $(LABEL) \
+		$(if $(COMMIT),--commit $(COMMIT),) \
+		$(if $(DRY),--dry-run,) \
+		$(if $(FORCE),--force,) \
+		$(if $(ALLOW_DIRTY),--allow-dirty,)
+
 bench-archive-rescan:
 	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results \
 		--rescan \
