@@ -351,6 +351,36 @@ class PostgresStore:
                 # mental-model tables are owned by
                 # ``astrocyte_postgres.mental_model_store.PostgresMentalModelStore``.
                 #
+                # 023_astrocyte_audit_log.sql is intentionally NOT mirrored
+                # here — audit_log is provisioned via migrate.sh only; the
+                # bootstrap path is dev/test and doesn't need audit history.
+                #
+                # 024_astrocyte_bank_disposition.sql is intentionally NOT
+                # mirrored here — adds disposition/background columns to
+                # ``astrocyte_banks``. The bootstrap path's banks table
+                # creation already handles these columns being absent (the
+                # store reads them with ``COALESCE``-style fallbacks).
+                #
+                # 025_astrocyte_documents.sql, 026_astrocyte_document_nodes.sql,
+                # and 030_document_node_page_range.sql are intentionally NOT
+                # mirrored here — the Document Engine tables (M17 Phase 2) are
+                # owned by ``astrocyte_postgres.document_store`` (or similar
+                # sibling), not by PostgresStore.
+                #
+                # 027_astrocyte_conversations.sql and
+                # 028_astrocyte_conversation_turns.sql are intentionally NOT
+                # mirrored here — Conversation Engine tables (M17 Phase 2.5)
+                # are owned by their dedicated sibling store.
+                #
+                # 029_pi_facts_nullable_document_id.sql is intentionally NOT
+                # mirrored here — relaxes a CHECK on a PageIndex fact column
+                # owned by ``PostgresPageIndexStore``.
+                #
+                # 031_astrocyte_conversation_documents.sql is intentionally
+                # NOT mirrored here — the conversation↔document association
+                # table is a composition-layer artifact owned by neither
+                # engine alone; provisioned via migrate.sh, not bootstrap.
+                #
                 # Mirrors 008_entities_temporal.sql (temporal_facts table only;
                 # the entity_* tables in 008 are owned by the entity-resolution
                 # adapter, not this store).
