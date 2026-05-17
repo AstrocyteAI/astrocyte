@@ -38,14 +38,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from scripts.financebench._client import FinanceBenchClient
-from scripts.financebench._dataset import (
+from scripts.financebench._client import FinanceBenchClient  # noqa: E402
+from scripts.financebench._dataset import (  # noqa: E402
     FinanceBenchEntry,
     load_dataset,
     pdf_path,
     unique_docs,
 )
-from scripts.financebench._scoring import judge
+from scripts.financebench._scoring import judge  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

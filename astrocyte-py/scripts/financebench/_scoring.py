@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, Awaitable
+from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 

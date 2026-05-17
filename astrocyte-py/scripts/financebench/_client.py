@@ -32,11 +32,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from astrocyte.documents.builders.md_builder import build_markdown_tree
-from astrocyte.documents.builders.summarizer import AdaptiveSummarizer
-from astrocyte.documents.ingestor import DocumentIngestor
-from astrocyte.documents.types import Document
-from astrocyte.types import Message
+from astrocyte.documents.builders.md_builder import build_markdown_tree  # noqa: E402
+from astrocyte.documents.builders.summarizer import AdaptiveSummarizer  # noqa: E402
+from astrocyte.documents.ingestor import DocumentIngestor  # noqa: E402
+from astrocyte.documents.types import Document  # noqa: E402
+from astrocyte.types import Message  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,9 @@ logger = logging.getLogger(__name__)
 # Optional Phase A import — MarkitdownParser (not yet built)
 # ---------------------------------------------------------------------------
 try:
-    from astrocyte.documents.parsers.markitdown import MarkitdownParser as _MarkitdownParser  # type: ignore[import-not-found]
+    from astrocyte.documents.parsers.markitdown import (
+        MarkitdownParser as _MarkitdownParser,  # type: ignore[import-not-found]
+    )
     _MARKITDOWN_AVAILABLE = True
 except ImportError:
     _MARKITDOWN_AVAILABLE = False
@@ -53,8 +55,8 @@ except ImportError:
 # Optional Phase C/D import — DocumentRetriever + DocumentNavigator
 # ---------------------------------------------------------------------------
 try:
-    from astrocyte.documents.retrieval.retriever import DocumentRetriever  # type: ignore[import-not-found]
     from astrocyte.documents.retrieval.navigator import DocumentNavigator  # type: ignore[import-not-found]
+    from astrocyte.documents.retrieval.retriever import DocumentRetriever  # type: ignore[import-not-found]
     _TREE_SEARCH_AVAILABLE = True
 except ImportError:
     _TREE_SEARCH_AVAILABLE = False
@@ -178,6 +180,7 @@ class FinanceBenchClient:
             return
 
         from astrocyte_postgres.document_store import PostgresDocumentStore  # noqa: PLC0415
+
         from astrocyte.providers.openai import OpenAIProvider  # noqa: PLC0415
 
         dsn = os.environ.get("DATABASE_URL") or os.environ.get("ASTROCYTE_PG_DSN")
