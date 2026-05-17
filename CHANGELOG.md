@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### M19 (v0.14.0) — SHIPPED: per-Q-type prompt routing + enriched fact extraction (2026-05-18)
+
+**2-run mean 193/230 (83.91%)** — clears M17+1σ ship gate by +2.25pp; +4q over previously-shipped B1-dp+RRF mean; +12q over B0 baseline. New high across the M17+M18+M19 series.
+
+| Bench | M19a 2-run mean | vs M17 baseline | vs B0 |
+|---|---|---|---|
+| **LME top_20** | **81.67%** (24.5/30) | M17 75.56% → **+6.11pp** | B0 66.67% → +15pp |
+| **LoCoMo top_20** | **84.25%** (168.5/200) | M17 80.5% → **+3.75pp / +2.50σ** | B0 80.5% → +3.75pp |
+| **Combined** | **83.91%** (193/230) | — | B0 78.70% → **+5.22pp** |
+
+**Three architectural changes shipped:**
+
+1. **Per-Q-type prompt routing** (`scripts/mem0_harness/_hindsight_prompt.py`) — the Hindsight SSP block is now one of FOUR inline category blocks (recommendation, multi-hop, temporal, knowledge-update), each conditionally applied by the answerer based on question shape. Fixes the M18b anti-composition: previously the SSP block bled into multi-hop questions causing the −7q B5-stack regression; per-Q-type routing scopes its influence correctly. Default ON post-M19; override `ASTROCYTE_M18_HINDSIGHT_SSP_PROMPT=0` for ablation.
+
+2. **Enriched fact extraction (Hindsight `why` parity)** (`astrocyte/pipeline/section_fact_extraction.py`) — extraction prompt now requires each fact's `text` field to capture WHAT + WHY (reason, strength, scope, conditions), not just bare atomic statements. Example: `"User strongly prefers Sony cameras for product photography because they already own a Sony 24-70mm lens for their candle business; would not consider switching"` instead of `"User prefers Sony"`. The richer text flows through recall to the answerer, enabling SSP answers that structure recommendations around the original framing (M19a r2 hit SSP 5/5 ceiling — first time).
+
+3. **directive_compile DEPRECATED** (`astrocyte/config.py` + `astrocyte/pipeline/document_postprocess.py`) — the M18a-2 auto-compile path is architecturally misaligned with Hindsight's user-authored `create_directive` MCP tool (compressed directives override original preference nuance, replicated −30pp SSP regression in M18b B2 × 2 runs). Code stays in-tree as reference for the future MCP-tool path; flag emits a runtime warning when set True.
+
+**Removed:**
+- M19 Workstream C boost-layer wiring in `scripts/mem0_harness/astrocyte_client.py` — regressed −7q vs shipped (Hindsight's recency boost α=0.2 favors recent sections, but our temporal-reasoning workload needs older sections for date arithmetic). The boost primitive (`astrocyte/pipeline/rerank_boosts.py`) stays available, still used by `section_rerank` where it ships clean. The `ASTROCYTE_M19_ENABLE_UNIFIED_BOOSTS` env var is no longer wired (no-op).
+
+**Architectural insight banked for M20+:** the M18b "retrieval-feature ceiling" finding holds, but the BREAKER is **answer-time prompt routing**, not more parallel RRF siblings or unified rerank boosts. M19a composed B1-dp+RRF (recall) + Hindsight SSP block (answer) WITHOUT anti-composition because the prompt block is gated to questions where it helps. Future accuracy work should prioritise answer-time mechanisms over more recall siblings.
+
 ### M18b.2 follow-up (2026-05-18) — B3/B4/B1+B3 ablations + retrieval-ceiling finding
 
 Ran the three deferred M18b ablations overnight (autonomous queue, ~$6 spend, ~2 hours). All three are NULL or anti-composing; **none ship**. The combined M18b + M18b.2 evidence indicates we've hit a **retrieval-feature accuracy ceiling** — adding more parallel retrieval strategies to the shipped RRF fusion does not compose further.
@@ -13,8 +36,9 @@ Ran the three deferred M18b ablations overnight (autonomous queue, ~$6 spend, ~2
 | B3 spreading_activation | ❌ Null | LME 68.33% / LoCoMo 82.50% / total 185.5 (80.65%) | LoCoMo +2pp lift didn't replicate — r1 had temporal +4, r2 had temporal −1; net within noise |
 | B4 episodic_extract | ❌ Null | r1 only: total 182 (+1q vs B0) | Slight negative composition with rerank; temporal regression −4 on the single run |
 | B1+B3 stack | ❌ Anti-composes | r1 only: total 184 (+3q vs B0; −5q vs B1-dp+RRF alone) | Same shape as B5-stack: combined < best individual. Multi-hop +3 (RRF wins), temporal −3 (B3 loses) |
+| **All-ON B5** (all 5 features simultaneously) | Plateaus, **no per-cat regression on LoCoMo** | r1 only: LME 20/30 / LoCoMo 169/200 / total 189 (82.17%) | LoCoMo matches top-tier (open-domain +5, biggest OD lift of M18b series; multi-hop +1, temporal +2, no regression). LME perfectly cancels at B0 (SSA −2 vs SSP+1+SSU+1). Total ties B1-dp+RRF 2-run mean. **Does not exceed single-feature ceiling.** |
 
-**Retrieval-ceiling finding (banked for M19):** four parallel retrieval strategies tested as RRF siblings on top of shipped fact_recall (B2/B3/B4 individually plus all attempted stacks) — none compose with the shipped B1-dp+RRF (temporal + dateparser + RRF) for additional accuracy. The RRF fusion appears to have a saturation point: adding more strategies dilutes the cross-strategy agreement signal rather than reinforcing it.
+**Retrieval-ceiling finding (banked for M19) — revised with all-ON B5 data:** four parallel retrieval strategies tested as RRF siblings on top of shipped fact_recall (B2/B3/B4 individually plus stacking combinations) — multiple configurations cluster at the same 189-192/230 combined accuracy ceiling. **2-feature stacks ANTI-COMPOSE** (B5-stack 182-187, B1+B3 184 — categories compete, one wins / one loses, net combined < best individual). **5-feature all-ON does NOT anti-compose** (189/230 with zero per-category LoCoMo regression — open-domain even hits +5, biggest OD lift of M18b series) but doesn't EXCEED the ceiling either. **Mechanism:** at 2 features each signal is strong enough to displace the other's wins; at 5 features no signal dominates, system falls back to baseline+coverage. The fix is not "more or fewer RRF siblings" — it's a NEW mechanism that lets signals compose by modulation rather than competition.
 
 **This sharpens the M19 priority:**
 
