@@ -75,7 +75,9 @@ class TestParseActions:
         assert actions[0]["action"] == "create"
 
     def test_mixed_valid_and_invalid(self):
-        raw = '[{"action": "create", "text": "A", "confidence": 0.9}, "not_a_dict", {"action": "delete", "obs_id": "x"}]'
+        raw = (
+            '[{"action": "create", "text": "A", "confidence": 0.9}, "not_a_dict", {"action": "delete", "obs_id": "x"}]'
+        )
         actions = _parse_actions(raw)
         assert len(actions) == 2
 
@@ -247,8 +249,7 @@ class TestObservationConsolidatorUpdate:
 
         # Second retain → update action referencing the existing obs
         llm_update = _make_json_llm(
-            f'[{{"action": "update", "obs_id": "{obs_id}", '
-            f'"text": "Alice is a senior engineer.", "confidence": 0.92}}]'
+            f'[{{"action": "update", "obs_id": "{obs_id}", "text": "Alice is a senior engineer.", "confidence": 0.92}}]'
         )
         result = await consolidator.consolidate(
             new_memory_text="Alice got promoted to senior engineer.",
@@ -393,30 +394,32 @@ class TestOrchestratorObservationIntegration:
             # observation_weight=0.0 by default — injection disabled
         )
         # Raw memory in the main bank
-        await vs.store_vectors([
-            VectorItem(
-                id="raw001",
-                bank_id="bank-filter",
-                vector=[1.0] + [0.0] * 127,
-                text="Charlie plays guitar.",
-                fact_type="world",
-            ),
-        ])
-        # Observation in the separate ::obs bank (written by consolidation, not by retain)
-        await vs.store_vectors([
-            VectorItem(
-                id="obs001",
-                bank_id=obs_bank_id("bank-filter"),
-                vector=[1.0] + [0.0] * 127,
-                text="Charlie is a musician.",
-                fact_type="observation",
-                metadata={"_obs_proof_count": 2},
-            ),
-        ])
-        # Normal recall: only raw bank is searched (observation_weight=0.0 → no injection)
-        result = await orch.recall(
-            RecallRequest(query="Charlie", bank_id="bank-filter", max_results=10)
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="raw001",
+                    bank_id="bank-filter",
+                    vector=[1.0] + [0.0] * 127,
+                    text="Charlie plays guitar.",
+                    fact_type="world",
+                ),
+            ]
         )
+        # Observation in the separate ::obs bank (written by consolidation, not by retain)
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="obs001",
+                    bank_id=obs_bank_id("bank-filter"),
+                    vector=[1.0] + [0.0] * 127,
+                    text="Charlie is a musician.",
+                    fact_type="observation",
+                    metadata={"_obs_proof_count": 2},
+                ),
+            ]
+        )
+        # Normal recall: only raw bank is searched (observation_weight=0.0 → no injection)
+        result = await orch.recall(RecallRequest(query="Charlie", bank_id="bank-filter", max_results=10))
         hit_ids = {h.memory_id for h in result.hits}
         assert "raw001" in hit_ids
         assert "obs001" not in hit_ids  # ::obs bank not injected by default

@@ -271,9 +271,7 @@ class TestOrchestratorAsOf:
         await vs.store_vectors([old, new])
 
         # Recall as_of checkpoint — should only see old-mem
-        result = await orch.recall(
-            RecallRequest(query="Alice", bank_id="bank1", as_of=checkpoint)
-        )
+        result = await orch.recall(RecallRequest(query="Alice", bank_id="bank1", as_of=checkpoint))
         ids = {h.memory_id for h in result.hits}
         assert "old-mem" in ids
         assert "new-mem" not in ids
@@ -285,10 +283,12 @@ class TestOrchestratorAsOf:
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
 
-        await vs.store_vectors([
-            _item("m1", "bank1", "Alice at Meta", retained_at=_ts(5)),
-            _item("m2", "bank1", "Alice at Google", retained_at=_future(1)),
-        ])
+        await vs.store_vectors(
+            [
+                _item("m1", "bank1", "Alice at Meta", retained_at=_ts(5)),
+                _item("m2", "bank1", "Alice at Google", retained_at=_future(1)),
+            ]
+        )
 
         result = await orch.recall(RecallRequest(query="Alice", bank_id="bank1", as_of=None))
         ids = {h.memory_id for h in result.hits}
@@ -326,10 +326,12 @@ class TestBrainHistory:
         brain, vs = self._brain()
 
         checkpoint = _ts(3)  # 3 days ago
-        await vs.store_vectors([
-            _item("m-old", "bank1", "Alice at Meta", retained_at=_ts(10)),
-            _item("m-new", "bank1", "Alice at Google", retained_at=_ts(1)),  # more recent
-        ])
+        await vs.store_vectors(
+            [
+                _item("m-old", "bank1", "Alice at Meta", retained_at=_ts(10)),
+                _item("m-new", "bank1", "Alice at Google", retained_at=_ts(1)),  # more recent
+            ]
+        )
 
         # as_of 3 days ago → only m-old visible
         result = await brain.history("Alice", bank_id="bank1", as_of=checkpoint)
@@ -341,10 +343,12 @@ class TestBrainHistory:
     async def test_history_includes_memories_retained_before_as_of(self):
         brain, vs = self._brain()
 
-        await vs.store_vectors([
-            _item("m1", "bank1", "Alice fact one", retained_at=_ts(5)),
-            _item("m2", "bank1", "Alice fact two", retained_at=_ts(2)),
-        ])
+        await vs.store_vectors(
+            [
+                _item("m1", "bank1", "Alice fact one", retained_at=_ts(5)),
+                _item("m2", "bank1", "Alice fact two", retained_at=_ts(2)),
+            ]
+        )
 
         # as_of = now → both visible
         result = await brain.history("Alice", bank_id="bank1", as_of=datetime.now(UTC))
@@ -356,9 +360,11 @@ class TestBrainHistory:
     async def test_history_empty_when_all_memories_in_future(self):
         brain, vs = self._brain()
 
-        await vs.store_vectors([
-            _item("m1", "bank1", "Alice at Meta", retained_at=_future(2)),
-        ])
+        await vs.store_vectors(
+            [
+                _item("m1", "bank1", "Alice at Meta", retained_at=_future(2)),
+            ]
+        )
 
         # as_of = now → nothing visible
         result = await brain.history("Alice", bank_id="bank1", as_of=datetime.now(UTC))
@@ -369,9 +375,7 @@ class TestBrainHistory:
         brain, vs = self._brain()
 
         for i in range(5):
-            await vs.store_vectors([
-                _item(f"m{i}", "bank1", f"Alice memory {i}", retained_at=_ts(i + 1))
-            ])
+            await vs.store_vectors([_item(f"m{i}", "bank1", f"Alice memory {i}", retained_at=_ts(i + 1))])
 
         result = await brain.history("Alice memory", bank_id="bank1", as_of=datetime.now(UTC), max_results=2)
         assert len(result.hits) <= 2

@@ -42,17 +42,22 @@ from astrocyte.types import RecallRequest
 
 class TestLoaderSchema:
     def test_loader_accepts_float_half_life(self) -> None:
-        cfg = _parse_mip_config({
-            "version": "1.0",
-            "rules": [{
-                "name": "r", "priority": 10,
-                "match": {"content_type": "text"},
-                "action": {
-                    "bank": "b",
-                    "pipeline": {"version": 1, "temporal_half_life_days": 90.0},
-                },
-            }],
-        })
+        cfg = _parse_mip_config(
+            {
+                "version": "1.0",
+                "rules": [
+                    {
+                        "name": "r",
+                        "priority": 10,
+                        "match": {"content_type": "text"},
+                        "action": {
+                            "bank": "b",
+                            "pipeline": {"version": 1, "temporal_half_life_days": 90.0},
+                        },
+                    }
+                ],
+            }
+        )
         spec = cfg.rules[0].action.pipeline
         assert spec is not None
         assert spec.temporal_half_life_days == 90.0
@@ -60,74 +65,99 @@ class TestLoaderSchema:
     def test_loader_accepts_int_half_life(self) -> None:
         """Ints are commonly used in YAML (``temporal_half_life_days: 90``).
         Loader must coerce to float."""
-        cfg = _parse_mip_config({
-            "version": "1.0",
-            "rules": [{
-                "name": "r", "priority": 10,
-                "match": {"content_type": "text"},
-                "action": {
-                    "bank": "b",
-                    "pipeline": {"version": 1, "temporal_half_life_days": 90},
-                },
-            }],
-        })
+        cfg = _parse_mip_config(
+            {
+                "version": "1.0",
+                "rules": [
+                    {
+                        "name": "r",
+                        "priority": 10,
+                        "match": {"content_type": "text"},
+                        "action": {
+                            "bank": "b",
+                            "pipeline": {"version": 1, "temporal_half_life_days": 90},
+                        },
+                    }
+                ],
+            }
+        )
         spec = cfg.rules[0].action.pipeline
         assert isinstance(spec.temporal_half_life_days, float)
         assert spec.temporal_half_life_days == 90.0
 
     def test_loader_rejects_zero(self) -> None:
         with pytest.raises(ConfigError, match="temporal_half_life_days"):
-            _parse_mip_config({
-                "version": "1.0",
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "text"},
-                    "action": {
-                        "bank": "b",
-                        "pipeline": {"version": 1, "temporal_half_life_days": 0},
-                    },
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "version": "1.0",
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "text"},
+                            "action": {
+                                "bank": "b",
+                                "pipeline": {"version": 1, "temporal_half_life_days": 0},
+                            },
+                        }
+                    ],
+                }
+            )
 
     def test_loader_rejects_negative(self) -> None:
         with pytest.raises(ConfigError, match="temporal_half_life_days"):
-            _parse_mip_config({
-                "version": "1.0",
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "text"},
-                    "action": {
-                        "bank": "b",
-                        "pipeline": {"version": 1, "temporal_half_life_days": -1},
-                    },
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "version": "1.0",
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "text"},
+                            "action": {
+                                "bank": "b",
+                                "pipeline": {"version": 1, "temporal_half_life_days": -1},
+                            },
+                        }
+                    ],
+                }
+            )
 
     def test_loader_rejects_non_number(self) -> None:
         with pytest.raises(ConfigError, match="temporal_half_life_days"):
-            _parse_mip_config({
-                "version": "1.0",
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "text"},
-                    "action": {
-                        "bank": "b",
-                        "pipeline": {"version": 1, "temporal_half_life_days": "seven"},
-                    },
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "version": "1.0",
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "text"},
+                            "action": {
+                                "bank": "b",
+                                "pipeline": {"version": 1, "temporal_half_life_days": "seven"},
+                            },
+                        }
+                    ],
+                }
+            )
 
     def test_loader_absent_field_defaults_to_none(self) -> None:
         """Unset half-life means 'use orchestrator default' — must be
         None so the override logic can detect it."""
-        cfg = _parse_mip_config({
-            "version": "1.0",
-            "rules": [{
-                "name": "r", "priority": 10,
-                "match": {"content_type": "text"},
-                "action": {"bank": "b", "pipeline": {"version": 1}},
-            }],
-        })
+        cfg = _parse_mip_config(
+            {
+                "version": "1.0",
+                "rules": [
+                    {
+                        "name": "r",
+                        "priority": 10,
+                        "match": {"content_type": "text"},
+                        "action": {"bank": "b", "pipeline": {"version": 1}},
+                    }
+                ],
+            }
+        )
         spec = cfg.rules[0].action.pipeline
         assert spec is not None
         assert spec.temporal_half_life_days is None
@@ -176,9 +206,11 @@ def _build_orch_with_rule(half_life_override: float | None) -> PipelineOrchestra
     rule = RoutingRule(
         name="test-rule",
         priority=10,
-        match=MatchBlock(all_conditions=[
-            MatchSpec(field="content_type", operator="eq", value="text"),
-        ]),
+        match=MatchBlock(
+            all_conditions=[
+                MatchSpec(field="content_type", operator="eq", value="text"),
+            ]
+        ),
         action=ActionSpec(bank="b", pipeline=pipeline_spec),
     )
     mip_config = MipConfig(version="1.0", rules=[rule])
@@ -186,7 +218,7 @@ def _build_orch_with_rule(half_life_override: float | None) -> PipelineOrchestra
     orch = PipelineOrchestrator(
         vector_store=InMemoryVectorStore(),
         llm_provider=MockLLMProvider(),
-        temporal_half_life_days=7.0,   # orchestrator default
+        temporal_half_life_days=7.0,  # orchestrator default
     )
     orch.mip_router = MipRouter(mip_config)
     return orch
@@ -276,18 +308,31 @@ class TestOrchestratorOverride:
         # Single 30-day-old memory. Same input, different half-life → different score.
         from astrocyte.types import VectorItem
 
-        await store.store_vectors([
-            VectorItem(
-                id="v1", bank_id="b", vector=[1.0, 0.0], text="memo",
-                metadata={"_created_at": (now - timedelta(days=30)).isoformat()},
-            ),
-        ])
+        await store.store_vectors(
+            [
+                VectorItem(
+                    id="v1",
+                    bank_id="b",
+                    vector=[1.0, 0.0],
+                    text="memo",
+                    metadata={"_created_at": (now - timedelta(days=30)).isoformat()},
+                ),
+            ]
+        )
 
         short = await _temporal_search(
-            store, "b", limit=10, scan_cap=500, half_life_days=7.0,
+            store,
+            "b",
+            limit=10,
+            scan_cap=500,
+            half_life_days=7.0,
         )
         long = await _temporal_search(
-            store, "b", limit=10, scan_cap=500, half_life_days=90.0,
+            store,
+            "b",
+            limit=10,
+            scan_cap=500,
+            half_life_days=90.0,
         )
         # 30 days old:
         # - 7d half-life:  2**(-30/7)  ≈ 0.0506
@@ -296,33 +341,32 @@ class TestOrchestratorOverride:
         assert long[0].score == pytest.approx(2.0 ** (-30.0 / 90.0), abs=0.001)
         assert long[0].score > short[0].score
 
-
-# ---------------------------------------------------------------------------
-# Session 1 Item 3 — analysis correction note
-# ---------------------------------------------------------------------------
-# The original claim was that bumping temporal_half_life_days from 7 to 90
-# would lift LongMemEval because older memories would stop being "ignored."
-# That's not quite right as implemented:
-#
-# 1. _temporal_search sorts internally by score (= decay-of-age), which is
-#    monotonic in age. The sort order doesn't change with half-life; only
-#    the absolute score values do.
-# 2. RRF fuses by RANK, not score. So regardless of half-life, the temporal
-#    strategy contributes the same per-rank RRF weight to each item.
-# 3. Net effect on recall ordering: zero, given the current RRF impl.
-#
-# The plumbing IS still correct — it's the mechanism that's incomplete.
-# Converting temporal from a rank-contributing strategy to a score-aware
-# fusion input (e.g. score-weighted RRF variant, or a recency boost
-# applied to semantic/keyword scores) is tracked as a follow-up: see the
-# todo "Make temporal half-life actually affect fusion ordering" to be
-# scheduled after Session 1 measurement.
-#
-# For Session 1 re-run we continue to set LongMemEval's half-life to 90
-# via MIP override — the schema/loader/plumbing delivers the value all
-# the way to _temporal_search, and when the follow-up fusion fix lands,
-# the config surface is ready. Today's benefit is limited to operators
-# who build custom retrieval code that reads the per-bank value.
+    # ---------------------------------------------------------------------------
+    # Session 1 Item 3 — analysis correction note
+    # ---------------------------------------------------------------------------
+    # The original claim was that bumping temporal_half_life_days from 7 to 90
+    # would lift LongMemEval because older memories would stop being "ignored."
+    # That's not quite right as implemented:
+    #
+    # 1. _temporal_search sorts internally by score (= decay-of-age), which is
+    #    monotonic in age. The sort order doesn't change with half-life; only
+    #    the absolute score values do.
+    # 2. RRF fuses by RANK, not score. So regardless of half-life, the temporal
+    #    strategy contributes the same per-rank RRF weight to each item.
+    # 3. Net effect on recall ordering: zero, given the current RRF impl.
+    #
+    # The plumbing IS still correct — it's the mechanism that's incomplete.
+    # Converting temporal from a rank-contributing strategy to a score-aware
+    # fusion input (e.g. score-weighted RRF variant, or a recency boost
+    # applied to semantic/keyword scores) is tracked as a follow-up: see the
+    # todo "Make temporal half-life actually affect fusion ordering" to be
+    # scheduled after Session 1 measurement.
+    #
+    # For Session 1 re-run we continue to set LongMemEval's half-life to 90
+    # via MIP override — the schema/loader/plumbing delivers the value all
+    # the way to _temporal_search, and when the follow-up fusion fix lands,
+    # the config surface is ready. Today's benefit is limited to operators
+    # who build custom retrieval code that reads the per-bank value.
 
     def test_math_sanity_of_half_life_constants(self) -> None:
         """Pin the decay formula so regressions on the math are obvious."""

@@ -212,7 +212,8 @@ _VERBATIM_JSON_SCHEMA: dict = {
 
 
 def _build_verbatim_user_prompt(
-    chunk_texts: list[str], event_date: datetime | None = None,
+    chunk_texts: list[str],
+    event_date: datetime | None = None,
 ) -> str:
     lines = []
     if event_date is not None:
@@ -324,7 +325,8 @@ _VERBATIM_SINGLE_JSON_SCHEMA: dict = {
 
 
 def _build_verbatim_single_user_prompt(
-    chunk: str, event_date: datetime | None = None,
+    chunk: str,
+    event_date: datetime | None = None,
 ) -> str:
     lines = []
     if event_date is not None:
@@ -404,7 +406,9 @@ async def _extract_one_chunk_verbatim_attempt(
         # the surrounding except.
         try:
             completion = await llm_provider.complete(
-                messages_in, max_tokens=2048, temperature=0.0,
+                messages_in,
+                max_tokens=2048,
+                temperature=0.0,
             )
         except Exception as exc:
             raise _VerbatimChunkError(f"LLM call failed: {exc}") from exc
@@ -443,28 +447,34 @@ async def _extract_one_chunk_verbatim(
     for attempt in range(max(1, max_retries)):
         try:
             return await _extract_one_chunk_verbatim_attempt(
-                chunk, llm_provider, event_date=event_date,
+                chunk,
+                llm_provider,
+                event_date=event_date,
             )
         except _VerbatimChunkError as exc:
             last_exc = exc
             if attempt < max_retries - 1:
                 delay = base_retry_delay * (2**attempt)
                 _logger.warning(
-                    "fact_extraction (verbatim/parallel) chunk attempt %d/%d "
-                    "failed (%s); retrying in %.0fs",
-                    attempt + 1, max_retries, exc, delay,
+                    "fact_extraction (verbatim/parallel) chunk attempt %d/%d failed (%s); retrying in %.0fs",
+                    attempt + 1,
+                    max_retries,
+                    exc,
+                    delay,
                 )
                 await asyncio.sleep(delay)
     _logger.warning(
         "fact_extraction (verbatim/parallel) chunk exhausted %d retries (%s); "
         "falling through to metadata-less ExtractedFact",
-        max_retries, last_exc,
+        max_retries,
+        last_exc,
     )
     return {}
 
 
 def _build_extracted_fact_from_raw(
-    chunk: str, raw: dict,
+    chunk: str,
+    raw: dict,
 ) -> ExtractedFact:
     """Convert one parsed metadata dict + the original chunk text into
     an :class:`ExtractedFact`. Shared by the batched and per-chunk
@@ -562,15 +572,13 @@ async def extract_facts_verbatim_parallel(
             # this branch means a programming error or task
             # cancellation. Log and continue with an empty metadata.
             _logger.warning(
-                "fact_extraction (verbatim/parallel) task raised: %r", r,
+                "fact_extraction (verbatim/parallel) task raised: %r",
+                r,
             )
             continue
         raw_by_idx[r.idx] = r.raw if isinstance(r.raw, dict) else {}
 
-    return [
-        _build_extracted_fact_from_raw(chunk, raw_by_idx.get(idx, {}))
-        for idx, chunk in enumerate(chunk_texts)
-    ]
+    return [_build_extracted_fact_from_raw(chunk, raw_by_idx.get(idx, {})) for idx, chunk in enumerate(chunk_texts)]
 
 
 # ---------------------------------------------------------------------------

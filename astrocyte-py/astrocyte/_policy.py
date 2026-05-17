@@ -28,6 +28,7 @@ from astrocyte.types import (
 if TYPE_CHECKING:
     from astrocyte.types import Metadata
 
+
 class PolicyEnforcer:
     """Centralizes all policy enforcement: access control, rate limiting,
     PII scanning, content validation, metadata sanitization, circuit breaking,
@@ -176,9 +177,7 @@ class PolicyEnforcer:
 
     # -- PII scanning --
 
-    async def scan_pii(
-        self, content: str, mode: str
-    ) -> tuple[str, list[PiiMatch]]:
+    async def scan_pii(self, content: str, mode: str) -> tuple[str, list[PiiMatch]]:
         """Scan content for PII. Returns (possibly redacted content, matches)."""
         if mode in ("llm", "rules_then_llm"):
             return await self._pii_scanner.apply_async(content)
@@ -200,9 +199,7 @@ class PolicyEnforcer:
 
     # -- Metadata sanitization --
 
-    def sanitize_metadata(
-        self, metadata: "Metadata | None"
-    ) -> tuple["Metadata | None", list[str]]:
+    def sanitize_metadata(self, metadata: "Metadata | None") -> tuple["Metadata | None", list[str]]:
         """Sanitize metadata. Returns (sanitized metadata, warnings)."""
         return self._metadata_sanitizer.sanitize(metadata)
 
@@ -227,9 +224,7 @@ class PolicyEnforcer:
 
     # -- Input validation --
 
-    def validate_retain_input(
-        self, content: str, tags: list[str] | None
-    ) -> str | None:
+    def validate_retain_input(self, content: str, tags: list[str] | None) -> str | None:
         """Validate retain input sizes. Returns error string or None if valid."""
         max_content_bytes = self._config.homeostasis.retain_max_content_bytes
         if max_content_bytes:

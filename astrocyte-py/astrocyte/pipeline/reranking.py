@@ -248,7 +248,7 @@ async def llm_pairwise_rerank(
     prompt_lines = [
         "Rank the memory candidates by how directly they answer the query.",
         "Penalize wrong-person or wrong-premise candidates.",
-        "Return JSON only: {\"ranked_ids\": [\"id1\", \"id2\"]}.",
+        'Return JSON only: {"ranked_ids": ["id1", "id2"]}.',
         "",
         f"Query: {query}",
         "",
@@ -348,7 +348,7 @@ def _parse_ranked_ids(text: str) -> list[str]:
     start = raw.find("{")
     end = raw.rfind("}")
     if start >= 0 and end > start:
-        raw = raw[start:end + 1]
+        raw = raw[start : end + 1]
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:

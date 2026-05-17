@@ -64,9 +64,7 @@ class SourceRegistry:
                         "For GitHub, install e.g. pip install astrocyte-ingestion-github or pip install 'astrocyte[poll]'."
                     ) from e
                 except Exception as e:
-                    raise ConfigError(
-                        f"sources.{sid}: failed to load poll driver {driver!r}: {e}"
-                    ) from e
+                    raise ConfigError(f"sources.{sid}: failed to load poll driver {driver!r}: {e}") from e
                 reg.register(source_cls(str(sid), cfg, retain=retain))
             elif st == "stream":
                 driver = (cfg.driver or "redis").strip().lower()
@@ -86,8 +84,6 @@ class SourceRegistry:
                         "For kafka + redis, install e.g. pip install 'astrocyte[stream]'."
                     ) from e
                 except Exception as e:
-                    raise ConfigError(
-                        f"sources.{sid}: failed to load stream driver {driver!r}: {e}"
-                    ) from e
+                    raise ConfigError(f"sources.{sid}: failed to load stream driver {driver!r}: {e}") from e
                 reg.register(source_cls(str(sid), cfg, retain=retain))
         return reg

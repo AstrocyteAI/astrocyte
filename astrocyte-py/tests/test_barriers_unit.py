@@ -318,11 +318,13 @@ class TestMetadataSanitizer:
 
     def test_blocks_sensitive_keys(self):
         ms = MetadataSanitizer()
-        cleaned, warnings = ms.sanitize({
-            "name": "Alice",
-            "api_key": "sk-123",
-            "password": "secret",
-        })
+        cleaned, warnings = ms.sanitize(
+            {
+                "name": "Alice",
+                "api_key": "sk-123",
+                "password": "secret",
+            }
+        )
         assert "api_key" not in cleaned
         assert "password" not in cleaned
         assert "name" in cleaned
@@ -330,12 +332,14 @@ class TestMetadataSanitizer:
 
     def test_blocks_compound_sensitive_keys(self):
         ms = MetadataSanitizer()
-        cleaned, warnings = ms.sanitize({
-            "db_password": "x",
-            "auth_token": "y",
-            "my-secret": "z",
-            "safe_key": "keep",
-        })
+        cleaned, warnings = ms.sanitize(
+            {
+                "db_password": "x",
+                "auth_token": "y",
+                "my-secret": "z",
+                "safe_key": "keep",
+            }
+        )
         assert cleaned is not None
         assert "db_password" not in cleaned
         assert "auth_token" not in cleaned

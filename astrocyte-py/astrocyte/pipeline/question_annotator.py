@@ -125,7 +125,9 @@ async def annotate_question(
     except Exception as exc:  # noqa: BLE001 — annotator failure shouldn't tank a question
         logger.warning(
             "annotate_question: LLM call failed for q=%r: %s: %s",
-            question[:80], type(exc).__name__, exc,
+            question[:80],
+            type(exc).__name__,
+            exc,
         )
         return QuestionAnnotation(entities=[], date_range=None)
 
@@ -134,7 +136,8 @@ async def annotate_question(
     except json.JSONDecodeError:
         logger.warning(
             "annotate_question: JSON parse failed for q=%r; raw=%r",
-            question[:80], completion.text[:120],
+            question[:80],
+            completion.text[:120],
         )
         return QuestionAnnotation(entities=[], date_range=None)
 
@@ -169,7 +172,10 @@ def _parse_iso_range(raw) -> tuple[datetime, datetime] | None:
     try:
         start = datetime.strptime(start_s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         end = datetime.strptime(end_s, "%Y-%m-%d").replace(
-            hour=23, minute=59, second=59, tzinfo=timezone.utc,
+            hour=23,
+            minute=59,
+            second=59,
+            tzinfo=timezone.utc,
         )
     except (ValueError, TypeError):
         return None

@@ -68,7 +68,9 @@ class MipRouter:
             if evaluate_match_block(rule.match, input_data):
                 logger.info(
                     "mip shadow match (no action taken): rule=%s priority=%d tags=%s",
-                    rule.name, rule.priority, rule.observability_tags,
+                    rule.name,
+                    rule.priority,
+                    rule.observability_tags,
                 )
 
         matches = evaluate_rules(live_rules, input_data)
@@ -123,8 +125,7 @@ class MipRouter:
         if policy == "error":
             names = ", ".join(m.rule.name for m in tied)
             raise MipRoutingError(
-                f"MIP tie_breaker=error: {len(tied)} rules matched at priority "
-                f"{top_priority}: {names}"
+                f"MIP tie_breaker=error: {len(tied)} rules matched at priority {top_priority}: {names}"
             )
         if policy == "most_specific":
             return max(tied, key=lambda m: _condition_count(m.rule))

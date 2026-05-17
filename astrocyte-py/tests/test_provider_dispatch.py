@@ -121,9 +121,7 @@ class TestRecallRouting:
         d = _make_dispatcher()
         d.pipeline = _mock_pipeline()
         mock_tr = MagicMock()
-        mock_tr.retrieve = AsyncMock(
-            return_value=RecallResult(hits=[], total_available=0, truncated=False)
-        )
+        mock_tr.retrieve = AsyncMock(return_value=RecallResult(hits=[], total_available=0, truncated=False))
         d.tiered_retriever = mock_tr
         await d.recall(RecallRequest(query="q", bank_id="b1"))
         mock_tr.retrieve.assert_awaited_once()
@@ -142,9 +140,7 @@ class TestRecallRouting:
         )
         d.engine_provider = engine
         ext = [MemoryHit(text="external", score=0.8)]
-        result = await d.recall(
-            RecallRequest(query="q", bank_id="b1", external_context=ext)
-        )
+        result = await d.recall(RecallRequest(query="q", bank_id="b1", external_context=ext))
         # Should have merged external context via RRF
         assert len(result.hits) >= 1
 

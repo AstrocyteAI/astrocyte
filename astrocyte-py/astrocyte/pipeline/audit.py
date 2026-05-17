@@ -76,7 +76,9 @@ def _render_memories(memories: list[MemoryHit]) -> str:
     return "\n".join(lines)
 
 
-def _parse_response(raw: str, scope: str, bank_id: str, memories_scanned: int, trace: RecallTrace | None) -> AuditResult:
+def _parse_response(
+    raw: str, scope: str, bank_id: str, memories_scanned: int, trace: RecallTrace | None
+) -> AuditResult:
     """Parse LLM JSON response into AuditResult, with graceful fallback."""
     raw = raw.strip()
     # Strip markdown fences if the model wrapped the JSON
@@ -129,6 +131,7 @@ def _parse_response(raw: str, scope: str, bank_id: str, memories_scanned: int, t
 # Public entry point
 # ---------------------------------------------------------------------------
 
+
 async def run_audit(
     scope: str,
     bank_id: str,
@@ -155,11 +158,13 @@ async def run_audit(
         return AuditResult(
             scope=scope,
             bank_id=bank_id,
-            gaps=[GapItem(
-                topic=scope,
-                severity="high",
-                reason="No memories were found in this bank for the given scope.",
-            )],
+            gaps=[
+                GapItem(
+                    topic=scope,
+                    severity="high",
+                    reason="No memories were found in this bank for the given scope.",
+                )
+            ],
             coverage_score=0.0,
             memories_scanned=0,
             trace=trace,

@@ -39,8 +39,9 @@ from astrocyte.testing.in_memory import InMemoryVectorStore
 from astrocyte.types import DocumentHit, VectorHit, VectorItem
 
 
-def _vec(id_: str, text: str, bank: str = "b1", *, created_at: datetime | None = None,
-         occurred_at: datetime | None = None) -> VectorItem:
+def _vec(
+    id_: str, text: str, bank: str = "b1", *, created_at: datetime | None = None, occurred_at: datetime | None = None
+) -> VectorItem:
     meta: dict = {}
     if created_at is not None:
         meta["_created_at"] = created_at.isoformat()
@@ -63,7 +64,11 @@ class TestTemporalRanking:
     async def test_empty_bank_returns_empty(self) -> None:
         store = InMemoryVectorStore()
         out = await _temporal_search(
-            store, "b1", limit=10, scan_cap=500, half_life_days=7.0,
+            store,
+            "b1",
+            limit=10,
+            scan_cap=500,
+            half_life_days=7.0,
         )
         assert out == []
 
@@ -93,12 +98,18 @@ class TestTemporalRanking:
         (not rank them all as 'infinitely old'). RRF will ignore the
         empty list so semantic-only retrieval stays correct."""
         store = InMemoryVectorStore()
-        await store.store_vectors([
-            _vec("v1", "hello"),
-            _vec("v2", "world"),
-        ])
+        await store.store_vectors(
+            [
+                _vec("v1", "hello"),
+                _vec("v2", "world"),
+            ]
+        )
         out = await _temporal_search(
-            store, "b1", limit=10, scan_cap=500, half_life_days=7.0,
+            store,
+            "b1",
+            limit=10,
+            scan_cap=500,
+            half_life_days=7.0,
         )
         assert out == []
 
@@ -106,13 +117,19 @@ class TestTemporalRanking:
         """Most-recent memory ranks first regardless of insertion order."""
         now = datetime.now(timezone.utc)
         store = InMemoryVectorStore()
-        await store.store_vectors([
-            _vec("old", "old memory", created_at=now - timedelta(days=30)),
-            _vec("fresh", "fresh memory", created_at=now - timedelta(hours=1)),
-            _vec("mid", "mid memory", created_at=now - timedelta(days=3)),
-        ])
+        await store.store_vectors(
+            [
+                _vec("old", "old memory", created_at=now - timedelta(days=30)),
+                _vec("fresh", "fresh memory", created_at=now - timedelta(hours=1)),
+                _vec("mid", "mid memory", created_at=now - timedelta(days=3)),
+            ]
+        )
         out = await _temporal_search(
-            store, "b1", limit=10, scan_cap=500, half_life_days=7.0,
+            store,
+            "b1",
+            limit=10,
+            scan_cap=500,
+            half_life_days=7.0,
         )
         assert [item.id for item in out] == ["fresh", "mid", "old"]
 
@@ -122,12 +139,18 @@ class TestTemporalRanking:
         gets ranked."""
         now = datetime.now(timezone.utc)
         store = InMemoryVectorStore()
-        await store.store_vectors([
-            _vec("with-occurred", "x", occurred_at=now - timedelta(hours=2)),
-            _vec("no-timestamp", "y"),
-        ])
+        await store.store_vectors(
+            [
+                _vec("with-occurred", "x", occurred_at=now - timedelta(hours=2)),
+                _vec("no-timestamp", "y"),
+            ]
+        )
         out = await _temporal_search(
-            store, "b1", limit=10, scan_cap=500, half_life_days=7.0,
+            store,
+            "b1",
+            limit=10,
+            scan_cap=500,
+            half_life_days=7.0,
         )
         # Only the item with a usable timestamp contributes.
         assert [item.id for item in out] == ["with-occurred"]
@@ -149,13 +172,19 @@ class TestTemporalRanking:
         now = datetime.now(timezone.utc)
         half_life = 7.0
         store = InMemoryVectorStore()
-        await store.store_vectors([
-            _vec("fresh", "a", created_at=now - timedelta(seconds=1)),
-            _vec("one_hl", "b", created_at=now - timedelta(days=half_life)),
-            _vec("two_hl", "c", created_at=now - timedelta(days=half_life * 2)),
-        ])
+        await store.store_vectors(
+            [
+                _vec("fresh", "a", created_at=now - timedelta(seconds=1)),
+                _vec("one_hl", "b", created_at=now - timedelta(days=half_life)),
+                _vec("two_hl", "c", created_at=now - timedelta(days=half_life * 2)),
+            ]
+        )
         out = await _temporal_search(
-            store, "b1", limit=10, scan_cap=500, half_life_days=half_life,
+            store,
+            "b1",
+            limit=10,
+            scan_cap=500,
+            half_life_days=half_life,
         )
         by_id = {item.id: item.score for item in out}
         assert by_id["fresh"] == pytest.approx(1.0, abs=0.01)
@@ -173,13 +202,19 @@ class TestTemporalRanking:
         store = InMemoryVectorStore()
         # list_vectors returns sorted by id — use ids that sort to put
         # the fresh one LAST so it's excluded when scan_cap=2.
-        await store.store_vectors([
-            _vec("a-old", "a", created_at=now - timedelta(days=30)),
-            _vec("b-oldish", "b", created_at=now - timedelta(days=10)),
-            _vec("c-fresh", "c", created_at=now - timedelta(hours=1)),
-        ])
+        await store.store_vectors(
+            [
+                _vec("a-old", "a", created_at=now - timedelta(days=30)),
+                _vec("b-oldish", "b", created_at=now - timedelta(days=10)),
+                _vec("c-fresh", "c", created_at=now - timedelta(hours=1)),
+            ]
+        )
         out = await _temporal_search(
-            store, "b1", limit=10, scan_cap=2, half_life_days=7.0,
+            store,
+            "b1",
+            limit=10,
+            scan_cap=2,
+            half_life_days=7.0,
         )
         ids = {item.id for item in out}
         assert "c-fresh" not in ids  # cap excluded it
@@ -188,12 +223,13 @@ class TestTemporalRanking:
     async def test_limit_trims_output(self) -> None:
         now = datetime.now(timezone.utc)
         store = InMemoryVectorStore()
-        await store.store_vectors([
-            _vec(f"v{i}", f"t{i}", created_at=now - timedelta(hours=i))
-            for i in range(10)
-        ])
+        await store.store_vectors([_vec(f"v{i}", f"t{i}", created_at=now - timedelta(hours=i)) for i in range(10)])
         out = await _temporal_search(
-            store, "b1", limit=3, scan_cap=500, half_life_days=7.0,
+            store,
+            "b1",
+            limit=3,
+            scan_cap=500,
+            half_life_days=7.0,
         )
         assert len(out) == 3
 
@@ -202,17 +238,26 @@ class TestTemporalRanking:
         so downstream rerank + reflect can still reason about the hit."""
         now = datetime.now(timezone.utc)
         store = InMemoryVectorStore()
-        await store.store_vectors([
-            VectorItem(
-                id="v1", bank_id="b1", vector=[1.0, 0.0], text="t",
-                metadata={"_created_at": now.isoformat(), "k": "v"},
-                tags=["topic:x"],
-                fact_type="world",
-                memory_layer="fact",
-            ),
-        ])
+        await store.store_vectors(
+            [
+                VectorItem(
+                    id="v1",
+                    bank_id="b1",
+                    vector=[1.0, 0.0],
+                    text="t",
+                    metadata={"_created_at": now.isoformat(), "k": "v"},
+                    tags=["topic:x"],
+                    fact_type="world",
+                    memory_layer="fact",
+                ),
+            ]
+        )
         out = await _temporal_search(
-            store, "b1", limit=10, scan_cap=500, half_life_days=7.0,
+            store,
+            "b1",
+            limit=10,
+            scan_cap=500,
+            half_life_days=7.0,
         )
         assert len(out) == 1
         item = out[0]
@@ -231,7 +276,10 @@ class TestExtractTimestamp:
     def test_iso_string_created_at(self) -> None:
         now = datetime(2026, 4, 18, 12, tzinfo=timezone.utc)
         v = VectorItem(
-            id="v", bank_id="b", vector=[0.0], text="t",
+            id="v",
+            bank_id="b",
+            vector=[0.0],
+            text="t",
             metadata={"_created_at": now.isoformat()},
         )
         assert _extract_timestamp(v) == now
@@ -241,7 +289,10 @@ class TestExtractTimestamp:
         back to occurred_at if the metadata is garbage."""
         now = datetime(2026, 4, 18, tzinfo=timezone.utc)
         v = VectorItem(
-            id="v", bank_id="b", vector=[0.0], text="t",
+            id="v",
+            bank_id="b",
+            vector=[0.0],
+            text="t",
             metadata={"_created_at": "not-a-date"},
             occurred_at=now,
         )
@@ -250,7 +301,10 @@ class TestExtractTimestamp:
     def test_naive_datetime_interpreted_as_utc(self) -> None:
         naive = datetime(2026, 4, 18, 12)
         v = VectorItem(
-            id="v", bank_id="b", vector=[0.0], text="t",
+            id="v",
+            bank_id="b",
+            vector=[0.0],
+            text="t",
             metadata=None,
             occurred_at=naive,
         )
@@ -273,9 +327,11 @@ class TestParallelRetrieveTemporal:
     async def test_temporal_strategy_appears_when_enabled(self) -> None:
         now = datetime.now(timezone.utc)
         store = InMemoryVectorStore()
-        await store.store_vectors([
-            _vec("v1", "x", created_at=now),
-        ])
+        await store.store_vectors(
+            [
+                _vec("v1", "x", created_at=now),
+            ]
+        )
         results = await parallel_retrieve(
             query_vector=[1.0, 0.0],
             query_text="x",
@@ -304,16 +360,24 @@ class TestParallelRetrieveTemporal:
         the strategy produces for the same fixture."""
         now = datetime.now(timezone.utc)
         store = InMemoryVectorStore()
-        await store.store_vectors([
-            _vec("old", "x", created_at=now - timedelta(days=7)),
-        ])
+        await store.store_vectors(
+            [
+                _vec("old", "x", created_at=now - timedelta(days=7)),
+            ]
+        )
         slow = await parallel_retrieve(
-            query_vector=[1.0, 0.0], query_text="x", bank_id="b1",
-            vector_store=store, temporal_half_life_days=30.0,
+            query_vector=[1.0, 0.0],
+            query_text="x",
+            bank_id="b1",
+            vector_store=store,
+            temporal_half_life_days=30.0,
         )
         fast = await parallel_retrieve(
-            query_vector=[1.0, 0.0], query_text="x", bank_id="b1",
-            vector_store=store, temporal_half_life_days=1.0,
+            query_vector=[1.0, 0.0],
+            query_text="x",
+            bank_id="b1",
+            vector_store=store,
+            temporal_half_life_days=1.0,
         )
         # Faster decay → 7-day-old memory scored much lower.
         assert slow["temporal"][0].score > fast["temporal"][0].score
@@ -471,6 +535,7 @@ class TestParallelRetrieveTemporal:
             async def search_fulltext(self, *_args, **_kwargs):
                 self.classic_called = True
                 return [DocumentHit(document_id="classic", text="x", score=0.5)]
+
             # NO search_fulltext_bm25 — use_bm25_idf must fall through.
 
         store = ClassicOnlyStore()

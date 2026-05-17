@@ -61,29 +61,35 @@ class TestStoreVectors:
 
 class TestSearchSimilar:
     async def test_basic_search(self, store: PostgresStore):
-        await store.store_vectors([
-            make_item("a", vector=[1.0, 0.0, 0.0]),
-            make_item("b", vector=[0.0, 1.0, 0.0]),
-            make_item("c", vector=[0.0, 0.0, 1.0]),
-        ])
+        await store.store_vectors(
+            [
+                make_item("a", vector=[1.0, 0.0, 0.0]),
+                make_item("b", vector=[0.0, 1.0, 0.0]),
+                make_item("c", vector=[0.0, 0.0, 1.0]),
+            ]
+        )
         hits = await store.search_similar([1.0, 0.0, 0.0], "bank-1", limit=3)
         assert len(hits) == 3
         assert hits[0].id == "a"
 
     async def test_search_filters_by_bank(self, store: PostgresStore):
-        await store.store_vectors([
-            make_item("a", bank_id="bank-1", vector=[1.0, 0.0, 0.0]),
-            make_item("b", bank_id="bank-2", vector=[1.0, 0.0, 0.0]),
-        ])
+        await store.store_vectors(
+            [
+                make_item("a", bank_id="bank-1", vector=[1.0, 0.0, 0.0]),
+                make_item("b", bank_id="bank-2", vector=[1.0, 0.0, 0.0]),
+            ]
+        )
         hits = await store.search_similar([1.0, 0.0, 0.0], "bank-1")
         assert len(hits) == 1
         assert hits[0].id == "a"
 
     async def test_search_with_tag_filter(self, store: PostgresStore):
-        await store.store_vectors([
-            make_item("a", vector=[1.0, 0.0, 0.0], tags=["important"]),
-            make_item("b", vector=[0.9, 0.1, 0.0], tags=["trivial"]),
-        ])
+        await store.store_vectors(
+            [
+                make_item("a", vector=[1.0, 0.0, 0.0], tags=["important"]),
+                make_item("b", vector=[0.9, 0.1, 0.0], tags=["trivial"]),
+            ]
+        )
         hits = await store.search_similar(
             [1.0, 0.0, 0.0],
             "bank-1",
@@ -93,10 +99,12 @@ class TestSearchSimilar:
         assert hits[0].id == "a"
 
     async def test_search_with_fact_type_filter(self, store: PostgresStore):
-        await store.store_vectors([
-            make_item("a", vector=[1.0, 0.0, 0.0], fact_type="world"),
-            make_item("b", vector=[0.9, 0.1, 0.0], fact_type="experience"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("a", vector=[1.0, 0.0, 0.0], fact_type="world"),
+                make_item("b", vector=[0.9, 0.1, 0.0], fact_type="experience"),
+            ]
+        )
         hits = await store.search_similar(
             [1.0, 0.0, 0.0],
             "bank-1",
@@ -106,10 +114,12 @@ class TestSearchSimilar:
         assert hits[0].id == "a"
 
     async def test_search_score_range(self, store: PostgresStore):
-        await store.store_vectors([
-            make_item("a", vector=[1.0, 0.0, 0.0]),
-            make_item("b", vector=[0.0, 1.0, 0.0]),
-        ])
+        await store.store_vectors(
+            [
+                make_item("a", vector=[1.0, 0.0, 0.0]),
+                make_item("b", vector=[0.0, 1.0, 0.0]),
+            ]
+        )
         hits = await store.search_similar([1.0, 0.0, 0.0], "bank-1")
         for hit in hits:
             assert 0.0 <= hit.score <= 1.0
@@ -135,10 +145,12 @@ class TestDelete:
         assert {r.id for r in remaining} == {"v1", "v2"}
 
     async def test_delete_respects_bank_isolation(self, store: PostgresStore):
-        await store.store_vectors([
-            make_item("v1", bank_id="bank-1"),
-            make_item("v2", bank_id="bank-2"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("v1", bank_id="bank-1"),
+                make_item("v2", bank_id="bank-2"),
+            ]
+        )
         deleted = await store.delete(["v1", "v2"], "bank-1")
         assert deleted == 1  # only v1 is in bank-1
 
@@ -211,11 +223,13 @@ class TestHealth:
 
 class TestMemoryLayer:
     async def test_roundtrip_via_list(self, store: PostgresStore):
-        await store.store_vectors([
-            make_item("v1", vector=[1.0, 0.0, 0.0], memory_layer="fact"),
-            make_item("v2", vector=[0.0, 1.0, 0.0], memory_layer="observation"),
-            make_item("v3", vector=[0.0, 0.0, 1.0], memory_layer=None),
-        ])
+        await store.store_vectors(
+            [
+                make_item("v1", vector=[1.0, 0.0, 0.0], memory_layer="fact"),
+                make_item("v2", vector=[0.0, 1.0, 0.0], memory_layer="observation"),
+                make_item("v3", vector=[0.0, 0.0, 1.0], memory_layer=None),
+            ]
+        )
         items = await store.list_vectors("bank-1")
         by_id = {i.id: i for i in items}
         assert by_id["v1"].memory_layer == "fact"
@@ -223,9 +237,11 @@ class TestMemoryLayer:
         assert by_id["v3"].memory_layer is None
 
     async def test_roundtrip_via_search(self, store: PostgresStore):
-        await store.store_vectors([
-            make_item("v1", vector=[1.0, 0.0, 0.0], memory_layer="model"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("v1", vector=[1.0, 0.0, 0.0], memory_layer="model"),
+            ]
+        )
         hits = await store.search_similar([1.0, 0.0, 0.0], "bank-1")
         assert len(hits) == 1
         assert hits[0].memory_layer == "model"
@@ -250,9 +266,11 @@ class TestMetadataAndTags:
         assert items[0].metadata is None
 
     async def test_tags_roundtrip(self, store: PostgresStore):
-        await store.store_vectors([
-            make_item("v1", vector=[1.0, 0.0, 0.0], tags=["a", "b", "c"]),
-        ])
+        await store.store_vectors(
+            [
+                make_item("v1", vector=[1.0, 0.0, 0.0], tags=["a", "b", "c"]),
+            ]
+        )
         items = await store.list_vectors("bank-1")
         assert sorted(items[0].tags) == ["a", "b", "c"]
 
@@ -279,18 +297,20 @@ class TestMetadataAndTags:
         assert await store.list_vectors("bank-1") == []
 
     async def test_temporal_metadata_projects_to_temporal_facts(self, store: PostgresStore, dsn: str):
-        await store.store_vectors([
-            make_item(
-                "v-temporal",
-                vector=[1.0, 0.0, 0.0],
-                metadata={
-                    "temporal_anchor": "2026-02-10",
-                    "temporal_phrase": "yesterday",
-                    "resolved_date": "2026-02-09",
-                    "date_granularity": "day",
-                },
-            )
-        ])
+        await store.store_vectors(
+            [
+                make_item(
+                    "v-temporal",
+                    vector=[1.0, 0.0, 0.0],
+                    metadata={
+                        "temporal_anchor": "2026-02-10",
+                        "temporal_phrase": "yesterday",
+                        "resolved_date": "2026-02-09",
+                        "date_granularity": "day",
+                    },
+                )
+            ]
+        )
 
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cur:

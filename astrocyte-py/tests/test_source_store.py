@@ -157,11 +157,13 @@ class TestChunkCRUD:
     @pytest.mark.asyncio
     async def test_store_and_list_chunks_in_order(self, store):
         await store.store_document(_doc("d1"))
-        await store.store_chunks([
-            _chunk("c2", "d1", chunk_index=2),
-            _chunk("c0", "d1", chunk_index=0),
-            _chunk("c1", "d1", chunk_index=1),
-        ])
+        await store.store_chunks(
+            [
+                _chunk("c2", "d1", chunk_index=2),
+                _chunk("c0", "d1", chunk_index=0),
+                _chunk("c1", "d1", chunk_index=1),
+            ]
+        )
         listed = await store.list_chunks("d1", "bank-1")
         assert [c.chunk_index for c in listed] == [0, 1, 2]
 
@@ -183,9 +185,11 @@ class TestChunkDedup:
     async def test_chunk_dedup_returns_existing_id(self, store):
         await store.store_document(_doc("d1"))
         first = await store.store_chunks([_chunk("c-orig", "d1", content_hash="h0")])
-        second = await store.store_chunks([
-            _chunk("c-DIFFERENT", "d1", chunk_index=99, content_hash="h0"),
-        ])
+        second = await store.store_chunks(
+            [
+                _chunk("c-DIFFERENT", "d1", chunk_index=99, content_hash="h0"),
+            ]
+        )
         assert first == ["c-orig"]
         assert second == ["c-orig"]
 

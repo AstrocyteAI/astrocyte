@@ -568,6 +568,125 @@ bench-archive:
 	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results --stage $(STAGE) --bench locomo --files "$$latest_locomo"
 
 # ---------------------------------------------------------------------------
+# FinanceBench — Document Engine bench (port 5435, no Doppler)
+# ---------------------------------------------------------------------------
+#
+# Tests Astrocyte's Document Engine against FinanceBench (patronus-ai/
+# financebench, ~150 Q&A pairs from 10-K SEC filings).
+# Reference: Mafin2.5 (VectifyAI) achieved 98.7% via PageIndex tree-search.
+#
+# Port 5435 — isolated from LME (:5433) and LoCoMo (:5434).
+# No Doppler required: credentials passed directly via env vars.
+#
+# Knobs:
+#   FINANCE_STRATEGY      vector (baseline) | tree_search (Phase C/D)
+#   FINANCE_MAX_Q         cap on questions (0 = all ~150)
+#   FINANCE_PROJECT       label written into results JSON
+#   FINANCE_ANSWERER_MODEL  model for answer generation (default gpt-4o-mini)
+#   FINANCE_JUDGE_MODEL     model for LLM-as-judge scoring (default gpt-4o-mini)
+#
+# Usage:
+#   make fetch-financebench                              # one-time dataset clone
+#   make bench-financebench FINANCE_STRATEGY=vector      # vector baseline
+#   make bench-financebench FINANCE_STRATEGY=tree_search # tree-search (Phase C/D)
+#   make bench-financebench FINANCE_MAX_Q=10             # smoke (10 questions)
+
+BENCH_FINANCE_CONTAINER    := astrocyte-bench-finance
+BENCH_FINANCE_PORT         := 5435
+BENCH_FINANCE_DATABASE_URL := postgresql://$(BENCH_PG_USER):$(BENCH_PG_PASSWORD)@127.0.0.1:$(BENCH_FINANCE_PORT)/$(BENCH_PG_DB)
+FINANCE_DIR                := $(DATASETS_DIR)/financebench
+
+FINANCE_STRATEGY           ?= vector
+FINANCE_MAX_Q              ?= 0
+FINANCE_PROJECT            ?= financebench
+FINANCE_ANSWERER_MODEL     ?= gpt-4o-mini
+FINANCE_JUDGE_MODEL        ?= gpt-4o-mini
+
+.PHONY: fetch-financebench bench-finance-db-start bench-finance-db-stop \
+        bench-finance-db-reset bench-financebench bench-archive-financebench
+
+fetch-financebench: $(FINANCE_DIR)/data/financebench_open_source.jsonl
+$(FINANCE_DIR)/data/financebench_open_source.jsonl:
+	@echo "  [finance] Cloning patronus-ai/financebench..."
+	@mkdir -p $(DATASETS_DIR)
+	git clone --depth 1 https://github.com/patronus-ai/financebench.git $(FINANCE_DIR)
+	@echo "  [finance] Dataset ready at $(FINANCE_DIR)/"
+
+# Start the FinanceBench Postgres container on port 5435.
+# Body mirrors bench-db-start / bench-db-start-2 exactly — intentionally
+# duplicated for grep-ability (ops file discipline, see comment above).
+bench-finance-db-start:
+	@set -e; \
+	if docker ps --format '{{.Names}}' | grep -q '^$(BENCH_FINANCE_CONTAINER)$$'; then \
+		echo "  [bench-finance-db] $(BENCH_FINANCE_CONTAINER) already running"; \
+	elif docker ps -a --format '{{.Names}}' | grep -q '^$(BENCH_FINANCE_CONTAINER)$$'; then \
+		echo "  [bench-finance-db] Restarting stopped container $(BENCH_FINANCE_CONTAINER)"; \
+		docker start $(BENCH_FINANCE_CONTAINER); \
+		until docker exec $(BENCH_FINANCE_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_FINANCE_DATABASE_URL)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
+		echo "  [bench-finance-db] Postgres ready"; \
+	else \
+		echo "  [bench-finance-db] Pulling $(BENCH_PG_IMAGE)..."; \
+		if docker pull $(BENCH_PG_IMAGE); then \
+			BENCH_IMG=$(BENCH_PG_IMAGE); \
+		else \
+			echo "  [bench-finance-db] Pull failed — building from ../docker/astrocyte-postgres/Dockerfile"; \
+			docker build -t $(BENCH_PG_IMAGE) -f ../docker/astrocyte-postgres/Dockerfile ..; \
+			BENCH_IMG=$(BENCH_PG_IMAGE); \
+		fi; \
+		docker run -d --name $(BENCH_FINANCE_CONTAINER) \
+			-e POSTGRES_USER=$(BENCH_PG_USER) \
+			-e POSTGRES_PASSWORD=$(BENCH_PG_PASSWORD) \
+			-e POSTGRES_DB=$(BENCH_PG_DB) \
+			-p $(BENCH_FINANCE_PORT):5432 \
+			$$BENCH_IMG; \
+		echo "  [bench-finance-db] Waiting for Postgres to be ready..."; \
+		until docker exec $(BENCH_FINANCE_CONTAINER) pg_isready -U $(BENCH_PG_USER) -d $(BENCH_PG_DB) -q 2>/dev/null; do sleep 1; done; \
+		until PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_FINANCE_DATABASE_URL)" -Atc "SELECT 1" >/dev/null 2>&1; do sleep 1; done; \
+		echo "  [bench-finance-db] Postgres ready at localhost:$(BENCH_FINANCE_PORT)"; \
+	fi; \
+	echo "  [bench-finance-db] Applying $(BENCH_VECTOR_EXTENSION) migrations (vector($(BENCH_EMBEDDING_DIMENSIONS)))"; \
+	ASTROCYTE_EMBEDDING_DIMENSIONS=$(BENCH_EMBEDDING_DIMENSIONS) \
+		VECTOR_EXTENSION=$(BENCH_VECTOR_EXTENSION) \
+		DATABASE_URL="$(BENCH_FINANCE_DATABASE_URL)" \
+		../adapters-storage-py/astrocyte-postgres/scripts/migrate.sh; \
+	actual=$$(PGPASSWORD=$(BENCH_PG_PASSWORD) psql "$(BENCH_FINANCE_DATABASE_URL)" -Atc "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'astrocyte_vectors'::regclass AND a.attname = 'embedding'"); \
+	if [ "$$actual" != "vector($(BENCH_EMBEDDING_DIMENSIONS))" ]; then \
+		echo "  [bench-finance-db] ERROR: astrocyte_vectors.embedding is $$actual, expected vector($(BENCH_EMBEDDING_DIMENSIONS))."; \
+		echo "  [bench-finance-db] Run 'make bench-finance-db-reset' once to recreate the database."; \
+		exit 1; \
+	fi
+
+bench-finance-db-stop:
+	@docker stop $(BENCH_FINANCE_CONTAINER) 2>/dev/null && docker rm $(BENCH_FINANCE_CONTAINER) 2>/dev/null && \
+		echo "  [bench-finance-db] $(BENCH_FINANCE_CONTAINER) stopped" || \
+		echo "  [bench-finance-db] $(BENCH_FINANCE_CONTAINER) not running"
+
+bench-finance-db-reset: bench-finance-db-stop bench-finance-db-start
+
+bench-financebench: fetch-financebench bench-finance-db-start bench-runner-deps
+	@mkdir -p $(RESULTS_DIR)/financebench/$(FINANCE_PROJECT)
+	doppler run -- env DATABASE_URL='$(BENCH_FINANCE_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_FINANCE_DATABASE_URL)' \
+	$(BENCH_UV_RUN) python scripts/financebench/run_financebench.py \
+		--dataset-dir $(FINANCE_DIR) \
+		--strategy $(FINANCE_STRATEGY) \
+		--project $(FINANCE_PROJECT) \
+		--answerer-model $(FINANCE_ANSWERER_MODEL) \
+		--judge-model $(FINANCE_JUDGE_MODEL) \
+		$(if $(FINANCE_MAX_Q),--max-questions $(FINANCE_MAX_Q),) \
+		--output-dir $(RESULTS_DIR)/financebench/$(FINANCE_PROJECT)
+
+# Archive the latest FinanceBench result JSON to R2.
+# Usage: make bench-archive-financebench STAGE=m19-close
+bench-archive-financebench:
+	@latest="$$(ls -t $(RESULTS_DIR)/financebench/$(FINANCE_PROJECT)/financebench_results_*.json 2>/dev/null | head -1)"; \
+	if [ -z "$$latest" ]; then echo "no FinanceBench results in $(RESULTS_DIR)/financebench/$(FINANCE_PROJECT)/" >&2; exit 1; fi; \
+	echo "archiving stage=$(STAGE) project=$(FINANCE_PROJECT)"; \
+	echo "  FinanceBench -> $$latest"; \
+	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results \
+		--stage $(STAGE) --bench financebench --files "$$latest"
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 

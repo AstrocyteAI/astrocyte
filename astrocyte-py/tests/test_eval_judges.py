@@ -194,9 +194,7 @@ class TestLocomoDispatch:
         # Plain F1 on the same strings would match all tokens → high score;
         # multi-hop splits and averages per-GT → lower score.
         plain = _f1_score("alice, bob", "alice, bob, carol")
-        assert cat_1 != pytest.approx(plain, abs=1e-6), (
-            "Multi-hop dispatch should NOT degrade to plain F1"
-        )
+        assert cat_1 != pytest.approx(plain, abs=1e-6), "Multi-hop dispatch should NOT degrade to plain F1"
 
     def test_open_domain_takes_first_alternate(self) -> None:
         """Category 3 (open-domain) — ground truth may carry ``;``-
@@ -222,21 +220,30 @@ class TestLocomoDispatch:
     def test_adversarial_passes_on_abstention_phrase(self) -> None:
         """Category 5 — any "no information available" / "not mentioned"
         phrase in the prediction → 1.0. Otherwise → 0.0."""
-        assert locomo_score_qa(
-            "There is no information available about this.",
-            "irrelevant gt",
-            category="adversarial",
-        ) == 1.0
-        assert locomo_score_qa(
-            "It was not mentioned in the conversation.",
-            "irrelevant gt",
-            category="adversarial",
-        ) == 1.0
-        assert locomo_score_qa(
-            "The answer is blue.",
-            "irrelevant gt",
-            category="adversarial",
-        ) == 0.0
+        assert (
+            locomo_score_qa(
+                "There is no information available about this.",
+                "irrelevant gt",
+                category="adversarial",
+            )
+            == 1.0
+        )
+        assert (
+            locomo_score_qa(
+                "It was not mentioned in the conversation.",
+                "irrelevant gt",
+                category="adversarial",
+            )
+            == 1.0
+        )
+        assert (
+            locomo_score_qa(
+                "The answer is blue.",
+                "irrelevant gt",
+                category="adversarial",
+            )
+            == 0.0
+        )
 
     def test_none_prediction_scores_zero(self) -> None:
         """A crashed reflect step might deliver None — judge must not
@@ -279,7 +286,10 @@ class TestLongMemEvalPrompts:
 
     def test_knowledge_update_mentions_updated_answer(self) -> None:
         prompt = build_longmemeval_judge_prompt(
-            "knowledge-update", "q", "a", "r",
+            "knowledge-update",
+            "q",
+            "a",
+            "r",
         )
         assert "updated answer" in prompt
 
@@ -308,7 +318,10 @@ class TestLongMemEvalPrompts:
 
     def test_preference_prompt_uses_rubric_label(self) -> None:
         prompt = build_longmemeval_judge_prompt(
-            "single-session-preference", "q", "rubric text", "r",
+            "single-session-preference",
+            "q",
+            "rubric text",
+            "r",
         )
         assert "Rubric: rubric text" in prompt
 
@@ -345,11 +358,13 @@ class TestParseYesNo:
         assert parse_yes_no("Yes, because the model mentions blue.") == 1.0
 
     def test_ambiguous_returns_zero_and_warns(
-        self, caplog: pytest.LogCaptureFixture,
+        self,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """'I don't know' is scored as no (safe default for accuracy)
         and logs a warning so operators can triage."""
         import logging
+
         with caplog.at_level(logging.WARNING):
             result = parse_yes_no("I'm not sure")
         assert result == 0.0
@@ -375,20 +390,26 @@ class TestLongMemEvalJudgeEndToEnd:
 
         class FakeLLM:
             SPI_VERSION = 1
+
             async def complete(self, messages, **kw):  # type: ignore[no-untyped-def]
                 return Completion(
-                    text="yes", model="fake",
+                    text="yes",
+                    model="fake",
                     usage=TokenUsage(input_tokens=1, output_tokens=1),
                 )
+
             def capabilities(self):  # pragma: no cover
                 """Unused — only ``complete`` is exercised."""
+
             async def embed(self, texts, **kw):  # pragma: no cover
                 """Unused — only ``complete`` is exercised."""
 
         judge = LongMemEvalJudge(FakeLLM())  # type: ignore[arg-type]
         score = await judge.score(
             "single-session-user",
-            "q", "gold answer", "model output",
+            "q",
+            "gold answer",
+            "model output",
         )
         assert score == 1.0
 
@@ -397,13 +418,17 @@ class TestLongMemEvalJudgeEndToEnd:
 
         class FakeLLM:
             SPI_VERSION = 1
+
             async def complete(self, messages, **kw):  # type: ignore[no-untyped-def]
                 return Completion(
-                    text="no", model="fake",
+                    text="no",
+                    model="fake",
                     usage=TokenUsage(input_tokens=1, output_tokens=1),
                 )
+
             def capabilities(self):  # pragma: no cover
                 """Unused — only ``complete`` is exercised."""
+
             async def embed(self, texts, **kw):  # pragma: no cover
                 """Unused — only ``complete`` is exercised."""
 
@@ -421,32 +446,43 @@ class TestLongMemEvalJudgeEndToEnd:
 
         class CapturingLLM:
             SPI_VERSION = 1
+
             async def complete(self, messages, **kw):  # type: ignore[no-untyped-def]
                 captured_prompt["content"] = messages[0].content  # type: ignore[assignment]
                 return Completion(
-                    text="yes", model="fake",
+                    text="yes",
+                    model="fake",
                     usage=TokenUsage(input_tokens=1, output_tokens=1),
                 )
+
             def capabilities(self):  # pragma: no cover
                 """Unused — only ``complete`` is exercised."""
+
             async def embed(self, texts, **kw):  # pragma: no cover
                 """Unused — only ``complete`` is exercised."""
 
         judge = LongMemEvalJudge(CapturingLLM())  # type: ignore[arg-type]
         await judge.score("temporal-reasoning", "Q?", "A.", "R.")
         assert captured_prompt["content"] == build_longmemeval_judge_prompt(
-            "temporal-reasoning", "Q?", "A.", "R.",
+            "temporal-reasoning",
+            "Q?",
+            "A.",
+            "R.",
         )
 
     async def test_llm_failure_propagates(self) -> None:
         """If the LLM raises, the judge doesn't swallow it — the adapter
         decides how to aggregate (log+count-as-0, or halt)."""
+
         class FailingLLM:
             SPI_VERSION = 1
+
             async def complete(self, messages, **kw):  # type: ignore[no-untyped-def]
                 raise RuntimeError("provider down")
+
             def capabilities(self):  # pragma: no cover
                 """Unused — only ``complete`` is exercised."""
+
             async def embed(self, texts, **kw):  # pragma: no cover
                 """Unused — only ``complete`` is exercised."""
 

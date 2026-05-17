@@ -98,6 +98,7 @@ def observation_scope(bank_id: str, tags: list[str] | None = None) -> str:
         return "|".join(sorted(str(tag) for tag in tags))
     return f"bank:{bank_id}"
 
+
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
@@ -192,9 +193,7 @@ def _parse_actions(raw: str) -> list[dict[str, Any]]:
     # Strip markdown code fences if present
     if text.startswith("```"):
         lines = text.splitlines()
-        text = "\n".join(
-            line for line in lines if not line.strip().startswith("```")
-        ).strip()
+        text = "\n".join(line for line in lines if not line.strip().startswith("```")).strip()
 
     # Find the first JSON array
     start = text.find("[")
@@ -337,7 +336,10 @@ class ObservationConsolidator:
                 try:
                     if act == "create":
                         r = await self._apply_create(
-                            action, bank_id, vector_store, llm_provider,
+                            action,
+                            bank_id,
+                            vector_store,
+                            llm_provider,
                             source_ids=new_memory_ids,
                             now_iso=now_iso,
                             scope=obs_scope,
@@ -351,7 +353,11 @@ class ObservationConsolidator:
                         obs_id = action.get("obs_id", "")
                         existing = obs_by_id.get(obs_id)
                         r = await self._apply_update(
-                            action, existing, bank_id, vector_store, llm_provider,
+                            action,
+                            existing,
+                            bank_id,
+                            vector_store,
+                            llm_provider,
                             new_source_ids=new_memory_ids,
                             now_iso=now_iso,
                             new_ids_json=new_ids_json,
@@ -379,7 +385,9 @@ class ObservationConsolidator:
         except Exception as exc:
             logger.warning(
                 "Observation consolidation failed for bank %s: %s",
-                bank_id, exc, exc_info=True,
+                bank_id,
+                exc,
+                exc_info=True,
             )
             result.errors.append(str(exc))
 

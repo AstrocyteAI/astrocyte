@@ -225,8 +225,7 @@ class CompileQueue:
                 try:
                     result = await self._engine.run(bank_id)
                     _logger.info(
-                        "Background compile done for bank %r: "
-                        "%d created, %d updated, %d noise, %d tokens, %dms",
+                        "Background compile done for bank %r: %d created, %d updated, %d noise, %d tokens, %dms",
                         bank_id,
                         result.pages_created,
                         result.pages_updated,

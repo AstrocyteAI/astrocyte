@@ -50,8 +50,7 @@ def _most_recent_run() -> Path:
         glob.glob(str(REPO_ROOT / "benchmark-results" / "results-*.json")),
     )
     if not matches:
-        print("error: no results-*.json files found in benchmark-results/",
-              file=sys.stderr)
+        print("error: no results-*.json files found in benchmark-results/", file=sys.stderr)
         sys.exit(2)
     return Path(matches[-1])
 
@@ -73,15 +72,8 @@ def _baseline_shape(bench: dict[str, Any], notes: str) -> dict[str, Any]:
     """
     return {
         "overall_accuracy": round(float(bench.get("overall_accuracy", 0.0)), 4),
-        "category_accuracy": {
-            k: round(float(v), 4)
-            for k, v in (bench.get("category_accuracy") or {}).items()
-        },
-        "metrics": {
-            k: round(float(v), 4)
-            for k, v in (bench.get("metrics") or {}).items()
-            if v is not None
-        },
+        "category_accuracy": {k: round(float(v), 4) for k, v in (bench.get("category_accuracy") or {}).items()},
+        "metrics": {k: round(float(v), 4) for k, v in (bench.get("metrics") or {}).items() if v is not None},
         "notes": notes,
     }
 
@@ -92,8 +84,7 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     SNAPSHOTS.mkdir(parents=True, exist_ok=True)
     dest = SNAPSHOTS / f"{args.bench}-{args.tag}.json"
     if dest.exists() and not args.force:
-        print(f"error: {dest} already exists (pass --force to overwrite)",
-              file=sys.stderr)
+        print(f"error: {dest} already exists (pass --force to overwrite)", file=sys.stderr)
         return 1
     shutil.copy(results_path, dest)
     print(f"snapshotted: {results_path.name} -> {dest.relative_to(REPO_ROOT)}")
@@ -124,8 +115,7 @@ def cmd_promote(args: argparse.Namespace) -> int:
         }
 
     if not existing:
-        print("error: no benchmark sections found in results — nothing to promote",
-              file=sys.stderr)
+        print("error: no benchmark sections found in results — nothing to promote", file=sys.stderr)
         return 1
 
     with open(baseline_path, "w") as f:
@@ -138,28 +128,22 @@ def cmd_promote(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     snap = sub.add_parser("snapshot", help="Copy a run into benchmarks/snapshots/")
     snap.add_argument("--bench", required=True, choices=["locomo", "longmemeval"])
-    snap.add_argument("--tag", required=True,
-                      help="Version tag (e.g. v3-real-openai)")
-    snap.add_argument("--results", default=None,
-                      help="Path to results JSON (default: most recent)")
-    snap.add_argument("--force", action="store_true",
-                      help="Overwrite an existing snapshot file")
+    snap.add_argument("--tag", required=True, help="Version tag (e.g. v3-real-openai)")
+    snap.add_argument("--results", default=None, help="Path to results JSON (default: most recent)")
+    snap.add_argument("--force", action="store_true", help="Overwrite an existing snapshot file")
     snap.set_defaults(func=cmd_snapshot)
 
-    prom = sub.add_parser("promote",
-                          help="Update benchmarks/baselines-{suite}.json (CI floor)")
-    prom.add_argument("--suite", required=True,
-                      help="Baseline suite name (e.g. openai, test-provider)")
-    prom.add_argument("--results", default=None,
-                      help="Path to results JSON (default: most recent)")
-    prom.add_argument("--notes", default=None,
-                      help="Custom notes text (default: auto-generated)")
+    prom = sub.add_parser("promote", help="Update benchmarks/baselines-{suite}.json (CI floor)")
+    prom.add_argument("--suite", required=True, help="Baseline suite name (e.g. openai, test-provider)")
+    prom.add_argument("--results", default=None, help="Path to results JSON (default: most recent)")
+    prom.add_argument("--notes", default=None, help="Custom notes text (default: auto-generated)")
     prom.set_defaults(func=cmd_promote)
 
     args = parser.parse_args()

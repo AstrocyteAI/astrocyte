@@ -45,7 +45,8 @@ class _ScriptedLLM(MockLLMProvider):
     ) -> Completion:
         self.call_count += 1
         return Completion(
-            text=self._default_response, model="mock",
+            text=self._default_response,
+            model="mock",
             usage=TokenUsage(input_tokens=10, output_tokens=20),
         )
 
@@ -62,7 +63,8 @@ class TestRegexPrepass:
     @pytest.mark.asyncio
     async def test_iso_date_full(self):
         result = await analyze_query(
-            "What happened on 2024-03-15?", reference_date=REF,
+            "What happened on 2024-03-15?",
+            reference_date=REF,
         )
         c = result.temporal_constraint
         assert c is not None
@@ -72,7 +74,8 @@ class TestRegexPrepass:
     @pytest.mark.asyncio
     async def test_iso_year_month(self):
         result = await analyze_query(
-            "Summarize 2024-03 events", reference_date=REF,
+            "Summarize 2024-03 events",
+            reference_date=REF,
         )
         c = result.temporal_constraint
         assert c is not None
@@ -140,6 +143,69 @@ class TestRegexPrepass:
 
 
 # ---------------------------------------------------------------------------
+# M18a-1 — temporal expansion flag
+# ---------------------------------------------------------------------------
+
+
+class TestM18aTemporalExpansion:
+    """Verify the M18a-1 flag controls the extended pattern set."""
+
+    @pytest.mark.asyncio
+    async def test_few_weeks_ago_off_by_default(self):
+        """Without the flag, 'a few weeks ago' falls through legacy patterns."""
+        result = await analyze_query("what did I learn a few weeks ago?", reference_date=REF)
+        # 'a few weeks ago' isn't in _try_relative — should be unmatched
+        assert result.temporal_constraint is None
+
+    @pytest.mark.asyncio
+    async def test_few_weeks_ago_caught_with_flag(self):
+        """With the flag, the temporal_expressions pattern matches."""
+        result = await analyze_query(
+            "what did I learn a few weeks ago?",
+            reference_date=REF,
+            allow_temporal_expansion=True,
+        )
+        assert result.temporal_constraint is not None
+        assert result.temporal_constraint.is_bounded()
+
+    @pytest.mark.asyncio
+    async def test_recently_caught_with_flag(self):
+        """'recently' is in temporal_expressions but not _try_relative."""
+        result = await analyze_query(
+            "have I done anything recently?",
+            reference_date=REF,
+            allow_temporal_expansion=True,
+        )
+        assert result.temporal_constraint is not None
+
+    @pytest.mark.asyncio
+    async def test_legacy_patterns_still_win_with_flag(self):
+        """When flag is on, _try_relative still wins for patterns it covers."""
+        # 'yesterday' is covered by _try_relative
+        result = await analyze_query(
+            "what happened yesterday?", reference_date=REF, allow_temporal_expansion=True,
+        )
+        assert result.temporal_constraint is not None
+        # Yesterday's range is narrow (one day), not the wider expansion's range
+        constraint = result.temporal_constraint
+        days_span = (constraint.end_date - constraint.start_date).days
+        assert days_span <= 1
+
+    @pytest.mark.asyncio
+    async def test_word_number_pattern(self):
+        """'two months ago' (word-number) only matches with flag on."""
+        off = await analyze_query("what did I learn two months ago?", reference_date=REF)
+        assert off.temporal_constraint is None  # word-numbers not in _try_relative
+
+        on = await analyze_query(
+            "what did I learn two months ago?",
+            reference_date=REF,
+            allow_temporal_expansion=True,
+        )
+        assert on.temporal_constraint is not None
+
+
+# ---------------------------------------------------------------------------
 # Temporal-marker gate
 # ---------------------------------------------------------------------------
 
@@ -166,16 +232,21 @@ class TestTemporalMarkerGate:
 
 class TestLLMFallback:
     @pytest.mark.asyncio
-    async def test_off_by_default_no_llm_call(self):
-        """``allow_llm_fallback=False`` (default) — no LLM call is made
-        even when a temporal marker is present and regex misses."""
+    async def test_explicit_off_no_llm_call(self):
+        """``allow_llm_fallback=False`` (explicit) — no LLM call is made
+        even when a temporal marker is present and regex misses.
+
+        Note: the parameter default flipped to ``True`` (2026-05-16, Gap
+        5 closure) — callers wanting deterministic / no-LLM behavior must
+        now opt out explicitly.
+        """
         llm = _ScriptedLLM('{"start_date": "2024-03-01T00:00:00Z", "end_date": "2024-05-31T00:00:00Z"}')
 
         result = await analyze_query(
             "What did Alice do last spring?",  # 'spring' = marker, no regex match
             reference_date=REF,
             llm_provider=llm,
-            # allow_llm_fallback=False (default)
+            allow_llm_fallback=False,
         )
 
         assert result.temporal_constraint is None
@@ -185,9 +256,7 @@ class TestLLMFallback:
     async def test_fallback_extracts_constraint(self):
         """Enabled fallback + temporal marker → LLM resolves the range."""
         llm = _ScriptedLLM(
-            '{"start_date": "2024-03-01T00:00:00Z",'
-            ' "end_date": "2024-05-31T00:00:00Z",'
-            ' "rationale": "spring 2024"}'
+            '{"start_date": "2024-03-01T00:00:00Z", "end_date": "2024-05-31T00:00:00Z", "rationale": "spring 2024"}'
         )
 
         result = await analyze_query(
@@ -220,9 +289,7 @@ class TestLLMFallback:
     @pytest.mark.asyncio
     async def test_fallback_handles_null_response(self):
         """LLM says no temporal scope → analyzer returns no constraint."""
-        llm = _ScriptedLLM(
-            '{"start_date": null, "end_date": null, "rationale": "no scope"}'
-        )
+        llm = _ScriptedLLM('{"start_date": null, "end_date": null, "rationale": "no scope"}')
 
         result = await analyze_query(
             "What did Alice do last spring?",

@@ -95,8 +95,7 @@ class PostgresPageIndexStore:
         self._dsn = dsn or os.environ.get("DATABASE_URL") or os.environ.get("ASTROCYTE_PG_DSN")
         if not self._dsn:
             raise ValueError(
-                "PostgresPageIndexStore requires `dsn` in pageindex_store_config "
-                "or DATABASE_URL / ASTROCYTE_PG_DSN",
+                "PostgresPageIndexStore requires `dsn` in pageindex_store_config or DATABASE_URL / ASTROCYTE_PG_DSN",
             )
         self._bootstrap_schema = bool(bootstrap_schema)
         self._pool: AsyncConnectionPool | None = None
@@ -112,6 +111,7 @@ class PostgresPageIndexStore:
     async def _ensure_pool(self) -> AsyncConnectionPool:
         async with self._pool_lock:
             if self._pool is None:
+
                 async def configure(conn: psycopg.AsyncConnection) -> None:
                     # Same search_path discipline as the wiki store — pin
                     # to public so the bench DB's user-named schema doesn't
@@ -172,7 +172,7 @@ class PostgresPageIndexStore:
 
     def _ddl_documents(self) -> str:
         return f"""
-        CREATE TABLE IF NOT EXISTS {self._fq('astrocyte_pi_documents')} (
+        CREATE TABLE IF NOT EXISTS {self._fq("astrocyte_pi_documents")} (
             id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
             bank_id         TEXT         NOT NULL,
             source_id       TEXT         NOT NULL,
@@ -188,9 +188,9 @@ class PostgresPageIndexStore:
         # Bootstrap path includes both — operators on plain pgvector who
         # can't run the diskann index should ALTER it manually.
         return f"""
-        CREATE TABLE IF NOT EXISTS {self._fq('astrocyte_pi_sections')} (
+        CREATE TABLE IF NOT EXISTS {self._fq("astrocyte_pi_sections")} (
             document_id        UUID         NOT NULL
-                REFERENCES {self._fq('astrocyte_pi_documents')}(id) ON DELETE CASCADE,
+                REFERENCES {self._fq("astrocyte_pi_documents")}(id) ON DELETE CASCADE,
             line_num           INT          NOT NULL,
             node_id            TEXT         NOT NULL,
             title              TEXT         NOT NULL,
@@ -202,29 +202,29 @@ class PostgresPageIndexStore:
             depth              INT          NOT NULL,
             PRIMARY KEY (document_id, line_num)
         );
-        ALTER TABLE {self._fq('astrocyte_pi_sections')}
+        ALTER TABLE {self._fq("astrocyte_pi_sections")}
             ADD COLUMN IF NOT EXISTS summary_embedding vector(1536);
         CREATE INDEX IF NOT EXISTS ix_pi_sections_skeleton
-            ON {self._fq('astrocyte_pi_sections')} (document_id, depth, line_num);
+            ON {self._fq("astrocyte_pi_sections")} (document_id, depth, line_num);
         """
 
     def _ddl_section_entities(self) -> str:
         return f"""
-        CREATE TABLE IF NOT EXISTS {self._fq('astrocyte_pi_section_entities')} (
+        CREATE TABLE IF NOT EXISTS {self._fq("astrocyte_pi_section_entities")} (
             document_id  UUID  NOT NULL,
             line_num     INT   NOT NULL,
             entity_name  TEXT  NOT NULL,
             PRIMARY KEY (document_id, line_num, entity_name),
             FOREIGN KEY (document_id, line_num)
-                REFERENCES {self._fq('astrocyte_pi_sections')}(document_id, line_num) ON DELETE CASCADE
+                REFERENCES {self._fq("astrocyte_pi_sections")}(document_id, line_num) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS ix_pi_section_entities_name
-            ON {self._fq('astrocyte_pi_section_entities')} (entity_name);
+            ON {self._fq("astrocyte_pi_section_entities")} (entity_name);
         """
 
     def _ddl_section_links(self) -> str:
         return f"""
-        CREATE TABLE IF NOT EXISTS {self._fq('astrocyte_pi_section_links')} (
+        CREATE TABLE IF NOT EXISTS {self._fq("astrocyte_pi_section_links")} (
             from_doc    UUID         NOT NULL,
             from_line   INT          NOT NULL,
             to_doc      UUID         NOT NULL,
@@ -235,12 +235,12 @@ class PostgresPageIndexStore:
             created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
             PRIMARY KEY (from_doc, from_line, to_doc, to_line, link_type),
             FOREIGN KEY (from_doc, from_line)
-                REFERENCES {self._fq('astrocyte_pi_sections')}(document_id, line_num) ON DELETE CASCADE,
+                REFERENCES {self._fq("astrocyte_pi_sections")}(document_id, line_num) ON DELETE CASCADE,
             FOREIGN KEY (to_doc, to_line)
-                REFERENCES {self._fq('astrocyte_pi_sections')}(document_id, line_num) ON DELETE CASCADE
+                REFERENCES {self._fq("astrocyte_pi_sections")}(document_id, line_num) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS ix_pi_section_links_from
-            ON {self._fq('astrocyte_pi_section_links')} (from_doc, from_line, link_type);
+            ON {self._fq("astrocyte_pi_section_links")} (from_doc, from_line, link_type);
         """
 
     # ── document upsert ─────────────────────────────────────────────────
@@ -257,7 +257,7 @@ class PostgresPageIndexStore:
                 # we keep the existing id and bump built_at.
                 await cur.execute(
                     f"""
-                    INSERT INTO {self._fq('astrocyte_pi_documents')}
+                    INSERT INTO {self._fq("astrocyte_pi_documents")}
                         (bank_id, source_id, md_text, reference_date, built_at)
                     VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (bank_id, source_id) DO UPDATE SET
@@ -316,7 +316,7 @@ class PostgresPageIndexStore:
                 )
                 await cur.executemany(
                     f"""
-                    INSERT INTO {self._fq('astrocyte_pi_sections')}
+                    INSERT INTO {self._fq("astrocyte_pi_sections")}
                         (document_id, line_num, node_id, title, summary,
                          summary_embedding, speaker, session_date, parent_node, depth)
                     VALUES (%s, %s, %s, %s, %s, %s::vector, %s, %s, %s, %s)
@@ -345,7 +345,7 @@ class PostgresPageIndexStore:
             async with conn.cursor() as cur:
                 await cur.executemany(
                     f"""
-                    UPDATE {self._fq('astrocyte_pi_sections')}
+                    UPDATE {self._fq("astrocyte_pi_sections")}
                     SET summary_embedding = %s::vector
                     WHERE document_id = %s AND line_num = %s
                     """,
@@ -369,7 +369,7 @@ class PostgresPageIndexStore:
                     f"""
                     SELECT id, bank_id, source_id, md_text,
                            reference_date, built_at
-                    FROM {self._fq('astrocyte_pi_documents')}
+                    FROM {self._fq("astrocyte_pi_documents")}
                     WHERE bank_id = %s AND source_id = %s
                     """,
                     (bank_id, source_id),
@@ -398,7 +398,7 @@ class PostgresPageIndexStore:
                     f"""
                     SELECT document_id, line_num, node_id, title, summary,
                            speaker, session_date, parent_node, depth
-                    FROM {self._fq('astrocyte_pi_sections')}
+                    FROM {self._fq("astrocyte_pi_sections")}
                     WHERE document_id = %s
                     ORDER BY line_num
                     """,
@@ -437,7 +437,7 @@ class PostgresPageIndexStore:
                 # ON CONFLICT DO NOTHING — idempotent on the composite PK.
                 await cur.executemany(
                     f"""
-                    INSERT INTO {self._fq('astrocyte_pi_section_entities')}
+                    INSERT INTO {self._fq("astrocyte_pi_section_entities")}
                         (document_id, line_num, entity_name)
                     VALUES (%s, %s, %s)
                     ON CONFLICT (document_id, line_num, entity_name) DO NOTHING
@@ -459,8 +459,7 @@ class PostgresPageIndexStore:
         for link in links:
             if link.link_type not in _VALID_LINK_TYPES:
                 raise ValueError(
-                    f"section_links.link_type must be one of {sorted(_VALID_LINK_TYPES)!r}, "
-                    f"got {link.link_type!r}"
+                    f"section_links.link_type must be one of {sorted(_VALID_LINK_TYPES)!r}, got {link.link_type!r}"
                 )
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
@@ -479,7 +478,7 @@ class PostgresPageIndexStore:
             async with conn.cursor() as cur:
                 await cur.executemany(
                     f"""
-                    INSERT INTO {self._fq('astrocyte_pi_section_links')}
+                    INSERT INTO {self._fq("astrocyte_pi_section_links")}
                         (from_doc, from_line, to_doc, to_line, link_type, weight)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (from_doc, from_line, to_doc, to_line, link_type) DO UPDATE SET
@@ -533,18 +532,18 @@ class PostgresPageIndexStore:
                 await cur.execute(
                     f"""
                     WITH inserted AS (
-                        INSERT INTO {self._fq('astrocyte_pi_section_links')}
+                        INSERT INTO {self._fq("astrocyte_pi_section_links")}
                             (from_doc, from_line, to_doc, to_line, link_type, weight)
                         SELECT s1.document_id, s1.line_num,
                                t.to_doc, t.to_line,
                                'semantic_knn',
                                t.sim
-                        FROM {self._fq('astrocyte_pi_sections')} AS s1
+                        FROM {self._fq("astrocyte_pi_sections")} AS s1
                         CROSS JOIN LATERAL (
                             SELECT s2.document_id AS to_doc,
                                    s2.line_num   AS to_line,
                                    1 - (s1.summary_embedding <=> s2.summary_embedding) AS sim
-                            FROM {self._fq('astrocyte_pi_sections')} AS s2
+                            FROM {self._fq("astrocyte_pi_sections")} AS s2
                             WHERE s2.document_id = s1.document_id
                               AND s2.line_num != s1.line_num
                               AND s2.summary_embedding IS NOT NULL
@@ -595,8 +594,8 @@ class PostgresPageIndexStore:
                     f"""
                     SELECT s.document_id, s.line_num,
                            1 - (s.summary_embedding <=> %s::vector) AS score
-                    FROM {self._fq('astrocyte_pi_sections')} AS s
-                    JOIN {self._fq('astrocyte_pi_documents')} AS d ON d.id = s.document_id
+                    FROM {self._fq("astrocyte_pi_sections")} AS s
+                    JOIN {self._fq("astrocyte_pi_documents")} AS d ON d.id = s.document_id
                     WHERE d.bank_id = %s
                       AND s.summary_embedding IS NOT NULL
                     ORDER BY s.summary_embedding <=> %s::vector
@@ -644,8 +643,8 @@ class PostgresPageIndexStore:
                                ),
                                (SELECT tsq FROM q)
                            ) AS score
-                    FROM {self._fq('astrocyte_pi_sections')} AS s
-                    JOIN {self._fq('astrocyte_pi_documents')} AS d ON d.id = s.document_id
+                    FROM {self._fq("astrocyte_pi_sections")} AS s
+                    JOIN {self._fq("astrocyte_pi_documents")} AS d ON d.id = s.document_id
                     WHERE d.bank_id = %s
                       {speaker_clause}
                       {doc_clause}
@@ -689,8 +688,8 @@ class PostgresPageIndexStore:
                     f"""
                     SELECT se.document_id, se.line_num,
                            COUNT(DISTINCT lower(se.entity_name))::float AS score
-                    FROM {self._fq('astrocyte_pi_section_entities')} AS se
-                    JOIN {self._fq('astrocyte_pi_documents')} AS d ON d.id = se.document_id
+                    FROM {self._fq("astrocyte_pi_section_entities")} AS se
+                    JOIN {self._fq("astrocyte_pi_documents")} AS d ON d.id = se.document_id
                     WHERE d.bank_id = %s
                       AND lower(se.entity_name) = ANY(%s::text[])
                     GROUP BY se.document_id, se.line_num
@@ -720,8 +719,8 @@ class PostgresPageIndexStore:
                 await cur.execute(
                     f"""
                     SELECT s.document_id, s.line_num, 1.0 AS score
-                    FROM {self._fq('astrocyte_pi_sections')} AS s
-                    JOIN {self._fq('astrocyte_pi_documents')} AS d ON d.id = s.document_id
+                    FROM {self._fq("astrocyte_pi_sections")} AS s
+                    JOIN {self._fq("astrocyte_pi_documents")} AS d ON d.id = s.document_id
                     WHERE d.bank_id = %s
                       AND s.session_date IS NOT NULL
                       AND s.session_date BETWEEN %s AND %s
@@ -768,12 +767,12 @@ class PostgresPageIndexStore:
                     SELECT edges.to_doc::text, edges.to_line, SUM(edges.weight)::float AS score
                     FROM (
                         SELECT sl.to_doc, sl.to_line, sl.weight
-                        FROM {self._fq('astrocyte_pi_section_links')} AS sl
+                        FROM {self._fq("astrocyte_pi_section_links")} AS sl
                         JOIN seeds ON sl.from_doc = seeds.doc AND sl.from_line = seeds.line
                         WHERE 1=1 {link_clause}
                         UNION ALL
                         SELECT sl.from_doc AS to_doc, sl.from_line AS to_line, sl.weight
-                        FROM {self._fq('astrocyte_pi_section_links')} AS sl
+                        FROM {self._fq("astrocyte_pi_section_links")} AS sl
                         JOIN seeds ON sl.to_doc = seeds.doc AND sl.to_line = seeds.line
                         WHERE 1=1 {link_clause}
                     ) AS edges
@@ -782,6 +781,65 @@ class PostgresPageIndexStore:
                     LIMIT %s
                     """,
                     tuple([seed_docs, seed_lines] + link_params + [top_k]),
+                )
+                rows = await cur.fetchall()
+        return [(str(r[0]), r[1], float(r[2])) for r in rows]
+
+    async def expand_sections_by_shared_entities(
+        self,
+        bank_id: str,
+        seeds: list[tuple[str, int]],
+        *,
+        top_k: int = 20,
+        exclude_seeds: bool = True,
+    ) -> list[tuple[str, int, float]]:
+        if not seeds:
+            return []
+        seed_docs = [str(d) for d, _ in seeds]
+        seed_lines = [int(ln) for _, ln in seeds]
+        exclude_clause = ""
+        if exclude_seeds:
+            # Postgres can't compare a row literal against unnest output
+            # without a CTE; use the lateral seeds CTE to filter.
+            exclude_clause = (
+                "AND NOT EXISTS (SELECT 1 FROM seeds WHERE seeds.doc = se.document_id AND seeds.line = se.line_num)"
+            )
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # One SQL: (a) collect distinct entity names from the
+                # seed sections, (b) find every other section in the
+                # bank sharing ≥1 entity, count distinct matches as
+                # score. Mirrors Hindsight's CTE pattern in
+                # search_sections_by_entities but seeded by the seed
+                # sections' entity sets rather than question entities.
+                await cur.execute(
+                    f"""
+                    WITH seeds AS (
+                        SELECT seed_doc::uuid AS doc, seed_line::int AS line
+                        FROM unnest(%s::uuid[], %s::int[])
+                            AS t(seed_doc, seed_line)
+                    ),
+                    seed_entities AS (
+                        SELECT DISTINCT lower(se.entity_name) AS entity_name
+                        FROM {self._fq("astrocyte_pi_section_entities")} AS se
+                        JOIN seeds ON seeds.doc = se.document_id
+                                  AND seeds.line = se.line_num
+                    )
+                    SELECT se.document_id, se.line_num,
+                           COUNT(DISTINCT lower(se.entity_name))::float AS score
+                    FROM {self._fq("astrocyte_pi_section_entities")} AS se
+                    JOIN {self._fq("astrocyte_pi_documents")} AS d
+                        ON d.id = se.document_id
+                    JOIN seed_entities ON seed_entities.entity_name = lower(se.entity_name)
+                    WHERE d.bank_id = %s
+                      {exclude_clause}
+                    GROUP BY se.document_id, se.line_num
+                    ORDER BY score DESC
+                    LIMIT %s
+                    """,
+                    (seed_docs, seed_lines, bank_id, top_k),
                 )
                 rows = await cur.fetchall()
         return [(str(r[0]), r[1], float(r[2])) for r in rows]
@@ -803,7 +861,7 @@ class PostgresPageIndexStore:
         if pattern is not None:
             sql = f"""
                 SELECT entity_name, COUNT(*) AS mentions
-                FROM {self._fq('astrocyte_pi_section_entities')}
+                FROM {self._fq("astrocyte_pi_section_entities")}
                 WHERE document_id = %s AND entity_name ILIKE %s
                 GROUP BY entity_name
                 ORDER BY mentions DESC, entity_name ASC
@@ -815,7 +873,7 @@ class PostgresPageIndexStore:
         else:
             sql = f"""
                 SELECT entity_name, COUNT(*) AS mentions
-                FROM {self._fq('astrocyte_pi_section_entities')}
+                FROM {self._fq("astrocyte_pi_section_entities")}
                 WHERE document_id = %s
                 GROUP BY entity_name
                 ORDER BY mentions DESC, entity_name ASC
@@ -837,18 +895,26 @@ class PostgresPageIndexStore:
         await self._ensure_schema(pool)
         rows = []
         for f in facts:
-            rows.append((
-                f.id, f.bank_id, f.document_id, f.line_num,
-                f.text, f.fact_type, f.speaker,
-                f.occurred_start, f.occurred_end,
-                list(f.entities or []),
-                _embedding_param(f.embedding) if f.embedding else None,
-            ))
+            rows.append(
+                (
+                    f.id,
+                    f.bank_id,
+                    f.document_id,
+                    f.line_num,
+                    f.text,
+                    f.fact_type,
+                    f.speaker,
+                    f.occurred_start,
+                    f.occurred_end,
+                    list(f.entities or []),
+                    _embedding_param(f.embedding) if f.embedding else None,
+                )
+            )
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.executemany(
                     f"""
-                    INSERT INTO {self._fq('astrocyte_pi_facts')}
+                    INSERT INTO {self._fq("astrocyte_pi_facts")}
                         (id, bank_id, document_id, line_num,
                          fact_text, fact_type, speaker,
                          occurred_start, occurred_end, entities, embedding)
@@ -873,7 +939,7 @@ class PostgresPageIndexStore:
             async with conn.cursor() as cur:
                 await cur.executemany(
                     f"""
-                    UPDATE {self._fq('astrocyte_pi_facts')}
+                    UPDATE {self._fq("astrocyte_pi_facts")}
                     SET embedding = %s::vector
                     WHERE id = %s::uuid
                     """,
@@ -892,6 +958,7 @@ class PostgresPageIndexStore:
         fact_type: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
+
         if not query_embedding:
             return []
         pool = await self._ensure_pool()
@@ -913,7 +980,7 @@ class PostgresPageIndexStore:
                     SELECT id, document_id, line_num, fact_text, fact_type,
                            speaker, occurred_start, occurred_end, entities,
                            1 - (embedding <=> %s::vector) AS score
-                    FROM {self._fq('astrocyte_pi_facts')}
+                    FROM {self._fq("astrocyte_pi_facts")}
                     WHERE bank_id = %s
                       AND embedding IS NOT NULL
                       {doc_clause}
@@ -926,10 +993,16 @@ class PostgresPageIndexStore:
                 rows = await cur.fetchall()
         return [
             PageIndexFactHit(
-                fact_id=str(r[0]), document_id=str(r[1]), line_num=r[2],
-                text=r[3], fact_type=r[4], speaker=r[5],
-                occurred_start=r[6], occurred_end=r[7],
-                entities=list(r[8] or []), score=float(r[9]),
+                fact_id=str(r[0]),
+                document_id=str(r[1]),
+                line_num=r[2],
+                text=r[3],
+                fact_type=r[4],
+                speaker=r[5],
+                occurred_start=r[6],
+                occurred_end=r[7],
+                entities=list(r[8] or []),
+                score=float(r[9]),
             )
             for r in rows
         ]
@@ -943,6 +1016,7 @@ class PostgresPageIndexStore:
         document_id: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
+
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
         params: list = [bank_id, [entity_name]]
@@ -957,7 +1031,7 @@ class PostgresPageIndexStore:
                     f"""
                     SELECT id, document_id, line_num, fact_text, fact_type,
                            speaker, occurred_start, occurred_end, entities
-                    FROM {self._fq('astrocyte_pi_facts')}
+                    FROM {self._fq("astrocyte_pi_facts")}
                     WHERE bank_id = %s
                       AND entities && %s::text[]
                       {doc_clause}
@@ -968,10 +1042,16 @@ class PostgresPageIndexStore:
                 rows = await cur.fetchall()
         return [
             PageIndexFactHit(
-                fact_id=str(r[0]), document_id=str(r[1]), line_num=r[2],
-                text=r[3], fact_type=r[4], speaker=r[5],
-                occurred_start=r[6], occurred_end=r[7],
-                entities=list(r[8] or []), score=1.0,
+                fact_id=str(r[0]),
+                document_id=str(r[1]),
+                line_num=r[2],
+                text=r[3],
+                fact_type=r[4],
+                speaker=r[5],
+                occurred_start=r[6],
+                occurred_end=r[7],
+                entities=list(r[8] or []),
+                score=1.0,
             )
             for r in rows
         ]
@@ -985,6 +1065,7 @@ class PostgresPageIndexStore:
         document_id: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
+
         start, end = date_range
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
@@ -1000,7 +1081,7 @@ class PostgresPageIndexStore:
                     f"""
                     SELECT id, document_id, line_num, fact_text, fact_type,
                            speaker, occurred_start, occurred_end, entities
-                    FROM {self._fq('astrocyte_pi_facts')}
+                    FROM {self._fq("astrocyte_pi_facts")}
                     WHERE bank_id = %s
                       AND occurred_start IS NOT NULL
                       AND occurred_start BETWEEN %s AND %s
@@ -1013,10 +1094,16 @@ class PostgresPageIndexStore:
                 rows = await cur.fetchall()
         return [
             PageIndexFactHit(
-                fact_id=str(r[0]), document_id=str(r[1]), line_num=r[2],
-                text=r[3], fact_type=r[4], speaker=r[5],
-                occurred_start=r[6], occurred_end=r[7],
-                entities=list(r[8] or []), score=1.0,
+                fact_id=str(r[0]),
+                document_id=str(r[1]),
+                line_num=r[2],
+                text=r[3],
+                fact_type=r[4],
+                speaker=r[5],
+                occurred_start=r[6],
+                occurred_end=r[7],
+                entities=list(r[8] or []),
+                score=1.0,
             )
             for r in rows
         ]
@@ -1035,9 +1122,7 @@ class PostgresPageIndexStore:
         clauses = []
         if entity_pattern is not None:
             # ILIKE-match any element of the entities array.
-            clauses.append(
-                "EXISTS (SELECT 1 FROM unnest(entities) AS e WHERE e ILIKE %s)"
-            )
+            clauses.append("EXISTS (SELECT 1 FROM unnest(entities) AS e WHERE e ILIKE %s)")
             ilike = entity_pattern if "%" in entity_pattern else f"%{entity_pattern}%"
             params.append(ilike)
         if fact_type is not None:
@@ -1049,7 +1134,7 @@ class PostgresPageIndexStore:
                 await cur.execute(
                     f"""
                     SELECT COUNT(*)
-                    FROM {self._fq('astrocyte_pi_facts')}
+                    FROM {self._fq("astrocyte_pi_facts")}
                     WHERE bank_id = %s AND document_id = %s::uuid
                     {where_extra}
                     """,
@@ -1069,13 +1154,10 @@ class PostgresPageIndexStore:
         await self._ensure_schema(pool)
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
-                rows = [
-                    (start, end, document_id, line_num)
-                    for line_num, start, end in event_dates
-                ]
+                rows = [(start, end, document_id, line_num) for line_num, start, end in event_dates]
                 await cur.executemany(
                     f"""
-                    UPDATE {self._fq('astrocyte_pi_sections')}
+                    UPDATE {self._fq("astrocyte_pi_sections")}
                     SET occurred_start = %s, occurred_end = %s
                     WHERE document_id = %s AND line_num = %s
                     """,
@@ -1094,6 +1176,7 @@ class PostgresPageIndexStore:
         document_id: str,
     ):
         from astrocyte.types import PageIndexSection
+
         del bank_id  # documents are bank-scoped via pi_documents.bank_id
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
@@ -1104,7 +1187,7 @@ class PostgresPageIndexStore:
                     SELECT line_num, node_id, title, summary,
                            summary_embedding, speaker, session_date,
                            parent_node, depth, occurred_start, occurred_end
-                    FROM {self._fq('astrocyte_pi_sections')}
+                    FROM {self._fq("astrocyte_pi_sections")}
                     WHERE document_id = %s
                     ORDER BY line_num
                     """,
@@ -1114,20 +1197,22 @@ class PostgresPageIndexStore:
         out: list[PageIndexSection] = []
         for r in rows:
             emb = _parse_pgvector(r[4])
-            out.append(PageIndexSection(
-                document_id=document_id,
-                line_num=r[0],
-                node_id=r[1] or "",
-                title=r[2] or "",
-                summary=r[3],
-                summary_embedding=emb,
-                speaker=r[5],
-                session_date=r[6],
-                parent_node=r[7],
-                depth=r[8] or 0,
-                occurred_start=r[9],
-                occurred_end=r[10],
-            ))
+            out.append(
+                PageIndexSection(
+                    document_id=document_id,
+                    line_num=r[0],
+                    node_id=r[1] or "",
+                    title=r[2] or "",
+                    summary=r[3],
+                    summary_embedding=emb,
+                    speaker=r[5],
+                    session_date=r[6],
+                    parent_node=r[7],
+                    depth=r[8] or 0,
+                    occurred_start=r[9],
+                    occurred_end=r[10],
+                )
+            )
         return out
 
     async def save_wiki_page(
@@ -1147,7 +1232,7 @@ class PostgresPageIndexStore:
                     # the existing row's updated_at.
                     await cur.execute(
                         f"""
-                        INSERT INTO {self._fq('astrocyte_wiki_pages')}
+                        INSERT INTO {self._fq("astrocyte_wiki_pages")}
                             (page_id, bank_id, slug, title, kind, scope,
                              confidence, tags, metadata, current_embedding)
                         VALUES (%s, %s, %s, %s, %s, %s, 1.0, NULL, '{{}}'::jsonb, %s)
@@ -1158,9 +1243,12 @@ class PostgresPageIndexStore:
                         RETURNING id
                         """,
                         (
-                            page.page_id, page.bank_id,
+                            page.page_id,
+                            page.bank_id,
                             page.page_id,  # slug == page_id (unique enough)
-                            page.title, page.kind, page.scope,
+                            page.title,
+                            page.kind,
+                            page.scope,
                             embedding,
                         ),
                     )
@@ -1169,7 +1257,7 @@ class PostgresPageIndexStore:
                     # Insert a revision row with the markdown content.
                     await cur.execute(
                         f"""
-                        INSERT INTO {self._fq('astrocyte_wiki_revisions')}
+                        INSERT INTO {self._fq("astrocyte_wiki_revisions")}
                             (page_uuid, revision_number, markdown,
                              summary, compiled_by, source_count, tokens_used)
                         VALUES (%s, %s, %s, %s, 'section_compile', %s, 0)
@@ -1178,15 +1266,18 @@ class PostgresPageIndexStore:
                         RETURNING id
                         """,
                         (
-                            page_uuid, page.revision, page.content,
-                            page.title, len(page.source_ids),
+                            page_uuid,
+                            page.revision,
+                            page.content,
+                            page.title,
+                            len(page.source_ids),
                         ),
                     )
                     rev_row = await cur.fetchone()
                     rev_id = rev_row[0]
                     await cur.execute(
                         f"""
-                        UPDATE {self._fq('astrocyte_wiki_pages')}
+                        UPDATE {self._fq("astrocyte_wiki_pages")}
                         SET current_revision_id = %s
                         WHERE id = %s
                         """,
@@ -1195,7 +1286,7 @@ class PostgresPageIndexStore:
                     # Replace provenance rows for this page.
                     await cur.execute(
                         f"""
-                        DELETE FROM {self._fq('astrocyte_pi_wiki_provenance')}
+                        DELETE FROM {self._fq("astrocyte_pi_wiki_provenance")}
                         WHERE wiki_page_id = %s
                         """,
                         (page_uuid,),
@@ -1203,15 +1294,12 @@ class PostgresPageIndexStore:
                     if provenance:
                         await cur.executemany(
                             f"""
-                            INSERT INTO {self._fq('astrocyte_pi_wiki_provenance')}
+                            INSERT INTO {self._fq("astrocyte_pi_wiki_provenance")}
                                 (wiki_page_id, document_id, line_num)
                             VALUES (%s, %s, %s)
                             ON CONFLICT DO NOTHING
                             """,
-                            [
-                                (page_uuid, doc_id, line_num)
-                                for doc_id, line_num in provenance
-                            ],
+                            [(page_uuid, doc_id, line_num) for doc_id, line_num in provenance],
                         )
         return page.page_id
 
@@ -1224,6 +1312,7 @@ class PostgresPageIndexStore:
         document_id: str | None = None,
     ):
         from astrocyte.types import WikiPageHit
+
         if not query_embedding:
             return []
         pool = await self._ensure_pool()
@@ -1240,8 +1329,8 @@ class PostgresPageIndexStore:
                     SELECT p.page_id, p.title, r.markdown, p.scope, p.kind,
                            1 - (p.current_embedding <=> %s::vector) AS score,
                            p.bank_id
-                    FROM {self._fq('astrocyte_wiki_pages')} AS p
-                    LEFT JOIN {self._fq('astrocyte_wiki_revisions')} AS r
+                    FROM {self._fq("astrocyte_wiki_pages")} AS p
+                    LEFT JOIN {self._fq("astrocyte_wiki_revisions")} AS r
                         ON r.id = p.current_revision_id
                     WHERE p.bank_id = %s
                       AND p.deleted_at IS NULL
@@ -1255,16 +1344,18 @@ class PostgresPageIndexStore:
                 rows = await cur.fetchall()
         out: list[WikiPageHit] = []
         for r in rows:
-            out.append(WikiPageHit(
-                page_id=r[0],
-                title=r[1] or "",
-                content=r[2] or "",
-                scope=r[3] or "",
-                kind=r[4] or "topic",
-                score=float(r[5]),
-                source_ids=[],  # provenance lookup is a separate query
-                bank_id=r[6] or bank_id,
-            ))
+            out.append(
+                WikiPageHit(
+                    page_id=r[0],
+                    title=r[1] or "",
+                    content=r[2] or "",
+                    scope=r[3] or "",
+                    kind=r[4] or "topic",
+                    score=float(r[5]),
+                    source_ids=[],  # provenance lookup is a separate query
+                    bank_id=r[6] or bank_id,
+                )
+            )
         return out
 
     async def count_wiki_pages_for_doc(
@@ -1279,7 +1370,7 @@ class PostgresPageIndexStore:
                 await cur.execute(
                     f"""
                     SELECT COUNT(*)
-                    FROM {self._fq('astrocyte_wiki_pages')}
+                    FROM {self._fq("astrocyte_wiki_pages")}
                     WHERE bank_id = %s
                       AND scope = %s
                       AND deleted_at IS NULL
@@ -1303,6 +1394,7 @@ class PostgresPageIndexStore:
         from datetime import datetime, timezone
 
         from astrocyte.types import WikiPage
+
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
         async with pool.connection() as conn:
@@ -1312,8 +1404,8 @@ class PostgresPageIndexStore:
                     SELECT p.page_id, p.title, p.kind, p.scope,
                            r.markdown, r.revision_number, r.created_at,
                            p.bank_id
-                    FROM {self._fq('astrocyte_wiki_pages')} AS p
-                    LEFT JOIN {self._fq('astrocyte_wiki_revisions')} AS r
+                    FROM {self._fq("astrocyte_wiki_pages")} AS p
+                    LEFT JOIN {self._fq("astrocyte_wiki_revisions")} AS r
                         ON r.id = p.current_revision_id
                     WHERE p.bank_id = %s
                       AND p.scope = %s
@@ -1330,8 +1422,8 @@ class PostgresPageIndexStore:
                     await cur.execute(
                         f"""
                         SELECT p.page_id, prov.document_id, prov.line_num
-                        FROM {self._fq('astrocyte_wiki_pages')} AS p
-                        JOIN {self._fq('astrocyte_pi_wiki_provenance')} AS prov
+                        FROM {self._fq("astrocyte_wiki_pages")} AS p
+                        JOIN {self._fq("astrocyte_pi_wiki_provenance")} AS prov
                             ON prov.wiki_page_id = p.id
                         WHERE p.bank_id = %s
                           AND p.page_id = ANY(%s)
@@ -1346,20 +1438,22 @@ class PostgresPageIndexStore:
         pages: list[WikiPage] = []
         for r in rows:
             revised_at = r[6] if r[6] is not None else datetime.now(tz=timezone.utc)
-            pages.append(WikiPage(
-                page_id=r[0],
-                bank_id=r[7] or bank_id,
-                kind=r[2] or "topic",
-                title=r[1] or "",
-                content=r[4] or "",
-                scope=r[3] or "",
-                source_ids=provenance_by_page.get(r[0], []),
-                cross_links=[],
-                revision=int(r[5]) if r[5] is not None else 1,
-                revised_at=revised_at,
-                tags=None,
-                metadata=None,
-            ))
+            pages.append(
+                WikiPage(
+                    page_id=r[0],
+                    bank_id=r[7] or bank_id,
+                    kind=r[2] or "topic",
+                    title=r[1] or "",
+                    content=r[4] or "",
+                    scope=r[3] or "",
+                    source_ids=provenance_by_page.get(r[0], []),
+                    cross_links=[],
+                    revision=int(r[5]) if r[5] is not None else 1,
+                    revised_at=revised_at,
+                    tags=None,
+                    metadata=None,
+                )
+            )
         return pages
 
     async def list_wikis_affected_by_entities(
@@ -1392,6 +1486,7 @@ class PostgresPageIndexStore:
         from datetime import datetime, timezone
 
         from astrocyte.types import WikiPage
+
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
         async with pool.connection() as conn:
@@ -1405,13 +1500,13 @@ class PostgresPageIndexStore:
                            COUNT(DISTINCT se.entity_name) AS overlap_count,
                            array_agg(DISTINCT se.entity_name
                                      ORDER BY se.entity_name) AS shared_entities
-                    FROM {self._fq('astrocyte_wiki_pages')} AS p
-                    JOIN {self._fq('astrocyte_pi_wiki_provenance')} AS prov
+                    FROM {self._fq("astrocyte_wiki_pages")} AS p
+                    JOIN {self._fq("astrocyte_pi_wiki_provenance")} AS prov
                         ON prov.wiki_page_id = p.id
-                    JOIN {self._fq('astrocyte_pi_section_entities')} AS se
+                    JOIN {self._fq("astrocyte_pi_section_entities")} AS se
                         ON se.document_id = prov.document_id
                        AND se.line_num    = prov.line_num
-                    LEFT JOIN {self._fq('astrocyte_wiki_revisions')} AS r
+                    LEFT JOIN {self._fq("astrocyte_wiki_revisions")} AS r
                         ON r.id = p.current_revision_id
                     WHERE p.bank_id = %s
                       AND p.deleted_at IS NULL

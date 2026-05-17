@@ -237,7 +237,8 @@ async def link_expansion(
         all_link_types = list(p.semantic_link_types) + list(p.causal_link_types)
         try:
             links = await find_links(
-                [h.id for h in seed_hits], bank_id,
+                [h.id for h in seed_hits],
+                bank_id,
                 link_types=all_link_types,
                 limit=p.expansion_limit * 4,
             )

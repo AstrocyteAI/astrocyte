@@ -87,17 +87,25 @@ class TestRerankFusedHits:
             ("d1", 2): _section("d1", 2, "doctor", "the user visited Dr. Patel"),
             ("d1", 3): _section("d1", 3, "camera", "user prefers Sony cameras"),
         }
-        fake = FakeCrossEncoder({
-            "apples. the user likes apples": 0.1,
-            "doctor. the user visited Dr. Patel": 0.9,
-            "camera. user prefers Sony cameras": 0.5,
-        })
+        fake = FakeCrossEncoder(
+            {
+                "apples. the user likes apples": 0.1,
+                "doctor. the user visited Dr. Patel": 0.9,
+                "camera. user prefers Sony cameras": 0.5,
+            }
+        )
         out = rerank_fused_hits(
-            hits, sections, "what doctor did the user see?",
-            model=fake, rerank_top_k=10, output_top_k=10,
+            hits,
+            sections,
+            "what doctor did the user see?",
+            model=fake,
+            rerank_top_k=10,
+            output_top_k=10,
         )
         assert [(h.document_id, h.line_num) for h in out] == [
-            ("d1", 2), ("d1", 3), ("d1", 1),
+            ("d1", 2),
+            ("d1", 3),
+            ("d1", 1),
         ]
         # rrf_score is overwritten with the cross-encoder score.
         assert out[0].rrf_score == 0.9
@@ -106,16 +114,15 @@ class TestRerankFusedHits:
 
     def test_truncates_to_output_top_k(self) -> None:
         hits = [_hit("d1", i, rrf=1.0 - i * 0.1) for i in range(5)]
-        sections = {
-            ("d1", i): _section("d1", i, f"t{i}", f"s{i}")
-            for i in range(5)
-        }
-        fake = FakeCrossEncoder({
-            f"t{i}. s{i}": float(i) for i in range(5)
-        })
+        sections = {("d1", i): _section("d1", i, f"t{i}", f"s{i}") for i in range(5)}
+        fake = FakeCrossEncoder({f"t{i}. s{i}": float(i) for i in range(5)})
         out = rerank_fused_hits(
-            hits, sections, "q",
-            model=fake, rerank_top_k=10, output_top_k=2,
+            hits,
+            sections,
+            "q",
+            model=fake,
+            rerank_top_k=10,
+            output_top_k=2,
         )
         # text 4 (score 4.0) and text 3 (score 3.0) are the top two.
         assert len(out) == 2
@@ -125,14 +132,15 @@ class TestRerankFusedHits:
         """Only the first ``rerank_top_k`` get sent to the cross-encoder.
         Items beyond that rank don't participate in the rerank at all."""
         hits = [_hit("d1", i, rrf=1.0 - i * 0.01) for i in range(10)]
-        sections = {
-            ("d1", i): _section("d1", i, f"t{i}", f"s{i}")
-            for i in range(10)
-        }
+        sections = {("d1", i): _section("d1", i, f"t{i}", f"s{i}") for i in range(10)}
         fake = FakeCrossEncoder({f"t{i}. s{i}": 1.0 for i in range(10)})
         rerank_fused_hits(
-            hits, sections, "q",
-            model=fake, rerank_top_k=3, output_top_k=10,
+            hits,
+            sections,
+            "q",
+            model=fake,
+            rerank_top_k=3,
+            output_top_k=10,
         )
         # Only the top-3 by RRF should have been sent to the cross-encoder.
         assert len(fake.calls) == 1
@@ -317,8 +325,8 @@ class TestBuildConstrainedSkeleton:
     @pytest.mark.parametrize(
         "tree",
         [
-            [],                                  # empty list
-            {"structure": []},                   # dict with empty structure
+            [],  # empty list
+            {"structure": []},  # dict with empty structure
         ],
     )
     def test_empty_inputs_return_empty(self, tree) -> None:

@@ -212,7 +212,8 @@ async def update_affected_wikis_for_document(  # noqa: PLR0913
     revision already reflects the new state and emits NO_CHANGE.
     """
     report = IncrementalUpdateReport(
-        document_id=document_id, affected_count=0,
+        document_id=document_id,
+        affected_count=0,
     )
 
     if not new_entities:
@@ -225,15 +226,16 @@ async def update_affected_wikis_for_document(  # noqa: PLR0913
     # ── Find affected wikis via entity overlap (SPI returns full WikiPage rows) ──
     try:
         affected = await page_index_store.list_wikis_affected_by_entities(
-            bank_id, list(new_entities),
+            bank_id,
+            list(new_entities),
             min_overlap=min_overlap,
             limit=max_updates,
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
-            "wiki_incremental.spi: list_wikis_affected_by_entities "
-            "failed doc=%s (%s)",
-            document_id, exc,
+            "wiki_incremental.spi: list_wikis_affected_by_entities failed doc=%s (%s)",
+            document_id,
+            exc,
         )
         return report
 
@@ -241,7 +243,8 @@ async def update_affected_wikis_for_document(  # noqa: PLR0913
     if not affected:
         _logger.debug(
             "wiki_incremental: doc=%s no wikis affected by entities=%s",
-            document_id, new_entities[:5],
+            document_id,
+            new_entities[:5],
         )
         return report
 
@@ -264,8 +267,11 @@ async def update_affected_wikis_for_document(  # noqa: PLR0913
 
     _logger.info(
         "wiki_incremental: doc=%s affected=%d updated=%d skipped=%d failed=%d",
-        document_id, report.affected_count,
-        len(report.updated), len(report.skipped), len(report.failed),
+        document_id,
+        report.affected_count,
+        len(report.updated),
+        len(report.skipped),
+        len(report.failed),
     )
     return report
 
@@ -297,14 +303,17 @@ async def _update_one_wiki(  # noqa: PLR0913
     ]
     if not new_content_parts:
         return WikiUpdateResult(
-            page_id=wiki.page_id, verdict="NO_CHANGE",
+            page_id=wiki.page_id,
+            verdict="NO_CHANGE",
             detail="no excerpt content for shared entities",
         )
     new_content = "\n\n".join(new_content_parts)
 
     msg = _UPDATE_PROMPT.format(
-        title=wiki.title, revision=wiki.revision,
-        wiki_content=wiki.content, new_content=new_content,
+        title=wiki.title,
+        revision=wiki.revision,
+        wiki_content=wiki.content,
+        new_content=new_content,
     )
     try:
         completion = await provider.complete(
@@ -317,10 +326,13 @@ async def _update_one_wiki(  # noqa: PLR0913
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "wiki_incremental.llm: call failed for page=%s (%s)",
-            wiki.page_id, exc,
+            wiki.page_id,
+            exc,
         )
         return WikiUpdateResult(
-            page_id=wiki.page_id, verdict="FAILED", detail=str(exc),
+            page_id=wiki.page_id,
+            verdict="FAILED",
+            detail=str(exc),
         )
 
     try:
@@ -328,10 +340,12 @@ async def _update_one_wiki(  # noqa: PLR0913
     except (json.JSONDecodeError, AttributeError) as exc:
         _logger.warning(
             "wiki_incremental.parse: bad JSON for page=%s (%s)",
-            wiki.page_id, exc,
+            wiki.page_id,
+            exc,
         )
         return WikiUpdateResult(
-            page_id=wiki.page_id, verdict="FAILED",
+            page_id=wiki.page_id,
+            verdict="FAILED",
             detail=f"bad JSON: {exc}",
         )
 
@@ -341,14 +355,16 @@ async def _update_one_wiki(  # noqa: PLR0913
 
     if verdict != "UPDATE":
         return WikiUpdateResult(
-            page_id=wiki.page_id, verdict="FAILED",
+            page_id=wiki.page_id,
+            verdict="FAILED",
             detail=f"unrecognised verdict: {verdict!r}",
         )
 
     revised_content = (data.get("revised_content") or "").strip()
     if not revised_content:
         return WikiUpdateResult(
-            page_id=wiki.page_id, verdict="FAILED",
+            page_id=wiki.page_id,
+            verdict="FAILED",
             detail="UPDATE verdict with empty revised_content",
         )
     revised_title = (data.get("revised_title") or wiki.title).strip()
@@ -361,6 +377,7 @@ async def _update_one_wiki(  # noqa: PLR0913
     # ``astrocyte_pi_wiki_provenance`` from the initial compile and is
     # untouched by content-only revisions).
     from dataclasses import replace  # noqa: PLC0415
+
     new_wiki = replace(
         wiki,
         title=revised_title,
@@ -378,19 +395,25 @@ async def _update_one_wiki(  # noqa: PLR0913
                 continue
     try:
         await page_index_store.save_wiki_page(
-            page=new_wiki, embedding=None, provenance=provenance,
+            page=new_wiki,
+            embedding=None,
+            provenance=provenance,
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "wiki_incremental.save: page=%s revision=%d failed (%s)",
-            wiki.page_id, new_wiki.revision, exc,
+            wiki.page_id,
+            new_wiki.revision,
+            exc,
         )
         return WikiUpdateResult(
-            page_id=wiki.page_id, verdict="FAILED",
+            page_id=wiki.page_id,
+            verdict="FAILED",
             detail=f"save failed: {exc}",
         )
 
     return WikiUpdateResult(
-        page_id=wiki.page_id, verdict="UPDATED",
+        page_id=wiki.page_id,
+        verdict="UPDATED",
         new_revision=new_wiki.revision,
     )

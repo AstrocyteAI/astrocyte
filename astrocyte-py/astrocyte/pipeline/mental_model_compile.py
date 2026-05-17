@@ -128,11 +128,7 @@ def _format_sections_for_prompt(sections, max_sections: int = 60) -> str:
         summary = (s.summary or s.title or "").strip()
         if not summary:
             continue
-        date = (
-            s.session_date.strftime("%Y-%m-%d")
-            if getattr(s, "session_date", None) is not None
-            else "no-date"
-        )
+        date = s.session_date.strftime("%Y-%m-%d") if getattr(s, "session_date", None) is not None else "no-date"
         rendered.append(f"[line={s.line_num} date={date}] {summary}")
     return "\n".join(rendered)
 
@@ -177,7 +173,8 @@ async def compile_mental_models_for_document(
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "mental_model_compile: LLM call failed doc=%s: %s",
-            document_id, exc,
+            document_id,
+            exc,
         )
         return []
     try:
@@ -185,7 +182,9 @@ async def compile_mental_models_for_document(
     except json.JSONDecodeError as exc:
         _logger.warning(
             "mental_model_compile: JSON parse failed doc=%s: %s text=%r",
-            document_id, exc, completion.text[:200],
+            document_id,
+            exc,
+            completion.text[:200],
         )
         return []
     raw_models = data.get("models") or []
@@ -218,13 +217,15 @@ async def compile_mental_models_for_document(
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "mental_model_compile.upsert failed model_id=%s: %s",
-                model_id, exc,
+                model_id,
+                exc,
             )
             continue
         upserted.append(model_id)
 
     _logger.info(
         "mental_model_compile: doc=%s upserted %d models",
-        document_id, len(upserted),
+        document_id,
+        len(upserted),
     )
     return upserted

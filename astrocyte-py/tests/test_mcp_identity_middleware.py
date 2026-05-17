@@ -84,8 +84,10 @@ def _cfg(**overrides) -> JwtMiddlewareConfig:
 
 def _static_decoder(claims: dict[str, Any]):
     """Build a test decoder that returns a fixed claim dict."""
+
     def decode(_token: str) -> dict[str, Any]:
         return claims
+
     return decode
 
 
@@ -129,6 +131,7 @@ class TestMiddlewareResolve:
         config permits anonymous for missing headers. Silently downgrading
         a broken token would let an attacker bypass identity-aware MIP
         rules by sending malformed credentials."""
+
         def bad_decoder(_token: str) -> dict[str, Any]:
             raise RuntimeError("signature invalid")
 
@@ -241,7 +244,8 @@ class TestMcpServerWiring:
         # With an injected decoder, no PyJWT dependency required.
         mw = JwtIdentityMiddleware(_cfg(), _static_decoder(_USER_CLAIMS))
         server = create_mcp_server(
-            brain, cfg,
+            brain,
+            cfg,
             astrocyte_context=pre_bound,
             jwt_middleware=mw,
         )

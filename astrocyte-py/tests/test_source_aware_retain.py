@@ -70,10 +70,12 @@ class TestRetainProvenanceGating:
     async def test_no_source_store_means_no_provenance(self) -> None:
         """Without a SourceStore, vectors stay anonymous (chunk_id=None)."""
         brain, vs, _ = _build(source_store=None, retain_provenance=True)
-        await brain._pipeline.retain(RetainRequest(  # type: ignore[union-attr]
-            content="Hello world. The sky is blue.",
-            bank_id="bank-A",
-        ))
+        await brain._pipeline.retain(
+            RetainRequest(  # type: ignore[union-attr]
+                content="Hello world. The sky is blue.",
+                bank_id="bank-A",
+            )
+        )
         items = list(vs._vectors.values())
         assert len(items) >= 1
         assert all(item.chunk_id is None for item in items)
@@ -83,10 +85,12 @@ class TestRetainProvenanceGating:
         """SourceStore wired but flag off = no provenance written."""
         store = InMemorySourceStore()
         brain, vs, _ = _build(source_store=store, retain_provenance=False)
-        await brain._pipeline.retain(RetainRequest(  # type: ignore[union-attr]
-            content="Hello world. The sky is blue.",
-            bank_id="bank-A",
-        ))
+        await brain._pipeline.retain(
+            RetainRequest(  # type: ignore[union-attr]
+                content="Hello world. The sky is blue.",
+                bank_id="bank-A",
+            )
+        )
         items = list(vs._vectors.values())
         assert all(item.chunk_id is None for item in items)
         # And no SourceDocument was created.
@@ -98,10 +102,12 @@ class TestRetainProvenanceGating:
         SourceStore now holds the parent document + chunk rows."""
         store = InMemorySourceStore()
         brain, vs, _ = _build(source_store=store, retain_provenance=True)
-        await brain._pipeline.retain(RetainRequest(  # type: ignore[union-attr]
-            content="The sky is blue. Grass is green. Water is wet.",
-            bank_id="bank-A",
-        ))
+        await brain._pipeline.retain(
+            RetainRequest(  # type: ignore[union-attr]
+                content="The sky is blue. Grass is green. Water is wet.",
+                bank_id="bank-A",
+            )
+        )
         items = list(vs._vectors.values())
         assert len(items) >= 1
         assert all(item.chunk_id is not None for item in items)
@@ -138,34 +144,47 @@ class TestProvenanceResilience:
     async def test_failing_source_store_does_not_break_retain(self) -> None:
         class _ExplodingStore:
             SPI_VERSION = 1
+
             async def store_document(self, doc):  # noqa: ARG002
                 raise RuntimeError("boom")
+
             async def store_chunks(self, chunks):  # noqa: ARG002
                 raise RuntimeError("boom")
+
             async def get_chunk(self, *a, **kw):  # noqa: ARG002
                 return None
+
             async def list_chunks(self, *a, **kw):  # noqa: ARG002
                 return []
+
             async def get_document(self, *a, **kw):  # noqa: ARG002
                 return None
+
             async def find_document_by_hash(self, *a, **kw):  # noqa: ARG002
                 return None
+
             async def find_chunk_by_hash(self, *a, **kw):  # noqa: ARG002
                 return None
+
             async def list_documents(self, *a, **kw):  # noqa: ARG002
                 return []
+
             async def delete_document(self, *a, **kw):  # noqa: ARG002
                 return False
+
             async def health(self):
                 from astrocyte.types import HealthStatus
+
                 return HealthStatus(healthy=False, message="boom")
 
         brain, vs, _ = _build(source_store=_ExplodingStore(), retain_provenance=True)
         # Ingest must NOT raise even though the source store throws.
-        result = await brain._pipeline.retain(RetainRequest(  # type: ignore[union-attr]
-            content="Some content.",
-            bank_id="bank-A",
-        ))
+        result = await brain._pipeline.retain(
+            RetainRequest(  # type: ignore[union-attr]
+                content="Some content.",
+                bank_id="bank-A",
+            )
+        )
         assert result.stored is True
         # Vectors still stored, just without chunk_id provenance.
         items = list(vs._vectors.values())
@@ -184,15 +203,19 @@ class TestRecallProvenance:
         """When retain stamps chunk_id, recall returns it on the MemoryHit."""
         store = InMemorySourceStore()
         brain, _, _ = _build(source_store=store, retain_provenance=True)
-        await brain._pipeline.retain(RetainRequest(  # type: ignore[union-attr]
-            content="Astrocyte memory framework rocks.",
-            bank_id="bank-A",
-        ))
-        result = await brain._pipeline.recall(RecallRequest(  # type: ignore[union-attr]
-            query="memory framework",
-            bank_id="bank-A",
-            max_results=5,
-        ))
+        await brain._pipeline.retain(
+            RetainRequest(  # type: ignore[union-attr]
+                content="Astrocyte memory framework rocks.",
+                bank_id="bank-A",
+            )
+        )
+        result = await brain._pipeline.recall(
+            RecallRequest(  # type: ignore[union-attr]
+                query="memory framework",
+                bank_id="bank-A",
+                max_results=5,
+            )
+        )
         assert len(result.hits) >= 1
         # At least one hit must carry the backreference.
         assert any(h.chunk_id is not None for h in result.hits)
@@ -204,19 +227,25 @@ class TestChunkExpansion:
         """Baseline: with expansion off, only the seed vectors come back."""
         store = InMemorySourceStore()
         brain, vs, _ = _build(
-            source_store=store, retain_provenance=True, chunk_expansion=False,
+            source_store=store,
+            retain_provenance=True,
+            chunk_expansion=False,
         )
         # Two paragraphs from the same document → two chunks → two vectors.
-        await brain._pipeline.retain(RetainRequest(  # type: ignore[union-attr]
-            content="The sky is blue today.\n\nGrass is green in spring.",
-            bank_id="bank-A",
-        ))
+        await brain._pipeline.retain(
+            RetainRequest(  # type: ignore[union-attr]
+                content="The sky is blue today.\n\nGrass is green in spring.",
+                bank_id="bank-A",
+            )
+        )
         before_count = len(vs._vectors)
-        result = await brain._pipeline.recall(RecallRequest(  # type: ignore[union-attr]
-            query="sky",
-            bank_id="bank-A",
-            max_results=5,
-        ))
+        result = await brain._pipeline.recall(
+            RecallRequest(  # type: ignore[union-attr]
+                query="sky",
+                bank_id="bank-A",
+                max_results=5,
+            )
+        )
         # Sanity: no expansion → recall returns at most as many hits as
         # vectors that match the query directly.
         assert len(result.hits) <= before_count
@@ -240,29 +269,49 @@ class TestChunkExpansion:
         )
 
         # Manually seed: one document with 4 chunks; vectors keyed by chunk.
-        await store.store_document(SourceDocument(
-            id="doc-A", bank_id="bank-X", content_hash="hash-A",
-        ))
-        chunk_ids = await store.store_chunks([
-            SourceChunk(id=f"doc-A:{i}", bank_id="bank-X", document_id="doc-A",
-                        chunk_index=i, text=f"chunk text {i}")
-            for i in range(4)
-        ])
+        await store.store_document(
+            SourceDocument(
+                id="doc-A",
+                bank_id="bank-X",
+                content_hash="hash-A",
+            )
+        )
+        chunk_ids = await store.store_chunks(
+            [
+                SourceChunk(
+                    id=f"doc-A:{i}", bank_id="bank-X", document_id="doc-A", chunk_index=i, text=f"chunk text {i}"
+                )
+                for i in range(4)
+            ]
+        )
         # Seed 4 vectors, one per chunk.
         for i, cid in enumerate(chunk_ids):
-            await vs.store_vectors([VectorItem(
-                id=f"mem-{i}", bank_id="bank-X", vector=[float(j == i) for j in range(128)],
-                text=f"memory body {i}", chunk_id=cid,
-            )])
+            await vs.store_vectors(
+                [
+                    VectorItem(
+                        id=f"mem-{i}",
+                        bank_id="bank-X",
+                        vector=[float(j == i) for j in range(128)],
+                        text=f"memory body {i}",
+                        chunk_id=cid,
+                    )
+                ]
+            )
 
         # Build a fake fused list with only the seed hit (mem-0).
-        seed_only = [ScoredItem(
-            id="mem-0", text="memory body 0", score=0.9, chunk_id="doc-A:0",
-        )]
+        seed_only = [
+            ScoredItem(
+                id="mem-0",
+                text="memory body 0",
+                score=0.9,
+                chunk_id="doc-A:0",
+            )
+        ]
 
         # Expand.
         expanded = await brain._pipeline._expand_via_sibling_chunks(  # type: ignore[union-attr]
-            seed_only, "bank-X",
+            seed_only,
+            "bank-X",
         )
 
         # The helper must have added the 3 siblings (mem-1, mem-2, mem-3)
@@ -279,6 +328,7 @@ class TestChunkExpansion:
     async def test_expansion_no_op_when_vector_store_lacks_get_by_chunk_ids(self) -> None:
         """Older adapters without ``get_by_chunk_ids`` must degrade
         gracefully — chunk expansion silently skips, recall still works."""
+
         # Composition over inheritance: ``_LegacyVectorStore`` wraps an
         # ``InMemoryVectorStore`` and delegates every attribute through
         # ``__getattr__`` EXCEPT ``get_by_chunk_ids``, which raises
@@ -297,9 +347,7 @@ class TestChunkExpansion:
 
             def __getattr__(self, name: str):
                 if name == "get_by_chunk_ids":
-                    raise AttributeError(
-                        "legacy adapter does not implement get_by_chunk_ids"
-                    )
+                    raise AttributeError("legacy adapter does not implement get_by_chunk_ids")
                 return getattr(self._inner, name)
 
         store = InMemorySourceStore()
@@ -313,15 +361,19 @@ class TestChunkExpansion:
         pipeline = PipelineOrchestrator(vector_store=legacy_vs, llm_provider=MockLLMProvider())
         brain.set_pipeline(pipeline)
 
-        await brain._pipeline.retain(RetainRequest(  # type: ignore[union-attr]
-            content="Hello there.\n\nGeneral kenobi.",
-            bank_id="bank-A",
-        ))
-        result = await brain._pipeline.recall(RecallRequest(  # type: ignore[union-attr]
-            query="hello",
-            bank_id="bank-A",
-            max_results=5,
-        ))
+        await brain._pipeline.retain(
+            RetainRequest(  # type: ignore[union-attr]
+                content="Hello there.\n\nGeneral kenobi.",
+                bank_id="bank-A",
+            )
+        )
+        result = await brain._pipeline.recall(
+            RecallRequest(  # type: ignore[union-attr]
+                query="hello",
+                bank_id="bank-A",
+                max_results=5,
+            )
+        )
         # Recall must still return without raising; the expansion
         # branch is gated by hasattr(get_by_chunk_ids) so it skips.
         assert isinstance(result.hits, list)

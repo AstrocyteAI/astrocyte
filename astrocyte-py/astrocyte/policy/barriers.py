@@ -26,7 +26,9 @@ logger = logging.getLogger("astrocyte.pii")
 
 _PII_PATTERNS: dict[str, tuple[re.Pattern[str], str]] = {
     "email": (
-        re.compile(r"\b[a-zA-Z0-9](?:[a-zA-Z0-9._%+\-]*[a-zA-Z0-9])?@[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}\b"),
+        re.compile(
+            r"\b[a-zA-Z0-9](?:[a-zA-Z0-9._%+\-]*[a-zA-Z0-9])?@[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}\b"
+        ),
         "[EMAIL_REDACTED]",
     ),
     "phone": (
@@ -469,8 +471,7 @@ class MetadataSanitizer:
             # Match exact key or key as a standalone word boundary segment
             key_lower = key.lower()
             if key_lower in self.blocked_keys or any(
-                re.search(rf"(?:^|[_.\-]){re.escape(bk)}(?:$|[_.\-])", key_lower)
-                for bk in self.blocked_keys
+                re.search(rf"(?:^|[_.\-]){re.escape(bk)}(?:$|[_.\-])", key_lower) for bk in self.blocked_keys
             ):
                 warnings.append(f"Blocked metadata key: '{key}'")
                 continue

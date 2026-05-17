@@ -113,7 +113,12 @@ async def parallel_retrieve(
     if use_hybrid_search:
         hybrid_task = asyncio.create_task(
             _timed_hybrid_semantic_keyword_search(
-                vector_store, query_vector, query_text, bank_id, limit, filters,
+                vector_store,
+                query_vector,
+                query_text,
+                bank_id,
+                limit,
+                filters,
             )
         )
     else:
@@ -145,13 +150,17 @@ async def parallel_retrieve(
     as_of = filters.as_of if filters is not None else None
     if enable_temporal and hasattr(vector_store, "list_vectors"):
         tasks["temporal"] = asyncio.create_task(
-            _timed(_temporal_search(
-                vector_store, bank_id, limit,
-                scan_cap=temporal_scan_cap,
-                half_life_days=temporal_half_life_days,
-                as_of=as_of,
-                filters=filters,
-            ))
+            _timed(
+                _temporal_search(
+                    vector_store,
+                    bank_id,
+                    limit,
+                    scan_cap=temporal_scan_cap,
+                    half_life_days=temporal_half_life_days,
+                    as_of=as_of,
+                    filters=filters,
+                )
+            )
         )
 
     # Wait for all strategies
@@ -174,16 +183,13 @@ async def parallel_retrieve(
             # use). Each fallback is isolated, so if e.g. semantic succeeds
             # but keyword fails, semantic still flows through.
             logger.warning(
-                "retrieval strategy hybrid_semantic_bm25 failed (%s); "
-                "falling back to per-strategy semantic + keyword",
+                "retrieval strategy hybrid_semantic_bm25 failed (%s); falling back to per-strategy semantic + keyword",
                 exc,
             )
             sem_task = asyncio.create_task(
                 _timed(_semantic_search(vector_store, query_vector, bank_id, limit, filters))
             )
-            kw_task = asyncio.create_task(
-                _timed(_keyword_search(document_store, query_text, bank_id, limit))
-            )
+            kw_task = asyncio.create_task(_timed(_keyword_search(document_store, query_text, bank_id, limit)))
             for name, fallback_task in (("semantic", sem_task), ("keyword", kw_task)):
                 try:
                     items, fallback_ms = await fallback_task
@@ -194,7 +200,9 @@ async def parallel_retrieve(
                         strategy_candidate_counts[name] = len(items)
                 except Exception as inner_exc:
                     logger.warning(
-                        "fallback strategy %s also failed: %s", name, inner_exc,
+                        "fallback strategy %s also failed: %s",
+                        name,
+                        inner_exc,
                     )
                     results[name] = []
                     if strategy_timings_ms is not None:

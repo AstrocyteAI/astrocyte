@@ -52,8 +52,7 @@ class PostgresSourceStore:
         self._dsn = dsn or os.environ.get("DATABASE_URL") or os.environ.get("ASTROCYTE_PG_DSN")
         if not self._dsn:
             raise ValueError(
-                "PostgresSourceStore requires `dsn` in source_store_config "
-                "or DATABASE_URL / ASTROCYTE_PG_DSN",
+                "PostgresSourceStore requires `dsn` in source_store_config or DATABASE_URL / ASTROCYTE_PG_DSN",
             )
         self._bootstrap_schema = bool(bootstrap_schema)
         self._pool: AsyncConnectionPool | None = None
@@ -69,6 +68,7 @@ class PostgresSourceStore:
     async def _ensure_pool(self) -> AsyncConnectionPool:
         async with self._pool_lock:
             if self._pool is None:
+
                 async def configure(conn: psycopg.AsyncConnection) -> None:
                     await conn.execute('SET search_path = public, "$user"')
                     await conn.commit()
@@ -327,9 +327,7 @@ class PostgresSourceStore:
 
         # Probe content_hash for each chunk before insert. We do this in
         # a single query per call rather than per-chunk to keep it cheap.
-        hashes_to_probe = list({
-            c.content_hash for c in chunks if c.content_hash and c.bank_id == chunks[0].bank_id
-        })
+        hashes_to_probe = list({c.content_hash for c in chunks if c.content_hash and c.bank_id == chunks[0].bank_id})
         existing_by_hash: dict[str, str] = {}
         if hashes_to_probe:
             async with pool.connection() as conn:

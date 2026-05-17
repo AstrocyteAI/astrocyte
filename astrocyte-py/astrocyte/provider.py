@@ -639,6 +639,34 @@ class PageIndexStore(Protocol):
         seeds. ``link_types`` filters to e.g. ['semantic_knn', 'causal'];
         None means all types. Score is link weight."""
 
+    async def expand_sections_by_shared_entities(
+        self,
+        bank_id: str,
+        seeds: list[tuple[str, int]],
+        *,
+        top_k: int = 20,
+        exclude_seeds: bool = True,
+    ) -> list[tuple[str, int, float]]:
+        """Fix 3 (conv-run-4) / entity spreading activation: 1-hop
+        expansion through entity co-occurrence in
+        ``astrocyte_pi_section_entities``.
+
+        For each seed ``(document_id, line_num)``, find every section
+        in the same bank that shares at least one entity with the seed.
+        Returns ``(document_id, line_num, score)`` where score is the
+        count of distinct shared entities. ``exclude_seeds=True``
+        filters the seeds themselves out of the result.
+
+        Why this is distinct from ``expand_section_links``: links rely
+        on ``astrocyte_pi_section_links`` being populated (semantic_knn
+        and the LLM-extracted causal/elaborates edges). In conversation
+        ingest the link density is sparse, so the existing graph_expand
+        strategy can't bridge Denver → Red Rocks even when both
+        sections mention the same entity. Entity spread uses the
+        already-populated ``astrocyte_pi_section_entities`` table
+        directly, which gives a denser bridge with the same SQL cost.
+        """
+
     # ── M12.1: fact-grain layer (atomic facts alongside sections) ───────
 
     async def save_facts(self, facts: list["PageIndexFact"]) -> int:

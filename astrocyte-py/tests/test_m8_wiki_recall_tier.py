@@ -87,6 +87,7 @@ def _orchestrator(
 # to control what vector the query embeds to so we can make wiki hits score
 # highly.  We subclass to return a controllable vector.
 
+
 class _VecLLMProvider(MockLLMProvider):
     """LLM provider whose embed() returns a preset vector for any input."""
 
@@ -363,9 +364,7 @@ class TestWikiTierTokenBudget:
         llm = _VecLLMProvider(query_vec)
         orch = _orchestrator(vs, llm, ws, threshold=0.7)
 
-        result = await orch.recall(
-            RecallRequest(query="long", bank_id="bank1", max_results=5, max_tokens=50)
-        )
+        result = await orch.recall(RecallRequest(query="long", bank_id="bank1", max_results=5, max_tokens=50))
 
         assert result.trace is not None
         assert result.trace.wiki_tier_used is True

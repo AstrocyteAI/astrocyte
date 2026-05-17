@@ -63,10 +63,17 @@ class MemoryTask:
 class TaskBackend(Protocol):
     """Storage contract for task queues, implemented by Postgres in production."""
 
-    async def enqueue(self, task: MemoryTask) -> str: pass
-    async def claim(self, worker_id: str, limit: int = 10) -> list[MemoryTask]: pass
-    async def complete(self, task_id: str, result: dict[str, Any]) -> None: pass
-    async def fail(self, task_id: str, error: str, retry_at: datetime | None) -> None: pass
+    async def enqueue(self, task: MemoryTask) -> str:
+        pass
+
+    async def claim(self, worker_id: str, limit: int = 10) -> list[MemoryTask]:
+        pass
+
+    async def complete(self, task_id: str, result: dict[str, Any]) -> None:
+        pass
+
+    async def fail(self, task_id: str, error: str, retry_at: datetime | None) -> None:
+        pass
 
 
 class InMemoryTaskBackend:
@@ -90,11 +97,7 @@ class InMemoryTaskBackend:
     async def claim(self, worker_id: str, limit: int = 10) -> list[MemoryTask]:
         now = datetime.now(UTC)
         queued = sorted(
-            (
-                task
-                for task in self._tasks.values()
-                if task.status == "queued" and task.run_after <= now
-            ),
+            (task for task in self._tasks.values() if task.status == "queued" and task.run_after <= now),
             key=lambda task: (task.run_after, task.created_at),
         )
         claimed: list[MemoryTask] = []
@@ -220,18 +223,14 @@ class MemoryTaskDispatcher:
         source_ids = [str(value) for value in task.payload.get("source_ids", []) if value]
         items = await _list_bank_vectors(self._ctx.vector_store, task.bank_id)
         relevant = [
-            item for item in items
-            if _item_matches_person(item, person) and (not source_ids or item.id in source_ids)
+            item for item in items if _item_matches_person(item, person) and (not source_ids or item.id in source_ids)
         ]
         # When scope is set, also filter the relevant items to those that
         # belong to the same scope — otherwise the page would merge memories
         # from every context that mentioned this person, defeating the
         # whole point of scoping.
         if scope is not None:
-            relevant = [
-                item for item in relevant
-                if _item_in_scope(item, scope)
-            ]
+            relevant = [item for item in relevant if _item_in_scope(item, scope)]
         if person is None:
             names = sorted({name for item in items for name in _item_person_names(item)})
             if not names:
@@ -251,14 +250,9 @@ class MemoryTaskDispatcher:
                 page_ids.extend(result.get("page_ids", []))
             return {"pages_created": created, "pages_updated": updated, "page_ids": page_ids}
 
-        page_id = (
-            f"person:{_slug(scope)}:{_slug(person)}" if scope
-            else f"person:{_slug(person)}"
-        )
+        page_id = f"person:{_slug(scope)}:{_slug(person)}" if scope else f"person:{_slug(person)}"
         existing = await self._ctx.wiki_store.get_page(page_id, task.bank_id)
-        page = await self._build_persona_page(
-            task.bank_id, person, relevant, existing, page_id=page_id, scope=scope
-        )
+        page = await self._build_persona_page(task.bank_id, person, relevant, existing, page_id=page_id, scope=scope)
         await self._ctx.wiki_store.upsert_page(page, task.bank_id)
         result = {
             "pages_created": 1 if existing is None else 0,

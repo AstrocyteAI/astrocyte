@@ -74,10 +74,12 @@ class TestEntityOverlapSignal:
         gs = InMemoryGraphStore()
         vs = InMemoryVectorStore()
         await gs.store_entities([_entity("alice", "Alice")], "b1")
-        await vs.store_vectors([
-            _vec("seed-mem", "Alice baked a cake."),
-            _vec("linked-mem", "Alice ran a race."),
-        ])
+        await vs.store_vectors(
+            [
+                _vec("seed-mem", "Alice baked a cake."),
+                _vec("linked-mem", "Alice ran a race."),
+            ]
+        )
         await gs.link_memories_to_entities(
             [
                 MemoryEntityAssociation(memory_id="seed-mem", entity_id="alice"),
@@ -89,8 +91,10 @@ class TestEntityOverlapSignal:
         seed = ScoredItem(id="seed-mem", text="Alice baked a cake.", score=0.9)
 
         result = await link_expansion(
-            [seed], bank_id="b1",
-            vector_store=vs, graph_store=gs,
+            [seed],
+            bank_id="b1",
+            vector_store=vs,
+            graph_store=gs,
             params=LinkExpansionParams(activation_threshold=0.0),
         )
 
@@ -113,19 +117,24 @@ class TestSemanticLinkSignal:
         """A precomputed ``semantic`` memory link surfaces the target."""
         gs = InMemoryGraphStore()
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            _vec("seed", "x"),
-            _vec("similar", "y"),
-        ])
+        await vs.store_vectors(
+            [
+                _vec("seed", "x"),
+                _vec("similar", "y"),
+            ]
+        )
         await gs.store_memory_links(
-            [_mlink("seed", "similar", "semantic", weight=0.85)], "b1",
+            [_mlink("seed", "similar", "semantic", weight=0.85)],
+            "b1",
         )
 
         seed = ScoredItem(id="seed", text="x", score=0.9)
 
         result = await link_expansion(
-            [seed], bank_id="b1",
-            vector_store=vs, graph_store=gs,
+            [seed],
+            bank_id="b1",
+            vector_store=vs,
+            graph_store=gs,
             params=LinkExpansionParams(activation_threshold=0.0),
         )
 
@@ -147,20 +156,25 @@ class TestCausalLinkSignal:
         """Causal links score with the Hindsight ``+1.0`` boost."""
         gs = InMemoryGraphStore()
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            _vec("effect", "she resigned"),
-            _vec("cause", "she was burned out"),
-        ])
+        await vs.store_vectors(
+            [
+                _vec("effect", "she resigned"),
+                _vec("cause", "she was burned out"),
+            ]
+        )
         # effect ← caused_by ← cause
         await gs.store_memory_links(
-            [_mlink("effect", "cause", "caused_by", weight=1.0)], "b1",
+            [_mlink("effect", "cause", "caused_by", weight=1.0)],
+            "b1",
         )
 
         seed = ScoredItem(id="effect", text="she resigned", score=1.0)
 
         result = await link_expansion(
-            [seed], bank_id="b1",
-            vector_store=vs, graph_store=gs,
+            [seed],
+            bank_id="b1",
+            vector_store=vs,
+            graph_store=gs,
             params=LinkExpansionParams(activation_threshold=0.0),
         )
 
@@ -185,11 +199,13 @@ class TestCompoundingSignals:
         gs = InMemoryGraphStore()
         vs = InMemoryVectorStore()
         await gs.store_entities([_entity("alice", "Alice")], "b1")
-        await vs.store_vectors([
-            _vec("seed", "Alice baked a cake."),
-            _vec("entity-only", "Alice ran a race."),
-            _vec("entity-and-semantic", "Alice climbed a mountain."),
-        ])
+        await vs.store_vectors(
+            [
+                _vec("seed", "Alice baked a cake."),
+                _vec("entity-only", "Alice ran a race."),
+                _vec("entity-and-semantic", "Alice climbed a mountain."),
+            ]
+        )
         await gs.link_memories_to_entities(
             [
                 MemoryEntityAssociation(memory_id="seed", entity_id="alice"),
@@ -199,14 +215,17 @@ class TestCompoundingSignals:
             "b1",
         )
         await gs.store_memory_links(
-            [_mlink("seed", "entity-and-semantic", "semantic", weight=0.9)], "b1",
+            [_mlink("seed", "entity-and-semantic", "semantic", weight=0.9)],
+            "b1",
         )
 
         seed = ScoredItem(id="seed", text="Alice baked.", score=0.9)
 
         result = await link_expansion(
-            [seed], bank_id="b1",
-            vector_store=vs, graph_store=gs,
+            [seed],
+            bank_id="b1",
+            vector_store=vs,
+            graph_store=gs,
             params=LinkExpansionParams(activation_threshold=0.0),
         )
         by_id = {it.id: it for it in result}
@@ -241,10 +260,12 @@ class TestCompoundingSignals:
 
         gs = FastGraphStore()
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            _vec("seed", "seed text"),
-            _vec("fast-candidate", "hydrated text", tags=["convo:X"]),
-        ])
+        await vs.store_vectors(
+            [
+                _vec("seed", "seed text"),
+                _vec("fast-candidate", "hydrated text", tags=["convo:X"]),
+            ]
+        )
 
         result = await link_expansion(
             [ScoredItem(id="seed", text="seed text", score=0.9)],
@@ -272,11 +293,13 @@ class TestFilteringAndExclusions:
     async def test_tag_scope_drops_cross_scope_candidates(self):
         gs = InMemoryGraphStore()
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            _vec("seed", "x", tags=["convo:X"]),
-            _vec("in-scope", "y", tags=["convo:X"]),
-            _vec("out-of-scope", "z", tags=["convo:Y"]),
-        ])
+        await vs.store_vectors(
+            [
+                _vec("seed", "x", tags=["convo:X"]),
+                _vec("in-scope", "y", tags=["convo:X"]),
+                _vec("out-of-scope", "z", tags=["convo:Y"]),
+            ]
+        )
         await gs.store_memory_links(
             [
                 _mlink("seed", "in-scope", "semantic", weight=0.8),
@@ -288,8 +311,10 @@ class TestFilteringAndExclusions:
         seed = ScoredItem(id="seed", text="x", score=0.9, tags=["convo:X"])
 
         result = await link_expansion(
-            [seed], bank_id="b1",
-            vector_store=vs, graph_store=gs,
+            [seed],
+            bank_id="b1",
+            vector_store=vs,
+            graph_store=gs,
             params=LinkExpansionParams(activation_threshold=0.0),
             tags=["convo:X"],
         )
@@ -303,10 +328,12 @@ class TestFilteringAndExclusions:
         """A seed cannot be its own candidate."""
         gs = InMemoryGraphStore()
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            _vec("a", "x"),
-            _vec("b", "y"),
-        ])
+        await vs.store_vectors(
+            [
+                _vec("a", "x"),
+                _vec("b", "y"),
+            ]
+        )
         # Mutual semantic link between two seeds.
         await gs.store_memory_links(
             [
@@ -322,8 +349,10 @@ class TestFilteringAndExclusions:
         ]
 
         result = await link_expansion(
-            seeds, bank_id="b1",
-            vector_store=vs, graph_store=gs,
+            seeds,
+            bank_id="b1",
+            vector_store=vs,
+            graph_store=gs,
             params=LinkExpansionParams(activation_threshold=0.0),
         )
 
@@ -337,14 +366,17 @@ class TestFilteringAndExclusions:
         await vs.store_vectors([_vec("seed", "x"), _vec("weak", "y")])
         # Weak semantic link (just above zero).
         await gs.store_memory_links(
-            [_mlink("seed", "weak", "semantic", weight=0.001)], "b1",
+            [_mlink("seed", "weak", "semantic", weight=0.001)],
+            "b1",
         )
 
         seed = ScoredItem(id="seed", text="x", score=0.9)
 
         result = await link_expansion(
-            [seed], bank_id="b1",
-            vector_store=vs, graph_store=gs,
+            [seed],
+            bank_id="b1",
+            vector_store=vs,
+            graph_store=gs,
             params=LinkExpansionParams(activation_threshold=0.5),
         )
 

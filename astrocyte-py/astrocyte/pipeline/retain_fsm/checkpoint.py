@@ -140,7 +140,8 @@ class FileCheckpoint(Checkpoint):
         except json.JSONDecodeError as exc:
             logger.warning(
                 "checkpoint load: malformed JSON at %s: %s",
-                path, exc,
+                path,
+                exc,
             )
             return None
         return _deserialise(raw)
@@ -158,6 +159,7 @@ class FileCheckpoint(Checkpoint):
 
 def _safe_segment(s: str) -> str:
     import re
+
     return re.sub(r"[^a-zA-Z0-9._-]", "_", s)[:128] or "_"
 
 
@@ -222,9 +224,7 @@ def _deserialise(raw: dict[str, Any]) -> RetainContext:
     ctx.entities = list(raw.get("entities") or [])
     ctx.wikis_created = list(raw.get("wikis_created") or [])
     ctx.wikis_updated = list(raw.get("wikis_updated") or [])
-    ctx.supersedes_edges = [
-        tuple(e) for e in raw.get("supersedes_edges") or []
-    ]
+    ctx.supersedes_edges = [tuple(e) for e in raw.get("supersedes_edges") or []]
     ctx.last_state = raw.get("last_state") or "INIT"
     ctx.errors = list(raw.get("errors") or [])
     ctx.started_at = _parse_iso(raw.get("started_at")) or datetime.now(

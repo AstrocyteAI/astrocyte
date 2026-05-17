@@ -43,23 +43,23 @@ class TestCrossEncoderRerank:
         """No work to do when items or query is empty."""
         fake = _FakeCrossEncoder({})
         assert cross_encoder_rerank([], "q", model=fake) == []
-        assert cross_encoder_rerank([_item("a", "x")], "", model=fake) == [
-            _item("a", "x")
-        ]
+        assert cross_encoder_rerank([_item("a", "x")], "", model=fake) == [_item("a", "x")]
         assert fake.calls == []
 
     def test_reranks_by_cross_encoder_score(self):
         """Items end up in descending cross-encoder score order — even
         when that order disagrees with their incoming bi-encoder score."""
-        fake = _FakeCrossEncoder({
-            "alice loves pottery": 0.95,
-            "bob runs trails":     0.10,
-            "carol bakes bread":   0.50,
-        })
+        fake = _FakeCrossEncoder(
+            {
+                "alice loves pottery": 0.95,
+                "bob runs trails": 0.10,
+                "carol bakes bread": 0.50,
+            }
+        )
         items = [
             _item("a", "alice loves pottery", score=0.20),  # was last by score
-            _item("b", "bob runs trails",     score=0.90),  # was first
-            _item("c", "carol bakes bread",   score=0.50),
+            _item("b", "bob runs trails", score=0.90),  # was first
+            _item("c", "carol bakes bread", score=0.50),
         ]
 
         ranked = cross_encoder_rerank(items, "Who likes pottery?", model=fake)
@@ -74,10 +74,12 @@ class TestCrossEncoderRerank:
         """``top_k`` bounds the cross-encoder call to the head of the
         list. Items past ``top_k`` keep their original score and follow
         the reranked head in the original relative order."""
-        fake = _FakeCrossEncoder({
-            "head-A": 0.30,  # ranked 2nd in head
-            "head-B": 0.80,  # ranked 1st in head
-        })
+        fake = _FakeCrossEncoder(
+            {
+                "head-A": 0.30,  # ranked 2nd in head
+                "head-B": 0.80,  # ranked 1st in head
+            }
+        )
         items = [
             _item("a", "head-A", score=0.50),
             _item("b", "head-B", score=0.40),

@@ -79,9 +79,7 @@ def _safe_resolve(
     """
     path_str = os.fspath(path)
     if any(ord(c) in _ILLEGAL_PATH_CHAR_ORDS for c in path_str):
-        raise ValueError(
-            f"Portability path contains illegal control character: {path_str!r}"
-        )
+        raise ValueError(f"Portability path contains illegal control character: {path_str!r}")
     # ``path_str`` is user-controlled, but the taint is neutralized by
     # the allow-list containment check below — ``resolved`` is matched
     # against ``allowed_roots`` (or the env-configured
@@ -110,10 +108,7 @@ def _safe_resolve(
     for root in roots:
         if resolved == root or resolved.is_relative_to(root):
             return resolved
-    raise ValueError(
-        f"Portability path escapes allowed roots: {resolved!s} "
-        f"not in {[str(r) for r in roots]}"
-    )
+    raise ValueError(f"Portability path escapes allowed roots: {resolved!s} not in {[str(r) for r in roots]}")
 
 
 # ---------------------------------------------------------------------------

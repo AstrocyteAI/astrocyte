@@ -111,8 +111,8 @@ _ABSTENTION_PHRASES: Final[tuple[str, ...]] = (
     "unable to find",
     "no record",
     "nothing about",
-    "not in the memor",       # prefix: "not in the memory" / "memories"
-    "not in my memor",        # prefix: "not in my memory" / "memories"
+    "not in the memor",  # prefix: "not in the memory" / "memories"
+    "not in my memor",  # prefix: "not in my memory" / "memories"
     "not in the conversation",
     "not in the provided",
     "no mention",

@@ -101,7 +101,8 @@ class TieredRetriever:
         # ── Tier 1: Fuzzy text match on recent memories ──
         if self.recent_buffer and self.max_tier >= 1:
             fuzzy_hits = self.recent_buffer.search(
-                request.query, request.bank_id,
+                request.query,
+                request.bank_id,
                 limit=request.max_results * 2,
                 min_score=self.min_score,
             )
@@ -120,9 +121,7 @@ class TieredRetriever:
                     ),
                 )
                 if request.external_context:
-                    result = merge_external_into_recall_result(
-                        result, request.external_context, request.max_results
-                    )
+                    result = merge_external_into_recall_result(result, request.external_context, request.max_results)
                 if self.recall_cache and query_vector and allow_cache:
                     self.recall_cache.put(request.bank_id, query_vector, result)
                 return result

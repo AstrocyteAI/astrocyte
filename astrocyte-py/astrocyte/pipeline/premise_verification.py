@@ -106,8 +106,7 @@ class QuestionVerification:
         # makes "Alice quit Google" moot).
         first = unsupported[0]
         return (
-            f"insufficient evidence: the question presupposes "
-            f"'{first.premise.claim}' which is not supported by memory."
+            f"insufficient evidence: the question presupposes '{first.premise.claim}' which is not supported by memory."
         )
 
 
@@ -145,10 +144,7 @@ asked. Example: "Did Alice play tennis at the club?" presupposes \
 
 
 def _build_extraction_user_prompt(question: str) -> str:
-    return (
-        f"Question: {question.strip()}\n\n"
-        f"Presuppositions (JSON array):"
-    )
+    return f"Question: {question.strip()}\n\nPresuppositions (JSON array):"
 
 
 _VERIFICATION_SYSTEM_PROMPT = """\
@@ -172,11 +168,7 @@ Output JSON only.
 
 def _build_verification_user_prompt(claim: str, hits: list[MemoryHit]) -> str:
     if not hits:
-        return (
-            f"Claim: {claim}\n\n"
-            f"Retrieved memories: (none)\n\n"
-            f"Verdict (JSON):"
-        )
+        return f"Claim: {claim}\n\nRetrieved memories: (none)\n\nVerdict (JSON):"
     lines = [f"Claim: {claim}", "", "Retrieved memories:"]
     for hit in hits:
         text = (hit.text or "").strip()
@@ -284,8 +276,11 @@ async def verify_premise(
     except Exception as exc:
         _logger.warning("premise verification recall failed (%s)", exc)
         return PremiseVerdict(
-            premise=premise, supported=False, confidence=0.0,
-            evidence_ids=[], rationale=f"recall failed: {exc}",
+            premise=premise,
+            supported=False,
+            confidence=0.0,
+            evidence_ids=[],
+            rationale=f"recall failed: {exc}",
         )
 
     try:
@@ -300,14 +295,16 @@ async def verify_premise(
     except Exception as exc:
         _logger.warning("premise verification LLM call failed (%s)", exc)
         return PremiseVerdict(
-            premise=premise, supported=False, confidence=0.0,
-            evidence_ids=[], rationale=f"judge LLM failed: {exc}",
+            premise=premise,
+            supported=False,
+            confidence=0.0,
+            evidence_ids=[],
+            rationale=f"judge LLM failed: {exc}",
         )
 
     parsed = _parse_json_object(completion.text) or {}
     supported_raw = parsed.get("supported", False)
-    supported = bool(supported_raw) if not isinstance(supported_raw, str) else \
-        supported_raw.lower() == "true"
+    supported = bool(supported_raw) if not isinstance(supported_raw, str) else supported_raw.lower() == "true"
     try:
         confidence = float(parsed.get("confidence", 0.0))
     except (TypeError, ValueError):
@@ -350,20 +347,27 @@ async def verify_question(
     premises = await extract_premises(question, llm_provider)
     if not premises:
         return QuestionVerification(
-            premises=[], verdicts=[], all_premises_supported=True,
+            premises=[],
+            verdicts=[],
+            all_premises_supported=True,
         )
 
     # Run verifications in parallel — each premise's recall + judge
     # are independent, so latency is bounded by the slowest.
     import asyncio
-    verdicts = await asyncio.gather(*[
-        verify_premise(
-            p, recall_fn, llm_provider,
-            recall_max_results=recall_max_results,
-            min_confidence=min_confidence,
-        )
-        for p in premises
-    ])
+
+    verdicts = await asyncio.gather(
+        *[
+            verify_premise(
+                p,
+                recall_fn,
+                llm_provider,
+                recall_max_results=recall_max_results,
+                min_confidence=min_confidence,
+            )
+            for p in premises
+        ]
+    )
 
     all_supported = all(v.supported for v in verdicts)
     return QuestionVerification(

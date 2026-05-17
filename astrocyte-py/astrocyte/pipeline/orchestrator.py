@@ -155,7 +155,8 @@ def _abstention_floor_for_skepticism(skepticism: int, base_floor: float) -> floa
 
 
 def _build_cooccurrence_pairs(
-    entity_ids: list[str], max_entities: int,
+    entity_ids: list[str],
+    max_entities: int,
 ) -> list[tuple[str, str]]:
     """Return the (a, b) pairs to create ``co_occurs`` links for.
 
@@ -178,7 +179,8 @@ def _build_cooccurrence_pairs(
 
 
 def _resolve_skepticism_for_abstention(
-    request_dispositions, fallback_enabled: bool,
+    request_dispositions,
+    fallback_enabled: bool,
 ) -> int:
     """Resolve effective skepticism for the abstention decision.
 
@@ -254,6 +256,7 @@ class _RetainProfiler:
             print(f"{prefix} (profiler enabled but captured no samples — instrumentation unwired?)")
             return
         import statistics
+
         rows: list[tuple[str, int, float, float, float, float]] = []
         for stage, samples in self.samples.items():
             if not samples:
@@ -272,13 +275,11 @@ class _RetainProfiler:
         rows.sort(key=lambda r: r[2], reverse=True)
         print(f"{prefix} aggregate breakdown (sorted by total wall time):")
         print(
-            f"{prefix}  {'stage':<22} {'n':<7} {'total_ms':<12} "
-            f"{'p50_ms':<10} {'p95_ms':<10} {'max_ms':<10}",
+            f"{prefix}  {'stage':<22} {'n':<7} {'total_ms':<12} {'p50_ms':<10} {'p95_ms':<10} {'max_ms':<10}",
         )
         for stage, n, total, p50, p95, mx in rows:
             print(
-                f"{prefix}  {stage:<22} {n:<7d} {total:<12.0f} "
-                f"{p50:<10.1f} {p95:<10.1f} {mx:<10.1f}",
+                f"{prefix}  {stage:<22} {n:<7d} {total:<12.0f} {p50:<10.1f} {p95:<10.1f} {mx:<10.1f}",
             )
 
 
@@ -570,7 +571,13 @@ class PipelineOrchestrator:
         #: free; ``allow_llm_fallback`` opt-in adds 1 LLM call per
         #: temporal-marker query.
         self.query_analyzer_enabled: bool = False
-        self.query_analyzer_allow_llm_fallback: bool = False
+        self.query_analyzer_allow_llm_fallback: bool = True
+        #: M18a-1 — extended temporal-expansion pattern set in the regex
+        #: pre-pass (word-numbers, "a few X ago", "the other day", "this/
+        #: earlier this <unit>", "recently/lately"). Default False.
+        #: Flipped via per-bank config or env override
+        #: ``ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION=1`` for bench runs.
+        self.query_analyzer_enable_temporal_expansion: bool = False
         #: Hindsight-parity agentic reflect loop. ``None`` = single-shot
         #: synthesis (legacy path). Set by ``Astrocyte.set_pipeline``
         #: when ``agentic_reflect.enabled`` is true.
@@ -741,9 +748,7 @@ class PipelineOrchestrator:
                     chunks_local,
                     self.llm_provider,
                     event_date=request.occurred_at,
-                    max_concurrency=(
-                        self.structured_fact_extraction_parallel_chunks_max_concurrency
-                    ),
+                    max_concurrency=(self.structured_fact_extraction_parallel_chunks_max_concurrency),
                 )
             else:
                 facts = await extract_facts_verbatim(
@@ -834,7 +839,11 @@ class PipelineOrchestrator:
             _logger.warning("storing semantic memory_links failed: %s", exc)
 
     async def _process_record_entities_with_retry(
-        self, record: dict[str, Any], *, max_retries: int = 10, base_delay: float = 0.1,
+        self,
+        record: dict[str, Any],
+        *,
+        max_retries: int = 10,
+        base_delay: float = 0.1,
     ) -> None:
         """Retry-wrapper around :meth:`_process_record_entities`.
 
@@ -889,9 +898,11 @@ class PipelineOrchestrator:
                 last_exc = exc
                 delay = base_delay * (2**attempt)
                 _logger.warning(
-                    "_process_record_entities deadlock on attempt %d/%d "
-                    "(%s); retrying in %.2fs",
-                    attempt + 1, max_retries, exc, delay,
+                    "_process_record_entities deadlock on attempt %d/%d (%s); retrying in %.2fs",
+                    attempt + 1,
+                    max_retries,
+                    exc,
+                    delay,
                 )
                 await asyncio.sleep(delay)
         # Defensive — loop body either returns or re-raises; this is
@@ -972,13 +983,11 @@ class PipelineOrchestrator:
         # wall on entity-dense workloads (LME profile 2026-05-06).
         if self.entity_cooccurrence_enabled:
             pairs = _build_cooccurrence_pairs(
-                entity_ids, self.entity_cooccurrence_max_entities,
+                entity_ids,
+                self.entity_cooccurrence_max_entities,
             )
             if pairs:
-                links = [
-                    EntityLink(entity_a=a, entity_b=b, link_type="co_occurs")
-                    for a, b in pairs
-                ]
+                links = [EntityLink(entity_a=a, entity_b=b, link_type="co_occurs") for a, b in pairs]
                 async with self._profiler.time("entity_co_occur"):
                     await self.graph_store.store_links(links, request.bank_id)
 
@@ -1513,13 +1522,11 @@ class PipelineOrchestrator:
             # retain regardless of corpus size.
             if self.entity_cooccurrence_enabled:
                 pairs = _build_cooccurrence_pairs(
-                    entity_ids, self.entity_cooccurrence_max_entities,
+                    entity_ids,
+                    self.entity_cooccurrence_max_entities,
                 )
                 if pairs:
-                    links = [
-                        EntityLink(entity_a=a, entity_b=b, link_type="co_occurs")
-                        for a, b in pairs
-                    ]
+                    links = [EntityLink(entity_a=a, entity_b=b, link_type="co_occurs") for a, b in pairs]
                     async with self._profiler.time("entity_co_occur"):
                         await self.graph_store.store_links(links, request.bank_id)
 
@@ -1908,9 +1915,7 @@ class PipelineOrchestrator:
         if self.graph_store is not None:
             entity_records = [r for r in stored_records if r["entities"]]
             if entity_records:
-                await asyncio.gather(
-                    *[self._process_record_entities_with_retry(r) for r in entity_records]
-                )
+                await asyncio.gather(*[self._process_record_entities_with_retry(r) for r in entity_records])
 
         for record in stored_records:
             request: RetainRequest = record["request"]
@@ -2010,6 +2015,7 @@ class PipelineOrchestrator:
                     reference_date=anchor,
                     llm_provider=self.llm_provider,
                     allow_llm_fallback=self.query_analyzer_allow_llm_fallback,
+                    allow_temporal_expansion=self.query_analyzer_enable_temporal_expansion,
                 )
                 if analysis.temporal_constraint and analysis.temporal_constraint.is_bounded():
                     c = analysis.temporal_constraint
@@ -2684,18 +2690,17 @@ class PipelineOrchestrator:
         # ``abstention_enabled`` remains as a fallback when no
         # per-call dispositions are supplied.
         skepticism = _resolve_skepticism_for_abstention(
-            request.dispositions, self.adversarial_abstention_enabled,
+            request.dispositions,
+            self.adversarial_abstention_enabled,
         )
         effective_floor = _abstention_floor_for_skepticism(
-            skepticism, self.adversarial_abstention_floor,
+            skepticism,
+            self.adversarial_abstention_floor,
         )
         if (
             effective_floor > 0.0
             and recall_result.top_semantic_score < effective_floor
-            and (
-                not recall_result.hits
-                or all((h.score or 0.0) < effective_floor for h in recall_result.hits[:5])
-            )
+            and (not recall_result.hits or all((h.score or 0.0) < effective_floor for h in recall_result.hits[:5]))
         ):
             _logger.info(
                 "reflect: abstention floor triggered (top_semantic=%.3f < "

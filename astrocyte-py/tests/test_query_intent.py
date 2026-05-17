@@ -217,6 +217,7 @@ class TestWeightedRrfFusion:
         """Negative weights are a caller bug — raise so the sign error
         surfaces immediately rather than silently inverting rankings."""
         import pytest
+
         a, b = _lists(["x"], ["y"])
         with pytest.raises(ValueError, match="weight must be >= 0.0"):
             weighted_rrf_fusion([(a, 1.0), (b, -5.0)])

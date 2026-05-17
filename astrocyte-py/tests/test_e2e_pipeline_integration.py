@@ -147,9 +147,7 @@ class TestFullPipelineIntegration:
             context=ctx,
         )
         all_docs = await brain.recall("meeting", _DOCS_BANK, context=ctx)
-        assert len(all_docs.hits) >= len(recent_window.hits), (
-            "Narrowing the time range should not produce MORE hits"
-        )
+        assert len(all_docs.hits) >= len(recent_window.hits), "Narrowing the time range should not produce MORE hits"
 
         # 5. Forget by tag removes exactly that memory.
         r_tagged = await brain.retain(
@@ -162,14 +160,12 @@ class TestFullPipelineIntegration:
         forget_result = await brain.forget(_DOCS_BANK, tags=["ephemeral"], context=ctx)
         assert forget_result.deleted_count == 1
         after_forget = await brain.recall("session note", _DOCS_BANK, context=ctx)
-        assert not any(
-            "session note" in h.text.lower() for h in after_forget.hits
-        ), "Forgotten memory should not appear in recall"
+        assert not any("session note" in h.text.lower() for h in after_forget.hits), (
+            "Forgotten memory should not appear in recall"
+        )
 
         # 6. Legal hold blocks further forget without compliance bypass.
-        brain.set_legal_hold(
-            _DOCS_BANK, "hold-litigation-1", "active litigation hold", set_by="admin"
-        )
+        brain.set_legal_hold(_DOCS_BANK, "hold-litigation-1", "active litigation hold", set_by="admin")
         with pytest.raises(LegalHoldActive):
             await brain.forget(_DOCS_BANK, tags=["meeting"], context=ctx)
 
@@ -178,9 +174,7 @@ class TestIdentityLayer:
     """JWT classification in isolation — fast contract pin."""
 
     def test_user_claims_produce_user_actor(self) -> None:
-        identity = classify_jwt_claims(
-            {"oid": "abc-123", "upn": "bob@example.com", "name": "Bob", "idtyp": "user"}
-        )
+        identity = classify_jwt_claims({"oid": "abc-123", "upn": "bob@example.com", "name": "Bob", "idtyp": "user"})
         assert identity.type == "user"
         assert identity.id == "abc-123"
 
@@ -300,9 +294,7 @@ class TestForgetAndLegalHold:
         ctx = _user_context()
         await brain.retain("held record", _DEFAULT_BANK, context=ctx)
         brain.set_legal_hold(_DEFAULT_BANK, "hold-2", "test hold", set_by="admin")
-        result = await brain.forget(
-            _DEFAULT_BANK, scope="all", compliance=True, reason="right-to-erasure", context=ctx
-        )
+        result = await brain.forget(_DEFAULT_BANK, scope="all", compliance=True, reason="right-to-erasure", context=ctx)
         assert result.deleted_count >= 0  # bypass granted; count may be 0 if already empty
 
     @pytest.mark.asyncio
@@ -317,5 +309,6 @@ class TestForgetAndLegalHold:
 
         if len(ids) > 5:
             from astrocyte.errors import AstrocyteError
+
             with pytest.raises(AstrocyteError, match="max_per_call"):
                 await brain.forget(_DOCS_BANK, memory_ids=ids)

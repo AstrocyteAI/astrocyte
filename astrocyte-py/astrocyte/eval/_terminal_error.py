@@ -21,12 +21,14 @@ Terminal (return True — abort the run, every call will fail the same way):
 
 from __future__ import annotations
 
-_TERMINAL_ERROR_CODES: frozenset[str] = frozenset({
-    "insufficient_quota",
-    "invalid_api_key",
-    "account_deactivated",
-    "billing_hard_limit_reached",
-})
+_TERMINAL_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "insufficient_quota",
+        "invalid_api_key",
+        "account_deactivated",
+        "billing_hard_limit_reached",
+    }
+)
 
 # Fallback substring markers for providers that don't expose structured
 # error codes (older OpenAI SDKs, third-party adapters). Compared against

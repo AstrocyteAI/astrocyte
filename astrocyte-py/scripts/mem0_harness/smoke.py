@@ -104,8 +104,10 @@ async def main() -> None:
                 continue
             resp = await client.add(messages, user_id=user_id, timestamp=ts)
             assert resp is not None, f"add() returned None for session {sk}"
-        print(f"  [smoke] add() done — {len(session_keys)} sessions buffered "
-              f"({time.monotonic() - ingest_start:.1f}s wall)")
+        print(
+            f"  [smoke] add() done — {len(session_keys)} sessions buffered "
+            f"({time.monotonic() - ingest_start:.1f}s wall)"
+        )
 
         # 3. First search() triggers lazy ingest. Time it.
         if not qa_list:

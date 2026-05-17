@@ -71,8 +71,7 @@ class TestBuildCooccurrencePairs:
         head = set(ids[:5])
         for a, b in pairs:
             assert a in head and b in head, (
-                f"pair ({a}, {b}) used an entity outside the head — "
-                f"cap is not preserving extraction order"
+                f"pair ({a}, {b}) used an entity outside the head — cap is not preserving extraction order"
             )
 
     def test_dense_session_bounded(self):

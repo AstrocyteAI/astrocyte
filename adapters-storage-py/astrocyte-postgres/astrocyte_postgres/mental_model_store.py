@@ -80,6 +80,7 @@ class PostgresMentalModelStore:
     async def _ensure_pool(self) -> AsyncConnectionPool:
         async with self._pool_lock:
             if self._pool is None:
+
                 async def configure(conn: psycopg.AsyncConnection) -> None:
                     # Match the wiki/vector pool: pin search_path to ``public``
                     # first so any unqualified type lookups (jsonb, timestamptz)
@@ -146,8 +147,7 @@ class PostgresMentalModelStore:
                 # this ALTER covers the in-process bootstrap path used by
                 # tests + bench runs.
                 await conn.execute(
-                    f"ALTER TABLE {models} "
-                    f"ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'general'"
+                    f"ALTER TABLE {models} ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'general'"
                 )
                 await conn.execute(
                     f"""

@@ -46,26 +46,32 @@ class TestAccessControl:
 
     def test_granted_permission_allowed(self) -> None:
         p = _make_enforcer(acl_enabled=True, default_policy="deny")
-        p.set_access_grants([
-            AccessGrant(bank_id="bank-1", principal="user:alice", permissions=["read", "write"]),
-        ])
+        p.set_access_grants(
+            [
+                AccessGrant(bank_id="bank-1", principal="user:alice", permissions=["read", "write"]),
+            ]
+        )
         ctx = AstrocyteContext(principal="user:alice")
         p.check_access("bank-1", "write", ctx)  # Should not raise
 
     def test_missing_permission_denied(self) -> None:
         p = _make_enforcer(acl_enabled=True, default_policy="deny")
-        p.set_access_grants([
-            AccessGrant(bank_id="bank-1", principal="user:alice", permissions=["read"]),
-        ])
+        p.set_access_grants(
+            [
+                AccessGrant(bank_id="bank-1", principal="user:alice", permissions=["read"]),
+            ]
+        )
         ctx = AstrocyteContext(principal="user:alice")
         with pytest.raises(AccessDenied):
             p.check_access("bank-1", "write", ctx)
 
     def test_wildcard_principal(self) -> None:
         p = _make_enforcer(acl_enabled=True, default_policy="deny")
-        p.set_access_grants([
-            AccessGrant(bank_id="bank-1", principal="*", permissions=["read"]),
-        ])
+        p.set_access_grants(
+            [
+                AccessGrant(bank_id="bank-1", principal="*", permissions=["read"]),
+            ]
+        )
         ctx = AstrocyteContext(principal="user:anyone")
         p.check_access("bank-1", "read", ctx)  # Should not raise
 

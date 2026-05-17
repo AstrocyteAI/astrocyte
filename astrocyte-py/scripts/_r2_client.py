@@ -15,6 +15,7 @@ Reads six env vars (Doppler-injected; see
 - ``R2_BUCKET_PUBLIC``  — public bucket (trajectory artifact)
 - ``R2_PUBLIC_URL``     — r2.dev URL the docs site reads from
 """
+
 from __future__ import annotations
 
 import os
@@ -25,10 +26,7 @@ from typing import AsyncIterator
 try:
     from aiobotocore.session import get_session
 except ImportError as exc:  # pragma: no cover
-    raise ImportError(
-        "aiobotocore is required for bench archive scripts. "
-        "Install with: uv sync --extra dev"
-    ) from exc
+    raise ImportError("aiobotocore is required for bench archive scripts. Install with: uv sync --extra dev") from exc
 
 
 REQUIRED_VARS = (

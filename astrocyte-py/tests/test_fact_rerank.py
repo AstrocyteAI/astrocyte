@@ -1,4 +1,5 @@
 """M12.3: fact-grain cross-encoder rerank unit tests."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -49,14 +50,19 @@ def test_reorders_by_cross_encoder_score() -> None:
         _hit("f2", "the user visited Dr. Patel", score=0.8),
         _hit("f3", "user prefers Sony cameras", score=0.7),
     ]
-    fake = FakeCrossEncoder({
-        "the user likes apples": 0.1,
-        "the user visited Dr. Patel": 0.9,
-        "user prefers Sony cameras": 0.5,
-    })
+    fake = FakeCrossEncoder(
+        {
+            "the user likes apples": 0.1,
+            "the user visited Dr. Patel": 0.9,
+            "user prefers Sony cameras": 0.5,
+        }
+    )
     out = rerank_fact_hits(
-        hits, "what doctor did the user see?",
-        model=fake, rerank_top_k=10, output_top_k=10,
+        hits,
+        "what doctor did the user see?",
+        model=fake,
+        rerank_top_k=10,
+        output_top_k=10,
     )
     assert [h.fact_id for h in out] == ["f2", "f3", "f1"]
     # New scores reflect cross-encoder, not original bi-encoder
@@ -69,8 +75,11 @@ def test_truncates_to_output_top_k() -> None:
     hits = [_hit(f"f{i}", f"text {i}", score=1.0 - i * 0.1) for i in range(5)]
     fake = FakeCrossEncoder({h.text: float(i) for i, h in enumerate(hits)})
     out = rerank_fact_hits(
-        hits, "q",
-        model=fake, rerank_top_k=10, output_top_k=2,
+        hits,
+        "q",
+        model=fake,
+        rerank_top_k=10,
+        output_top_k=2,
     )
     assert len(out) == 2
     # text 4 (score 4.0) and text 3 (score 3.0) are the top two
@@ -81,8 +90,11 @@ def test_rerank_top_k_caps_rescored_items() -> None:
     hits = [_hit(f"f{i}", f"text {i}") for i in range(10)]
     fake = FakeCrossEncoder({h.text: 1.0 for h in hits})
     rerank_fact_hits(
-        hits, "q",
-        model=fake, rerank_top_k=3, output_top_k=10,
+        hits,
+        "q",
+        model=fake,
+        rerank_top_k=3,
+        output_top_k=10,
     )
     # Only the top-3 should have been sent to the cross-encoder
     assert len(fake.calls) == 1

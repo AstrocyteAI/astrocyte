@@ -128,11 +128,7 @@ def _slugify(s: str) -> str:
 
 
 def _format_section_for_prompt(section: PageIndexSection) -> str:
-    date = (
-        section.session_date.strftime("%Y-%m-%d")
-        if section.session_date is not None
-        else "no-date"
-    )
+    date = section.session_date.strftime("%Y-%m-%d") if section.session_date is not None else "no-date"
     summary = (section.summary or section.title or "").strip()
     return f"[line={section.line_num}, date={date}]\n{summary}"
 
@@ -171,7 +167,8 @@ async def _synthesize_observation(
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
-            "section_compile.synthesize: LLM call failed (%s)", exc,
+            "section_compile.synthesize: LLM call failed (%s)",
+            exc,
         )
         return None
     try:
@@ -179,7 +176,8 @@ async def _synthesize_observation(
     except json.JSONDecodeError as exc:
         _logger.warning(
             "section_compile.synthesize: JSON parse failed (%s) text=%r",
-            exc, completion.text[:200],
+            exc,
+            completion.text[:200],
         )
         return None
     title = str(data.get("title", "")).strip()
@@ -259,7 +257,8 @@ async def _revise_observation(
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "section_compile.revise: LLM call failed for page=%s (%s)",
-            page.page_id, exc,
+            page.page_id,
+            exc,
         )
         return None
     try:
@@ -267,7 +266,9 @@ async def _revise_observation(
     except json.JSONDecodeError as exc:
         _logger.warning(
             "section_compile.revise: JSON parse failed for page=%s (%s) text=%r",
-            page.page_id, exc, completion.text[:200],
+            page.page_id,
+            exc,
+            completion.text[:200],
         )
         return None
     verdict = str(data.get("verdict", "")).strip().upper()
@@ -306,7 +307,8 @@ async def revise_wikis_for_document(
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "revise_wikis: list_wiki_pages_for_doc failed for doc=%s (%s)",
-            document_id, exc,
+            document_id,
+            exc,
         )
         return 0
     if not pages:
@@ -317,7 +319,8 @@ async def revise_wikis_for_document(
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "revise_wikis: load_sections failed for doc=%s (%s)",
-            document_id, exc,
+            document_id,
+            exc,
         )
         return 0
     section_by_line = {s.line_num: s for s in all_sections}
@@ -326,7 +329,7 @@ async def revise_wikis_for_document(
     for page in pages:
         # Resolve provenance source_ids back to sections.
         provenance_lines: list[int] = []
-        for src in (page.source_ids or []):
+        for src in page.source_ids or []:
             # source_ids are formatted "docId:lineNum"
             if ":" not in src:
                 continue
@@ -335,10 +338,7 @@ async def revise_wikis_for_document(
                 provenance_lines.append(int(line_str))
             except ValueError:
                 continue
-        prov_sections = [
-            section_by_line[ln] for ln in provenance_lines
-            if ln in section_by_line
-        ]
+        prov_sections = [section_by_line[ln] for ln in provenance_lines if ln in section_by_line]
         if not prov_sections:
             continue
         # Sort chronologically — session_date first, line_num fallback.
@@ -349,8 +349,10 @@ async def revise_wikis_for_document(
             ),
         )
         result = await _revise_observation(
-            provider=provider, model=model,
-            page=page, sections=prov_sections,
+            provider=provider,
+            model=model,
+            page=page,
+            sections=prov_sections,
         )
         if result is None:
             continue
@@ -375,31 +377,39 @@ async def revise_wikis_for_document(
         try:
             new_embedding = (
                 await provider.embed(
-                    [f"{new_title}\n\n{new_content}"], model=embedding_model,
+                    [f"{new_title}\n\n{new_content}"],
+                    model=embedding_model,
                 )
             )[0]
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
-                "revise_wikis: embed failed for page=%s (%s)", page.page_id, exc,
+                "revise_wikis: embed failed for page=%s (%s)",
+                page.page_id,
+                exc,
             )
             new_embedding = None
 
         provenance_pairs = [(s.document_id, s.line_num) for s in prov_sections]
         try:
             await store.save_wiki_page(
-                page=revised_page, embedding=new_embedding,
+                page=revised_page,
+                embedding=new_embedding,
                 provenance=provenance_pairs,
             )
             revised_count += 1
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
-                "revise_wikis.save failed for page=%s (%s)", page.page_id, exc,
+                "revise_wikis.save failed for page=%s (%s)",
+                page.page_id,
+                exc,
             )
 
     if revised_count:
         _logger.info(
             "revise_wikis: doc=%s revised %d/%d pages",
-            document_id, revised_count, len(pages),
+            document_id,
+            revised_count,
+            len(pages),
         )
     return revised_count
 
@@ -440,13 +450,16 @@ async def compile_sections_for_document(
         existing = await store.count_wiki_pages_for_doc(bank_id, document_id)
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
-            "section_compile.count failed for doc=%s (%s)", document_id, exc,
+            "section_compile.count failed for doc=%s (%s)",
+            document_id,
+            exc,
         )
         existing = 0
     if existing > 0:
         _logger.debug(
             "section_compile: doc=%s already has %d pages — skip initial compile, run revision pass only",
-            document_id, existing,
+            document_id,
+            existing,
         )
         # M12.6: even when initial compile is skipped, run the Karpathy
         # revision pass against the existing pages. Lets a code change
@@ -454,13 +467,18 @@ async def compile_sections_for_document(
         # full re-extraction.
         try:
             await revise_wikis_for_document(
-                store=store, bank_id=bank_id, document_id=document_id,
-                provider=provider, model=model, embedding_model=embedding_model,
+                store=store,
+                bank_id=bank_id,
+                document_id=document_id,
+                provider=provider,
+                model=model,
+                embedding_model=embedding_model,
             )
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "revise_wikis: cache-hit revision pass failed for doc=%s (%s)",
-                document_id, exc,
+                document_id,
+                exc,
             )
         return []
 
@@ -488,7 +506,9 @@ async def compile_sections_for_document(
     if not by_cluster:
         _logger.debug(
             "section_compile: doc=%s yielded no clusters (eps=%s min=%s)",
-            document_id, eps, min_samples,
+            document_id,
+            eps,
+            min_samples,
         )
         return []
 
@@ -504,7 +524,9 @@ async def compile_sections_for_document(
 
     for cluster in clusters:
         synth = await _synthesize_observation(
-            provider=provider, model=model, sections=cluster,
+            provider=provider,
+            model=model,
+            sections=cluster,
         )
         if synth is None:
             continue
@@ -539,17 +561,21 @@ async def compile_sections_for_document(
     # Single batched embedding call for all observations in this doc.
     try:
         embeddings = await provider.embed(
-            pending_summaries, model=embedding_model,
+            pending_summaries,
+            model=embedding_model,
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "section_compile: embedding batch failed for doc=%s (%s)",
-            document_id, exc,
+            document_id,
+            exc,
         )
         embeddings = [None] * len(pending_pages)
 
     for page, embedding, (page_id, provenance_pairs) in zip(
-        pending_pages, embeddings, pending_provenance,
+        pending_pages,
+        embeddings,
+        pending_provenance,
     ):
         try:
             await store.save_wiki_page(
@@ -560,14 +586,17 @@ async def compile_sections_for_document(
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "section_compile.save_wiki_page failed page_id=%s (%s)",
-                page_id, exc,
+                page_id,
+                exc,
             )
             continue
         created_page_ids.append(page_id)
 
     _logger.info(
         "section_compile: doc=%s created %d pages from %d clusters",
-        document_id, len(created_page_ids), len(clusters),
+        document_id,
+        len(created_page_ids),
+        len(clusters),
     )
 
     # M12.6: Karpathy-style revision pass over the freshly compiled
@@ -576,13 +605,18 @@ async def compile_sections_for_document(
     # Idempotent — pages already at latest state are unchanged.
     try:
         await revise_wikis_for_document(
-            store=store, bank_id=bank_id, document_id=document_id,
-            provider=provider, model=model, embedding_model=embedding_model,
+            store=store,
+            bank_id=bank_id,
+            document_id=document_id,
+            provider=provider,
+            model=model,
+            embedding_model=embedding_model,
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "revise_wikis: post-initial revision pass failed for doc=%s (%s)",
-            document_id, exc,
+            document_id,
+            exc,
         )
 
     return created_page_ids

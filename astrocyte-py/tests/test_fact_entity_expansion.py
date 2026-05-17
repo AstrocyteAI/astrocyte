@@ -1,4 +1,5 @@
 """M12.4: entity-graph expansion unit tests."""
+
 from __future__ import annotations
 
 from astrocyte.pipeline.fact_entity_expansion import expand_via_entity_graph
@@ -61,7 +62,9 @@ def _hit(
 
 async def test_empty_initial_hits_returns_empty() -> None:
     out = await expand_via_entity_graph(
-        [], store=FakeStore(), bank_id="b1",
+        [],
+        store=FakeStore(),
+        bank_id="b1",
     )
     assert out == []
 
@@ -69,7 +72,9 @@ async def test_empty_initial_hits_returns_empty() -> None:
 async def test_no_entities_on_seed_hits_returns_empty() -> None:
     seeds = [_hit("s1", entities=[])]
     out = await expand_via_entity_graph(
-        seeds, store=FakeStore(), bank_id="b1",
+        seeds,
+        store=FakeStore(),
+        bank_id="b1",
     )
     assert out == []
 
@@ -80,12 +85,16 @@ async def test_happy_path_expands_via_entity() -> None:
     seeds = [_hit("s1", entities=["Dr. Patel", "role:doctor"])]
     neighbor_a = _hit("n1", entities=["Dr. Patel", "Sunnyvale Clinic"])
     neighbor_b = _hit("n2", entities=["Dr. Patel"], line_num=42)
-    store = FakeStore(hits_by_entity={
-        "Dr. Patel": [neighbor_a, neighbor_b],
-        "role:doctor": [],
-    })
+    store = FakeStore(
+        hits_by_entity={
+            "Dr. Patel": [neighbor_a, neighbor_b],
+            "role:doctor": [],
+        }
+    )
     out = await expand_via_entity_graph(
-        seeds, store=store, bank_id="b1",
+        seeds,
+        store=store,
+        bank_id="b1",
     )
     assert {h.fact_id for h in out} == {"n1", "n2"}
 
@@ -94,11 +103,15 @@ async def test_dedupes_against_initial_hits() -> None:
     # The store happens to return the seed itself as a "neighbor".
     # Should NOT appear in the expanded set.
     seed = _hit("s1", entities=["Dr. Patel"])
-    store = FakeStore(hits_by_entity={
-        "Dr. Patel": [seed, _hit("n1", entities=["Dr. Patel"])],
-    })
+    store = FakeStore(
+        hits_by_entity={
+            "Dr. Patel": [seed, _hit("n1", entities=["Dr. Patel"])],
+        }
+    )
     out = await expand_via_entity_graph(
-        [seed], store=store, bank_id="b1",
+        [seed],
+        store=store,
+        bank_id="b1",
     )
     assert [h.fact_id for h in out] == ["n1"]
 
@@ -108,12 +121,16 @@ async def test_dedupes_across_entities() -> None:
     # in both entity's neighbor lists. Should appear ONCE in the output.
     seed = _hit("s1", entities=["Dr. Patel", "role:doctor"])
     shared = _hit("n1", entities=["Dr. Patel", "role:doctor"])
-    store = FakeStore(hits_by_entity={
-        "Dr. Patel": [shared],
-        "role:doctor": [shared],
-    })
+    store = FakeStore(
+        hits_by_entity={
+            "Dr. Patel": [shared],
+            "role:doctor": [shared],
+        }
+    )
     out = await expand_via_entity_graph(
-        [seed], store=store, bank_id="b1",
+        [seed],
+        store=store,
+        bank_id="b1",
     )
     assert [h.fact_id for h in out] == ["n1"]
 
@@ -125,13 +142,18 @@ async def test_max_seed_hits_caps_seed_pool() -> None:
         _hit("s2", entities=["B"]),
         _hit("s3", entities=["C"]),  # ignored — beyond max_seed_hits
     ]
-    store = FakeStore(hits_by_entity={
-        "A": [_hit("nA", entities=["A"])],
-        "B": [_hit("nB", entities=["B"])],
-        "C": [_hit("nC", entities=["C"])],
-    })
+    store = FakeStore(
+        hits_by_entity={
+            "A": [_hit("nA", entities=["A"])],
+            "B": [_hit("nB", entities=["B"])],
+            "C": [_hit("nC", entities=["C"])],
+        }
+    )
     out = await expand_via_entity_graph(
-        seeds, store=store, bank_id="b1", max_seed_hits=2,
+        seeds,
+        store=store,
+        bank_id="b1",
+        max_seed_hits=2,
     )
     assert {h.fact_id for h in out} == {"nA", "nB"}
 
@@ -140,11 +162,12 @@ async def test_max_seed_entities_caps_distinct_entities() -> None:
     seeds = [
         _hit("s1", entities=["A", "B", "C", "D", "E"]),
     ]
-    store = FakeStore(hits_by_entity={
-        e: [_hit(f"n{e}", entities=[e])] for e in "ABCDE"
-    })
+    store = FakeStore(hits_by_entity={e: [_hit(f"n{e}", entities=[e])] for e in "ABCDE"})
     out = await expand_via_entity_graph(
-        seeds, store=store, bank_id="b1", max_seed_entities=3,
+        seeds,
+        store=store,
+        bank_id="b1",
+        max_seed_entities=3,
     )
     # Only A, B, C are used as seeds → only nA, nB, nC come back
     assert {h.fact_id for h in out} == {"nA", "nB", "nC"}
@@ -152,22 +175,31 @@ async def test_max_seed_entities_caps_distinct_entities() -> None:
 
 async def test_max_expanded_facts_caps_total_output() -> None:
     seed = _hit("s1", entities=["Dr. Patel"])
-    store = FakeStore(hits_by_entity={
-        "Dr. Patel": [_hit(f"n{i}", entities=["Dr. Patel"]) for i in range(50)],
-    })
+    store = FakeStore(
+        hits_by_entity={
+            "Dr. Patel": [_hit(f"n{i}", entities=["Dr. Patel"]) for i in range(50)],
+        }
+    )
     out = await expand_via_entity_graph(
-        [seed], store=store, bank_id="b1", max_expanded_facts=5,
+        [seed],
+        store=store,
+        bank_id="b1",
+        max_expanded_facts=5,
     )
     assert len(out) == 5
 
 
 async def test_max_neighbor_facts_per_entity_caps_per_entity_fan_out() -> None:
     seed = _hit("s1", entities=["Dr. Patel"])
-    store = FakeStore(hits_by_entity={
-        "Dr. Patel": [_hit(f"n{i}", entities=["Dr. Patel"]) for i in range(50)],
-    })
+    store = FakeStore(
+        hits_by_entity={
+            "Dr. Patel": [_hit(f"n{i}", entities=["Dr. Patel"]) for i in range(50)],
+        }
+    )
     out = await expand_via_entity_graph(
-        [seed], store=store, bank_id="b1",
+        [seed],
+        store=store,
+        bank_id="b1",
         max_neighbor_facts_per_entity=3,
         max_expanded_facts=100,
     )
@@ -177,11 +209,15 @@ async def test_max_neighbor_facts_per_entity_caps_per_entity_fan_out() -> None:
 async def test_case_insensitive_seed_entity_dedup() -> None:
     # "Dr. Patel" / "dr. patel" / "DR. PATEL" are all the same seed.
     seeds = [_hit("s1", entities=["Dr. Patel", "dr. patel", "DR. PATEL"])]
-    store = FakeStore(hits_by_entity={
-        "Dr. Patel": [_hit("n1", entities=["Dr. Patel"])],
-    })
+    store = FakeStore(
+        hits_by_entity={
+            "Dr. Patel": [_hit("n1", entities=["Dr. Patel"])],
+        }
+    )
     out = await expand_via_entity_graph(
-        seeds, store=store, bank_id="b1",
+        seeds,
+        store=store,
+        bank_id="b1",
     )
     # Only one search call for the deduped entity
     assert len(store.calls) == 1
@@ -200,17 +236,24 @@ async def test_per_entity_store_failure_isolated() -> None:
         raise_for={"A"},
     )
     out = await expand_via_entity_graph(
-        [seed], store=store, bank_id="b1",
+        [seed],
+        store=store,
+        bank_id="b1",
     )
     assert [h.fact_id for h in out] == ["nB"]
 
 
 async def test_document_id_threaded_through() -> None:
     seed = _hit("s1", entities=["A"])
-    store = FakeStore(hits_by_entity={
-        "A": [_hit("n1", entities=["A"])],
-    })
+    store = FakeStore(
+        hits_by_entity={
+            "A": [_hit("n1", entities=["A"])],
+        }
+    )
     await expand_via_entity_graph(
-        [seed], store=store, bank_id="b1", document_id="doc-42",
+        [seed],
+        store=store,
+        bank_id="b1",
+        document_id="doc-42",
     )
     assert store.calls == [("A", "doc-42")]

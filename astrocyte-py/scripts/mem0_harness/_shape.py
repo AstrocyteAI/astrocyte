@@ -10,6 +10,7 @@ whether to prepend consolidated preference-kind MentalModels at the top
 of the candidate list. See the diagnostic in chat notes 2026-05-13
 (M14.6 LME single-session-preference analysis) for motivation.
 """
+
 from __future__ import annotations
 
 import re

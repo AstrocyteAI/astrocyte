@@ -184,9 +184,7 @@ class TestPipelinePropagation:
             RoutingRule(
                 name="r",
                 priority=1,
-                match=MatchBlock(
-                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="chat")]
-                ),
+                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="chat")]),
                 action=ActionSpec(bank="b"),
             ),
         ]
@@ -207,16 +205,12 @@ class TestPipelinePropagation:
             RoutingRule(
                 name="conv",
                 priority=1,
-                match=MatchBlock(
-                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="conversation")]
-                ),
+                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="conversation")]),
                 action=ActionSpec(bank="b", pipeline=pipeline),
             ),
         ]
         router = MipRouter(MipConfig(rules=rules))
-        decision = router.route_sync(
-            RuleEngineInput(content="hi", content_type="conversation")
-        )
+        decision = router.route_sync(RuleEngineInput(content="hi", content_type="conversation"))
         assert decision is not None
         assert decision.pipeline is pipeline
         assert decision.pipeline.chunker.strategy == "dialogue"
@@ -234,9 +228,7 @@ class TestPipelinePropagation:
                 name="lock",
                 priority=1,
                 override=True,
-                match=MatchBlock(
-                    all_conditions=[MatchSpec(field="content_type", operator="eq", value="legal")]
-                ),
+                match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="legal")]),
                 action=ActionSpec(bank="locked", pipeline=pipeline),
             ),
         ]

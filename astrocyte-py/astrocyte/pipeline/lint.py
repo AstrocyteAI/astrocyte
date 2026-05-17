@@ -274,7 +274,7 @@ class LintEngine:
                     continue  # LLM failure is non-fatal; skip pair
 
                 if verdict.upper().startswith("CONTRADICTION"):
-                    explanation = verdict[len("CONTRADICTION:"):].strip() if ":" in verdict else verdict
+                    explanation = verdict[len("CONTRADICTION:") :].strip() if ":" in verdict else verdict
                     issues.append(
                         LintIssue(
                             kind="contradiction",

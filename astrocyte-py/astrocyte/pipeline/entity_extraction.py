@@ -65,7 +65,10 @@ def _parse_entities(response: str) -> list[Entity]:
             if start > len(text):
                 logger.warning("Malformed markdown code block in entity response")
                 return []
-            if start + len(_JSON_FENCE_TAG) <= len(text) and text[start:start + len(_JSON_FENCE_TAG)].lower() == _JSON_FENCE_TAG:
+            if (
+                start + len(_JSON_FENCE_TAG) <= len(text)
+                and text[start : start + len(_JSON_FENCE_TAG)].lower() == _JSON_FENCE_TAG
+            ):
                 start += len(_JSON_FENCE_TAG)
             close = text.find("```", start)
             if close < 0:

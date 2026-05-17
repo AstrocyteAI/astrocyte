@@ -46,17 +46,13 @@ class TestLayerWeightedRRFFusion:
             ScoredItem(id="a", text="fact", score=0.9, memory_layer="fact"),
             ScoredItem(id="b", text="model", score=0.8, memory_layer="model"),
         ]
-        result = layer_weighted_rrf_fusion(
-            [items], layer_weights={"fact": 1.0, "model": 3.0}
-        )
+        result = layer_weighted_rrf_fusion([items], layer_weights={"fact": 1.0, "model": 3.0})
         # "model" gets 3x boost — should rank first despite lower original score
         assert result[0].id == "b"
 
     def test_missing_layer_gets_weight_1(self):
         items = [ScoredItem(id="a", text="no layer", score=0.9)]
-        result = layer_weighted_rrf_fusion(
-            [items], layer_weights={"fact": 2.0}
-        )
+        result = layer_weighted_rrf_fusion([items], layer_weights={"fact": 2.0})
         # No layer → weight 1.0, same as plain RRF
         plain = rrf_fusion([items])
         assert result[0].score == plain[0].score
@@ -65,10 +61,7 @@ class TestLayerWeightedRRFFusion:
         assert layer_weighted_rrf_fusion([]) == []
 
     def test_preserves_metadata(self):
-        items = [
-            ScoredItem(id="a", text="t", score=0.9, fact_type="world",
-                       tags=["x"], memory_layer="fact")
-        ]
+        items = [ScoredItem(id="a", text="t", score=0.9, fact_type="world", tags=["x"], memory_layer="fact")]
         result = layer_weighted_rrf_fusion([items], layer_weights={"fact": 2.0})
         assert result[0].fact_type == "world"
         assert result[0].tags == ["x"]
@@ -100,10 +93,16 @@ class TestMemoryHitsAsScored:
         assert memory_hits_as_scored(hits1)[0].id == memory_hits_as_scored(hits2)[0].id
 
     def test_preserves_fields(self):
-        hits = [MemoryHit(
-            text="t", score=0.5, fact_type="world",
-            tags=["a"], memory_layer="fact", metadata={"k": "v"},
-        )]
+        hits = [
+            MemoryHit(
+                text="t",
+                score=0.5,
+                fact_type="world",
+                tags=["a"],
+                memory_layer="fact",
+                metadata={"k": "v"},
+            )
+        ]
         scored = memory_hits_as_scored(hits)
         assert scored[0].fact_type == "world"
         assert scored[0].tags == ["a"]
@@ -266,10 +265,12 @@ class TestRunConsolidation:
     async def test_dedup_removes_near_duplicates(self):
         vs = InMemoryVectorStore()
         # Store two near-identical vectors
-        await vs.store_vectors([
-            VectorItem(id="v1", text="hello world", vector=[1.0, 0.0, 0.0, 0.0], bank_id="b1"),
-            VectorItem(id="v2", text="hello world copy", vector=[1.0, 0.001, 0.0, 0.0], bank_id="b1"),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="hello world", vector=[1.0, 0.0, 0.0, 0.0], bank_id="b1"),
+                VectorItem(id="v2", text="hello world copy", vector=[1.0, 0.001, 0.0, 0.0], bank_id="b1"),
+            ]
+        )
         result = await run_consolidation(vs, "b1", similarity_threshold=0.99)
         assert result.total_scanned == 2
         assert result.duplicates_removed == 1
@@ -277,10 +278,12 @@ class TestRunConsolidation:
     @pytest.mark.asyncio
     async def test_no_duplicates(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            VectorItem(id="v1", text="a", vector=[1.0, 0.0], bank_id="b1"),
-            VectorItem(id="v2", text="b", vector=[0.0, 1.0], bank_id="b1"),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="a", vector=[1.0, 0.0], bank_id="b1"),
+                VectorItem(id="v2", text="b", vector=[0.0, 1.0], bank_id="b1"),
+            ]
+        )
         result = await run_consolidation(vs, "b1", similarity_threshold=0.95)
         assert result.duplicates_removed == 0
         assert result.total_scanned == 2
@@ -296,18 +299,28 @@ class TestRunConsolidation:
     async def test_stale_archival(self):
         vs = InMemoryVectorStore()
         old_date = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
-        await vs.store_vectors([
-            VectorItem(
-                id="v1", text="old", vector=[1.0, 0.0], bank_id="b1",
-                metadata={"_created_at": old_date},
-            ),
-            VectorItem(
-                id="v2", text="new", vector=[0.0, 1.0], bank_id="b1",
-                metadata={"_created_at": datetime.now(timezone.utc).isoformat()},
-            ),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="v1",
+                    text="old",
+                    vector=[1.0, 0.0],
+                    bank_id="b1",
+                    metadata={"_created_at": old_date},
+                ),
+                VectorItem(
+                    id="v2",
+                    text="new",
+                    vector=[0.0, 1.0],
+                    bank_id="b1",
+                    metadata={"_created_at": datetime.now(timezone.utc).isoformat()},
+                ),
+            ]
+        )
         result = await run_consolidation(
-            vs, "b1", similarity_threshold=0.99,
+            vs,
+            "b1",
+            similarity_threshold=0.99,
             archive_unretrieved_after_days=30,
         )
         assert result.stale_archived == 1

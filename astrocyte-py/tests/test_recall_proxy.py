@@ -249,10 +249,13 @@ class TestRowToHit:
         assert hit2.score == 0.0
 
     def test_metadata_filtered(self):
-        hit = _row_to_hit("src1", {
-            "text": "a",
-            "metadata": {"key": "val", "num": 42, "bad": [1, 2]},
-        })
+        hit = _row_to_hit(
+            "src1",
+            {
+                "text": "a",
+                "metadata": {"key": "val", "num": 42, "bad": [1, 2]},
+            },
+        )
         assert hit.metadata == {"key": "val", "num": 42}
         assert "bad" not in hit.metadata  # list values filtered
 

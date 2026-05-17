@@ -22,6 +22,7 @@ source files (or leave them; they're already gitignored)::
 
 Defaults to a dry run; pass ``--execute`` to actually upload.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -113,9 +114,9 @@ async def _upload_one(
     client,
     cfg: R2Config,
     *,
-    source: str,                # "daily" | "preset-matrix" | "pr-gates"
+    source: str,  # "daily" | "preset-matrix" | "pr-gates"
     stage: str,
-    bench_hint: str,            # "" or one of KNOWN_BENCHES
+    bench_hint: str,  # "" or one of KNOWN_BENCHES
     path: Path,
     dry_run: bool,
     historical_runs: list[dict],
@@ -146,9 +147,7 @@ async def _upload_one(
         if dry_run:
             print(f"  DRY {bench:<12} {len(gz):>8,}B  s3://{cfg.bucket_private}/{key}")
         else:
-            await _put_object(
-                client, cfg.bucket_private, key, gz, "application/gzip"
-            )
+            await _put_object(client, cfg.bucket_private, key, gz, "application/gzip")
             print(f"  uploaded {bench:<12} -> s3://{cfg.bucket_private}/{key}")
 
         # Append to a synthetic "historical" manifest so the trajectory
@@ -168,9 +167,7 @@ async def _upload_one(
     return n
 
 
-async def _write_historical_manifest(
-    client, cfg: R2Config, runs: list[dict], *, dry_run: bool
-) -> None:
+async def _write_historical_manifest(client, cfg: R2Config, runs: list[dict], *, dry_run: bool) -> None:
     """Write `historical/manifest.json` so trajectory regen picks up the runs."""
     if dry_run:
         return
@@ -183,15 +180,12 @@ async def _write_historical_manifest(
         indent=2,
         sort_keys=True,
     ).encode("utf-8")
-    await _put_object(
-        client, cfg.bucket_private, "historical/manifest.json", body, "application/json"
-    )
+    await _put_object(client, cfg.bucket_private, "historical/manifest.json", body, "application/json")
 
 
 async def _amain(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--execute", action="store_true",
-                        help="Actually upload (default: dry run).")
+    parser.add_argument("--execute", action="store_true", help="Actually upload (default: dry run).")
     parser.add_argument("--skip-pr-gates", action="store_true")
     parser.add_argument("--skip-local", action="store_true")
     args = parser.parse_args(argv)

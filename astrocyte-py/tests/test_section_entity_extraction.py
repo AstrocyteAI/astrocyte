@@ -72,7 +72,10 @@ class TestExtractEntitiesForSection:
         )
         section = _section(line_num=5)
         result = await extract_entities_for_section(
-            provider, "doc-1", section, "Alice works at Google on Python.",
+            provider,
+            "doc-1",
+            section,
+            "Alice works at Google on Python.",
         )
         assert len(result) == 3
         assert all(isinstance(e, PageIndexSectionEntity) for e in result)
@@ -82,7 +85,10 @@ class TestExtractEntitiesForSection:
     async def test_empty_text_no_api_call(self) -> None:
         provider = _StubProvider(response_text="never")
         result = await extract_entities_for_section(
-            provider, "doc-1", _section(5), "",
+            provider,
+            "doc-1",
+            _section(5),
+            "",
         )
         assert result == []
         assert provider.prompts_seen == []
@@ -90,7 +96,10 @@ class TestExtractEntitiesForSection:
     async def test_whitespace_text_no_api_call(self) -> None:
         provider = _StubProvider(response_text="never")
         result = await extract_entities_for_section(
-            provider, "doc-1", _section(5), "   \n\t  ",
+            provider,
+            "doc-1",
+            _section(5),
+            "   \n\t  ",
         )
         assert result == []
         assert provider.prompts_seen == []
@@ -99,7 +108,10 @@ class TestExtractEntitiesForSection:
         # LLM returned non-JSON. Picker degrades gracefully.
         provider = _StubProvider(response_text="oops not json {")
         result = await extract_entities_for_section(
-            provider, "doc-1", _section(5), "Alice and Bob talked.",
+            provider,
+            "doc-1",
+            _section(5),
+            "Alice and Bob talked.",
         )
         assert result == []
 
@@ -107,57 +119,83 @@ class TestExtractEntitiesForSection:
         # Valid JSON but no ``entities`` key.
         provider = _StubProvider(response_text=json.dumps({"answer": "no entities"}))
         result = await extract_entities_for_section(
-            provider, "doc-1", _section(5), "...",
+            provider,
+            "doc-1",
+            _section(5),
+            "...",
         )
         assert result == []
 
     async def test_case_insensitive_dedupe(self) -> None:
         # "Caroline" and "caroline" → one row. First-seen casing wins.
         provider = _StubProvider(
-            response_text=json.dumps({
-                "entities": ["Caroline", "caroline", "CAROLINE", "Bob"],
-            }),
+            response_text=json.dumps(
+                {
+                    "entities": ["Caroline", "caroline", "CAROLINE", "Bob"],
+                }
+            ),
         )
         result = await extract_entities_for_section(
-            provider, "doc-1", _section(5), "...",
+            provider,
+            "doc-1",
+            _section(5),
+            "...",
         )
         names = [e.entity_name for e in result]
         assert names == ["Caroline", "Bob"]
 
-    async def test_caps_at_15_entities(self) -> None:
+    async def test_caps_at_20_entities(self) -> None:
         # Pathological extraction (e.g. recipe with 30 ingredients).
         # Cap prevents the index from being dominated by one section.
+        # M17 follow-up: cap raised from 15 → 20 to make room for the
+        # alias-capture variants (typical inflation is 1-2 aliases per
+        # person mentioned).
         provider = _StubProvider(
-            response_text=json.dumps({
-                "entities": [f"Entity{i}" for i in range(30)],
-            }),
+            response_text=json.dumps(
+                {
+                    "entities": [f"Entity{i}" for i in range(30)],
+                }
+            ),
         )
         result = await extract_entities_for_section(
-            provider, "doc-1", _section(5), "...",
+            provider,
+            "doc-1",
+            _section(5),
+            "...",
         )
-        assert len(result) == 15
-        assert [e.entity_name for e in result] == [f"Entity{i}" for i in range(15)]
+        assert len(result) == 20
+        assert [e.entity_name for e in result] == [f"Entity{i}" for i in range(20)]
 
     async def test_strips_whitespace_and_filters_empties(self) -> None:
         provider = _StubProvider(
-            response_text=json.dumps({
-                "entities": ["  Alice  ", "", "   ", "\nBob\t"],
-            }),
+            response_text=json.dumps(
+                {
+                    "entities": ["  Alice  ", "", "   ", "\nBob\t"],
+                }
+            ),
         )
         result = await extract_entities_for_section(
-            provider, "doc-1", _section(5), "...",
+            provider,
+            "doc-1",
+            _section(5),
+            "...",
         )
         assert [e.entity_name for e in result] == ["Alice", "Bob"]
 
     async def test_non_string_entries_filtered(self) -> None:
         # Defensive: LLM occasionally returns mixed types.
         provider = _StubProvider(
-            response_text=json.dumps({
-                "entities": ["Alice", 42, None, {"name": "Bob"}, "Charlie"],
-            }),
+            response_text=json.dumps(
+                {
+                    "entities": ["Alice", 42, None, {"name": "Bob"}, "Charlie"],
+                }
+            ),
         )
         result = await extract_entities_for_section(
-            provider, "doc-1", _section(5), "...",
+            provider,
+            "doc-1",
+            _section(5),
+            "...",
         )
         assert [e.entity_name for e in result] == ["Alice", "Charlie"]
 
@@ -169,7 +207,10 @@ class TestExtractEntitiesForSection:
         # Use a marker char ('Q') that isn't in the prompt template.
         long_text = "Q" * 20_000
         await extract_entities_for_section(
-            provider, "doc-1", _section(5), long_text,
+            provider,
+            "doc-1",
+            _section(5),
+            long_text,
         )
         prompt = provider.prompts_seen[0]
         assert prompt.count("Q") == 6_000  # the cap is exact (string slice)
@@ -187,8 +228,12 @@ class TestInMemoryStoreSaveSectionEmbeddings:
 
         store = InMemoryPageIndexStore()
         doc = PageIndexDocument(
-            id="", bank_id="b1", source_id="conv-1",
-            md_text="x", reference_date=None, built_at=datetime.now(tz=timezone.utc),
+            id="",
+            bank_id="b1",
+            source_id="conv-1",
+            md_text="x",
+            reference_date=None,
+            built_at=datetime.now(tz=timezone.utc),
         )
         doc_id = await store.save_document(doc)
         sections = [_section(1), _section(5), _section(10)]
@@ -222,8 +267,12 @@ class TestInMemoryStoreSaveSectionEmbeddings:
 
         store = InMemoryPageIndexStore()
         doc = PageIndexDocument(
-            id="", bank_id="b1", source_id="conv-1",
-            md_text="x", reference_date=None, built_at=datetime.now(tz=timezone.utc),
+            id="",
+            bank_id="b1",
+            source_id="conv-1",
+            md_text="x",
+            reference_date=None,
+            built_at=datetime.now(tz=timezone.utc),
         )
         doc_id = await store.save_document(doc)
         s1 = _section(1)
@@ -236,5 +285,6 @@ class TestInMemoryStoreSaveSectionEmbeddings:
 
     async def test_empty_embeddings_noop(self) -> None:
         from astrocyte.testing.in_memory import InMemoryPageIndexStore
+
         store = InMemoryPageIndexStore()
         assert await store.save_section_embeddings("nonexistent-doc", []) == 0

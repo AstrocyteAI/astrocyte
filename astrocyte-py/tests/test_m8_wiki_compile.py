@@ -441,12 +441,8 @@ class TestCompileEngine:
         v_cluster_a = [1.0] + [0.0] * 127
         v_cluster_b = [0.0] * 64 + [1.0] + [0.0] * 63
 
-        items = [
-            VectorItem(id=f"a{i}", bank_id="b", vector=list(v_cluster_a), text=f"Alert {i}")
-            for i in range(3)
-        ] + [
-            VectorItem(id=f"b{i}", bank_id="b", vector=list(v_cluster_b), text=f"Deploy {i}")
-            for i in range(3)
+        items = [VectorItem(id=f"a{i}", bank_id="b", vector=list(v_cluster_a), text=f"Alert {i}") for i in range(3)] + [
+            VectorItem(id=f"b{i}", bank_id="b", vector=list(v_cluster_b), text=f"Deploy {i}") for i in range(3)
         ]
         await vs.store_vectors(items)
 
@@ -474,10 +470,7 @@ class TestCompileEngine:
         v_cluster = [1.0] + [0.0] * 127
         v_noise = [0.0] * 63 + [1.0] + [0.0] * 64  # orthogonal
 
-        items = [
-            VectorItem(id=f"c{i}", bank_id="b", vector=list(v_cluster), text=f"Cluster {i}")
-            for i in range(3)
-        ] + [
+        items = [VectorItem(id=f"c{i}", bank_id="b", vector=list(v_cluster), text=f"Cluster {i}") for i in range(3)] + [
             VectorItem(id="noise", bank_id="b", vector=list(v_noise), text="Isolated memory")
         ]
         await vs.store_vectors(items)

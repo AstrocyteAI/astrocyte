@@ -53,7 +53,10 @@ _HINT_PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
         "Resolve weekend offsets by counting complete weekends back from the relevant memory timestamp.",
     ),
     (
-        re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(days?|weeks?|months?|years?)\s+(before|ago|earlier)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(days?|weeks?|months?|years?)\s+(before|ago|earlier)\b",
+            re.IGNORECASE,
+        ),
         "relative_offset",
         "Resolve numeric temporal offsets from the relevant memory timestamp.",
     ),

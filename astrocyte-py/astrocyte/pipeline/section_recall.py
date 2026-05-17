@@ -170,6 +170,9 @@ async def section_recall(
     wiki_document_id: str | None = None,
     wiki_min_score: float = 0.55,
     wiki_top_k: int = 3,
+    enable_spreading_activation: bool = False,
+    spreading_seed_count: int = 10,
+    spreading_top_k: int = 10,
 ) -> SectionRecallResult:
     """Run all selected strategies in parallel, RRF-fuse, return.
 
@@ -212,15 +215,19 @@ async def section_recall(
             embeds = await embedding_provider.embed([question])
             qvec = embeds[0] if embeds else []
             hits = await store.search_sections_semantic(
-                bank_id, qvec, top_k=semantic_seed_count,
+                bank_id,
+                qvec,
+                top_k=semantic_seed_count,
             )
             return StrategyResult(
-                strategy="semantic", hits=hits,
+                strategy="semantic",
+                hits=hits,
                 elapsed_ms=(time.monotonic() - ts) * 1000.0,
             )
         except Exception as exc:  # noqa: BLE001
             return StrategyResult(
-                strategy="semantic", hits=[],
+                strategy="semantic",
+                hits=[],
                 elapsed_ms=(time.monotonic() - ts) * 1000.0,
                 error=f"{type(exc).__name__}: {exc}",
             )
@@ -230,15 +237,20 @@ async def section_recall(
         try:
             speaker = "assistant" if mode in {"single-session-assistant", "assistant-recall"} else None
             hits = await store.search_sections_keyword(
-                bank_id, question, top_k=per_strategy_top_k, speaker=speaker,
+                bank_id,
+                question,
+                top_k=per_strategy_top_k,
+                speaker=speaker,
             )
             return StrategyResult(
-                strategy="keyword", hits=hits,
+                strategy="keyword",
+                hits=hits,
                 elapsed_ms=(time.monotonic() - ts) * 1000.0,
             )
         except Exception as exc:  # noqa: BLE001
             return StrategyResult(
-                strategy="keyword", hits=[],
+                strategy="keyword",
+                hits=[],
                 elapsed_ms=(time.monotonic() - ts) * 1000.0,
                 error=f"{type(exc).__name__}: {exc}",
             )
@@ -249,15 +261,19 @@ async def section_recall(
             return StrategyResult(strategy="entity", hits=[], elapsed_ms=0.0)
         try:
             hits = await store.search_sections_by_entities(
-                bank_id, question_entities, top_k=per_strategy_top_k,
+                bank_id,
+                question_entities,
+                top_k=per_strategy_top_k,
             )
             return StrategyResult(
-                strategy="entity", hits=hits,
+                strategy="entity",
+                hits=hits,
                 elapsed_ms=(time.monotonic() - ts) * 1000.0,
             )
         except Exception as exc:  # noqa: BLE001
             return StrategyResult(
-                strategy="entity", hits=[],
+                strategy="entity",
+                hits=[],
                 elapsed_ms=(time.monotonic() - ts) * 1000.0,
                 error=f"{type(exc).__name__}: {exc}",
             )
@@ -268,15 +284,19 @@ async def section_recall(
             return StrategyResult(strategy="temporal", hits=[], elapsed_ms=0.0)
         try:
             hits = await store.search_sections_temporal(
-                bank_id, date_range, top_k=per_strategy_top_k,
+                bank_id,
+                date_range,
+                top_k=per_strategy_top_k,
             )
             return StrategyResult(
-                strategy="temporal", hits=hits,
+                strategy="temporal",
+                hits=hits,
                 elapsed_ms=(time.monotonic() - ts) * 1000.0,
             )
         except Exception as exc:  # noqa: BLE001
             return StrategyResult(
-                strategy="temporal", hits=[],
+                strategy="temporal",
+                hits=[],
                 elapsed_ms=(time.monotonic() - ts) * 1000.0,
                 error=f"{type(exc).__name__}: {exc}",
             )
@@ -311,20 +331,66 @@ async def section_recall(
         unique_seeds = [s for s in seeds if not (s in seen or seen.add(s))]
         try:
             hits = await store.expand_section_links(
-                unique_seeds, top_k=per_strategy_top_k,
+                unique_seeds,
+                top_k=per_strategy_top_k,
             )
-            initial_results.append(StrategyResult(
-                strategy="graph_expand", hits=hits,
-                elapsed_ms=(time.monotonic() - ts) * 1000.0,
-            ))
+            initial_results.append(
+                StrategyResult(
+                    strategy="graph_expand",
+                    hits=hits,
+                    elapsed_ms=(time.monotonic() - ts) * 1000.0,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
-            initial_results.append(StrategyResult(
-                strategy="graph_expand", hits=[],
-                elapsed_ms=(time.monotonic() - ts) * 1000.0,
-                error=f"{type(exc).__name__}: {exc}",
-            ))
+            initial_results.append(
+                StrategyResult(
+                    strategy="graph_expand",
+                    hits=[],
+                    elapsed_ms=(time.monotonic() - ts) * 1000.0,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            )
 
     fused = _rrf_fuse_section_hits(initial_results, k=rrf_k)
+
+    # M18a-3 — entity-co-occurrence spread (gated by `enable_spreading_activation`).
+    # After RRF fusion, expand the top-K seeds through the dense
+    # `astrocyte_pi_section_entities` table. Spread hits are appended to
+    # `fused` with synthetic FusedHit entries (`strategy="spreading"` rank,
+    # rrf_score scaled by spread score) so downstream callers iterate one
+    # uniform list. Distinct from `graph_expand` which uses the sparse
+    # LLM-link table. See `astrocyte.pipeline.spreading_activation`.
+    if enable_spreading_activation and fused:
+        from astrocyte.pipeline.spreading_activation import (  # noqa: PLC0415
+            expand_via_shared_entities,
+        )
+
+        seeds = [(h.document_id, h.line_num) for h in fused[:spreading_seed_count]]
+        already_in_fused = {(h.document_id, h.line_num) for h in fused}
+        try:
+            spread_hits = await expand_via_shared_entities(
+                store=store,
+                bank_id=bank_id,
+                seeds=seeds,
+                top_k=spreading_top_k,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("section_recall: spreading_activation failed: %s", exc)
+            spread_hits = []
+        for doc_id, line_num, score in spread_hits:
+            if (doc_id, line_num) in already_in_fused:
+                continue
+            fused.append(
+                FusedHit(
+                    document_id=doc_id,
+                    line_num=line_num,
+                    # Scale spread score onto the RRF range so it competes
+                    # plausibly with fused entries — small but non-zero so
+                    # the rerank still sees them as candidates worth scoring.
+                    rrf_score=score * 0.1,
+                    per_strategy_rank={"spreading": 0},
+                )
+            )
 
     # M10.1 wiki tier — pre-aggregated observations sit ABOVE sections.
     # When enabled, we semantic-search the bank's wiki pages and surface
@@ -347,22 +413,28 @@ async def section_recall(
             else:
                 qvec = (await embedding_provider.embed([question]))[0]
             raw_hits = await store.search_wiki_pages_semantic(
-                bank_id, qvec,
+                bank_id,
+                qvec,
                 top_k=wiki_top_k,
                 document_id=wiki_document_id,
             )
             wiki_hits = [h for h in raw_hits if h.score >= wiki_min_score]
-            initial_results.append(StrategyResult(
-                strategy="wiki",
-                hits=[(h.page_id, 0, h.score) for h in wiki_hits],
-                elapsed_ms=(time.monotonic() - ts) * 1000.0,
-            ))
+            initial_results.append(
+                StrategyResult(
+                    strategy="wiki",
+                    hits=[(h.page_id, 0, h.score) for h in wiki_hits],
+                    elapsed_ms=(time.monotonic() - ts) * 1000.0,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
-            initial_results.append(StrategyResult(
-                strategy="wiki", hits=[],
-                elapsed_ms=(time.monotonic() - ts) * 1000.0,
-                error=f"{type(exc).__name__}: {exc}",
-            ))
+            initial_results.append(
+                StrategyResult(
+                    strategy="wiki",
+                    hits=[],
+                    elapsed_ms=(time.monotonic() - ts) * 1000.0,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            )
 
     return SectionRecallResult(
         fused=fused,

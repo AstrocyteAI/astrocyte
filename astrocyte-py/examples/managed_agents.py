@@ -35,6 +35,7 @@ from astrocyte.integrations.managed_agents import (
 # Pattern 1: Single agent with session-scoped memory
 # ---------------------------------------------------------------------------
 
+
 async def single_agent_example():
     """An agent that remembers across turns within a session."""
 
@@ -78,6 +79,7 @@ async def single_agent_example():
 # Pattern 2: Multi-agent with coordinated memory
 # ---------------------------------------------------------------------------
 
+
 async def multi_agent_example():
     """A coordinator dispatches to researcher and analyst sub-agents.
 
@@ -99,8 +101,7 @@ async def multi_agent_example():
         role="researcher",
         session_id=sid,
         description=(
-            "Research specialist. Use this agent to explore codebases, "
-            "search for patterns, and gather information."
+            "Research specialist. Use this agent to explore codebases, search for patterns, and gather information."
         ),
         prompt=(
             "You are a research agent. Explore the codebase thoroughly. "
@@ -153,6 +154,7 @@ async def multi_agent_example():
 # ---------------------------------------------------------------------------
 # Pattern 3: Remote MCP server (for any Managed Agent)
 # ---------------------------------------------------------------------------
+
 
 def remote_mcp_config() -> dict:
     """Config snippet for connecting to Astrocyte's MCP server remotely.

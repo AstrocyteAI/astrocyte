@@ -125,8 +125,8 @@ class TestEmbeddingAutolink:
         new = _entity("e2", "Bob", embedding=[1.0, 0.0, 0.0])
 
         resolver = EntityResolver(
-            trigram_threshold=0.0,            # let any candidate through to scoring
-            autolink_threshold=0.99,          # name_sim won't autolink
+            trigram_threshold=0.0,  # let any candidate through to scoring
+            autolink_threshold=0.99,  # name_sim won't autolink
             embedding_autolink_threshold=0.92,
             skip_threshold=0.5,
         )
@@ -156,7 +156,7 @@ class TestCombinedSkip:
 
         # No embeddings on either side → embedding tier inactive.
         resolver = EntityResolver(
-            trigram_threshold=0.0,    # let candidate through
+            trigram_threshold=0.0,  # let candidate through
             skip_threshold=0.5,
             autolink_threshold=0.95,
         )
@@ -209,13 +209,18 @@ class TestCompositeAutolink:
 
         gs = InMemoryGraphStore()
         # Existing "Alice Smith" with a friend "Bob" recorded as co_occurs.
-        await gs.store_entities([
-            _entity("e1", "Alice Smith"),
-            _entity("e2_bob", "Bob"),
-        ], "b")
-        gs._links.setdefault("b", []).extend([
-            EntityLink(entity_a="e1", entity_b="e2_bob", link_type="co_occurs"),
-        ])
+        await gs.store_entities(
+            [
+                _entity("e1", "Alice Smith"),
+                _entity("e2_bob", "Bob"),
+            ],
+            "b",
+        )
+        gs._links.setdefault("b", []).extend(
+            [
+                EntityLink(entity_a="e1", entity_b="e2_bob", link_type="co_occurs"),
+            ]
+        )
         llm = _RecordingLLM()
 
         # New mention "Alice" arriving with "Bob" nearby. Name sim ~0.7
@@ -231,14 +236,18 @@ class TestCompositeAutolink:
             composite_threshold=0.6,
         )
         links = await resolver.resolve(
-            [new_alice, new_bob], "Alice and Bob arrived together.",
-            "b", gs, llm,
+            [new_alice, new_bob],
+            "Alice and Bob arrived together.",
+            "b",
+            gs,
+            llm,
             event_date=datetime(2026, 4, 30, tzinfo=timezone.utc),
         )
 
         # At least one link should be the composite autolink for Alice→Alice Smith.
-        assert any("composite" in (lk.evidence or "") for lk in links), \
+        assert any("composite" in (lk.evidence or "") for lk in links), (
             f"No composite autolink in {[lk.evidence for lk in links]}"
+        )
         # No LLM disambiguation call for the Alice/Alice-Smith pair.
         assert all("entity resolution assistant" not in p.lower() for p in llm.completion_calls)
 
@@ -250,9 +259,12 @@ class TestCompositeAutolink:
         gs = InMemoryGraphStore()
         # Existing Alice Smith with last_seen 1 day ago.
         recent = (datetime(2026, 4, 30, tzinfo=timezone.utc) - timedelta(days=1)).isoformat()
-        await gs.store_entities([
-            _entity("e1", "Alice Smith"),
-        ], "b")
+        await gs.store_entities(
+            [
+                _entity("e1", "Alice Smith"),
+            ],
+            "b",
+        )
         # Inject last_seen via metadata so the in-memory adapter exposes it.
         gs._entities["b"]["e1"].metadata = {"last_seen": recent}
         llm = _RecordingLLM()
@@ -266,8 +278,11 @@ class TestCompositeAutolink:
             composite_threshold=0.55,  # tuned for this test
         )
         await resolver.resolve(
-            [new_alice], "Alice spoke today.",
-            "b", gs, llm,
+            [new_alice],
+            "Alice spoke today.",
+            "b",
+            gs,
+            llm,
             event_date=datetime(2026, 4, 30, tzinfo=timezone.utc),
         )
 
@@ -279,12 +294,12 @@ class TestCompositeAutolink:
         # ``_composite_score``.)
         match = (await gs.find_entity_candidates_scored("Alice", "b", trigram_threshold=0.0))[0]
         score = resolver._composite_score(
-            match.name_similarity, match,
+            match.name_similarity,
+            match,
             nearby_names=set(),
             event_date=datetime(2026, 4, 30, tzinfo=timezone.utc),
         )
-        assert score > 0.5 * match.name_similarity, \
-            "Temporal signal didn't add anything to the composite"
+        assert score > 0.5 * match.name_similarity, "Temporal signal didn't add anything to the composite"
 
     @pytest.mark.asyncio
     async def test_no_signals_means_just_name_weight(self):
@@ -298,7 +313,8 @@ class TestCompositeAutolink:
         match = (await gs.find_entity_candidates_scored("Alice", "b"))[0]
         # name_sim = 1.0, no cooccurrence (no links), no last_seen
         score = resolver._composite_score(
-            match.name_similarity, match,
+            match.name_similarity,
+            match,
             nearby_names=set(),
             event_date=datetime(2026, 4, 30, tzinfo=timezone.utc),
         )
@@ -319,13 +335,15 @@ class TestMentionCountBonus:
         """A fresh entity (``mention_count = 1``) gets no bonus — the
         signal only kicks in once a canonical has been resolved-to."""
         from datetime import datetime, timezone
+
         gs = InMemoryGraphStore()
         await gs.store_entities([_entity("e1", "Alice")], "b")
         resolver = EntityResolver()
 
         match = (await gs.find_entity_candidates_scored("Alice", "b"))[0]
         score = resolver._composite_score(
-            match.name_similarity, match,
+            match.name_similarity,
+            match,
             nearby_names=set(),
             event_date=datetime(2026, 4, 30, tzinfo=timezone.utc),
         )
@@ -339,6 +357,7 @@ class TestMentionCountBonus:
         """A popular candidate scores higher than an unpopular one with
         otherwise identical signals — but only up to the cap."""
         from datetime import datetime, timezone
+
         gs = InMemoryGraphStore()
         await gs.store_entities([_entity("e1", "Alice")], "b")
         resolver = EntityResolver(mention_count_bonus_cap=0.05, mention_count_saturation=50)
@@ -352,27 +371,26 @@ class TestMentionCountBonus:
         match_popular = (await gs.find_entity_candidates_scored("Alice", "b"))[0]
 
         score_fresh = resolver._composite_score(
-            match.name_similarity, match,
+            match.name_similarity,
+            match,
             nearby_names=set(),
             event_date=datetime(2026, 4, 30, tzinfo=timezone.utc),
         )
         score_popular = resolver._composite_score(
-            match_popular.name_similarity, match_popular,
+            match_popular.name_similarity,
+            match_popular,
             nearby_names=set(),
             event_date=datetime(2026, 4, 30, tzinfo=timezone.utc),
         )
 
-        assert score_popular > score_fresh, (
-            "Popular candidate should outscore fresh one with identical other signals"
-        )
-        assert score_popular - score_fresh <= 0.05 + 1e-9, (
-            "Bonus must never exceed mention_count_bonus_cap"
-        )
+        assert score_popular > score_fresh, "Popular candidate should outscore fresh one with identical other signals"
+        assert score_popular - score_fresh <= 0.05 + 1e-9, "Bonus must never exceed mention_count_bonus_cap"
 
     @pytest.mark.asyncio
     async def test_disabled_bonus_means_zero_contribution(self):
         """``mention_count_bonus_cap=0.0`` disables the signal entirely."""
         from datetime import datetime, timezone
+
         gs = InMemoryGraphStore()
         await gs.store_entities([_entity("e1", "Alice")], "b")
         for _ in range(10):
@@ -381,7 +399,8 @@ class TestMentionCountBonus:
 
         match = (await gs.find_entity_candidates_scored("Alice", "b"))[0]
         score = resolver._composite_score(
-            match.name_similarity, match,
+            match.name_similarity,
+            match,
             nearby_names=set(),
             event_date=datetime(2026, 4, 30, tzinfo=timezone.utc),
         )
@@ -395,6 +414,7 @@ class TestMentionCountBonus:
         tentative ID to an existing canonical, the canonical's
         ``mention_count`` is bumped."""
         from datetime import datetime, timezone
+
         gs = InMemoryGraphStore()
         # Pre-existing canonical "Alice" with mention_count=1.
         await gs.store_entities([_entity("e-canonical", "Alice")], "b")
@@ -525,7 +545,8 @@ class TestInMemoryScoredCandidates:
             "b",
         )
         results = await gs.find_entity_candidates_scored(
-            "Bob", "b",
+            "Bob",
+            "b",
             name_embedding=[1.0, 0.0],
             trigram_threshold=0.0,  # bypass trigram filter
         )
@@ -542,7 +563,9 @@ class TestInMemoryScoredCandidates:
         # ``Zzzzz`` shares no characters with ``Alice``; SequenceMatcher
         # ratio ≈ 0. Threshold 0.5 keeps ``Alice`` (1.0) and drops ``Zzzzz``.
         results = await gs.find_entity_candidates_scored(
-            "Alice", "b", trigram_threshold=0.5,
+            "Alice",
+            "b",
+            trigram_threshold=0.5,
         )
         names = {r.entity.name for r in results}
         assert "Alice" in names
@@ -554,11 +577,13 @@ class TestInMemoryScoredCandidates:
         await gs.store_entities(
             [
                 _entity("e1", "Alice Smith"),  # name_sim ~0.7
-                _entity("e2", "Alice"),         # name_sim 1.0
+                _entity("e2", "Alice"),  # name_sim 1.0
             ],
             "b",
         )
         results = await gs.find_entity_candidates_scored(
-            "Alice", "b", trigram_threshold=0.0,
+            "Alice",
+            "b",
+            trigram_threshold=0.0,
         )
         assert results[0].entity.name == "Alice"  # higher scored first

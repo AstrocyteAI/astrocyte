@@ -69,11 +69,11 @@ class TestSectionMemoryId:
     @pytest.mark.parametrize(
         "garbage",
         [
-            "",                     # empty
-            "no-colon",             # no separator
-            ":42",                  # empty doc_id
-            "doc:notanint",         # non-integer line
-            "doc:",                 # missing line_num
+            "",  # empty
+            "no-colon",  # no separator
+            ":42",  # empty doc_id
+            "doc:notanint",  # non-integer line
+            "doc:",  # missing line_num
         ],
     )
     def test_parse_returns_none_on_malformed_input(self, garbage):
@@ -190,16 +190,18 @@ async def populated_store():
     await store.save_sections(doc_id, sections)
 
     # Link line 1 → line 2 (semantic_knn, weight 0.9)
-    await store.save_section_links([
-        PageIndexSectionLink(
-            from_doc=doc_id,
-            from_line=1,
-            to_doc=doc_id,
-            to_line=2,
-            link_type="semantic_knn",
-            weight=0.9,
-        ),
-    ])
+    await store.save_section_links(
+        [
+            PageIndexSectionLink(
+                from_doc=doc_id,
+                from_line=1,
+                to_doc=doc_id,
+                to_line=2,
+                link_type="semantic_knn",
+                weight=0.9,
+            ),
+        ]
+    )
     return store, doc_id
 
 
@@ -238,14 +240,19 @@ class TestMakeSectionRecallFn:
 
         class BrokenStore:
             """Raises on every method call."""
+
             async def search_sections_semantic(self, *a, **kw):
                 raise RuntimeError("synthetic failure")
+
             async def search_sections_keyword(self, *a, **kw):
                 raise RuntimeError("synthetic failure")
+
             async def search_sections_by_entities(self, *a, **kw):
                 raise RuntimeError("synthetic failure")
+
             async def search_sections_temporal(self, *a, **kw):
                 raise RuntimeError("synthetic failure")
+
             async def expand_section_links(self, *a, **kw):
                 raise RuntimeError("synthetic failure")
 
@@ -296,7 +303,8 @@ class TestMakeListEntitiesFn:
 
     @pytest.mark.asyncio
     async def test_returns_callable_with_pattern_filter_shape(
-        self, populated_store,
+        self,
+        populated_store,
     ):
         """The factory binds bank_id + document_id and exposes a
         ``(pattern, limit) -> [(name, count)]`` callable."""
@@ -305,17 +313,21 @@ class TestMakeListEntitiesFn:
         store, doc_id = populated_store
         # Seed 3 distinct entities with different mention counts so the
         # factory's output ordering (count desc, name asc) is testable.
-        await store.save_section_entities([
-            PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Alice"),
-            PageIndexSectionEntity(document_id=doc_id, line_num=2, entity_name="Alice"),
-            PageIndexSectionEntity(document_id=doc_id, line_num=3, entity_name="Alice"),
-            PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Bob"),
-            PageIndexSectionEntity(document_id=doc_id, line_num=2, entity_name="Bob"),
-            PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Carol"),
-        ])
+        await store.save_section_entities(
+            [
+                PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Alice"),
+                PageIndexSectionEntity(document_id=doc_id, line_num=2, entity_name="Alice"),
+                PageIndexSectionEntity(document_id=doc_id, line_num=3, entity_name="Alice"),
+                PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Bob"),
+                PageIndexSectionEntity(document_id=doc_id, line_num=2, entity_name="Bob"),
+                PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Carol"),
+            ]
+        )
 
         list_entities_fn = make_list_entities_fn(
-            store=store, bank_id="b1", document_id=doc_id,
+            store=store,
+            bank_id="b1",
+            document_id=doc_id,
         )
         # No pattern → top-N entities by mention count.
         results = await list_entities_fn(None, 10)

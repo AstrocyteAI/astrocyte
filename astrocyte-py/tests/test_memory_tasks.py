@@ -65,22 +65,28 @@ def _dispatcher(
 async def test_in_memory_backend_idempotency_and_worker() -> None:
     backend = InMemoryTaskBackend()
     vector_store = InMemoryVectorStore()
-    await vector_store.store_vectors([
-        _item("m1", "Alice went hiking yesterday.", occurred_at=datetime(2026, 2, 10, tzinfo=UTC)),
-    ])
+    await vector_store.store_vectors(
+        [
+            _item("m1", "Alice went hiking yesterday.", occurred_at=datetime(2026, 2, 10, tzinfo=UTC)),
+        ]
+    )
     dispatcher = _dispatcher(vector_store)
     worker = MemoryTaskWorker(backend, dispatcher, worker_id="w1")
 
-    first = await backend.enqueue(MemoryTask(
-        task_type=NORMALIZE_TEMPORAL_FACTS,
-        bank_id="b1",
-        idempotency_key="normalize:b1",
-    ))
-    second = await backend.enqueue(MemoryTask(
-        task_type=NORMALIZE_TEMPORAL_FACTS,
-        bank_id="b1",
-        idempotency_key="normalize:b1",
-    ))
+    first = await backend.enqueue(
+        MemoryTask(
+            task_type=NORMALIZE_TEMPORAL_FACTS,
+            bank_id="b1",
+            idempotency_key="normalize:b1",
+        )
+    )
+    second = await backend.enqueue(
+        MemoryTask(
+            task_type=NORMALIZE_TEMPORAL_FACTS,
+            bank_id="b1",
+            idempotency_key="normalize:b1",
+        )
+    )
 
     assert first == second
     assert await worker.run_once(limit=1) == 1
@@ -89,10 +95,12 @@ async def test_in_memory_backend_idempotency_and_worker() -> None:
 
 async def test_recover_stale_running_task_requeues_for_retry() -> None:
     backend = InMemoryTaskBackend()
-    task_id = await backend.enqueue(MemoryTask(
-        task_type=NORMALIZE_TEMPORAL_FACTS,
-        bank_id="b1",
-    ))
+    task_id = await backend.enqueue(
+        MemoryTask(
+            task_type=NORMALIZE_TEMPORAL_FACTS,
+            bank_id="b1",
+        )
+    )
     claimed = await backend.claim("worker-1", limit=1)
     assert claimed[0].id == task_id
 
@@ -115,14 +123,18 @@ def test_split_texts_by_token_budget_keeps_order_and_splits() -> None:
 
 async def test_normalize_temporal_facts_updates_vector_metadata() -> None:
     vector_store = InMemoryVectorStore()
-    await vector_store.store_vectors([
-        _item("m1", "Alice went hiking yesterday.", occurred_at=datetime(2026, 2, 10, tzinfo=UTC)),
-    ])
+    await vector_store.store_vectors(
+        [
+            _item("m1", "Alice went hiking yesterday.", occurred_at=datetime(2026, 2, 10, tzinfo=UTC)),
+        ]
+    )
 
-    result = await _dispatcher(vector_store).run(MemoryTask(
-        task_type=NORMALIZE_TEMPORAL_FACTS,
-        bank_id="b1",
-    ))
+    result = await _dispatcher(vector_store).run(
+        MemoryTask(
+            task_type=NORMALIZE_TEMPORAL_FACTS,
+            bank_id="b1",
+        )
+    )
 
     stored = (await vector_store.list_vectors("b1"))[0]
     assert result["memories_updated"] == 1
@@ -132,17 +144,21 @@ async def test_normalize_temporal_facts_updates_vector_metadata() -> None:
 async def test_compile_persona_page_and_index_vector() -> None:
     vector_store = InMemoryVectorStore()
     wiki_store = InMemoryWikiStore()
-    await vector_store.store_vectors([
-        _item("m1", "Alice likes hiking.", metadata={"locomo_persons": "Alice"}),
-        _item("m2", "Bob likes chess.", metadata={"locomo_persons": "Bob"}),
-    ])
+    await vector_store.store_vectors(
+        [
+            _item("m1", "Alice likes hiking.", metadata={"locomo_persons": "Alice"}),
+            _item("m2", "Bob likes chess.", metadata={"locomo_persons": "Bob"}),
+        ]
+    )
     dispatcher = _dispatcher(vector_store, wiki_store=wiki_store)
 
-    compile_result = await dispatcher.run(MemoryTask(
-        task_type=COMPILE_PERSONA_PAGE,
-        bank_id="b1",
-        payload={"person": "Alice", "index_vector": True},
-    ))
+    compile_result = await dispatcher.run(
+        MemoryTask(
+            task_type=COMPILE_PERSONA_PAGE,
+            bank_id="b1",
+            payload={"person": "Alice", "index_vector": True},
+        )
+    )
 
     page = await wiki_store.get_page("person:alice", "b1")
     indexed = await vector_store.list_vectors("b1")
@@ -169,47 +185,53 @@ async def test_compile_persona_page_with_scope_uses_scoped_page_id_and_tag() -> 
     wiki_store = InMemoryWikiStore()
     # Stamp the scope tag the same way the LoCoMo retain path does so
     # ``_item_in_scope`` can match.
-    await vector_store.store_vectors([
-        VectorItem(
-            id="m1",
-            bank_id="b1",
-            vector=[1.0] + [0.0] * 127,
-            text="Alice in convo-A likes hiking.",
-            metadata={"locomo_persons": "Alice", "conversation_id": "convo-A"},
-            tags=["convo:convo-A"],
-        ),
-        VectorItem(
-            id="m2",
-            bank_id="b1",
-            vector=[1.0] + [0.0] * 127,
-            text="Alice in convo-B likes chess.",
-            metadata={"locomo_persons": "Alice", "conversation_id": "convo-B"},
-            tags=["convo:convo-B"],
-        ),
-    ])
+    await vector_store.store_vectors(
+        [
+            VectorItem(
+                id="m1",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Alice in convo-A likes hiking.",
+                metadata={"locomo_persons": "Alice", "conversation_id": "convo-A"},
+                tags=["convo:convo-A"],
+            ),
+            VectorItem(
+                id="m2",
+                bank_id="b1",
+                vector=[1.0] + [0.0] * 127,
+                text="Alice in convo-B likes chess.",
+                metadata={"locomo_persons": "Alice", "conversation_id": "convo-B"},
+                tags=["convo:convo-B"],
+            ),
+        ]
+    )
 
     dispatcher = _dispatcher(vector_store, wiki_store=wiki_store)
 
     # Compile persona for Alice scoped to convo-A.
-    await dispatcher.run(MemoryTask(
-        task_type=COMPILE_PERSONA_PAGE,
-        bank_id="b1",
-        payload={
-            "person": "Alice",
-            "scope": "convo:convo-A",
-            "index_vector": True,
-        },
-    ))
+    await dispatcher.run(
+        MemoryTask(
+            task_type=COMPILE_PERSONA_PAGE,
+            bank_id="b1",
+            payload={
+                "person": "Alice",
+                "scope": "convo:convo-A",
+                "index_vector": True,
+            },
+        )
+    )
     # And again for convo-B — must NOT collapse onto convo-A's page.
-    await dispatcher.run(MemoryTask(
-        task_type=COMPILE_PERSONA_PAGE,
-        bank_id="b1",
-        payload={
-            "person": "Alice",
-            "scope": "convo:convo-B",
-            "index_vector": True,
-        },
-    ))
+    await dispatcher.run(
+        MemoryTask(
+            task_type=COMPILE_PERSONA_PAGE,
+            bank_id="b1",
+            payload={
+                "person": "Alice",
+                "scope": "convo:convo-B",
+                "index_vector": True,
+            },
+        )
+    )
 
     page_a = await wiki_store.get_page("person:convo-convo-a:alice", "b1")
     page_b = await wiki_store.get_page("person:convo-convo-b:alice", "b1")
@@ -242,18 +264,22 @@ async def test_compile_persona_page_with_scope_uses_scoped_page_id_and_tag() -> 
 async def test_project_entity_edges_uses_person_metadata() -> None:
     vector_store = InMemoryVectorStore()
     graph_store = InMemoryGraphStore()
-    await vector_store.store_vectors([
-        _item(
-            "m1",
-            "Alice talked with Bob about hiking.",
-            metadata={"locomo_persons": "Alice,Bob", "session_id": "s1", "locomo_turn_ids": "dia_1"},
-        ),
-    ])
+    await vector_store.store_vectors(
+        [
+            _item(
+                "m1",
+                "Alice talked with Bob about hiking.",
+                metadata={"locomo_persons": "Alice,Bob", "session_id": "s1", "locomo_turn_ids": "dia_1"},
+            ),
+        ]
+    )
 
-    result = await _dispatcher(vector_store, graph_store=graph_store).run(MemoryTask(
-        task_type=PROJECT_ENTITY_EDGES,
-        bank_id="b1",
-    ))
+    result = await _dispatcher(vector_store, graph_store=graph_store).run(
+        MemoryTask(
+            task_type=PROJECT_ENTITY_EDGES,
+            bank_id="b1",
+        )
+    )
 
     assert result["entities_projected"] == 2
     assert result["associations_projected"] == 2
@@ -282,13 +308,13 @@ async def test_lint_wiki_page_returns_filtered_issues() -> None:
         vector_store,
         wiki_store=wiki_store,
         lint_engine=lint_engine,
-    ).run(MemoryTask(
-        task_type=LINT_WIKI_PAGE,
-        bank_id="b1",
-        payload={"page_id": "topic:stale"},
-    ))
+    ).run(
+        MemoryTask(
+            task_type=LINT_WIKI_PAGE,
+            bank_id="b1",
+            payload={"page_id": "topic:stale"},
+        )
+    )
 
     assert result["orphan_count"] == 1
     assert result["issues"][0]["action"] == "archive"
-
-

@@ -94,7 +94,9 @@ def bank_id() -> str:
 
 class TestPostgresPageIndexStore:
     async def test_save_load_document_roundtrip(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         doc_id = await store.save_document(_doc(bank_id, md="hello"))
         assert doc_id  # store-assigned UUID
@@ -106,12 +108,16 @@ class TestPostgresPageIndexStore:
         assert loaded.id == doc_id
 
     async def test_load_document_returns_none_when_missing(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         assert await store.load_document(bank_id, "no-such-conv") is None
 
     async def test_upsert_keyed_on_bank_id_source_id(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         first_id = await store.save_document(_doc(bank_id, md="v1"))
         second_id = await store.save_document(_doc(bank_id, md="v2"))
@@ -120,12 +126,19 @@ class TestPostgresPageIndexStore:
         assert loaded is not None and loaded.md_text == "v2"
 
     async def test_save_sections_atomic_replace(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         doc_id = await store.save_document(_doc(bank_id))
-        await store.save_sections(doc_id, [
-            _section(doc_id, 1), _section(doc_id, 5), _section(doc_id, 10),
-        ])
+        await store.save_sections(
+            doc_id,
+            [
+                _section(doc_id, 1),
+                _section(doc_id, 5),
+                _section(doc_id, 10),
+            ],
+        )
         skel = await store.load_skeleton(doc_id)
         assert [s.line_num for s in skel] == [1, 5, 10]
 
@@ -135,22 +148,31 @@ class TestPostgresPageIndexStore:
         assert [s.line_num for s in skel2] == [100, 200]
 
     async def test_save_sections_cascades_to_entities_and_links(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         # Pin the FK ON DELETE CASCADE in migration 015 — replacing the
         # tree must wipe dependent rows, not orphan them.
         doc_id = await store.save_document(_doc(bank_id))
         await store.save_sections(doc_id, [_section(doc_id, 1), _section(doc_id, 5)])
-        await store.save_section_entities([
-            PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Alice"),
-        ])
-        await store.save_section_links([
-            PageIndexSectionLink(
-                from_doc=doc_id, from_line=1,
-                to_doc=doc_id, to_line=5,
-                link_type="semantic_knn", weight=0.9,
-            ),
-        ])
+        await store.save_section_entities(
+            [
+                PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Alice"),
+            ]
+        )
+        await store.save_section_links(
+            [
+                PageIndexSectionLink(
+                    from_doc=doc_id,
+                    from_line=1,
+                    to_doc=doc_id,
+                    to_line=5,
+                    link_type="semantic_knn",
+                    weight=0.9,
+                ),
+            ]
+        )
         # Replace tree → cascade should drop the entity and link rows.
         await store.save_sections(doc_id, [_section(doc_id, 99)])
 
@@ -173,47 +195,65 @@ class TestPostgresPageIndexStore:
         assert link_count == 0, "links must cascade-delete on tree replace"
 
     async def test_load_skeleton_orders_by_line_num(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         doc_id = await store.save_document(_doc(bank_id))
-        await store.save_sections(doc_id, [
-            _section(doc_id, 50),
-            _section(doc_id, 1),
-            _section(doc_id, 12),
-        ])
+        await store.save_sections(
+            doc_id,
+            [
+                _section(doc_id, 50),
+                _section(doc_id, 1),
+                _section(doc_id, 12),
+            ],
+        )
         skel = await store.load_skeleton(doc_id)
         assert [s.line_num for s in skel] == [1, 12, 50]
 
     async def test_save_section_links_rejects_invalid_link_type(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         # The SQL CHECK constraint catches this server-side; the Python
         # adapter validates first to give a better error message.
         doc_id = await store.save_document(_doc(bank_id))
         await store.save_sections(doc_id, [_section(doc_id, 1), _section(doc_id, 5)])
         bad = PageIndexSectionLink(
-            from_doc=doc_id, from_line=1,
-            to_doc=doc_id, to_line=5,
-            link_type="invalid_type", weight=1.0,
+            from_doc=doc_id,
+            from_line=1,
+            to_doc=doc_id,
+            to_line=5,
+            link_type="invalid_type",
+            weight=1.0,
         )
         with pytest.raises(ValueError, match="link_type"):
             await store.save_section_links([bad])
 
     async def test_save_section_links_idempotent(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         doc_id = await store.save_document(_doc(bank_id))
         await store.save_sections(doc_id, [_section(doc_id, 1), _section(doc_id, 5)])
         link = PageIndexSectionLink(
-            from_doc=doc_id, from_line=1, to_doc=doc_id, to_line=5,
-            link_type="semantic_knn", weight=0.85,
+            from_doc=doc_id,
+            from_line=1,
+            to_doc=doc_id,
+            to_line=5,
+            link_type="semantic_knn",
+            weight=0.85,
         )
         # ON CONFLICT DO UPDATE — second call must not error.
         await store.save_section_links([link])
         await store.save_section_links([link])
 
     async def test_save_section_entities_idempotent(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         doc_id = await store.save_document(_doc(bank_id))
         await store.save_sections(doc_id, [_section(doc_id, 1)])
@@ -223,7 +263,9 @@ class TestPostgresPageIndexStore:
         await store.save_section_entities([e])
 
     async def test_save_empty_lists_noop(
-        self, store: PostgresPageIndexStore, bank_id: str,
+        self,
+        store: PostgresPageIndexStore,
+        bank_id: str,
     ) -> None:
         doc_id = await store.save_document(_doc(bank_id))
         assert await store.save_sections(doc_id, []) == 0

@@ -1,4 +1,5 @@
 """M12.1: fact-grain extraction unit tests."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -52,25 +53,29 @@ class TestExtractFactsForSection:
 
     async def test_happy_path_three_facts(self, section: PageIndexSection) -> None:
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"facts": ['
-                 '{"text": "User visited Dr. Patel on May 7, 2023.",'
-                 ' "fact_type": "experience", "speaker": "user",'
-                 ' "occurred_start": "2023-05-07", "occurred_end": null,'
-                 ' "entities": ["Dr. Patel", "role:doctor"]},'
-                 '{"text": "User has been seeing Dr. Patel for 6 months.",'
-                 ' "fact_type": "experience", "speaker": "user",'
-                 ' "occurred_start": null, "occurred_end": null,'
-                 ' "entities": ["Dr. Patel", "role:doctor"]},'
-                 '{"text": "User prefers Dr. Patel over previous clinic.",'
-                 ' "fact_type": "preference", "speaker": "user",'
-                 ' "occurred_start": null, "occurred_end": null,'
-                 ' "entities": ["Dr. Patel", "role:doctor"]}'
-                 ']}',
-            model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "User visited Dr. Patel on May 7, 2023.",'
+                ' "fact_type": "experience", "speaker": "user",'
+                ' "occurred_start": "2023-05-07", "occurred_end": null,'
+                ' "entities": ["Dr. Patel", "role:doctor"]},'
+                '{"text": "User has been seeing Dr. Patel for 6 months.",'
+                ' "fact_type": "experience", "speaker": "user",'
+                ' "occurred_start": null, "occurred_end": null,'
+                ' "entities": ["Dr. Patel", "role:doctor"]},'
+                '{"text": "User prefers Dr. Patel over previous clinic.",'
+                ' "fact_type": "preference", "speaker": "user",'
+                ' "occurred_start": null, "occurred_end": null,'
+                ' "entities": ["Dr. Patel", "role:doctor"]}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
         facts = await extract_facts_for_section(
-            provider, section, "some section text",
+            provider,
+            section,
+            "some section text",
             bank_id="b1",
         )
         assert len(facts) == 3
@@ -83,11 +88,17 @@ class TestExtractFactsForSection:
 
     async def test_empty_facts_list_returns_empty(self, section) -> None:
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"facts": []}', model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": []}',
+                model="gpt-4o-mini",
+            )
+        )
         facts = await extract_facts_for_section(
-            provider, section, "chit-chat", bank_id="b1",
+            provider,
+            section,
+            "chit-chat",
+            bank_id="b1",
         )
         assert facts == []
 
@@ -100,17 +111,22 @@ class TestExtractFactsForSection:
         directly.
         """
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"facts": ['
-                 '{"text": "Assistant recommended a saline rinse for post-nasal drip.",'
-                 ' "fact_type": "assistant_statement", "speaker": "assistant",'
-                 ' "occurred_start": null, "occurred_end": null,'
-                 ' "entities": ["saline rinse", "post-nasal drip"]}'
-                 ']}',
-            model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "Assistant recommended a saline rinse for post-nasal drip.",'
+                ' "fact_type": "assistant_statement", "speaker": "assistant",'
+                ' "occurred_start": null, "occurred_end": null,'
+                ' "entities": ["saline rinse", "post-nasal drip"]}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
         facts = await extract_facts_for_section(
-            provider, section, "text", bank_id="b1",
+            provider,
+            section,
+            "text",
+            bank_id="b1",
         )
         assert len(facts) == 1
         assert facts[0].fact_type == "assistant_statement"
@@ -123,20 +139,25 @@ class TestExtractFactsForSection:
         a back-and-forth dialogue turn.
         """
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"facts": ['
-                 '{"text": "User visited Dr. Patel.", "fact_type": "experience",'
-                 ' "speaker": "user", "entities": ["Dr. Patel"]},'
-                 '{"text": "User prefers clinic A.", "fact_type": "preference",'
-                 ' "speaker": "user", "entities": ["clinic A"]},'
-                 '{"text": "Assistant suggested switching to nasal spray.",'
-                 ' "fact_type": "assistant_statement", "speaker": "assistant",'
-                 ' "entities": ["nasal spray"]}'
-                 ']}',
-            model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "User visited Dr. Patel.", "fact_type": "experience",'
+                ' "speaker": "user", "entities": ["Dr. Patel"]},'
+                '{"text": "User prefers clinic A.", "fact_type": "preference",'
+                ' "speaker": "user", "entities": ["clinic A"]},'
+                '{"text": "Assistant suggested switching to nasal spray.",'
+                ' "fact_type": "assistant_statement", "speaker": "assistant",'
+                ' "entities": ["nasal spray"]}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
         facts = await extract_facts_for_section(
-            provider, section, "text", bank_id="b1",
+            provider,
+            section,
+            "text",
+            bank_id="b1",
         )
         assert len(facts) == 3
         fact_types = {f.fact_type for f in facts}
@@ -144,75 +165,99 @@ class TestExtractFactsForSection:
 
     async def test_invalid_fact_type_dropped(self, section) -> None:
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"facts": ['
-                 '{"text": "valid", "fact_type": "experience", "entities": []},'
-                 '{"text": "invalid type", "fact_type": "gibberish", "entities": []}'
-                 ']}',
-            model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "valid", "fact_type": "experience", "entities": []},'
+                '{"text": "invalid type", "fact_type": "gibberish", "entities": []}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
         facts = await extract_facts_for_section(
-            provider, section, "text", bank_id="b1",
+            provider,
+            section,
+            "text",
+            bank_id="b1",
         )
         assert len(facts) == 1
         assert facts[0].fact_type == "experience"
 
     async def test_missing_text_dropped(self, section) -> None:
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"facts": ['
-                 '{"text": "", "fact_type": "experience"},'
-                 '{"text": "valid", "fact_type": "world"}'
-                 ']}',
-            model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": [{"text": "", "fact_type": "experience"},{"text": "valid", "fact_type": "world"}]}',
+                model="gpt-4o-mini",
+            )
+        )
         facts = await extract_facts_for_section(
-            provider, section, "text", bank_id="b1",
+            provider,
+            section,
+            "text",
+            bank_id="b1",
         )
         assert len(facts) == 1
         assert facts[0].text == "valid"
 
     async def test_dedupes_entities_case_insensitively(self, section) -> None:
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"facts": [{"text": "f", "fact_type": "world",'
-                 ' "entities": ["Dr. Patel", "dr. patel", "DR. PATEL"]}]}',
-            model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": [{"text": "f", "fact_type": "world",'
+                ' "entities": ["Dr. Patel", "dr. patel", "DR. PATEL"]}]}',
+                model="gpt-4o-mini",
+            )
+        )
         facts = await extract_facts_for_section(
-            provider, section, "text", bank_id="b1",
+            provider,
+            section,
+            "text",
+            bank_id="b1",
         )
         assert facts[0].entities == ["Dr. Patel"]
 
     async def test_caps_at_12_facts(self, section) -> None:
-        many = ",".join(
-            f'{{"text": "f{i}", "fact_type": "world", "entities": []}}'
-            for i in range(20)
-        )
+        many = ",".join(f'{{"text": "f{i}", "fact_type": "world", "entities": []}}' for i in range(20))
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text=f'{{"facts": [{many}]}}', model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text=f'{{"facts": [{many}]}}',
+                model="gpt-4o-mini",
+            )
+        )
         facts = await extract_facts_for_section(
-            provider, section, "text", bank_id="b1",
+            provider,
+            section,
+            "text",
+            bank_id="b1",
         )
         assert len(facts) == 12
 
     async def test_empty_text_returns_empty(self, section) -> None:
         provider = MagicMock()
         facts = await extract_facts_for_section(
-            provider, section, "   ", bank_id="b1",
+            provider,
+            section,
+            "   ",
+            bank_id="b1",
         )
         assert facts == []
         provider.complete.assert_not_called() if hasattr(provider.complete, "assert_not_called") else None
 
     async def test_json_parse_failure_returns_empty(self, section) -> None:
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text="not valid", model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text="not valid",
+                model="gpt-4o-mini",
+            )
+        )
         facts = await extract_facts_for_section(
-            provider, section, "text", bank_id="b1",
+            provider,
+            section,
+            "text",
+            bank_id="b1",
         )
         assert facts == []
 
@@ -220,7 +265,10 @@ class TestExtractFactsForSection:
         provider = MagicMock()
         provider.complete = AsyncMock(side_effect=RuntimeError("api down"))
         facts = await extract_facts_for_section(
-            provider, section, "text", bank_id="b1",
+            provider,
+            section,
+            "text",
+            bank_id="b1",
         )
         assert facts == []
 
@@ -230,7 +278,10 @@ class TestInMemoryFactStore:
     async def store_with_facts(self) -> tuple[InMemoryPageIndexStore, str]:
         s = InMemoryPageIndexStore()
         doc = PageIndexDocument(
-            id="", bank_id="b1", source_id="s1", md_text="# m",
+            id="",
+            bank_id="b1",
+            source_id="s1",
+            md_text="# m",
             reference_date=datetime(2023, 5, 8, tzinfo=timezone.utc),
             built_at=datetime(2026, 5, 11, tzinfo=timezone.utc),
         )
@@ -238,21 +289,33 @@ class TestInMemoryFactStore:
         await s.save_sections(doc_id, [_section(1, "s1"), _section(5, "s5")])
         facts = [
             PageIndexFact(
-                id="f1", bank_id="b1", document_id=doc_id, line_num=1,
-                text="User visited Dr. Patel", fact_type="experience",
+                id="f1",
+                bank_id="b1",
+                document_id=doc_id,
+                line_num=1,
+                text="User visited Dr. Patel",
+                fact_type="experience",
                 speaker="user",
                 occurred_start=datetime(2023, 5, 7),
                 entities=["Dr. Patel", "role:doctor"],
             ),
             PageIndexFact(
-                id="f2", bank_id="b1", document_id=doc_id, line_num=5,
-                text="User prefers Sony cameras", fact_type="preference",
+                id="f2",
+                bank_id="b1",
+                document_id=doc_id,
+                line_num=5,
+                text="User prefers Sony cameras",
+                fact_type="preference",
                 speaker="user",
                 entities=["Sony", "category:camera"],
             ),
             PageIndexFact(
-                id="f3", bank_id="b1", document_id=doc_id, line_num=5,
-                text="User visited Dr. Lee", fact_type="experience",
+                id="f3",
+                bank_id="b1",
+                document_id=doc_id,
+                line_num=5,
+                text="User visited Dr. Lee",
+                fact_type="experience",
                 speaker="user",
                 occurred_start=datetime(2023, 6, 10),
                 entities=["Dr. Lee", "role:doctor"],
@@ -269,25 +332,41 @@ class TestInMemoryFactStore:
     async def test_count_facts_by_entity_pattern(self, store_with_facts) -> None:
         s, doc_id = store_with_facts
         # Two "role:doctor" mentions
-        assert await s.count_facts_matching(
-            "b1", doc_id, entity_pattern="role:doctor",
-        ) == 2
+        assert (
+            await s.count_facts_matching(
+                "b1",
+                doc_id,
+                entity_pattern="role:doctor",
+            )
+            == 2
+        )
 
     async def test_count_facts_by_type(self, store_with_facts) -> None:
         s, doc_id = store_with_facts
-        assert await s.count_facts_matching(
-            "b1", doc_id, fact_type="experience",
-        ) == 2
-        assert await s.count_facts_matching(
-            "b1", doc_id, fact_type="preference",
-        ) == 1
+        assert (
+            await s.count_facts_matching(
+                "b1",
+                doc_id,
+                fact_type="experience",
+            )
+            == 2
+        )
+        assert (
+            await s.count_facts_matching(
+                "b1",
+                doc_id,
+                fact_type="preference",
+            )
+            == 1
+        )
 
     async def test_search_facts_by_entity(self, store_with_facts) -> None:
         s, doc_id = store_with_facts
         hits = await s.search_facts_by_entity("b1", "role:doctor")
         assert len(hits) == 2
         assert {h.text for h in hits} == {
-            "User visited Dr. Patel", "User visited Dr. Lee",
+            "User visited Dr. Patel",
+            "User visited Dr. Lee",
         }
 
     async def test_search_facts_temporal(self, store_with_facts) -> None:
@@ -301,10 +380,12 @@ class TestInMemoryFactStore:
 
     async def test_update_fact_embeddings(self, store_with_facts) -> None:
         s, doc_id = store_with_facts
-        updated = await s.update_fact_embeddings([
-            ("f1", [0.1, 0.2, 0.3]),
-            ("f2", [0.4, 0.5, 0.6]),
-        ])
+        updated = await s.update_fact_embeddings(
+            [
+                ("f1", [0.1, 0.2, 0.3]),
+                ("f2", [0.4, 0.5, 0.6]),
+            ]
+        )
         assert updated == 2
         # semantic search now returns f1 / f2 (have embeddings); f3 (None) excluded
         hits = await s.search_facts_semantic("b1", [0.1, 0.2, 0.3], top_k=5)

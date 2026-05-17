@@ -202,6 +202,7 @@ def _format_memories(
         # SESSION date which may not match the event date a question
         # asks about, potentially confusing the LLM.
         import os as _os_local
+
         _legacy_format = _os_local.environ.get("ASTROCYTE_LEGACY_MEMORY_FORMAT") == "1"
         if not _legacy_format:
             if hit.occurred_at:
@@ -273,10 +274,7 @@ async def synthesize(
         )
         user_prompt = f"<reference_date>\n{anchor}\n</reference_date>\n\n" + user_prompt
     if query_plan.guidance:
-        user_prompt = (
-            f"<query_guidance>\n{query_plan.guidance}\n</query_guidance>\n\n"
-            + user_prompt
-        )
+        user_prompt = f"<query_guidance>\n{query_plan.guidance}\n</query_guidance>\n\n" + user_prompt
     if authority_context and str(authority_context).strip():
         user_prompt = f"<authority_context>\n{authority_context.strip()}\n</authority_context>\n\n" + user_prompt
 

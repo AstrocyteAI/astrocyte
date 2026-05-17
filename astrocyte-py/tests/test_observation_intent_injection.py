@@ -35,7 +35,7 @@ def _make_orch(vs: InMemoryVectorStore, llm: MockLLMProvider) -> PipelineOrchest
         vector_store=vs,
         llm_provider=llm,
         enable_observation_consolidation=True,
-        observation_weight=0.0,           # global injection disabled
+        observation_weight=0.0,  # global injection disabled
         observation_injection_weight=1.5,  # intent-gated weight
         enable_multi_query_expansion=False,
     )
@@ -45,22 +45,24 @@ async def _seed(vs: InMemoryVectorStore, llm: MockLLMProvider, bank: str) -> str
     """Seed one raw memory and one observation; return the observation id."""
     raw_vec = llm._bow_embed("Alice plays guitar and paints watercolours.")
     obs_vec = llm._bow_embed("Alice is artistic and enjoys creative hobbies.")
-    await vs.store_vectors([
-        VectorItem(
-            id="raw001",
-            bank_id=bank,
-            vector=raw_vec,
-            text="Alice plays guitar and paints watercolours.",
-        ),
-        VectorItem(
-            id="obs001",
-            bank_id=obs_bank_id(bank),
-            vector=obs_vec,
-            text="Alice is artistic and enjoys creative hobbies.",
-            fact_type="observation",
-            metadata={"_obs_proof_count": 3},
-        ),
-    ])
+    await vs.store_vectors(
+        [
+            VectorItem(
+                id="raw001",
+                bank_id=bank,
+                vector=raw_vec,
+                text="Alice plays guitar and paints watercolours.",
+            ),
+            VectorItem(
+                id="obs001",
+                bank_id=obs_bank_id(bank),
+                vector=obs_vec,
+                text="Alice is artistic and enjoys creative hobbies.",
+                fact_type="observation",
+                metadata={"_obs_proof_count": 3},
+            ),
+        ]
+    )
     return "obs001"
 
 
@@ -127,9 +129,7 @@ class TestObservationIntentInjection:
         await _seed(vs, llm, bank)
 
         orch = _make_orch(vs, llm)
-        result = await orch.recall(
-            RecallRequest(query="when did Alice last play guitar", bank_id=bank)
-        )
+        result = await orch.recall(RecallRequest(query="when did Alice last play guitar", bank_id=bank))
 
         hit_ids = {h.memory_id for h in result.hits}
         assert "obs001" not in hit_ids
@@ -197,13 +197,11 @@ class TestObservationInjectionDefaults:
             vector_store=vs,
             llm_provider=llm,
             enable_observation_consolidation=True,
-            observation_weight=1.5,          # global injection enabled
+            observation_weight=1.5,  # global injection enabled
             enable_multi_query_expansion=False,
         )
         # FACTUAL query — would normally skip injection
-        result = await orch.recall(
-            RecallRequest(query="what instrument does Alice play", bank_id=bank)
-        )
+        result = await orch.recall(RecallRequest(query="what instrument does Alice play", bank_id=bank))
 
         hit_ids = {h.memory_id for h in result.hits}
         assert "obs001" in hit_ids

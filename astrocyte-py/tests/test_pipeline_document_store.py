@@ -42,10 +42,12 @@ def _orch(with_doc_store: bool) -> tuple[PipelineOrchestrator, InMemoryVectorSto
 class TestRetainMirrorsToDocumentStore:
     async def test_chunk_lands_in_both_stores(self) -> None:
         orch, vector, doc = _orch(with_doc_store=True)
-        result = await orch.retain(RetainRequest(
-            content="The quick brown fox jumps over the lazy dog.",
-            bank_id="b1",
-        ))
+        result = await orch.retain(
+            RetainRequest(
+                content="The quick brown fox jumps over the lazy dog.",
+                bank_id="b1",
+            )
+        )
         assert result.stored
 
         # Vector store has at least one chunk.
@@ -82,7 +84,8 @@ class TestRetainMirrorsToDocumentStore:
         assert len(await vector.list_vectors("b1", limit=10)) >= 1
 
     async def test_document_store_failure_does_not_abort_retain(
-        self, caplog: pytest.LogCaptureFixture,
+        self,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """If the document store raises, the retain path must still
         complete — the vector store write already happened. Retrieval
@@ -92,14 +95,19 @@ class TestRetainMirrorsToDocumentStore:
 
         class FailingDocStore:
             SPI_VERSION = 1
+
             async def store_document(self, doc, bank_id):  # type: ignore[no-untyped-def]
                 raise RuntimeError("disk full")
+
             async def search_fulltext(self, query, bank_id, limit=10, filters=None):  # type: ignore[no-untyped-def]
                 return []
+
             async def get_document(self, document_id, bank_id):  # type: ignore[no-untyped-def]
                 return None
+
             async def health(self):  # type: ignore[no-untyped-def]
                 from astrocyte.types import HealthStatus
+
                 return HealthStatus(healthy=False, message="test failure")
 
         vector = InMemoryVectorStore()
@@ -111,9 +119,9 @@ class TestRetainMirrorsToDocumentStore:
         with caplog.at_level(logging.WARNING, logger="astrocyte.mip"):
             result = await orch.retain(RetainRequest(content="x", bank_id="b1"))
         assert result.stored  # retain succeeded despite doc store failure
-        assert any(
-            "store_document failed" in r.getMessage() for r in caplog.records
-        ), "operator needs a warning for triage"
+        assert any("store_document failed" in r.getMessage() for r in caplog.records), (
+            "operator needs a warning for triage"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -131,15 +139,21 @@ class TestKeywordRetrievalFires:
         from astrocyte.types import RecallRequest
 
         orch, _, _ = _orch(with_doc_store=True)
-        await orch.retain(RetainRequest(
-            content="The quarterly review covers Q3 2024 revenue targets.",
-            bank_id="b1",
-        ))
+        await orch.retain(
+            RetainRequest(
+                content="The quarterly review covers Q3 2024 revenue targets.",
+                bank_id="b1",
+            )
+        )
 
         # Query that shares keywords with the chunk.
-        result = await orch.recall(RecallRequest(
-            query="Q3 2024 revenue", bank_id="b1", max_results=5,
-        ))
+        result = await orch.recall(
+            RecallRequest(
+                query="Q3 2024 revenue",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert any("Q3 2024" in h.text for h in result.hits), (
             f"Expected keyword match in recall hits; got {[h.text for h in result.hits]}"
         )

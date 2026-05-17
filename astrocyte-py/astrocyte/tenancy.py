@@ -68,10 +68,7 @@ def _validate_identifier(value: str, *, label: str) -> str:
     quoting. This is the SQL-injection guard — never relax it.
     """
     if not isinstance(value, str) or not _IDENT_RE.match(value):
-        raise ValueError(
-            f"{label} {value!r} is not a valid PostgreSQL identifier "
-            f"(must match {_IDENT_RE.pattern})"
-        )
+        raise ValueError(f"{label} {value!r} is not a valid PostgreSQL identifier (must match {_IDENT_RE.pattern})")
     return value
 
 

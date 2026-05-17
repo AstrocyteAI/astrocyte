@@ -110,9 +110,14 @@ class TestTier0Cache:
 
         # Second: with external_context — must skip cache
         ext = [MemoryHit(text="External NASA data", score=0.8)]
-        result = await retriever.retrieve(RecallRequest(
-            query="NASA", bank_id="b1", max_results=5, external_context=ext,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="NASA",
+                bank_id="b1",
+                max_results=5,
+                external_context=ext,
+            )
+        )
         assert result.trace.tier_used == 3  # Not 0 (cache)
         assert result.trace.cache_hit is False
 
@@ -121,9 +126,12 @@ class TestTier0Cache:
         """Cached results should be trimmed to max_results."""
         pipeline, vs, _ = _make_pipeline()
         for i in range(5):
-            await pipeline.retain(RetainRequest(
-                content=f"Fact {i} about science topic {i}", bank_id="b1",
-            ))
+            await pipeline.retain(
+                RetainRequest(
+                    content=f"Fact {i} about science topic {i}",
+                    bank_id="b1",
+                )
+            )
         cache = RecallCache(similarity_threshold=0.8)
 
         retriever = TieredRetriever(pipeline, recall_cache=cache, max_tier=3)
@@ -153,11 +161,19 @@ class TestTier1FuzzyRecent:
         buf.add("b1", "m3", "Alice mentors junior engineers at NASA headquarters")
 
         retriever = TieredRetriever(
-            pipeline, recent_buffer=buf, min_results=2, min_score=0.2, max_tier=3,
+            pipeline,
+            recent_buffer=buf,
+            min_results=2,
+            min_score=0.2,
+            max_tier=3,
         )
-        result = await retriever.retrieve(RecallRequest(
-            query="Alice NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="Alice NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.trace.tier_used == 1
         assert result.trace.fusion_method == "fuzzy_recent"
         assert "fuzzy_recent" in result.trace.strategies_used
@@ -173,12 +189,20 @@ class TestTier1FuzzyRecent:
         buf.add("b1", "m3", "Charlie studies quantum physics at MIT")
 
         retriever = TieredRetriever(
-            pipeline, recent_buffer=buf, min_results=1, min_score=0.2, max_tier=3,
+            pipeline,
+            recent_buffer=buf,
+            min_results=1,
+            min_score=0.2,
+            max_tier=3,
         )
         # "Alce" is a typo for "Alice", "NASSA" is a typo for "NASA"
-        result = await retriever.retrieve(RecallRequest(
-            query="Alce NASSA rockets", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="Alce NASSA rockets",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         if result.trace.tier_used == 1:
             # Fuzzy match caught the typos
             assert any("NASA" in h.text for h in result.hits)
@@ -191,11 +215,19 @@ class TestTier1FuzzyRecent:
         buf.add("b1", "m1", "Alice works at NASA")  # Only 1 match
 
         retriever = TieredRetriever(
-            pipeline, recent_buffer=buf, min_results=3, min_score=0.2, max_tier=3,
+            pipeline,
+            recent_buffer=buf,
+            min_results=3,
+            min_score=0.2,
+            max_tier=3,
         )
-        result = await retriever.retrieve(RecallRequest(
-            query="Alice NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="Alice NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.trace.tier_used >= 2  # Escalated past fuzzy
 
     @pytest.mark.asyncio
@@ -205,9 +237,13 @@ class TestTier1FuzzyRecent:
         await _seed_vectors(pipeline, ["Alice works at NASA"])
 
         retriever = TieredRetriever(pipeline, recent_buffer=None, max_tier=3)
-        result = await retriever.retrieve(RecallRequest(
-            query="NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.trace.tier_used == 3  # Skipped tier 1
 
     @pytest.mark.asyncio
@@ -220,11 +256,19 @@ class TestTier1FuzzyRecent:
         buf.add("bank-a", "m3", "Alice mentors junior engineers")
 
         retriever = TieredRetriever(
-            pipeline, recent_buffer=buf, min_results=2, min_score=0.2, max_tier=3,
+            pipeline,
+            recent_buffer=buf,
+            min_results=2,
+            min_score=0.2,
+            max_tier=3,
         )
-        result = await retriever.retrieve(RecallRequest(
-            query="Alice NASA", bank_id="bank-b", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="Alice NASA",
+                bank_id="bank-b",
+                max_results=5,
+            )
+        )
         # bank-b has no recent memories — should not use tier 1
         assert result.trace.tier_used != 1
 
@@ -234,16 +278,24 @@ class TestTier1FuzzyRecent:
         pipeline, vs, _ = _make_pipeline()
         buf = RecentMemoryBuffer()
         retriever = TieredRetriever(
-            pipeline, recent_buffer=buf, min_results=1, min_score=0.2, max_tier=3,
+            pipeline,
+            recent_buffer=buf,
+            min_results=1,
+            min_score=0.2,
+            max_tier=3,
         )
 
         retriever.notify_retain("b1", "m1", "Alice works at NASA on rocket engines")
         retriever.notify_retain("b1", "m2", "Alice published research about propulsion")
         assert buf.size("b1") == 2
 
-        result = await retriever.retrieve(RecallRequest(
-            query="Alice NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="Alice NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.trace.tier_used == 1
 
     @pytest.mark.asyncio
@@ -345,19 +397,29 @@ class TestTier2BM25:
     async def test_bm25_resolves_without_escalation(self):
         """When BM25 returns sufficient high-scoring hits, don't escalate."""
         pipeline, vs, ds = _make_pipeline(with_doc_store=True)
-        await _seed_documents(ds, [
-            "Alice works at NASA on rocket engines",
-            "Alice published a paper about propulsion",
-            "Alice presented at the space conference",
-            "Alice mentors junior engineers at NASA",
-        ])
+        await _seed_documents(
+            ds,
+            [
+                "Alice works at NASA on rocket engines",
+                "Alice published a paper about propulsion",
+                "Alice presented at the space conference",
+                "Alice mentors junior engineers at NASA",
+            ],
+        )
 
         retriever = TieredRetriever(
-            pipeline, min_results=3, min_score=0.2, max_tier=3,
+            pipeline,
+            min_results=3,
+            min_score=0.2,
+            max_tier=3,
         )
-        result = await retriever.retrieve(RecallRequest(
-            query="Alice NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="Alice NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.trace.tier_used == 2
         assert result.trace.fusion_method == "bm25_only"
         assert "keyword" in result.trace.strategies_used
@@ -371,11 +433,18 @@ class TestTier2BM25:
         await _seed_vectors(pipeline, ["Alice works at NASA"])
 
         retriever = TieredRetriever(
-            pipeline, min_results=3, min_score=0.2, max_tier=3,
+            pipeline,
+            min_results=3,
+            min_score=0.2,
+            max_tier=3,
         )
-        result = await retriever.retrieve(RecallRequest(
-            query="Alice NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="Alice NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.trace.tier_used == 3  # Escalated past BM25
 
     @pytest.mark.asyncio
@@ -383,19 +452,29 @@ class TestTier2BM25:
         """When BM25 avg score is below min_score, escalate."""
         pipeline, vs, ds = _make_pipeline(with_doc_store=True)
         # Documents with minimal query term overlap → low scores
-        await _seed_documents(ds, [
-            "The weather is sunny today and the birds are singing",
-            "Tomorrow will be cloudy with a chance of rain showers",
-            "Yesterday was particularly warm for this time of year",
-        ])
+        await _seed_documents(
+            ds,
+            [
+                "The weather is sunny today and the birds are singing",
+                "Tomorrow will be cloudy with a chance of rain showers",
+                "Yesterday was particularly warm for this time of year",
+            ],
+        )
         await _seed_vectors(pipeline, ["Alice works at NASA"])
 
         retriever = TieredRetriever(
-            pipeline, min_results=1, min_score=0.9, max_tier=3,
+            pipeline,
+            min_results=1,
+            min_score=0.9,
+            max_tier=3,
         )
-        result = await retriever.retrieve(RecallRequest(
-            query="Alice NASA rockets", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="Alice NASA rockets",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         # BM25 won't find "Alice NASA" in weather docs → escalates
         assert result.trace.tier_used == 3
 
@@ -406,29 +485,43 @@ class TestTier2BM25:
         await _seed_vectors(pipeline, ["Alice works at NASA"])
 
         retriever = TieredRetriever(pipeline, max_tier=3)
-        result = await retriever.retrieve(RecallRequest(
-            query="NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.trace.tier_used == 3
 
     @pytest.mark.asyncio
     async def test_bm25_merges_external_context(self):
         """Tier 2 results should include external context when present."""
         pipeline, vs, ds = _make_pipeline(with_doc_store=True)
-        await _seed_documents(ds, [
-            "Alice works at NASA on rocket engines",
-            "Alice published a paper about propulsion",
-            "Alice presented at the space conference",
-        ])
+        await _seed_documents(
+            ds,
+            [
+                "Alice works at NASA on rocket engines",
+                "Alice published a paper about propulsion",
+                "Alice presented at the space conference",
+            ],
+        )
 
         ext = [MemoryHit(text="External: Alice won an award", score=0.95)]
         retriever = TieredRetriever(
-            pipeline, min_results=2, min_score=0.2, max_tier=3,
+            pipeline,
+            min_results=2,
+            min_score=0.2,
+            max_tier=3,
         )
-        result = await retriever.retrieve(RecallRequest(
-            query="Alice NASA", bank_id="b1", max_results=10,
-            external_context=ext,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="Alice NASA",
+                bank_id="b1",
+                max_results=10,
+                external_context=ext,
+            )
+        )
         # External hit should be merged in
         all_texts = [h.text for h in result.hits]
         assert any("award" in t for t in all_texts)
@@ -446,9 +539,13 @@ class TestTier3FullRecall:
         await _seed_vectors(pipeline, ["Alice works at NASA"])
 
         retriever = TieredRetriever(pipeline, max_tier=3)
-        result = await retriever.retrieve(RecallRequest(
-            query="NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.trace.tier_used == 3
         assert result.trace.cache_hit is False
         assert len(result.hits) >= 1
@@ -469,9 +566,13 @@ class TestTier3FullRecall:
             return custom_result
 
         retriever = TieredRetriever(pipeline, max_tier=3, full_recall=mock_full_recall)
-        result = await retriever.retrieve(RecallRequest(
-            query="anything", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="anything",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.hits[0].text == "custom result"
         assert result.trace.tier_used == 3
 
@@ -493,9 +594,13 @@ class TestTier3FullRecall:
         # Empty bank — tier 3 returns nothing
 
         retriever = TieredRetriever(pipeline, min_results=3, max_tier=4)
-        result = await retriever.retrieve(RecallRequest(
-            query="nonexistent topic", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="nonexistent topic",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         # Should have escalated to tier 4
         assert result.trace.tier_used == 4
         assert "agentic_reformulation" in result.trace.strategies_used
@@ -508,9 +613,13 @@ class TestTier3FullRecall:
         await _seed_vectors(pipeline, ["Alice works at NASA"])
 
         retriever = TieredRetriever(pipeline, min_results=5, max_tier=3)
-        result = await retriever.retrieve(RecallRequest(
-            query="NASA", bank_id="b1", max_results=10,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="NASA",
+                bank_id="b1",
+                max_results=10,
+            )
+        )
         assert result.trace.tier_used == 3  # Didn't escalate further
         assert len(result.hits) >= 1  # Still returned what it found
 
@@ -528,9 +637,13 @@ class TestTier4Agentic:
         await _seed_vectors(pipeline, ["Alice works at NASA on rocket propulsion"])
 
         retriever = TieredRetriever(pipeline, min_results=99, max_tier=4)
-        result = await retriever.retrieve(RecallRequest(
-            query="rockets", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="rockets",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.trace.tier_used == 4
         assert "agentic_reformulation" in result.trace.strategies_used
 
@@ -544,17 +657,27 @@ class TestTier4Agentic:
         async def capturing_recall(req: RecallRequest) -> RecallResult:
             captured_requests.append(req)
             return RecallResult(
-                hits=[], total_available=0, truncated=False,
+                hits=[],
+                total_available=0,
+                truncated=False,
                 trace=RecallTrace(strategies_used=[], total_candidates=0, fusion_method="rrf"),
             )
 
         retriever = TieredRetriever(
-            pipeline, min_results=99, max_tier=4, full_recall=capturing_recall,
+            pipeline,
+            min_results=99,
+            max_tier=4,
+            full_recall=capturing_recall,
         )
-        await retriever.retrieve(RecallRequest(
-            query="rockets", bank_id="b1", max_results=5,
-            tags=["science"], fact_types=["world"],
-        ))
+        await retriever.retrieve(
+            RecallRequest(
+                query="rockets",
+                bank_id="b1",
+                max_results=5,
+                tags=["science"],
+                fact_types=["world"],
+            )
+        )
 
         # Tier 3 call + tier 4 reformulated call
         assert len(captured_requests) == 2
@@ -573,7 +696,10 @@ class TestTier4Agentic:
         cache = RecallCache(similarity_threshold=0.8)
 
         retriever = TieredRetriever(
-            pipeline, recall_cache=cache, min_results=99, max_tier=4,
+            pipeline,
+            recall_cache=cache,
+            min_results=99,
+            max_tier=4,
         )
         await retriever.retrieve(RecallRequest(query="rockets", bank_id="b1", max_results=5))
         assert cache.size("b1") >= 1
@@ -610,8 +736,10 @@ class TestReformulateQuery:
         # Replace LLM with one that always fails
         class FailingLLM:
             SPI_VERSION = 1
+
             async def complete(self, *a, **kw):
                 raise RuntimeError("LLM unavailable")
+
             async def embed(self, texts, **kw):
                 return [[0.0] * 128 for _ in texts]
 
@@ -634,9 +762,13 @@ class TestMaxTier:
         await _seed_vectors(pipeline, ["Alice works at NASA"])
 
         retriever = TieredRetriever(pipeline, recall_cache=RecallCache(), max_tier=0)
-        result = await retriever.retrieve(RecallRequest(
-            query="NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         # No cache entry exists — should return empty (no escalation)
         assert result.hits == []
         assert result.trace.tier_used == 0
@@ -655,9 +787,13 @@ class TestMaxTier:
         await _seed_vectors(pipeline, ["Alice works at NASA"])
 
         retriever = TieredRetriever(pipeline, max_tier=2)
-        result = await retriever.retrieve(RecallRequest(
-            query="NASA", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="NASA",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         # No doc store for tier 2, no tier 3 allowed → empty
         assert result.hits == []
 
@@ -678,9 +814,14 @@ class TestFallbackExternalContext:
             MemoryHit(text="External fact B", score=0.7),
         ]
         retriever = TieredRetriever(pipeline, max_tier=0)  # Only cache, no cache entry
-        result = await retriever.retrieve(RecallRequest(
-            query="anything", bank_id="b1", max_results=5, external_context=ext,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="anything",
+                bank_id="b1",
+                max_results=5,
+                external_context=ext,
+            )
+        )
         assert len(result.hits) == 2
         assert result.hits[0].text == "External fact A"
 
@@ -690,9 +831,13 @@ class TestFallbackExternalContext:
         pipeline, _, _ = _make_pipeline()
 
         retriever = TieredRetriever(pipeline, max_tier=0)
-        result = await retriever.retrieve(RecallRequest(
-            query="anything", bank_id="b1", max_results=5,
-        ))
+        result = await retriever.retrieve(
+            RecallRequest(
+                query="anything",
+                bank_id="b1",
+                max_results=5,
+            )
+        )
         assert result.hits == []
         assert result.total_available == 0
 

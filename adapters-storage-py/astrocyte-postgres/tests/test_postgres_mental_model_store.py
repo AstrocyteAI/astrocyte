@@ -36,10 +36,12 @@ async def store(dsn: str):
     conn = await psycopg.AsyncConnection.connect(dsn)
     async with conn:
         await conn.execute(
-            "DELETE FROM public.astrocyte_mental_model_versions WHERE bank_id = %s", [bank],
+            "DELETE FROM public.astrocyte_mental_model_versions WHERE bank_id = %s",
+            [bank],
         )
         await conn.execute(
-            "DELETE FROM public.astrocyte_mental_models WHERE bank_id = %s", [bank],
+            "DELETE FROM public.astrocyte_mental_models WHERE bank_id = %s",
+            [bank],
         )
         await conn.commit()
 

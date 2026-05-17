@@ -20,6 +20,7 @@ from astrocyte.types import Message
 # Helpers — conform to the real LLMProvider protocol
 # ---------------------------------------------------------------------------
 
+
 class _TrackingLLM(MockLLMProvider):
     """MockLLMProvider that records every complete() call's message list."""
 
@@ -45,6 +46,7 @@ class _FailingEmbedLLM(MockLLMProvider):
 # ---------------------------------------------------------------------------
 # generate_hyde_vector
 # ---------------------------------------------------------------------------
+
 
 class TestGenerateHydeVector:
     @pytest.mark.asyncio
@@ -101,6 +103,7 @@ class TestGenerateHydeVector:
 # parallel_retrieve — hyde strategy
 # ---------------------------------------------------------------------------
 
+
 class TestParallelRetrieveHyde:
     @pytest.mark.asyncio
     async def test_no_hyde_vector_no_hyde_strategy(self):
@@ -131,6 +134,7 @@ class TestParallelRetrieveHyde:
     @pytest.mark.asyncio
     async def test_hyde_results_are_scored_items(self):
         from astrocyte.pipeline.fusion import ScoredItem
+
         vs = InMemoryVectorStore()
         results = await parallel_retrieve(
             query_vector=[0.1, 0.2, 0.3],
@@ -148,11 +152,13 @@ class TestParallelRetrieveHyde:
 # Orchestrator integration
 # ---------------------------------------------------------------------------
 
+
 class TestOrchestratorHyde:
     @pytest.mark.asyncio
     async def test_hyde_disabled_by_default(self):
         """enable_hyde=False: orchestrator stores the flag correctly."""
         from astrocyte.pipeline.orchestrator import PipelineOrchestrator as Orchestrator
+
         vs = InMemoryVectorStore()
         llm = MockLLMProvider("hypothetical")
         orch = Orchestrator(vector_store=vs, llm_provider=llm, enable_hyde=False)
@@ -161,6 +167,7 @@ class TestOrchestratorHyde:
     @pytest.mark.asyncio
     async def test_hyde_enabled_flag_stored(self):
         from astrocyte.pipeline.orchestrator import PipelineOrchestrator as Orchestrator
+
         vs = InMemoryVectorStore()
         llm = MockLLMProvider("hypothetical")
         orch = Orchestrator(vector_store=vs, llm_provider=llm, enable_hyde=True)

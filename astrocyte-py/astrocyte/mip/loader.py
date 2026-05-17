@@ -37,7 +37,12 @@ from astrocyte.mip.schema import (
 # Recognised sub-keys for the pipeline block. Unknown keys at any level emit
 # warnings during load (forward-compat: vocabulary may grow).
 _PIPELINE_KEYS = {
-    "version", "preset", "chunker", "dedup", "rerank", "reflect",
+    "version",
+    "preset",
+    "chunker",
+    "dedup",
+    "rerank",
+    "reflect",
     "temporal_half_life_days",
 }
 _CHUNKER_KEYS = {"strategy", "max_size", "overlap"}
@@ -45,8 +50,14 @@ _DEDUP_KEYS = {"threshold", "action"}
 _RERANK_KEYS = {"keyword_weight", "proper_noun_weight"}
 _REFLECT_KEYS = {"prompt", "promote_metadata"}
 _FORGET_KEYS = {
-    "version", "preset", "mode", "audit", "cascade",
-    "respect_legal_hold", "min_age_days", "max_per_call",
+    "version",
+    "preset",
+    "mode",
+    "audit",
+    "cascade",
+    "respect_legal_hold",
+    "min_age_days",
+    "max_per_call",
 }
 _FORGET_MODES = {"soft", "hard", "tombstone"}
 _FORGET_AUDIT = {"none", "recommended", "required"}
@@ -76,9 +87,7 @@ def _parse_mip_config(data: dict) -> MipConfig:
     # Phase 5: tie-breaker policy
     tie_breaker = data.get("tie_breaker", "first")
     if tie_breaker not in _TIE_BREAKERS:
-        raise ConfigError(
-            f"tie_breaker must be one of {sorted(_TIE_BREAKERS)} (got {tie_breaker!r})"
-        )
+        raise ConfigError(f"tie_breaker must be one of {sorted(_TIE_BREAKERS)} (got {tie_breaker!r})")
     config.tie_breaker = tie_breaker
 
     # Banks
@@ -139,16 +148,12 @@ def _parse_rule(data: dict) -> RoutingRule:
     active_from = _parse_iso_datetime(data.get("active_from"), rule_name, "active_from")
     active_until = _parse_iso_datetime(data.get("active_until"), rule_name, "active_until")
     if active_from and active_until and active_until <= active_from:
-        raise ConfigError(
-            f"Rule '{rule_name}': active_until must be strictly after active_from"
-        )
+        raise ConfigError(f"Rule '{rule_name}': active_until must be strictly after active_from")
 
     obs_tags = data.get("observability_tags")
     if obs_tags is not None:
         if not isinstance(obs_tags, list) or not all(isinstance(t, str) for t in obs_tags):
-            raise ConfigError(
-                f"Rule '{rule_name}': observability_tags must be a list of strings"
-            )
+            raise ConfigError(f"Rule '{rule_name}': observability_tags must be a list of strings")
 
     return RoutingRule(
         name=data["name"],
@@ -178,15 +183,9 @@ def _parse_iso_datetime(value: object, rule_name: str, field: str) -> datetime |
         try:
             dt = datetime.fromisoformat(value)
         except ValueError as exc:
-            raise ConfigError(
-                f"Rule '{rule_name}': {field} must be ISO 8601 datetime "
-                f"(got {value!r}): {exc}"
-            ) from exc
+            raise ConfigError(f"Rule '{rule_name}': {field} must be ISO 8601 datetime (got {value!r}): {exc}") from exc
     else:
-        raise ConfigError(
-            f"Rule '{rule_name}': {field} must be a datetime string "
-            f"(got {type(value).__name__})"
-        )
+        raise ConfigError(f"Rule '{rule_name}': {field} must be a datetime string (got {type(value).__name__})")
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
@@ -257,11 +256,7 @@ def _parse_action(
     )
 
     forget_data = data.get("forget")
-    forget = (
-        _parse_forget(forget_data, rule_name=rule_name)
-        if forget_data is not None
-        else None
-    )
+    forget = _parse_forget(forget_data, rule_name=rule_name) if forget_data is not None else None
 
     return ActionSpec(
         bank=data.get("bank"),
@@ -292,44 +287,31 @@ def _parse_forget(data: dict, rule_name: str) -> ForgetSpec:
 
     version = data.get("version")
     if version is None:
-        raise ConfigError(
-            f"Rule '{rule_name}': forget.version is required when forget block is set"
-        )
+        raise ConfigError(f"Rule '{rule_name}': forget.version is required when forget block is set")
     if not isinstance(version, int):
-        raise ConfigError(
-            f"Rule '{rule_name}': forget.version must be an integer (got {type(version).__name__})"
-        )
+        raise ConfigError(f"Rule '{rule_name}': forget.version must be an integer (got {type(version).__name__})")
 
     preset = data.get("preset")
     if preset is not None and not is_known_forget_preset(preset):
         raise ConfigError(
-            f"Rule '{rule_name}': unknown forget preset '{preset}' "
-            f"(known: {', '.join(list_forget_presets())})"
+            f"Rule '{rule_name}': unknown forget preset '{preset}' (known: {', '.join(list_forget_presets())})"
         )
 
     mode = data.get("mode")
     if mode is not None and mode not in _FORGET_MODES:
-        raise ConfigError(
-            f"Rule '{rule_name}': forget.mode must be one of {sorted(_FORGET_MODES)} (got {mode!r})"
-        )
+        raise ConfigError(f"Rule '{rule_name}': forget.mode must be one of {sorted(_FORGET_MODES)} (got {mode!r})")
 
     audit = data.get("audit")
     if audit is not None and audit not in _FORGET_AUDIT:
-        raise ConfigError(
-            f"Rule '{rule_name}': forget.audit must be one of {sorted(_FORGET_AUDIT)} (got {audit!r})"
-        )
+        raise ConfigError(f"Rule '{rule_name}': forget.audit must be one of {sorted(_FORGET_AUDIT)} (got {audit!r})")
 
     min_age = data.get("min_age_days")
     if min_age is not None and (not isinstance(min_age, int) or min_age < 0):
-        raise ConfigError(
-            f"Rule '{rule_name}': forget.min_age_days must be a non-negative int"
-        )
+        raise ConfigError(f"Rule '{rule_name}': forget.min_age_days must be a non-negative int")
 
     max_per_call = data.get("max_per_call")
     if max_per_call is not None and (not isinstance(max_per_call, int) or max_per_call <= 0):
-        raise ConfigError(
-            f"Rule '{rule_name}': forget.max_per_call must be a positive int"
-        )
+        raise ConfigError(f"Rule '{rule_name}': forget.max_per_call must be a positive int")
 
     spec = ForgetSpec(
         version=version,
@@ -346,9 +328,7 @@ def _parse_forget(data: dict, rule_name: str) -> ForgetSpec:
     # Compliance discipline: hard delete demands audit. Check after preset
     # expansion so the gdpr preset (mode=hard, audit=required) passes cleanly.
     if resolved.mode == "hard" and resolved.audit != "required":
-        raise ConfigError(
-            f"Rule '{rule_name}': forget.mode='hard' requires forget.audit='required'"
-        )
+        raise ConfigError(f"Rule '{rule_name}': forget.mode='hard' requires forget.audit='required'")
 
     return resolved
 
@@ -376,33 +356,23 @@ def _parse_pipeline(
     # P2: version required
     version = data.get("version")
     if version is None:
-        raise ConfigError(
-            f"Rule '{rule_name}': pipeline.version is required when pipeline block is set"
-        )
+        raise ConfigError(f"Rule '{rule_name}': pipeline.version is required when pipeline block is set")
     if not isinstance(version, int):
-        raise ConfigError(
-            f"Rule '{rule_name}': pipeline.version must be an integer (got {type(version).__name__})"
-        )
+        raise ConfigError(f"Rule '{rule_name}': pipeline.version must be an integer (got {type(version).__name__})")
 
     # P5: content_type must be referenced in match block
     if not _match_references_content_type(match_data):
-        raise ConfigError(
-            f"Rule '{rule_name}': pipeline fields require 'content_type' in the match block"
-        )
+        raise ConfigError(f"Rule '{rule_name}': pipeline fields require 'content_type' in the match block")
 
     preset = data.get("preset")
     if preset is not None and not is_known_preset(preset):
-        raise ConfigError(
-            f"Rule '{rule_name}': unknown preset '{preset}' "
-            f"(known: {', '.join(list_presets())})"
-        )
+        raise ConfigError(f"Rule '{rule_name}': unknown preset '{preset}' (known: {', '.join(list_presets())})")
 
     half_life = data.get("temporal_half_life_days")
     if half_life is not None:
         if not isinstance(half_life, (int, float)) or half_life <= 0:
             raise ConfigError(
-                f"Rule '{rule_name}': pipeline.temporal_half_life_days must "
-                f"be a positive number (got {half_life!r})",
+                f"Rule '{rule_name}': pipeline.temporal_half_life_days must be a positive number (got {half_life!r})",
             )
 
     spec = PipelineSpec(
@@ -464,9 +434,7 @@ def _parse_reflect(data: dict | None, rule_name: str) -> ReflectSpec | None:
     promote = data.get("promote_metadata")
     if promote is not None:
         if not isinstance(promote, list):
-            raise ConfigError(
-                f"Rule '{rule_name}': pipeline.reflect.promote_metadata must be a list"
-            )
+            raise ConfigError(f"Rule '{rule_name}': pipeline.reflect.promote_metadata must be a list")
         # P4: hard cap
         if len(promote) > _PROMOTE_METADATA_MAX:
             raise ConfigError(

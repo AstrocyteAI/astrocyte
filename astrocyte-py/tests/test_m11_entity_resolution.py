@@ -66,6 +66,7 @@ class ControlledLLMProvider:
     async def complete(self, messages, model=None, max_tokens=1024, temperature=0.0):
         self.complete_calls.append(messages)
         from astrocyte.types import Completion, TokenUsage
+
         resp = self._responses.pop(0) if self._responses else self._default
         return Completion(text=resp, model="ctrl", usage=TokenUsage(input_tokens=10, output_tokens=30))
 
@@ -425,6 +426,7 @@ class TestOrchestratorEntityResolution:
         orch = PipelineOrchestrator(vs, llm, graph_store=gs)
 
         from astrocyte.types import RetainRequest
+
         await orch.retain(RetainRequest(content="Calvin is the CTO.", bank_id="bank1"))
 
         # No alias_of links should exist
@@ -443,15 +445,18 @@ class TestOrchestratorEntityResolution:
 
         # LLM: first call = entity extraction (returns JSON entity list)
         # second call = entity resolution confirmation
-        llm = ControlledLLMProvider(responses=[
-            '[{"name": "Calvin", "entity_type": "PERSON", "aliases": []}]',
-            _confirm_response(same=True, confidence=0.9, evidence="Calvin is the CTO"),
-        ])
+        llm = ControlledLLMProvider(
+            responses=[
+                '[{"name": "Calvin", "entity_type": "PERSON", "aliases": []}]',
+                _confirm_response(same=True, confidence=0.9, evidence="Calvin is the CTO"),
+            ]
+        )
 
         resolver = EntityResolver(confirmation_threshold=0.8)
         orch = PipelineOrchestrator(vs, llm, graph_store=gs, entity_resolver=resolver)
 
         from astrocyte.types import RetainRequest
+
         await orch.retain(RetainRequest(content="Calvin is the CTO.", bank_id="bank1"))
 
         alias_links = [lnk for lnk in gs._links.get("bank1", []) if lnk.link_type == "alias_of"]
@@ -464,9 +469,11 @@ class TestOrchestratorEntityResolution:
         vs = InMemoryVectorStore()
         gs = InMemoryGraphStore()
 
-        llm = ControlledLLMProvider(responses=[
-            '[{"name": "Calvin", "entity_type": "PERSON", "aliases": []}]',
-        ])
+        llm = ControlledLLMProvider(
+            responses=[
+                '[{"name": "Calvin", "entity_type": "PERSON", "aliases": []}]',
+            ]
+        )
         # FailingLLMProvider for the resolution step — but we use a single provider
         # so we just exhaust responses and let it return the default empty string.
 
@@ -474,5 +481,6 @@ class TestOrchestratorEntityResolution:
         orch = PipelineOrchestrator(vs, llm, graph_store=gs, entity_resolver=resolver)
 
         from astrocyte.types import RetainRequest
+
         result = await orch.retain(RetainRequest(content="Calvin is the CTO.", bank_id="bank1"))
         assert result.stored is True

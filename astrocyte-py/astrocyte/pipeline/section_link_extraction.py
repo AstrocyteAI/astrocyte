@@ -124,9 +124,7 @@ async def extract_links_for_section(
         summary = (p.summary or "").strip()
         if not title and not summary:
             continue
-        prior_lines.append(
-            f"  - line {p.line_num}: {title}\n      summary: {summary[:240]}"
-        )
+        prior_lines.append(f"  - line {p.line_num}: {title}\n      summary: {summary[:240]}")
         valid_to_lines.add(p.line_num)
     if not prior_lines:
         return []
@@ -151,7 +149,8 @@ async def extract_links_for_section(
     except json.JSONDecodeError:
         logger.warning(
             "section_link_extraction: JSON parse failed for doc=%s line=%d",
-            document_id, current.line_num,
+            document_id,
+            current.line_num,
         )
         return []
 

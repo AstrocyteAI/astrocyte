@@ -106,11 +106,7 @@ def _dbscan(
     # Pre-compute neighbourhoods: points within eps cosine distance
     neighbours: list[list[int]] = []
     for i in range(n):
-        nbrs = [
-            j
-            for j in range(n)
-            if i != j and (1.0 - _cosine_sim(vectors[i], vectors[j])) <= eps
-        ]
+        nbrs = [j for j in range(n) if i != j and (1.0 - _cosine_sim(vectors[i], vectors[j])) <= eps]
         neighbours.append(nbrs)
 
     labels = [-1] * n
@@ -222,11 +218,7 @@ class CompileEngine:
             item_map = {item.id: item for item in all_items}
 
             for cs in compile_scopes:
-                relevant = [
-                    item_map[mid]
-                    for mid in cs.memory_ids[: self._max_per_scope]
-                    if mid in item_map
-                ]
+                relevant = [item_map[mid] for mid in cs.memory_ids[: self._max_per_scope] if mid in item_map]
                 page, tokens = await self._synthesise(cs, relevant, bank_id)
                 tokens_used += tokens
 
@@ -303,9 +295,7 @@ class CompileEngine:
         match, falls back to all memories in the bank (caller is compiling
         an untagged bank with a named scope).
         """
-        matching_ids = [
-            item.id for item in all_items if item.tags and scope in item.tags
-        ]
+        matching_ids = [item.id for item in all_items if item.tags and scope in item.tags]
         if not matching_ids:
             matching_ids = [item.id for item in all_items]
         return [CompileScope(scope=scope, source="explicit", memory_ids=matching_ids)]
@@ -372,11 +362,7 @@ class CompileEngine:
                 untagged_map = {item.id: item for item in untagged}
                 for cluster_label, memory_ids in cluster_groups.items():
                     # Label via LLM using up to 5 representative memories
-                    samples = [
-                        untagged_map[mid]
-                        for mid in memory_ids[:5]
-                        if mid in untagged_map
-                    ]
+                    samples = [untagged_map[mid] for mid in memory_ids[:5] if mid in untagged_map]
                     label = await self._label_cluster(samples)
                     scopes.append(
                         CompileScope(
@@ -405,10 +391,7 @@ class CompileEngine:
             page = _empty_page(cs, bank_id)
             return page, 0
 
-        memory_texts = "\n".join(
-            f"[Memory {i + 1}]: {item.text[:400]}"
-            for i, item in enumerate(relevant)
-        )
+        memory_texts = "\n".join(f"[Memory {i + 1}]: {item.text[:400]}" for i, item in enumerate(relevant))
         user_prompt = f"Topic: {cs.scope}\n\nMemories:\n{memory_texts}"
 
         messages = [
@@ -480,11 +463,7 @@ class CompileEngine:
             if not chunk:
                 break
             # Exclude previously compiled pages (stored with memory_layer="compiled")
-            raw = [
-                item
-                for item in chunk
-                if item.memory_layer != "compiled" and item.fact_type != "wiki"
-            ]
+            raw = [item for item in chunk if item.memory_layer != "compiled" and item.fact_type != "wiki"]
             all_items.extend(raw)
             if len(chunk) < batch:
                 break

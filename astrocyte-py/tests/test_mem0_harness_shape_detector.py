@@ -7,6 +7,7 @@ fire on LME ``single-session-preference`` questions and stay quiet for
 temporal / counting / yes-no shapes that don't benefit from preference
 anchoring.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -36,9 +37,7 @@ class TestRecommendationShape:
         ],
     )
     def test_positive_recommendation_shapes(self, question: str) -> None:
-        assert is_recommendation_shape(question), (
-            f"expected recommendation shape: {question!r}"
-        )
+        assert is_recommendation_shape(question), f"expected recommendation shape: {question!r}"
 
 
 class TestNonRecommendationShape:
@@ -61,6 +60,4 @@ class TestNonRecommendationShape:
         ],
     )
     def test_negative_non_recommendation_shapes(self, question: str) -> None:
-        assert not is_recommendation_shape(question), (
-            f"unexpectedly matched recommendation shape: {question!r}"
-        )
+        assert not is_recommendation_shape(question), f"unexpectedly matched recommendation shape: {question!r}"

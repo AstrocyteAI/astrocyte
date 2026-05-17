@@ -110,8 +110,7 @@ def classify_jwt_claims(
     """
     if not isinstance(claims, dict):
         raise AuthorizationError(
-            "Token claims must be a dict (got "
-            f"{type(claims).__name__}). Decoded token is malformed."
+            f"Token claims must be a dict (got {type(claims).__name__}). Decoded token is malformed."
         )
 
     tenant_id = _nonempty_str(claims.get("tid"))

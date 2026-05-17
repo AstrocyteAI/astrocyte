@@ -84,6 +84,7 @@ class TestTrackingLLMProvider:
                 seen_kwargs["tools"] = tools
                 seen_kwargs["tool_choice"] = tool_choice
                 from astrocyte.types import Completion
+
                 return Completion(
                     text="",
                     model="mock",
@@ -96,6 +97,7 @@ class TestTrackingLLMProvider:
 
             def capabilities(self):
                 from astrocyte.types import LLMCapabilities
+
                 return LLMCapabilities()
 
         tools = [ToolDefinition(name="recall", description="x", parameters={})]
@@ -162,10 +164,12 @@ class TestRetainDedup:
         assert first_count >= 1
 
         # Second retain — includes same content plus new content
-        r2 = await orch.retain(RetainRequest(
-            content="Quantum computing uses qubits for parallel computation",
-            bank_id="b1",
-        ))
+        r2 = await orch.retain(
+            RetainRequest(
+                content="Quantum computing uses qubits for parallel computation",
+                bank_id="b1",
+            )
+        )
         # New distinct content should be stored
         assert r2.stored is True
         all_docs = await vs.list_vectors("b1")
@@ -310,15 +314,17 @@ class TestReflectHierarchy:
         vs = InMemoryVectorStore()
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
-        await vs.store_vectors([
-            VectorItem(
-                id="raw-1",
-                bank_id="b1",
-                vector=[1.0] + [0.0] * 127,
-                text="Caroline said she wants to become a counselor.",
-                fact_type="world",
-            )
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="raw-1",
+                    bank_id="b1",
+                    vector=[1.0] + [0.0] * 127,
+                    text="Caroline said she wants to become a counselor.",
+                    fact_type="world",
+                )
+            ]
+        )
         hits = [
             MemoryHit(
                 text="Caroline has a stable counseling-career goal.",
@@ -338,15 +344,17 @@ class TestReflectHierarchy:
     async def test_entity_path_fallback_reads_person_metadata(self):
         vs = InMemoryVectorStore()
         orch = PipelineOrchestrator(vs, MockLLMProvider())
-        await vs.store_vectors([
-            VectorItem(
-                id="alice-1",
-                bank_id="b1",
-                vector=[1.0] + [0.0] * 127,
-                text="Alice joined the pottery workshop.",
-                metadata={"locomo_persons": "Alice", "session_id": "s1"},
-            )
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="alice-1",
+                    bank_id="b1",
+                    vector=[1.0] + [0.0] * 127,
+                    text="Alice joined the pottery workshop.",
+                    metadata={"locomo_persons": "Alice", "session_id": "s1"},
+                )
+            ]
+        )
 
         hits = await orch._retrieve_entity_path_fallback("What activities did Alice join?", "b1", limit=5)
 
@@ -356,9 +364,11 @@ class TestReflectHierarchy:
     def test_entity_path_authority_context_labels_sections(self):
         orch = PipelineOrchestrator(InMemoryVectorStore(), MockLLMProvider())
 
-        context = orch._entity_path_authority_context([
-            MemoryHit(text="Alice joined pottery.", score=0.8, metadata={"_entity_path": "alice"}),
-        ])
+        context = orch._entity_path_authority_context(
+            [
+                MemoryHit(text="Alice joined pottery.", score=0.8, metadata={"_entity_path": "alice"}),
+            ]
+        )
 
         assert context is not None
         assert "entity_path_evidence" in context
@@ -382,22 +392,24 @@ class TestReflectTagScoping:
         orch = PipelineOrchestrator(vs, llm)
 
         # Two memories in the same bank, distinguished by conversation tag.
-        await vs.store_vectors([
-            VectorItem(
-                id="m-A",
-                bank_id="b1",
-                vector=[1.0] + [0.0] * 127,
-                text="Caroline joined a hiking club in convo A.",
-                tags=["convo:A"],
-            ),
-            VectorItem(
-                id="m-B",
-                bank_id="b1",
-                vector=[1.0] + [0.0] * 127,
-                text="Caroline joined a chess club in convo B.",
-                tags=["convo:B"],
-            ),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="m-A",
+                    bank_id="b1",
+                    vector=[1.0] + [0.0] * 127,
+                    text="Caroline joined a hiking club in convo A.",
+                    tags=["convo:A"],
+                ),
+                VectorItem(
+                    id="m-B",
+                    bank_id="b1",
+                    vector=[1.0] + [0.0] * 127,
+                    text="Caroline joined a chess club in convo B.",
+                    tags=["convo:B"],
+                ),
+            ]
+        )
 
         captured_hit_ids: list[str] = []
 
@@ -407,9 +419,7 @@ class TestReflectTagScoping:
                     captured_hit_ids.append(hit.memory_id)
             return ReflectResult(answer="ok", sources=kwargs.get("hits"))
 
-        monkeypatch.setattr(
-            orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize)
-        )
+        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
 
         await orch.reflect(
             ReflectRequest(
@@ -438,22 +448,24 @@ class TestReflectTagScoping:
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
 
-        await vs.store_vectors([
-            VectorItem(
-                id="m-A",
-                bank_id="b1",
-                vector=[1.0] + [0.0] * 127,
-                text="Caroline joined a hiking club in convo A.",
-                tags=["convo:A"],
-            ),
-            VectorItem(
-                id="m-B",
-                bank_id="b1",
-                vector=[1.0] + [0.0] * 127,
-                text="Caroline joined a chess club in convo B.",
-                tags=["convo:B"],
-            ),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="m-A",
+                    bank_id="b1",
+                    vector=[1.0] + [0.0] * 127,
+                    text="Caroline joined a hiking club in convo A.",
+                    tags=["convo:A"],
+                ),
+                VectorItem(
+                    id="m-B",
+                    bank_id="b1",
+                    vector=[1.0] + [0.0] * 127,
+                    text="Caroline joined a chess club in convo B.",
+                    tags=["convo:B"],
+                ),
+            ]
+        )
 
         captured_hit_ids: list[str] = []
 
@@ -463,9 +475,7 @@ class TestReflectTagScoping:
                     captured_hit_ids.append(hit.memory_id)
             return ReflectResult(answer="ok", sources=kwargs.get("hits"))
 
-        monkeypatch.setattr(
-            orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize)
-        )
+        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
 
         await orch.reflect(
             ReflectRequest(
@@ -475,8 +485,7 @@ class TestReflectTagScoping:
         )
 
         assert {"m-A", "m-B"}.issubset(set(captured_hit_ids)), (
-            "Negative control failed: without tag scoping, both memories "
-            "should be eligible for synthesis context."
+            "Negative control failed: without tag scoping, both memories should be eligible for synthesis context."
         )
 
 
@@ -499,22 +508,24 @@ class TestReflectExpansionTagScoping:
         orch = PipelineOrchestrator(vs, MockLLMProvider())
 
         # raw-A and raw-B live in the same bank, distinct convo tags.
-        await vs.store_vectors([
-            VectorItem(
-                id="raw-A",
-                bank_id="b1",
-                vector=[1.0] + [0.0] * 127,
-                text="Caroline went hiking (convo A).",
-                tags=["convo:A"],
-            ),
-            VectorItem(
-                id="raw-B",
-                bank_id="b1",
-                vector=[1.0] + [0.0] * 127,
-                text="Caroline played chess (convo B).",
-                tags=["convo:B"],
-            ),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="raw-A",
+                    bank_id="b1",
+                    vector=[1.0] + [0.0] * 127,
+                    text="Caroline went hiking (convo A).",
+                    tags=["convo:A"],
+                ),
+                VectorItem(
+                    id="raw-B",
+                    bank_id="b1",
+                    vector=[1.0] + [0.0] * 127,
+                    text="Caroline played chess (convo B).",
+                    tags=["convo:B"],
+                ),
+            ]
+        )
 
         # A wiki/observation hit whose source_ids cite BOTH raw memories
         # (the cross-scope-leak shape we want expansion to defend against).
@@ -527,12 +538,8 @@ class TestReflectExpansionTagScoping:
             memory_layer="observation",
         )
 
-        scoped = await orch._expand_reflect_sources(
-            "b1", [compiled_hit], limit=10, tags=["convo:A"]
-        )
-        unscoped = await orch._expand_reflect_sources(
-            "b1", [compiled_hit], limit=10
-        )
+        scoped = await orch._expand_reflect_sources("b1", [compiled_hit], limit=10, tags=["convo:A"])
+        unscoped = await orch._expand_reflect_sources("b1", [compiled_hit], limit=10)
 
         scoped_ids = {h.memory_id for h in scoped}
         unscoped_ids = {h.memory_id for h in unscoped}
@@ -540,8 +547,7 @@ class TestReflectExpansionTagScoping:
         # Scoped expansion: only convo-A leaks through.
         assert "raw-A" in scoped_ids
         assert "raw-B" not in scoped_ids, (
-            "Expansion must drop cross-scope sources when tags is set; "
-            "raw-B (convo:B) leaked into a convo:A reflect."
+            "Expansion must drop cross-scope sources when tags is set; raw-B (convo:B) leaked into a convo:A reflect."
         )
         # Negative control: without tags, both come through (proves the
         # filter is what's preventing the leak, not some unrelated bug).
@@ -560,6 +566,7 @@ class TestAdversarialAbstention:
     async def test_abstains_when_top_score_below_floor(self, monkeypatch):
         """All hits below floor → no LLM call, "insufficient evidence" returned."""
         from astrocyte.types import MemoryHit, RecallResult, RecallTrace
+
         vs = InMemoryVectorStore()
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
@@ -576,6 +583,7 @@ class TestAdversarialAbstention:
 
         async def fake_recall(req):
             return weak_recall
+
         orch.recall = fake_recall
 
         synth_called = {"count": 0}
@@ -583,6 +591,7 @@ class TestAdversarialAbstention:
         async def fake_synth(**kwargs):
             synth_called["count"] += 1
             return ReflectResult(answer="should not be called", sources=None)
+
         monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synth))
 
         result = await orch.reflect(ReflectRequest(query="adversarial?", bank_id="b1"))
@@ -595,6 +604,7 @@ class TestAdversarialAbstention:
     async def test_does_not_abstain_when_top_score_above_floor(self, monkeypatch):
         """Strong hit clears the floor → normal synthesis path runs."""
         from astrocyte.types import MemoryHit, RecallResult, RecallTrace
+
         vs = InMemoryVectorStore()
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
@@ -611,10 +621,12 @@ class TestAdversarialAbstention:
 
         async def fake_recall(req):
             return strong_recall
+
         orch.recall = fake_recall
 
         async def fake_synth(**kwargs):
             return ReflectResult(answer="real synthesized answer", sources=kwargs.get("hits"))
+
         monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synth))
 
         result = await orch.reflect(ReflectRequest(query="real question?", bank_id="b1"))
@@ -627,6 +639,7 @@ class TestAdversarialAbstention:
         """``abstention_enabled=False`` keeps the legacy behavior — even
         weak hits go through to the LLM."""
         from astrocyte.types import MemoryHit, RecallResult, RecallTrace
+
         vs = InMemoryVectorStore()
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
@@ -642,6 +655,7 @@ class TestAdversarialAbstention:
 
         async def fake_recall(req):
             return weak_recall
+
         orch.recall = fake_recall
 
         synth_called = {"count": 0}
@@ -649,13 +663,12 @@ class TestAdversarialAbstention:
         async def fake_synth(**kwargs):
             synth_called["count"] += 1
             return ReflectResult(answer="legacy behavior — LLM invoked", sources=None)
+
         monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synth))
 
         await orch.reflect(ReflectRequest(query="q?", bank_id="b1"))
 
-        assert synth_called["count"] == 1, (
-            "When abstention is disabled, LLM must run even on weak hits"
-        )
+        assert synth_called["count"] == 1, "When abstention is disabled, LLM must run even on weak hits"
 
 
 class TestQueryAnalyzerWiring:
@@ -667,6 +680,7 @@ class TestQueryAnalyzerWiring:
         """A query like 'what happened in March 2024?' adds a time_range
         filter on top of the request's other filters before retrieval runs."""
         from astrocyte.types import VectorFilters
+
         vs = InMemoryVectorStore()
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
@@ -677,15 +691,19 @@ class TestQueryAnalyzerWiring:
         async def fake_parallel_retrieve(*args, **kwargs):
             captured["filters"] = kwargs.get("filters")
             return {"semantic": []}
+
         monkeypatch.setattr(
-            orchestrator_mod, "parallel_retrieve",
+            orchestrator_mod,
+            "parallel_retrieve",
             AsyncMock(side_effect=fake_parallel_retrieve),
         )
 
-        await orch.recall(RecallRequest(
-            query="What happened in March 2024?",
-            bank_id="b1",
-        ))
+        await orch.recall(
+            RecallRequest(
+                query="What happened in March 2024?",
+                bank_id="b1",
+            )
+        )
 
         f = captured["filters"]
         assert isinstance(f, VectorFilters)
@@ -710,8 +728,10 @@ class TestQueryAnalyzerWiring:
         async def fake_parallel_retrieve(*args, **kwargs):
             captured["filters"] = kwargs.get("filters")
             return {"semantic": []}
+
         monkeypatch.setattr(
-            orchestrator_mod, "parallel_retrieve",
+            orchestrator_mod,
+            "parallel_retrieve",
             AsyncMock(side_effect=fake_parallel_retrieve),
         )
 
@@ -719,11 +739,13 @@ class TestQueryAnalyzerWiring:
             datetime(2020, 1, 1, tzinfo=timezone.utc),
             datetime(2020, 12, 31, tzinfo=timezone.utc),
         )
-        await orch.recall(RecallRequest(
-            query="What happened in March 2024?",  # would extract 2024
-            bank_id="b1",
-            time_range=caller_range,
-        ))
+        await orch.recall(
+            RecallRequest(
+                query="What happened in March 2024?",  # would extract 2024
+                bank_id="b1",
+                time_range=caller_range,
+            )
+        )
 
         # Caller's range was preserved, not overwritten.
         assert captured["filters"].time_range[0].year == 2020
@@ -734,6 +756,7 @@ class TestQueryAnalyzerWiring:
         runs and the filter's time_range is whatever the caller supplied
         (which is None by default)."""
         from astrocyte.types import VectorFilters
+
         vs = InMemoryVectorStore()
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
@@ -744,15 +767,19 @@ class TestQueryAnalyzerWiring:
         async def fake_parallel_retrieve(*args, **kwargs):
             captured["filters"] = kwargs.get("filters")
             return {"semantic": []}
+
         monkeypatch.setattr(
-            orchestrator_mod, "parallel_retrieve",
+            orchestrator_mod,
+            "parallel_retrieve",
             AsyncMock(side_effect=fake_parallel_retrieve),
         )
 
-        await orch.recall(RecallRequest(
-            query="What happened in March 2024?",
-            bank_id="b1",
-        ))
+        await orch.recall(
+            RecallRequest(
+                query="What happened in March 2024?",
+                bank_id="b1",
+            )
+        )
 
         assert isinstance(captured["filters"], VectorFilters)
         assert captured["filters"].time_range is None
@@ -791,11 +818,13 @@ class TestContentTypeRouting:
         orch = PipelineOrchestrator(vs, llm, chunk_strategy="sentence")
 
         content = "Alice: Hello there!\nBob: Hi Alice, how are you?\nAlice: I'm good thanks."
-        r = await orch.retain(RetainRequest(
-            content=content,
-            bank_id="b1",
-            content_type="conversation",
-        ))
+        r = await orch.retain(
+            RetainRequest(
+                content=content,
+                bank_id="b1",
+                content_type="conversation",
+            )
+        )
         assert r.stored is True
 
         # Verify the chunks preserved speaker turns (dialogue chunking keeps turns together)
@@ -812,11 +841,13 @@ class TestContentTypeRouting:
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm, chunk_strategy="sentence")
 
-        r = await orch.retain(RetainRequest(
-            content="First sentence. Second sentence. Third sentence.",
-            bank_id="b1",
-            content_type="text",
-        ))
+        r = await orch.retain(
+            RetainRequest(
+                content="First sentence. Second sentence. Third sentence.",
+                bank_id="b1",
+                content_type="text",
+            )
+        )
         assert r.stored is True
 
     @pytest.mark.asyncio
@@ -827,11 +858,13 @@ class TestContentTypeRouting:
         orch = PipelineOrchestrator(vs, llm)
 
         content = "First paragraph about topic A.\n\nSecond paragraph about topic B."
-        r = await orch.retain(RetainRequest(
-            content=content,
-            bank_id="b1",
-            content_type="document",
-        ))
+        r = await orch.retain(
+            RetainRequest(
+                content=content,
+                bank_id="b1",
+                content_type="document",
+            )
+        )
         assert r.stored is True
 
 
@@ -864,14 +897,20 @@ class TestSemanticOverfetch:
 
         # Store enough items to test overfetch
         for i in range(10):
-            await orch.retain(RetainRequest(
-                content=f"Memory item number {i} about topic {chr(65 + i)}",
-                bank_id="b1",
-            ))
+            await orch.retain(
+                RetainRequest(
+                    content=f"Memory item number {i} about topic {chr(65 + i)}",
+                    bank_id="b1",
+                )
+            )
 
-        result = await orch.recall(RecallRequest(
-            query="topic", bank_id="b1", max_results=3,
-        ))
+        result = await orch.recall(
+            RecallRequest(
+                query="topic",
+                bank_id="b1",
+                max_results=3,
+            )
+        )
         # Should have hits — overfetch ensures broader retrieval
         assert len(result.hits) <= 3
         assert result.trace is not None
@@ -908,11 +947,13 @@ class TestRetainEdgeCases:
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
 
-        r = await orch.retain(RetainRequest(
-            content="Alice works at NASA",
-            bank_id="b1",
-            metadata={"source": "conversation"},
-        ))
+        r = await orch.retain(
+            RetainRequest(
+                content="Alice works at NASA",
+                bank_id="b1",
+                metadata={"source": "conversation"},
+            )
+        )
         assert r.stored is True
         assert r.memory_id is not None
 
@@ -922,11 +963,13 @@ class TestRetainEdgeCases:
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
 
-        r = await orch.retain(RetainRequest(
-            content="Important fact about chemistry",
-            bank_id="b1",
-            tags=["science", "chemistry"],
-        ))
+        r = await orch.retain(
+            RetainRequest(
+                content="Important fact about chemistry",
+                bank_id="b1",
+                tags=["science", "chemistry"],
+            )
+        )
         assert r.stored is True
 
 
@@ -974,10 +1017,12 @@ class TestRecallRoundTrip:
         orch = PipelineOrchestrator(vs, llm)
 
         for i in range(10):
-            await orch.retain(RetainRequest(
-                content=f"Fact {i}: something unique about topic {i}",
-                bank_id="b1",
-            ))
+            await orch.retain(
+                RetainRequest(
+                    content=f"Fact {i}: something unique about topic {i}",
+                    bank_id="b1",
+                )
+            )
 
         result = await orch.recall(RecallRequest(query="fact", bank_id="b1", max_results=3))
         assert len(result.hits) <= 3

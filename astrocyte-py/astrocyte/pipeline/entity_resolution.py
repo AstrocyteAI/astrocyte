@@ -105,16 +105,13 @@ def _name_similarity(a: str, b: str) -> float:
 def _build_user_message(entity_a: Entity, entity_b: Entity, source_text: str) -> str:
     aliases_a = f" (also known as: {', '.join(entity_a.aliases)})" if entity_a.aliases else ""
     aliases_b = f" (also known as: {', '.join(entity_b.aliases)})" if entity_b.aliases else ""
-    return (
-        f"ENTITY A: {entity_a.name}{aliases_a}\n"
-        f"ENTITY B: {entity_b.name}{aliases_b}\n\n"
-        f"SOURCE TEXT:\n{source_text}"
-    )
+    return f"ENTITY A: {entity_a.name}{aliases_a}\nENTITY B: {entity_b.name}{aliases_b}\n\nSOURCE TEXT:\n{source_text}"
 
 
 # ---------------------------------------------------------------------------
 # EntityResolver
 # ---------------------------------------------------------------------------
+
 
 class EntityResolver:
     """Identifies and persists alias-of links between entities (M11).
@@ -152,80 +149,80 @@ class EntityResolver:
         canonical_resolution: bool = False,
     ) -> None:
         """Args:
-            similarity_threshold: Passed to ``find_entity_candidates`` —
-                the adapter's first-stage filter (legacy path).
-            confirmation_threshold: Minimum LLM-reported confidence for a
-                disambiguated pair to be linked.
-            max_candidates_per_entity: Hard cap on candidates evaluated per
-                new entity. Default ``10`` — matches Hindsight's natural
-                ``pg_trgm`` candidate count. The cascade's cheap tiers
-                evaluate all of them; only the genuinely-ambiguous middle
-                band reaches the LLM.
-            autolink_threshold: Trigram name-similarity at or above which a
-                pair is auto-linked **without** calling the LLM. Default
-                ``0.95`` — effectively identical names.
-            skip_threshold: Combined-score (max of name and embedding
-                similarity) below which a candidate is dropped **without**
-                an LLM call. Default ``0.5``.
-            embedding_autolink_threshold: Cosine-similarity at or above
-                which the embedding tier autolinks the pair. Catches
-                semantic aliases (``"Bob"`` ↔ ``"Robert"``) that string
-                similarity alone misses. Default ``0.92``.
-            autolink_confidence: Confidence value persisted on alias-of
-                links created via the autolink fast paths. Default ``0.95``.
-            trigram_threshold: Adapter-side prefilter passed to
-                ``find_entity_candidates_scored``. Candidates with name
-                similarity below this are dropped before being returned.
-                Default ``0.15`` matches Hindsight's empirically-tuned
-                threshold — catches substring relationships while staying
-                fully index-based.
-            composite_threshold: Score at or above which the Hindsight-style
-                composite tier autolinks. Composite =
-                ``name_weight * name_sim + cooccurrence_weight * overlap +
-                temporal_weight * decay``. Default ``0.6`` matches Hindsight.
-            composite_name_weight: Weight applied to ``name_similarity`` in
-                the composite score. Default ``0.5``.
-            composite_cooccurrence_weight: Weight applied to the Jaccard-
-                style overlap between the new entity's nearby-entity names
-                and the candidate's stored co-occurring entity names.
-                Default ``0.3``.
-            composite_temporal_weight: Weight applied to a temporal-decay
-                signal — ``max(0, 1 - days_diff / temporal_window_days)``.
-                Default ``0.2``.
-            composite_temporal_window_days: Days over which the temporal
-                decay falls from 1.0 to 0.0. Default ``7.0``.
-            mention_count_bonus_cap: Maximum additive bonus the
-                ``mention_count`` popularity signal contributes to the
-                composite score. Hindsight-parity tiebreaker — capped at
-                ``0.05`` so a popular candidate breaks ties between
-                near-identical composite scores without ever overriding
-                the primary name/cooccurrence/temporal signals on its
-                own. Set to ``0.0`` to disable.
-            mention_count_saturation: Mention count at which the bonus
-                reaches its cap. Bonus scales as
-                ``cap * log1p(count) / log1p(saturation)``. Default
-                ``50`` — popular entities saturate quickly so the signal
-                stops growing once an entity is well-established.
-            enable_llm_disambiguation: When ``True`` (default for backward
-                compat), ambiguous middle-band pairs (composite below
-                threshold, name/embedding combined above ``skip_threshold``)
-                escalate to an LLM call for final disambiguation. Set to
-                ``False`` to match Hindsight's LLM-free design — ambiguous
-                pairs are simply not linked. For LoCoMo-scale benchmarks
-                the cheap tiers (trigram, embedding, composite) handle the
-                common cases; the LLM tier mostly fires on hard cases that
-                don't move benchmark scores and adds significant retain
-                latency.
-            canonical_resolution: When ``True`` (Hindsight-style
-                lookup-then-decide), :meth:`resolve_canonical_ids_in_place`
-                rewrites each new entity's tentative ID to its existing
-                canonical's ID before storage — so different surface forms
-                that resolve to the same canonical never produce duplicate
-                entity rows. The post-storage :meth:`resolve` aliasing
-                pass becomes redundant in this mode. Default ``False``
-                preserves the legacy two-stage flow (store-by-ID then
-                resolve aliases). Orchestrator decides which path to run
-                based on this flag.
+        similarity_threshold: Passed to ``find_entity_candidates`` —
+            the adapter's first-stage filter (legacy path).
+        confirmation_threshold: Minimum LLM-reported confidence for a
+            disambiguated pair to be linked.
+        max_candidates_per_entity: Hard cap on candidates evaluated per
+            new entity. Default ``10`` — matches Hindsight's natural
+            ``pg_trgm`` candidate count. The cascade's cheap tiers
+            evaluate all of them; only the genuinely-ambiguous middle
+            band reaches the LLM.
+        autolink_threshold: Trigram name-similarity at or above which a
+            pair is auto-linked **without** calling the LLM. Default
+            ``0.95`` — effectively identical names.
+        skip_threshold: Combined-score (max of name and embedding
+            similarity) below which a candidate is dropped **without**
+            an LLM call. Default ``0.5``.
+        embedding_autolink_threshold: Cosine-similarity at or above
+            which the embedding tier autolinks the pair. Catches
+            semantic aliases (``"Bob"`` ↔ ``"Robert"``) that string
+            similarity alone misses. Default ``0.92``.
+        autolink_confidence: Confidence value persisted on alias-of
+            links created via the autolink fast paths. Default ``0.95``.
+        trigram_threshold: Adapter-side prefilter passed to
+            ``find_entity_candidates_scored``. Candidates with name
+            similarity below this are dropped before being returned.
+            Default ``0.15`` matches Hindsight's empirically-tuned
+            threshold — catches substring relationships while staying
+            fully index-based.
+        composite_threshold: Score at or above which the Hindsight-style
+            composite tier autolinks. Composite =
+            ``name_weight * name_sim + cooccurrence_weight * overlap +
+            temporal_weight * decay``. Default ``0.6`` matches Hindsight.
+        composite_name_weight: Weight applied to ``name_similarity`` in
+            the composite score. Default ``0.5``.
+        composite_cooccurrence_weight: Weight applied to the Jaccard-
+            style overlap between the new entity's nearby-entity names
+            and the candidate's stored co-occurring entity names.
+            Default ``0.3``.
+        composite_temporal_weight: Weight applied to a temporal-decay
+            signal — ``max(0, 1 - days_diff / temporal_window_days)``.
+            Default ``0.2``.
+        composite_temporal_window_days: Days over which the temporal
+            decay falls from 1.0 to 0.0. Default ``7.0``.
+        mention_count_bonus_cap: Maximum additive bonus the
+            ``mention_count`` popularity signal contributes to the
+            composite score. Hindsight-parity tiebreaker — capped at
+            ``0.05`` so a popular candidate breaks ties between
+            near-identical composite scores without ever overriding
+            the primary name/cooccurrence/temporal signals on its
+            own. Set to ``0.0`` to disable.
+        mention_count_saturation: Mention count at which the bonus
+            reaches its cap. Bonus scales as
+            ``cap * log1p(count) / log1p(saturation)``. Default
+            ``50`` — popular entities saturate quickly so the signal
+            stops growing once an entity is well-established.
+        enable_llm_disambiguation: When ``True`` (default for backward
+            compat), ambiguous middle-band pairs (composite below
+            threshold, name/embedding combined above ``skip_threshold``)
+            escalate to an LLM call for final disambiguation. Set to
+            ``False`` to match Hindsight's LLM-free design — ambiguous
+            pairs are simply not linked. For LoCoMo-scale benchmarks
+            the cheap tiers (trigram, embedding, composite) handle the
+            common cases; the LLM tier mostly fires on hard cases that
+            don't move benchmark scores and adds significant retain
+            latency.
+        canonical_resolution: When ``True`` (Hindsight-style
+            lookup-then-decide), :meth:`resolve_canonical_ids_in_place`
+            rewrites each new entity's tentative ID to its existing
+            canonical's ID before storage — so different surface forms
+            that resolve to the same canonical never produce duplicate
+            entity rows. The post-storage :meth:`resolve` aliasing
+            pass becomes redundant in this mode. Default ``False``
+            preserves the legacy two-stage flow (store-by-ID then
+            resolve aliases). Orchestrator decides which path to run
+            based on this flag.
         """
         if not (0.0 <= skip_threshold <= autolink_threshold <= 1.0):
             raise ValueError(
@@ -233,25 +230,13 @@ class EntityResolver:
                 f"got skip={skip_threshold}, autolink={autolink_threshold}"
             )
         if not (0.0 <= embedding_autolink_threshold <= 1.0):
-            raise ValueError(
-                "Expected 0.0 <= embedding_autolink_threshold <= 1.0, "
-                f"got {embedding_autolink_threshold}"
-            )
+            raise ValueError(f"Expected 0.0 <= embedding_autolink_threshold <= 1.0, got {embedding_autolink_threshold}")
         if composite_temporal_window_days <= 0.0:
-            raise ValueError(
-                "composite_temporal_window_days must be > 0, "
-                f"got {composite_temporal_window_days}"
-            )
+            raise ValueError(f"composite_temporal_window_days must be > 0, got {composite_temporal_window_days}")
         if mention_count_bonus_cap < 0.0:
-            raise ValueError(
-                "mention_count_bonus_cap must be >= 0, "
-                f"got {mention_count_bonus_cap}"
-            )
+            raise ValueError(f"mention_count_bonus_cap must be >= 0, got {mention_count_bonus_cap}")
         if mention_count_saturation <= 0:
-            raise ValueError(
-                "mention_count_saturation must be > 0, "
-                f"got {mention_count_saturation}"
-            )
+            raise ValueError(f"mention_count_saturation must be > 0, got {mention_count_saturation}")
         self.similarity_threshold = similarity_threshold
         self.confirmation_threshold = confirmation_threshold
         self.max_candidates_per_entity = max_candidates_per_entity
@@ -331,21 +316,23 @@ class EntityResolver:
         # Pre-compute the set of nearby entity names — every other new
         # entity in this batch is a "nearby" candidate for cooccurrence
         # overlap with each candidate's existing co_occurs links.
-        nearby_names: set[str] = {
-            (e.name or "").strip().lower()
-            for e in new_entities
-            if e.name and e.name.strip()
-        }
+        nearby_names: set[str] = {(e.name or "").strip().lower() for e in new_entities if e.name and e.name.strip()}
         effective_event_date = event_date or datetime.now(timezone.utc)
 
-        per_entity = await asyncio.gather(*[
-            self._resolve_one_entity(
-                entity, source_text, bank_id, graph_store, llm_provider,
-                nearby_names=nearby_names - {(entity.name or "").strip().lower()},
-                event_date=effective_event_date,
-            )
-            for entity in new_entities
-        ])
+        per_entity = await asyncio.gather(
+            *[
+                self._resolve_one_entity(
+                    entity,
+                    source_text,
+                    bank_id,
+                    graph_store,
+                    llm_provider,
+                    nearby_names=nearby_names - {(entity.name or "").strip().lower()},
+                    event_date=effective_event_date,
+                )
+                for entity in new_entities
+            ]
+        )
         return [link for sublist in per_entity for link in sublist]
 
     async def resolve_canonical_ids_in_place(
@@ -378,25 +365,25 @@ class EntityResolver:
         if not new_entities:
             return {}
 
-        nearby_names: set[str] = {
-            (e.name or "").strip().lower()
-            for e in new_entities
-            if e.name and e.name.strip()
-        }
+        nearby_names: set[str] = {(e.name or "").strip().lower() for e in new_entities if e.name and e.name.strip()}
         effective_event_date = event_date or datetime.now(timezone.utc)
         id_remapping: dict[str, str] = {}
 
         # Process all entities in parallel — independent lookups against
         # existing canonicals. Each task returns the resolved canonical ID
         # (or the original tentative ID if no match).
-        resolutions = await asyncio.gather(*[
-            self._best_canonical_id(
-                entity, bank_id, graph_store,
-                nearby_names=nearby_names - {(entity.name or "").strip().lower()},
-                event_date=effective_event_date,
-            )
-            for entity in new_entities
-        ])
+        resolutions = await asyncio.gather(
+            *[
+                self._best_canonical_id(
+                    entity,
+                    bank_id,
+                    graph_store,
+                    nearby_names=nearby_names - {(entity.name or "").strip().lower()},
+                    event_date=effective_event_date,
+                )
+                for entity in new_entities
+            ]
+        )
         for entity, canonical_id in zip(new_entities, resolutions, strict=True):
             tentative_id = entity.id
             if canonical_id != tentative_id:
@@ -416,7 +403,8 @@ class EntityResolver:
                     _logger.warning(
                         "increment_mention_counts failed (%s) — composite "
                         "scoring will use stale popularity signal until next "
-                        "successful resolve.", exc,
+                        "successful resolve.",
+                        exc,
                     )
         return id_remapping
 
@@ -451,7 +439,9 @@ class EntityResolver:
                 self._record_cascade("already_canonical")
                 return entity.id
             score, decision = self._resolution_score_with_tier(
-                match, nearby_names, event_date,
+                match,
+                nearby_names,
+                event_date,
             )
             if score > best_score:
                 best_score = score
@@ -460,7 +450,10 @@ class EntityResolver:
 
         if best_match is not None and best_score > 0.0:
             composite = self._composite_score(
-                best_match.name_similarity, best_match, nearby_names, event_date,
+                best_match.name_similarity,
+                best_match,
+                nearby_names,
+                event_date,
             )
             self._record_cascade(best_decision or "composite_autolink", composite_score=composite)
             self._record_canonical_resolution(resolved=True)
@@ -546,23 +539,25 @@ class EntityResolver:
         if not scored:
             return []
 
-        eligible = [
-            match
-            for match in scored[: self.max_candidates_per_entity]
-            if match.entity.id != entity.id
-        ]
+        eligible = [match for match in scored[: self.max_candidates_per_entity] if match.entity.id != entity.id]
         if not eligible:
             return []
 
-        results = await asyncio.gather(*[
-            self._handle_candidate(
-                entity, match,
-                source_text, bank_id, graph_store, llm_provider,
-                nearby_names=nearby_names,
-                event_date=event_date,
-            )
-            for match in eligible
-        ])
+        results = await asyncio.gather(
+            *[
+                self._handle_candidate(
+                    entity,
+                    match,
+                    source_text,
+                    bank_id,
+                    graph_store,
+                    llm_provider,
+                    nearby_names=nearby_names,
+                    event_date=event_date,
+                )
+                for match in eligible
+            ]
+        )
         return [link for link in results if link is not None]
 
     async def _handle_candidate(
@@ -586,16 +581,24 @@ class EntityResolver:
         if name_sim >= self.autolink_threshold:
             self._record_cascade("trigram_autolink")
             return await self._autolink(
-                entity, candidate, name_sim, "trigram",
-                bank_id, graph_store,
+                entity,
+                candidate,
+                name_sim,
+                "trigram",
+                bank_id,
+                graph_store,
             )
 
         # Tier B: embedding autolink — semantic alias (Bob/Robert).
         if emb_sim is not None and emb_sim >= self.embedding_autolink_threshold:
             self._record_cascade("embedding_autolink")
             return await self._autolink(
-                entity, candidate, emb_sim, "embedding",
-                bank_id, graph_store,
+                entity,
+                candidate,
+                emb_sim,
+                "embedding",
+                bank_id,
+                graph_store,
             )
 
         # Tier C: Hindsight-style composite — combine name similarity with
@@ -604,13 +607,20 @@ class EntityResolver:
         # broader context (same friends mentioned, recent activity) gives
         # the resolver enough evidence to autolink without an LLM.
         composite = self._composite_score(
-            name_sim, match, nearby_names, event_date,
+            name_sim,
+            match,
+            nearby_names,
+            event_date,
         )
         if composite >= self.composite_threshold:
             self._record_cascade("composite_autolink", composite_score=composite)
             return await self._autolink(
-                entity, candidate, composite, "composite",
-                bank_id, graph_store,
+                entity,
+                candidate,
+                composite,
+                "composite",
+                bank_id,
+                graph_store,
             )
 
         # Combined-signal skip: cheap signals say "no" — embedding has been
@@ -619,9 +629,9 @@ class EntityResolver:
         combined = max(name_sim, emb_sim or 0.0)
         if combined < self.skip_threshold:
             _logger.debug(
-                "entity resolution: skipping %r vs %r "
-                "(name_sim=%.2f, emb_sim=%s, composite=%.2f, max < %.2f)",
-                entity.name, candidate.name,
+                "entity resolution: skipping %r vs %r (name_sim=%.2f, emb_sim=%s, composite=%.2f, max < %.2f)",
+                entity.name,
+                candidate.name,
                 name_sim,
                 f"{emb_sim:.2f}" if emb_sim is not None else "n/a",
                 composite,
@@ -635,15 +645,22 @@ class EntityResolver:
         # LLM-free design).
         if not self.enable_llm_disambiguation:
             _logger.debug(
-                "entity resolution: skipping ambiguous %r vs %r "
-                "(LLM tier disabled, name_sim=%.2f, composite=%.2f)",
-                entity.name, candidate.name, name_sim, composite,
+                "entity resolution: skipping ambiguous %r vs %r (LLM tier disabled, name_sim=%.2f, composite=%.2f)",
+                entity.name,
+                candidate.name,
+                name_sim,
+                composite,
             )
             self._record_cascade("skipped_no_llm", composite_score=composite)
             return None
         self._record_cascade("llm_disambiguation", composite_score=composite)
         return await self._confirm_and_link(
-            entity, candidate, source_text, bank_id, graph_store, llm_provider,
+            entity,
+            candidate,
+            source_text,
+            bank_id,
+            graph_store,
+            llm_provider,
         )
 
     def _composite_score(
@@ -701,6 +718,7 @@ class EntityResolver:
         # breaks ties between near-equal name/cooccurrence/temporal blends.
         if self.mention_count_bonus_cap > 0.0 and match.mention_count > 1:
             import math
+
             saturation = max(1, self.mention_count_saturation)
             bonus = self.mention_count_bonus_cap * min(
                 1.0,
@@ -738,8 +756,9 @@ class EntityResolver:
                 )
             except Exception as exc:
                 _logger.warning(
-                    "find_entity_candidates_scored failed for %r: %s — "
-                    "falling back to legacy path", entity.name, exc,
+                    "find_entity_candidates_scored failed for %r: %s — falling back to legacy path",
+                    entity.name,
+                    exc,
                 )
                 matches = None
             if matches is not None:
@@ -796,14 +815,21 @@ class EntityResolver:
         except Exception as exc:
             _logger.warning(
                 "store_entity_link (autolink/%s) failed for %r <-> %r: %s",
-                tier, entity_a.name, entity_b.name, exc,
+                tier,
+                entity_a.name,
+                entity_b.name,
+                exc,
             )
             return None
 
         _logger.debug(
             "entity resolution: autolinked (%s) %r (%s) alias_of %r (%s) score=%.2f",
             tier,
-            entity_a.name, entity_a.id, entity_b.name, entity_b.id, score,
+            entity_a.name,
+            entity_a.id,
+            entity_b.name,
+            entity_b.id,
+            score,
         )
         return link
 
@@ -828,9 +854,7 @@ class EntityResolver:
             completion = await llm_provider.complete(messages, max_tokens=256, temperature=0.0)
             raw = (completion.text or "").strip()
         except Exception as exc:
-            _logger.warning(
-                "LLM confirmation failed for %r <-> %r: %s", entity_a.name, entity_b.name, exc
-            )
+            _logger.warning("LLM confirmation failed for %r <-> %r: %s", entity_a.name, entity_b.name, exc)
             return None
 
         # Strip markdown fences
@@ -843,7 +867,9 @@ class EntityResolver:
         except json.JSONDecodeError:
             _logger.warning(
                 "entity resolution LLM returned non-JSON for %r <-> %r: %r",
-                entity_a.name, entity_b.name, raw[:120],
+                entity_a.name,
+                entity_b.name,
+                raw[:120],
             )
             return None
 
@@ -860,7 +886,10 @@ class EntityResolver:
         if confidence < self.confirmation_threshold:
             _logger.debug(
                 "entity resolution: %r <-> %r confidence %.2f below threshold %.2f — skipped",
-                entity_a.name, entity_b.name, confidence, self.confirmation_threshold,
+                entity_a.name,
+                entity_b.name,
+                confidence,
+                self.confirmation_threshold,
             )
             return None
 
@@ -878,13 +907,15 @@ class EntityResolver:
         try:
             await graph_store.store_entity_link(link, bank_id)
         except Exception as exc:
-            _logger.warning(
-                "store_entity_link failed for %r <-> %r: %s", entity_a.name, entity_b.name, exc
-            )
+            _logger.warning("store_entity_link failed for %r <-> %r: %s", entity_a.name, entity_b.name, exc)
             return None
 
         _logger.info(
             "entity resolution: linked %r (%s) alias_of %r (%s) confidence=%.2f",
-            entity_a.name, entity_a.id, entity_b.name, entity_b.id, confidence,
+            entity_a.name,
+            entity_a.id,
+            entity_b.name,
+            entity_b.id,
+            confidence,
         )
         return link

@@ -173,11 +173,7 @@ async def extract_facts_for_section(
     text = section_text.strip()
     if not text:
         return []
-    sess_iso = (
-        section.session_date.strftime("%Y-%m-%d")
-        if section.session_date is not None
-        else "unknown"
-    )
+    sess_iso = section.session_date.strftime("%Y-%m-%d") if section.session_date is not None else "unknown"
     msg = _EXTRACT_PROMPT.format(
         session_date=sess_iso,
         section_text=text[:6000],
@@ -194,7 +190,9 @@ async def extract_facts_for_section(
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "section_fact_extraction: LLM call failed doc=%s line=%d: %s",
-            section.document_id, section.line_num, exc,
+            section.document_id,
+            section.line_num,
+            exc,
         )
         return []
     try:
@@ -202,7 +200,8 @@ async def extract_facts_for_section(
     except json.JSONDecodeError:
         _logger.warning(
             "section_fact_extraction: JSON parse failed doc=%s line=%d",
-            section.document_id, section.line_num,
+            section.document_id,
+            section.line_num,
         )
         return []
     raw = data.get("facts") or []
@@ -218,11 +217,7 @@ async def extract_facts_for_section(
         if not fact_text or fact_type not in _VALID_FACT_TYPES:
             continue
         speaker_raw = entry.get("speaker")
-        speaker = (
-            str(speaker_raw).strip() or None
-            if isinstance(speaker_raw, str)
-            else None
-        )
+        speaker = str(speaker_raw).strip() or None if isinstance(speaker_raw, str) else None
         if speaker is not None and speaker not in {"user", "assistant"}:
             speaker = None
         ents_raw = entry.get("entities") or []
@@ -238,17 +233,19 @@ async def extract_facts_for_section(
                 continue
             seen.add(k)
             deduped.append(e)
-        out.append(PageIndexFact(
-            id=str(uuid.uuid4()),
-            bank_id=bank_id,
-            document_id=section.document_id,
-            line_num=section.line_num,
-            text=fact_text,
-            fact_type=fact_type,
-            speaker=speaker,
-            occurred_start=_parse_iso_date(entry.get("occurred_start")),
-            occurred_end=_parse_iso_date(entry.get("occurred_end")),
-            entities=deduped,
-            embedding=None,  # embeddings batched separately at retain time
-        ))
+        out.append(
+            PageIndexFact(
+                id=str(uuid.uuid4()),
+                bank_id=bank_id,
+                document_id=section.document_id,
+                line_num=section.line_num,
+                text=fact_text,
+                fact_type=fact_type,
+                speaker=speaker,
+                occurred_start=_parse_iso_date(entry.get("occurred_start")),
+                occurred_end=_parse_iso_date(entry.get("occurred_end")),
+                entities=deduped,
+                embedding=None,  # embeddings batched separately at retain time
+            )
+        )
     return out

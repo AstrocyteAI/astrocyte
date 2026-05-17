@@ -100,7 +100,7 @@ class TestExtractFactsVerbatim:
             ' "entities": [{"name": "Alice", "entity_type": "PERSON"}]},'
             '{"what": "LLM PARAPHRASE 1", "who": "Bob",'
             ' "entities": [{"name": "Bob", "entity_type": "PERSON"}]}'
-            ']}'
+            "]}"
         )
 
         chunks = [
@@ -111,9 +111,7 @@ class TestExtractFactsVerbatim:
         facts = await extract_facts_verbatim(chunks, llm)
 
         assert len(facts) == 2
-        assert facts[0].what == chunks[0], (
-            "Verbatim mode must use chunk text as 'what', not the LLM paraphrase"
-        )
+        assert facts[0].what == chunks[0], "Verbatim mode must use chunk text as 'what', not the LLM paraphrase"
         assert facts[1].what == chunks[1]
         # Metadata still comes from the LLM.
         assert facts[0].who == "Alice"
@@ -124,9 +122,7 @@ class TestExtractFactsVerbatim:
     @pytest.mark.asyncio
     async def test_returns_one_fact_per_chunk_in_order(self):
         """Output length and order MUST match the input chunks list."""
-        llm = _ScriptedLLM('{"facts": ['
-            '{"who": "A"}, {"who": "B"}, {"who": "C"}'
-        ']}')
+        llm = _ScriptedLLM('{"facts": [{"who": "A"}, {"who": "B"}, {"who": "C"}]}')
         chunks = ["chunk-A", "chunk-B", "chunk-C"]
 
         facts = await extract_facts_verbatim(chunks, llm)
@@ -157,7 +153,7 @@ class TestExtractFactsVerbatim:
             '{"facts": ['
             '{"who": "cause"},'
             '{"who": "effect", "causal_relations": [{"target_fact_index": 0, "strength": 0.9}]}'
-            ']}'
+            "]}"
         )
         chunks = ["she worked overtime", "she felt burned out"]
 
@@ -168,19 +164,13 @@ class TestExtractFactsVerbatim:
 
     @pytest.mark.asyncio
     async def test_self_loop_causal_dropped(self):
-        llm = _ScriptedLLM(
-            '{"facts": [{"causal_relations": [{"target_fact_index": 0, "strength": 0.9}]}]}'
-        )
+        llm = _ScriptedLLM('{"facts": [{"causal_relations": [{"target_fact_index": 0, "strength": 0.9}]}]}')
         facts = await extract_facts_verbatim(["only-chunk"], llm)
         assert facts[0].causal_relations == []
 
     @pytest.mark.asyncio
     async def test_out_of_range_causal_dropped(self):
-        llm = _ScriptedLLM(
-            '{"facts": ['
-            '{"causal_relations": [{"target_fact_index": 99, "strength": 0.9}]}'
-            ']}'
-        )
+        llm = _ScriptedLLM('{"facts": [{"causal_relations": [{"target_fact_index": 99, "strength": 0.9}]}]}')
         facts = await extract_facts_verbatim(["chunk-0"], llm)
         assert facts[0].causal_relations == []
 
@@ -308,7 +298,9 @@ class TestExtractFactsVerbatimParallel:
         # (With retries enabled the alternating call_count pattern would
         # mask failures by re-rolling them.)
         facts = await extract_facts_verbatim_parallel(
-            chunks, llm, max_retries=1,
+            chunks,
+            llm,
+            max_retries=1,
         )
         # All 4 ExtractedFacts produced (failures fall through to
         # metadata-less ExtractedFact preserving chunk text).
@@ -352,7 +344,10 @@ class TestExtractFactsVerbatimParallel:
         llm = _FailFirstLLM()
         # Use base_retry_delay=0 to keep the test fast.
         facts = await extract_facts_verbatim_parallel(
-            ["chunk-X"], llm, max_retries=3, base_retry_delay=0.0,
+            ["chunk-X"],
+            llm,
+            max_retries=3,
+            base_retry_delay=0.0,
         )
         assert len(facts) == 1
         assert facts[0].who == "Carol", "retry path should have recovered"
@@ -368,7 +363,10 @@ class TestExtractFactsVerbatimParallel:
 
         llm = _ScriptedLLM("not json ever")
         facts = await extract_facts_verbatim_parallel(
-            ["doomed-chunk"], llm, max_retries=3, base_retry_delay=0.0,
+            ["doomed-chunk"],
+            llm,
+            max_retries=3,
+            base_retry_delay=0.0,
         )
         assert len(facts) == 1
         # Chunk text preserved, metadata defaults applied.
@@ -398,7 +396,9 @@ class TestMaterializeFactsTextIsChunkVerbatim:
         facts = [
             ExtractedFact(
                 what="Alice went hiking yesterday.",
-                who="Alice", when="yesterday", where="N/A",
+                who="Alice",
+                when="yesterday",
+                where="N/A",
             ),
         ]
         materialized = materialize_facts(facts, bank_id="b1")
@@ -412,7 +412,8 @@ class TestMaterializeFactsTextIsChunkVerbatim:
         facts = [
             ExtractedFact(
                 what="Alice went hiking yesterday.",
-                who="Alice", when="yesterday",
+                who="Alice",
+                when="yesterday",
             ),
         ]
         materialized = materialize_facts(facts, bank_id="b1")
@@ -456,10 +457,13 @@ class TestMaterializeFacts:
 
     def test_associations_link_each_memory_to_its_entities(self):
         facts = [
-            ExtractedFact(what="A meets B", entities=[
-                FactEntity(name="Alice", entity_type="PERSON"),
-                FactEntity(name="Bob", entity_type="PERSON"),
-            ]),
+            ExtractedFact(
+                what="A meets B",
+                entities=[
+                    FactEntity(name="Alice", entity_type="PERSON"),
+                    FactEntity(name="Bob", entity_type="PERSON"),
+                ],
+            ),
         ]
 
         result = materialize_facts(facts, bank_id="b1")
@@ -475,9 +479,12 @@ class TestMaterializeFacts:
         MemoryLinks resolved from indices to memory IDs."""
         facts = [
             ExtractedFact(what="cause"),
-            ExtractedFact(what="effect", causal_relations=[
-                FactCausalRelation(target_fact_index=0, strength=0.9),
-            ]),
+            ExtractedFact(
+                what="effect",
+                causal_relations=[
+                    FactCausalRelation(target_fact_index=0, strength=0.9),
+                ],
+            ),
         ]
 
         result = materialize_facts(facts, bank_id="b1")
@@ -488,24 +495,30 @@ class TestMaterializeFacts:
         link = result.memory_links[0]
         assert isinstance(link, MemoryLink)
         assert link.source_memory_id == effect_id  # source = effect
-        assert link.target_memory_id == cause_id   # target = cause
+        assert link.target_memory_id == cause_id  # target = cause
         assert link.link_type == "caused_by"
         assert link.confidence == pytest.approx(0.9)
 
     def test_self_loops_dropped(self):
         facts = [
-            ExtractedFact(what="X", causal_relations=[
-                FactCausalRelation(target_fact_index=0),
-            ]),
+            ExtractedFact(
+                what="X",
+                causal_relations=[
+                    FactCausalRelation(target_fact_index=0),
+                ],
+            ),
         ]
         assert materialize_facts(facts, bank_id="b1").memory_links == []
 
     def test_out_of_range_indices_dropped(self):
         facts = [
             ExtractedFact(what="A"),
-            ExtractedFact(what="B", causal_relations=[
-                FactCausalRelation(target_fact_index=99),
-            ]),
+            ExtractedFact(
+                what="B",
+                causal_relations=[
+                    FactCausalRelation(target_fact_index=99),
+                ],
+            ),
         ]
         assert materialize_facts(facts, bank_id="b1").memory_links == []
 
@@ -550,7 +563,9 @@ class TestMaterializeFacts:
         embeddings = [[1.0, 0.0], [0.0, 1.0]]
 
         result = materialize_facts(
-            facts, bank_id="b1", embeddings=embeddings,
+            facts,
+            bank_id="b1",
+            embeddings=embeddings,
         )
 
         assert result.vector_items[0].vector == [1.0, 0.0]
@@ -568,7 +583,9 @@ class TestMaterializeFacts:
         ]
 
         result = materialize_facts(
-            facts, bank_id="b1", occurred_at=default_time,
+            facts,
+            bank_id="b1",
+            occurred_at=default_time,
         )
 
         assert result.vector_items[0].occurred_at == fact_time
@@ -637,10 +654,7 @@ class TestSFEConfigWiring:
         pipeline = self._make_brain_with_pipeline(config)
         assert pipeline.structured_fact_extraction_chunk_max_size is None
         assert pipeline.structured_fact_extraction_parallel_chunks is False
-        assert (
-            pipeline.structured_fact_extraction_parallel_chunks_max_concurrency
-            == 6
-        )
+        assert pipeline.structured_fact_extraction_parallel_chunks_max_concurrency == 6
 
     def test_chunk_max_size_overrides_propagate(self):
         from astrocyte.config import AstrocyteConfig
@@ -655,10 +669,7 @@ class TestSFEConfigWiring:
         assert pipeline.structured_fact_extraction_enabled is True
         assert pipeline.structured_fact_extraction_chunk_max_size == 2048
         assert pipeline.structured_fact_extraction_parallel_chunks is True
-        assert (
-            pipeline.structured_fact_extraction_parallel_chunks_max_concurrency
-            == 8
-        )
+        assert pipeline.structured_fact_extraction_parallel_chunks_max_concurrency == 8
 
     @pytest.mark.asyncio
     async def test_chunk_max_size_used_in_pre_chunking(self, monkeypatch):
@@ -680,7 +691,10 @@ class TestSFEConfigWiring:
         def _spy_chunk_text(text, *, strategy, max_chunk_size=512, **kw):
             captured_max_size.append(max_chunk_size)
             return original_chunk_text(
-                text, strategy=strategy, max_chunk_size=max_chunk_size, **kw,
+                text,
+                strategy=strategy,
+                max_chunk_size=max_chunk_size,
+                **kw,
             )
 
         monkeypatch.setattr(chunking_mod, "chunk_text", _spy_chunk_text)
@@ -706,6 +720,4 @@ class TestSFEConfigWiring:
         )
 
         assert captured_max_size, "chunk_text was never called by SFE path"
-        assert 1024 in captured_max_size, (
-            f"SFE did not use chunk_max_size=1024; saw {captured_max_size!r}"
-        )
+        assert 1024 in captured_max_size, f"SFE did not use chunk_max_size=1024; saw {captured_max_size!r}"

@@ -188,7 +188,9 @@ class TestLintEngineRun:
         ws = InMemoryWikiStore()
 
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=["m1", "m2"],
             wiki_pages=[_wiki_page("topic:foo", "bank1", source_ids=["m1", "m2"])],
         )
@@ -209,7 +211,9 @@ class TestLintEngineRun:
 
         # Store 2 raw memories, wiki page cites 3 (one missing)
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=["m1", "m2"],
             wiki_pages=[_wiki_page("topic:foo", "bank1", source_ids=["m1", "m2", "m3-deleted"])],
         )
@@ -231,7 +235,9 @@ class TestLintEngineRun:
 
         # No raw memories stored; wiki page cites two deleted ones
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=[],
             wiki_pages=[_wiki_page("topic:foo", "bank1", source_ids=["m1-deleted", "m2-deleted"])],
         )
@@ -250,7 +256,9 @@ class TestLintEngineRun:
         ws = InMemoryWikiStore()
 
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=["m1"],
             wiki_pages=[
                 _wiki_page("topic:clean", "bank1", source_ids=["m1"]),
@@ -286,12 +294,16 @@ class TestLintEngineRun:
 
         # bank1: clean; bank2: stale
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=["m1"],
             wiki_pages=[_wiki_page("topic:foo", "bank1", source_ids=["m1"])],
         )
         await _setup_bank(
-            vs, ws, "bank2",
+            vs,
+            ws,
+            "bank2",
             raw_ids=[],
             wiki_pages=[_wiki_page("topic:bar", "bank2", source_ids=["m-gone"])],
         )
@@ -310,7 +322,9 @@ class TestLintEngineRun:
         ws = InMemoryWikiStore()
 
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=[],
             wiki_pages=[_wiki_page("topic:nosources", "bank1", source_ids=[])],
         )
@@ -359,7 +373,9 @@ class TestContradictionDetection:
         ws = InMemoryWikiStore()
 
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=["m1", "m2"],
             wiki_pages=[
                 _wiki_page("topic:a", "bank1", source_ids=["m1"], title="Page A"),
@@ -389,7 +405,9 @@ class TestContradictionDetection:
         ws = InMemoryWikiStore()
 
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=["m1", "m2"],
             wiki_pages=[
                 _wiki_page("topic:a", "bank1", source_ids=["m1"]),
@@ -411,7 +429,9 @@ class TestContradictionDetection:
         ws = InMemoryWikiStore()
 
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=["m1", "m2"],
             wiki_pages=[
                 _wiki_page("topic:a", "bank1", source_ids=["m1"]),
@@ -432,7 +452,9 @@ class TestContradictionDetection:
         ws = InMemoryWikiStore()
 
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=["m1", "m2"],
             wiki_pages=[
                 _wiki_page("topic:a", "bank1", source_ids=["m1"]),
@@ -455,10 +477,7 @@ class TestContradictionDetection:
         ws = InMemoryWikiStore()
 
         # 5 pages → 10 pairs; set max_contradiction_pairs=3
-        pages = [
-            _wiki_page(f"topic:{i}", "bank1", source_ids=[f"m{i}"])
-            for i in range(5)
-        ]
+        pages = [_wiki_page(f"topic:{i}", "bank1", source_ids=[f"m{i}"]) for i in range(5)]
         raw_ids = [f"m{i}" for i in range(5)]
         await _setup_bank(vs, ws, "bank1", raw_ids=raw_ids, wiki_pages=pages)
 
@@ -469,6 +488,7 @@ class TestContradictionDetection:
             nonlocal call_count
             call_count += 1
             from astrocyte.types import Completion
+
             return Completion(text="OK", model="mock")
 
         llm.complete = _mock_complete
@@ -484,7 +504,9 @@ class TestContradictionDetection:
         ws = InMemoryWikiStore()
 
         await _setup_bank(
-            vs, ws, "bank1",
+            vs,
+            ws,
+            "bank1",
             raw_ids=["m1"],
             wiki_pages=[_wiki_page("topic:a", "bank1", source_ids=["m1"])],
         )

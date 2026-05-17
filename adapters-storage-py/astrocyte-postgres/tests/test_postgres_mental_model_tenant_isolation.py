@@ -118,13 +118,9 @@ class TestSchemaIsolation:
 
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    f'SELECT count(*) FROM "{schema_a}".astrocyte_mental_model_versions'
-                )
+                await cur.execute(f'SELECT count(*) FROM "{schema_a}".astrocyte_mental_model_versions')
                 a_versions = (await cur.fetchone())[0]
-                await cur.execute(
-                    f'SELECT count(*) FROM "{schema_b}".astrocyte_mental_model_versions'
-                )
+                await cur.execute(f'SELECT count(*) FROM "{schema_b}".astrocyte_mental_model_versions')
                 b_versions = (await cur.fetchone())[0]
 
         # A archived 1 (v1 → when v2 was upserted); B archived 0 (only one upsert).

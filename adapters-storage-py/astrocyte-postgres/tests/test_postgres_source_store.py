@@ -35,7 +35,8 @@ async def store(dsn: str):
     conn = await psycopg.AsyncConnection.connect(dsn)
     async with conn:
         await conn.execute(
-            "DELETE FROM public.astrocyte_source_documents WHERE bank_id = %s", [bank],
+            "DELETE FROM public.astrocyte_source_documents WHERE bank_id = %s",
+            [bank],
         )
         await conn.commit()
 
@@ -186,10 +187,7 @@ class TestChunkCRUD:
     async def test_store_chunks_returns_ids_in_order(self, store):
         s, bank = store
         await s.store_document(_doc("d1", bank))
-        ids = await s.store_chunks([
-            _chunk(f"c{i}", "d1", bank, chunk_index=i, content_hash=f"h{i}")
-            for i in range(3)
-        ])
+        ids = await s.store_chunks([_chunk(f"c{i}", "d1", bank, chunk_index=i, content_hash=f"h{i}") for i in range(3)])
         assert ids == ["c0", "c1", "c2"]
 
     @pytest.mark.asyncio
@@ -197,11 +195,13 @@ class TestChunkCRUD:
         s, bank = store
         await s.store_document(_doc("d1", bank))
         # Insert out of order.
-        await s.store_chunks([
-            _chunk("c2", "d1", bank, chunk_index=2),
-            _chunk("c0", "d1", bank, chunk_index=0),
-            _chunk("c1", "d1", bank, chunk_index=1),
-        ])
+        await s.store_chunks(
+            [
+                _chunk("c2", "d1", bank, chunk_index=2),
+                _chunk("c0", "d1", bank, chunk_index=0),
+                _chunk("c1", "d1", bank, chunk_index=1),
+            ]
+        )
         listed = await s.list_chunks("d1", bank)
         assert [c.chunk_index for c in listed] == [0, 1, 2]
 
@@ -231,9 +231,11 @@ class TestChunkDedup:
         s, bank = store
         await s.store_document(_doc("d1", bank))
         first = await s.store_chunks([_chunk("c-orig", "d1", bank, content_hash="h0")])
-        second = await s.store_chunks([
-            _chunk("c-DIFFERENT", "d1", bank, chunk_index=99, content_hash="h0"),
-        ])
+        second = await s.store_chunks(
+            [
+                _chunk("c-DIFFERENT", "d1", bank, chunk_index=99, content_hash="h0"),
+            ]
+        )
         assert first == ["c-orig"]
         assert second == ["c-orig"]
 
@@ -247,11 +249,13 @@ class TestChunkDedup:
         # Seed an existing chunk with hash 'h0'.
         await s.store_chunks([_chunk("c-existing", "d1", bank, content_hash="h0")])
         # Now mix: 1 dup of h0 + 2 new chunks.
-        ids = await s.store_chunks([
-            _chunk("c-dup", "d1", bank, chunk_index=10, content_hash="h0"),
-            _chunk("c-new1", "d1", bank, chunk_index=11, content_hash="h1"),
-            _chunk("c-new2", "d1", bank, chunk_index=12, content_hash="h2"),
-        ])
+        ids = await s.store_chunks(
+            [
+                _chunk("c-dup", "d1", bank, chunk_index=10, content_hash="h0"),
+                _chunk("c-new1", "d1", bank, chunk_index=11, content_hash="h1"),
+                _chunk("c-new2", "d1", bank, chunk_index=12, content_hash="h2"),
+            ]
+        )
         assert ids == ["c-existing", "c-new1", "c-new2"]
 
     @pytest.mark.asyncio
@@ -278,10 +282,12 @@ class TestCascadeDelete:
     async def test_hard_delete_document_cascades_to_chunks(self, store, dsn):
         s, bank = store
         await s.store_document(_doc("d1", bank))
-        await s.store_chunks([
-            _chunk("c0", "d1", bank, chunk_index=0),
-            _chunk("c1", "d1", bank, chunk_index=1),
-        ])
+        await s.store_chunks(
+            [
+                _chunk("c0", "d1", bank, chunk_index=0),
+                _chunk("c1", "d1", bank, chunk_index=1),
+            ]
+        )
 
         # Hard-delete the doc directly to exercise the FK CASCADE.
         async with await psycopg.AsyncConnection.connect(dsn) as conn:

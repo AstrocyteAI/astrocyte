@@ -119,9 +119,7 @@ class MentalModelService:
         existing = await self._store.get(model_id, bank_id)
         if existing is None:
             return None
-        next_sources = (
-            list(source_ids) if source_ids is not None else list(existing.source_ids)
-        )
+        next_sources = list(source_ids) if source_ids is not None else list(existing.source_ids)
         draft = replace(
             existing,
             content=content,

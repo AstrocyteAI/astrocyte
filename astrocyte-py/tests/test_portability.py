@@ -229,9 +229,7 @@ class TestImportProgress:
 class TestPathContainment:
     """Lock the CWE-022 security model — uncontained paths must opt in."""
 
-    async def test_export_refuses_uncontained_by_default(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
+    async def test_export_refuses_uncontained_by_default(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         # Override the autouse fixture: simulate a deployment with no
         # ASTROCYTE_PORTABILITY_ROOTS configured.
         monkeypatch.delenv("ASTROCYTE_PORTABILITY_ROOTS", raising=False)
@@ -240,16 +238,12 @@ class TestPathContainment:
         with pytest.raises(ValueError, match="containment is required"):
             await brain.export_bank("b1", str(tmp_path / "out.jsonl"))
 
-    async def test_export_allows_uncontained_when_opted_in(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
+    async def test_export_allows_uncontained_when_opted_in(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("ASTROCYTE_PORTABILITY_ROOTS", raising=False)
         brain, _ = _make_brain()
         await brain.retain("content", bank_id="b1")
         # Trusted internal caller explicitly opts out of containment.
-        count = await brain.export_bank(
-            "b1", str(tmp_path / "out.jsonl"), allow_uncontained=True
-        )
+        count = await brain.export_bank("b1", str(tmp_path / "out.jsonl"), allow_uncontained=True)
         assert count >= 1
 
     async def test_export_rejects_path_outside_allowed_root(self, tmp_path: Path):
@@ -257,9 +251,7 @@ class TestPathContainment:
         await brain.retain("content", bank_id="b1")
         # Try to escape the configured root.
         with pytest.raises(ValueError, match="escapes allowed roots"):
-            await brain.export_bank(
-                "b1", "/tmp/escape.jsonl", allowed_roots=[str(tmp_path)]
-            )
+            await brain.export_bank("b1", "/tmp/escape.jsonl", allowed_roots=[str(tmp_path)])
 
     async def test_export_rejects_null_byte_in_path(self, tmp_path: Path):
         brain, _ = _make_brain()

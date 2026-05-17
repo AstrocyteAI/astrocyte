@@ -1,4 +1,5 @@
 """M14.0: unit tests for the retain FSM engine + checkpoint."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,8 +38,10 @@ def _ctx(**kw) -> RetainContext:
 class TestSingleState:
     async def test_complete_state_terminates(self) -> None:
         fsm = _fsm()
+
         async def state_done(ctx, services) -> Complete:
             return Complete()
+
         fsm.register("INIT", state_done)
         ctx = await fsm.run(_ctx())
         assert ctx.completed_at is not None
@@ -51,8 +54,10 @@ class TestSingleState:
 
     async def test_failed_state_terminates_with_error(self) -> None:
         fsm = _fsm()
+
         async def state_bad(ctx, services) -> Failed:
             return Failed("ingest unavailable")
+
         fsm.register("INIT", state_bad)
         ctx = await fsm.run(_ctx())
         assert ctx.completed_at is None
@@ -71,15 +76,19 @@ class TestSingleState:
 class TestChainedStates:
     async def test_state_chain_terminates(self) -> None:
         fsm = _fsm()
+
         async def s_init(ctx, services) -> str:
             ctx.entities.append("seen-INIT")
             return "READ"
+
         async def s_read(ctx, services) -> str:
             ctx.entities.append("seen-READ")
             return "COMPLETE"
+
         async def s_complete(ctx, services) -> Complete:
             ctx.entities.append("seen-COMPLETE")
             return Complete()
+
         fsm.register("INIT", s_init)
         fsm.register("READ", s_read)
         fsm.register("COMPLETE", s_complete)
@@ -104,8 +113,10 @@ class TestChainedStates:
 class TestErrorHandling:
     async def test_state_raises_exception_captured(self) -> None:
         fsm = _fsm()
+
         async def s_boom(ctx, services):
             raise RuntimeError("db is on fire")
+
         fsm.register("INIT", s_boom)
         ctx = await fsm.run(_ctx())
         assert ctx.completed_at is None
@@ -117,8 +128,10 @@ class TestErrorHandling:
 
     async def test_state_returns_garbage_terminates(self) -> None:
         fsm = _fsm()
+
         async def s_garbage(ctx, services):
             return 42  # not a state name, Complete, Failed, or Parallel
+
         fsm.register("INIT", s_garbage)
         ctx = await fsm.run(_ctx())
         assert any("unsupported type" in e for e in ctx.errors)
@@ -130,20 +143,26 @@ class TestErrorHandling:
 class TestParallelBranches:
     async def test_parallel_join(self) -> None:
         fsm = _fsm()
+
         async def s_init(ctx, services) -> Parallel:
             return Parallel(branches=("A", "B", "C"), join="DONE")
+
         async def s_a(ctx, services):
             ctx.entities.append("A")
             return Complete()  # branch result is ignored — join is fixed
+
         async def s_b(ctx, services):
             ctx.entities.append("B")
             return Complete()
+
         async def s_c(ctx, services):
             ctx.entities.append("C")
             return Complete()
+
         async def s_done(ctx, services) -> Complete:
             ctx.entities.append("DONE")
             return Complete()
+
         fsm.register("INIT", s_init)
         fsm.register("A", s_a)
         fsm.register("B", s_b)
@@ -163,14 +182,19 @@ class TestParallelBranches:
 
     async def test_parallel_branch_failure_terminates(self) -> None:
         fsm = _fsm()
+
         async def s_init(ctx, services) -> Parallel:
             return Parallel(branches=("A", "B"), join="DONE")
+
         async def s_a(ctx, services):
             return Complete()
+
         async def s_b(ctx, services):
             return Failed("B blew up")
+
         async def s_done(ctx, services) -> Complete:
             return Complete()
+
         fsm.register("INIT", s_init)
         fsm.register("A", s_a)
         fsm.register("B", s_b)
@@ -181,10 +205,13 @@ class TestParallelBranches:
 
     async def test_parallel_unknown_branch(self) -> None:
         fsm = _fsm()
+
         async def s_init(ctx, services) -> Parallel:
             return Parallel(branches=("MISSING",), join="DONE")
+
         async def s_done(ctx, services) -> Complete:
             return Complete()
+
         fsm.register("INIT", s_init)
         fsm.register("DONE", s_done)
         ctx = await fsm.run(_ctx())
@@ -317,13 +344,16 @@ class TestResume:
         async def s_init(ctx, services) -> str:
             visited.append("INIT")
             return "READ"
+
         async def s_read(ctx, services) -> str:
             visited.append("READ")
             ctx.entities.append("read-output")
             return "STAGE3"
+
         async def s_stage3(ctx, services) -> Complete:
             visited.append("STAGE3")
             return Complete()
+
         fsm.register("INIT", s_init)
         fsm.register("READ", s_read)
         fsm.register("STAGE3", s_stage3)
@@ -352,8 +382,10 @@ class TestResume:
         async def s_init(ctx, services) -> str:
             ctx.entities.append("init-done")
             return "READ"
+
         async def s_read(ctx, services):
             raise RuntimeError("boom")
+
         fsm.register("INIT", s_init)
         fsm.register("READ", s_read)
 
@@ -377,8 +409,10 @@ class TestContextHelpers:
 
         async def s_a(ctx, services) -> str:
             return "B"
+
         async def s_b(ctx, services) -> Complete:
             return Complete()
+
         fsm.register("INIT", s_a)
         fsm.register("A", s_a)
         fsm.register("B", s_b)

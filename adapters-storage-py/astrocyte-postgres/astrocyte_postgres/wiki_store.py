@@ -52,6 +52,7 @@ class PostgresWikiStore:
     async def _ensure_pool(self) -> AsyncConnectionPool:
         async with self._pool_lock:
             if self._pool is None:
+
                 async def configure(conn: psycopg.AsyncConnection) -> None:
                     # Pin search_path to ``public`` first so wiki tables are
                     # routed to the canonical migrated schema. Without this,

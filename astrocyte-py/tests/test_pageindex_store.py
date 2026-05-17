@@ -108,14 +108,16 @@ class TestInMemoryPageIndexStore:
         assert loaded.id == doc_id
 
     async def test_load_document_returns_none_when_missing(
-        self, store: InMemoryPageIndexStore,
+        self,
+        store: InMemoryPageIndexStore,
     ) -> None:
         # ``None`` (not exception) is the contract — caller decides
         # whether to build the doc.
         assert await store.load_document("b1", "no-such-conv") is None
 
     async def test_upsert_keyed_on_bank_id_source_id(
-        self, store: InMemoryPageIndexStore,
+        self,
+        store: InMemoryPageIndexStore,
     ) -> None:
         # First save assigns an id; second save with the same
         # (bank_id, source_id) must REPLACE in place and preserve the id
@@ -129,7 +131,8 @@ class TestInMemoryPageIndexStore:
         assert loaded.md_text == "v2", "newer md_text wins"
 
     async def test_save_sections_atomic_replace(
-        self, store: InMemoryPageIndexStore,
+        self,
+        store: InMemoryPageIndexStore,
     ) -> None:
         doc_id = await store.save_document(_doc())
         v1 = [_section(doc_id, 1), _section(doc_id, 5), _section(doc_id, 10)]
@@ -146,22 +149,30 @@ class TestInMemoryPageIndexStore:
         assert [s.line_num for s in skel2] == [100, 200]
 
     async def test_save_sections_cascades_to_entities_and_links(
-        self, store: InMemoryPageIndexStore,
+        self,
+        store: InMemoryPageIndexStore,
     ) -> None:
         # Mirrors the FK ON DELETE CASCADE in migration 015 — atomic
         # tree replace must drop dependent rows, not orphan them.
         doc_id = await store.save_document(_doc())
         await store.save_sections(doc_id, [_section(doc_id, 1), _section(doc_id, 5)])
-        await store.save_section_entities([
-            PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Alice"),
-        ])
-        await store.save_section_links([
-            PageIndexSectionLink(
-                from_doc=doc_id, from_line=1,
-                to_doc=doc_id, to_line=5,
-                link_type="semantic_knn", weight=0.9,
-            ),
-        ])
+        await store.save_section_entities(
+            [
+                PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Alice"),
+            ]
+        )
+        await store.save_section_links(
+            [
+                PageIndexSectionLink(
+                    from_doc=doc_id,
+                    from_line=1,
+                    to_doc=doc_id,
+                    to_line=5,
+                    link_type="semantic_knn",
+                    weight=0.9,
+                ),
+            ]
+        )
         # Replace the tree.
         await store.save_sections(doc_id, [_section(doc_id, 99)])
         # Old entity/link buckets must be empty (cascade).
@@ -169,20 +180,25 @@ class TestInMemoryPageIndexStore:
         assert store._section_links.get(doc_id) is None
 
     async def test_load_skeleton_orders_by_line_num(
-        self, store: InMemoryPageIndexStore,
+        self,
+        store: InMemoryPageIndexStore,
     ) -> None:
         doc_id = await store.save_document(_doc())
         # Insert in scrambled order — load must sort.
-        await store.save_sections(doc_id, [
-            _section(doc_id, 50),
-            _section(doc_id, 1),
-            _section(doc_id, 12),
-        ])
+        await store.save_sections(
+            doc_id,
+            [
+                _section(doc_id, 50),
+                _section(doc_id, 1),
+                _section(doc_id, 12),
+            ],
+        )
         skel = await store.load_skeleton(doc_id)
         assert [s.line_num for s in skel] == [1, 12, 50]
 
     async def test_load_skeleton_strips_summary_embedding(
-        self, store: InMemoryPageIndexStore,
+        self,
+        store: InMemoryPageIndexStore,
     ) -> None:
         # The picker doesn't need embeddings; SQL adapter projects them
         # out to keep the read cheap. In-memory store mirrors that to
@@ -195,7 +211,8 @@ class TestInMemoryPageIndexStore:
         assert skel[0].summary_embedding is None
 
     async def test_save_section_entities_idempotent(
-        self, store: InMemoryPageIndexStore,
+        self,
+        store: InMemoryPageIndexStore,
     ) -> None:
         doc_id = await store.save_document(_doc())
         await store.save_sections(doc_id, [_section(doc_id, 1)])
@@ -205,13 +222,18 @@ class TestInMemoryPageIndexStore:
         assert n1 == 1 and n2 == 0, "second insert is a no-op on the composite PK"
 
     async def test_save_section_links_idempotent(
-        self, store: InMemoryPageIndexStore,
+        self,
+        store: InMemoryPageIndexStore,
     ) -> None:
         doc_id = await store.save_document(_doc())
         await store.save_sections(doc_id, [_section(doc_id, 1), _section(doc_id, 5)])
         link = PageIndexSectionLink(
-            from_doc=doc_id, from_line=1, to_doc=doc_id, to_line=5,
-            link_type="semantic_knn", weight=0.85,
+            from_doc=doc_id,
+            from_line=1,
+            to_doc=doc_id,
+            to_line=5,
+            link_type="semantic_knn",
+            weight=0.85,
         )
         n1 = await store.save_section_links([link])
         n2 = await store.save_section_links([link])
@@ -247,9 +269,7 @@ def _import_bench_module():
     pytest.importorskip("pageindex")
     import importlib.util
 
-    bench_path = (
-        Path(__file__).resolve().parent.parent / "scripts" / "bench_pageindex_locomo.py"
-    )
+    bench_path = Path(__file__).resolve().parent.parent / "scripts" / "bench_pageindex_locomo.py"
     spec = importlib.util.spec_from_file_location("bench_pi_locomo", bench_path)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
@@ -370,7 +390,8 @@ class TestBenchHarnessConversion:
             },
         ]
         sections = bench_module._flatten_tree_to_sections(
-            {"structure": original}, "d",
+            {"structure": original},
+            "d",
         )
         rebuilt = bench_module._sections_to_compact_tree(sections)
 
@@ -454,7 +475,10 @@ class TestBuildOrLoadTreeWithStore:
         }
 
     async def test_save_then_load_returns_equivalent_shape(
-        self, bench_module, synthetic_conv: dict, tmp_path: Path,
+        self,
+        bench_module,
+        synthetic_conv: dict,
+        tmp_path: Path,
     ) -> None:
         # Use the in-memory store's save/load directly to avoid the
         # md_to_tree LLM call that build_or_load_tree triggers on a
@@ -546,38 +570,58 @@ class TestInMemoryListDistinctEntities:
     @pytest.fixture
     async def populated(self):
         store = InMemoryPageIndexStore()
-        doc1 = await store.save_document(PageIndexDocument(
-            id="", bank_id="b1", source_id="conv-1",
-            md_text="x", reference_date=None,
-            built_at=datetime.now(tz=timezone.utc),
-        ))
-        doc2 = await store.save_document(PageIndexDocument(
-            id="", bank_id="b1", source_id="conv-2",
-            md_text="x", reference_date=None,
-            built_at=datetime.now(tz=timezone.utc),
-        ))
+        doc1 = await store.save_document(
+            PageIndexDocument(
+                id="",
+                bank_id="b1",
+                source_id="conv-1",
+                md_text="x",
+                reference_date=None,
+                built_at=datetime.now(tz=timezone.utc),
+            )
+        )
+        doc2 = await store.save_document(
+            PageIndexDocument(
+                id="",
+                bank_id="b1",
+                source_id="conv-2",
+                md_text="x",
+                reference_date=None,
+                built_at=datetime.now(tz=timezone.utc),
+            )
+        )
         # Sections must exist before save_section_entities (FK to (doc, line)).
         for doc_id in (doc1, doc2):
-            await store.save_sections(doc_id, [
-                PageIndexSection(
-                    document_id=doc_id, line_num=ln, node_id=f"{ln:04d}",
-                    title=f"S{ln}", depth=1,
-                )
-                for ln in (1, 2, 3)
-            ])
+            await store.save_sections(
+                doc_id,
+                [
+                    PageIndexSection(
+                        document_id=doc_id,
+                        line_num=ln,
+                        node_id=f"{ln:04d}",
+                        title=f"S{ln}",
+                        depth=1,
+                    )
+                    for ln in (1, 2, 3)
+                ],
+            )
         # Doc 1: Alice ×3, Bob ×2, Carol ×1.
-        await store.save_section_entities([
-            PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Alice"),
-            PageIndexSectionEntity(document_id=doc1, line_num=2, entity_name="Alice"),
-            PageIndexSectionEntity(document_id=doc1, line_num=3, entity_name="Alice"),
-            PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Bob"),
-            PageIndexSectionEntity(document_id=doc1, line_num=2, entity_name="Bob"),
-            PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Carol"),
-        ])
+        await store.save_section_entities(
+            [
+                PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Alice"),
+                PageIndexSectionEntity(document_id=doc1, line_num=2, entity_name="Alice"),
+                PageIndexSectionEntity(document_id=doc1, line_num=3, entity_name="Alice"),
+                PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Bob"),
+                PageIndexSectionEntity(document_id=doc1, line_num=2, entity_name="Bob"),
+                PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Carol"),
+            ]
+        )
         # Doc 2: Dave ×1 (must NOT leak into doc 1's results).
-        await store.save_section_entities([
-            PageIndexSectionEntity(document_id=doc2, line_num=1, entity_name="Dave"),
-        ])
+        await store.save_section_entities(
+            [
+                PageIndexSectionEntity(document_id=doc2, line_num=1, entity_name="Dave"),
+            ]
+        )
         return store, doc1, doc2
 
     @pytest.mark.asyncio
@@ -611,9 +655,11 @@ class TestInMemoryListDistinctEntities:
         composite PK (document_id, line_num, entity_name)."""
         store, doc1, _ = populated
         # Re-insert Alice@line=1; must NOT bump the count.
-        await store.save_section_entities([
-            PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Alice"),
-        ])
+        await store.save_section_entities(
+            [
+                PageIndexSectionEntity(document_id=doc1, line_num=1, entity_name="Alice"),
+            ]
+        )
         result = await store.list_distinct_entities("b1", doc1, pattern="alice")
         assert result == [("Alice", 3)]  # still 3, not 4
 
@@ -637,11 +683,16 @@ class TestInMemoryListDistinctEntities:
     @pytest.mark.asyncio
     async def test_empty_document_returns_empty(self):
         store = InMemoryPageIndexStore()
-        empty_doc = await store.save_document(PageIndexDocument(
-            id="", bank_id="b1", source_id="empty",
-            md_text="", reference_date=None,
-            built_at=datetime.now(tz=timezone.utc),
-        ))
+        empty_doc = await store.save_document(
+            PageIndexDocument(
+                id="",
+                bank_id="b1",
+                source_id="empty",
+                md_text="",
+                reference_date=None,
+                built_at=datetime.now(tz=timezone.utc),
+            )
+        )
         result = await store.list_distinct_entities("b1", empty_doc)
         assert result == []
 

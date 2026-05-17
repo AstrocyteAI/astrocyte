@@ -134,7 +134,9 @@ class InMemoryVectorStore:
         return count
 
     async def get_by_chunk_ids(
-        self, chunk_ids: list[str], bank_id: str,
+        self,
+        chunk_ids: list[str],
+        bank_id: str,
     ) -> list[VectorHit]:
         """M10 chunk expansion: return all vectors whose ``chunk_id`` is in the list.
 
@@ -152,18 +154,20 @@ class InMemoryVectorStore:
                 continue
             if item.chunk_id is None or item.chunk_id not in wanted:
                 continue
-            hits.append(VectorHit(
-                id=item.id,
-                text=item.text,
-                score=1.0,
-                metadata=item.metadata,
-                tags=item.tags,
-                fact_type=item.fact_type,
-                occurred_at=item.occurred_at,
-                memory_layer=item.memory_layer,
-                retained_at=item.retained_at,
-                chunk_id=item.chunk_id,
-            ))
+            hits.append(
+                VectorHit(
+                    id=item.id,
+                    text=item.text,
+                    score=1.0,
+                    metadata=item.metadata,
+                    tags=item.tags,
+                    fact_type=item.fact_type,
+                    occurred_at=item.occurred_at,
+                    memory_layer=item.memory_layer,
+                    retained_at=item.retained_at,
+                    chunk_id=item.chunk_id,
+                )
+            )
         return hits
 
     async def list_vectors(
@@ -276,10 +280,7 @@ class InMemoryGraphStore:
         """
         name_lower = name.lower()
         bank_entities = self._entities.get(bank_id, {})
-        results = [
-            e for e in bank_entities.values()
-            if name_lower in e.name.lower() or e.name.lower() in name_lower
-        ]
+        results = [e for e in bank_entities.values() if name_lower in e.name.lower() or e.name.lower() in name_lower]
         return results[:limit]
 
     async def find_entity_candidates_scored(
@@ -330,13 +331,9 @@ class InMemoryGraphStore:
             other_a = bank_entities.get(link.entity_b)
             other_b = bank_entities.get(link.entity_a)
             if other_a is not None:
-                cooccurrence_map.setdefault(link.entity_a, []).append(
-                    (other_a.name or "").strip().lower()
-                )
+                cooccurrence_map.setdefault(link.entity_a, []).append((other_a.name or "").strip().lower())
             if other_b is not None:
-                cooccurrence_map.setdefault(link.entity_b, []).append(
-                    (other_b.name or "").strip().lower()
-                )
+                cooccurrence_map.setdefault(link.entity_b, []).append((other_b.name or "").strip().lower())
 
         scored: list[EntityCandidateMatch] = []
         for entity in bank_entities.values():
@@ -504,6 +501,7 @@ class InMemoryGraphStore:
             # Entity is a frozen-ish dataclass — replace via dataclasses.replace
             # to avoid mutating the original object held elsewhere.
             from dataclasses import replace as _dc_replace
+
             bank_entities[eid] = _dc_replace(
                 entity,
                 mention_count=int(getattr(entity, "mention_count", 1)) + 1,
@@ -629,10 +627,7 @@ class InMemoryEngineProvider:
         # MIP soft-delete: hide records flagged with `_deleted: true` in metadata.
         # The flag is set by `soft_delete()` when forget.mode == "soft" so that
         # records survive on disk for audit/restore but disappear from recall.
-        filtered = [
-            m for m in memories
-            if not (m.metadata and m.metadata.get("_deleted") is True)
-        ]
+        filtered = [m for m in memories if not (m.metadata and m.metadata.get("_deleted") is True)]
         if request.tags:
             tag_set = set(request.tags)
             filtered = [m for m in filtered if m.tags and tag_set & set(m.tags)]
@@ -771,6 +766,7 @@ class InMemoryWikiStore:
             self._history[bank_id].setdefault(page.page_id, []).append(existing)
             # Increment revision on the incoming page
             from dataclasses import replace as _replace
+
             page = _replace(page, revision=existing.revision + 1)
 
         self._pages[bank_id][page.page_id] = page
@@ -888,10 +884,8 @@ class InMemoryPageIndexStore:
         # Return a shallow copy without summary_embedding to mirror the
         # SQL adapter's projection (the picker doesn't need embeddings).
         from dataclasses import replace as _replace
-        return [
-            _replace(s, summary_embedding=None)
-            for s in self._sections.get(document_id, [])
-        ]
+
+        return [_replace(s, summary_embedding=None) for s in self._sections.get(document_id, [])]
 
     async def save_section_embeddings(
         self,
@@ -930,8 +924,7 @@ class InMemoryPageIndexStore:
             bucket = self._section_entities.setdefault(e.document_id, [])
             # Idempotent on the composite key.
             if not any(
-                existing.line_num == e.line_num and existing.entity_name == e.entity_name
-                for existing in bucket
+                existing.line_num == e.line_num and existing.entity_name == e.entity_name for existing in bucket
             ):
                 bucket.append(e)
                 n += 1
@@ -996,9 +989,7 @@ class InMemoryPageIndexStore:
     # ── PR2 commit B: parallel-strategy query methods ─────────────────
 
     def _docs_in_bank(self, bank_id: str) -> set[str]:
-        return {
-            d.id for (b, _src), d in self._documents.items() if b == bank_id
-        }
+        return {d.id for (b, _src), d in self._documents.items() if b == bank_id}
 
     async def search_sections_semantic(
         self,
@@ -1050,9 +1041,7 @@ class InMemoryPageIndexStore:
             for s in self._sections.get(doc_id, []):
                 if speaker is not None and s.speaker != speaker:
                     continue
-                haystack = (
-                    (s.title or "").lower() + " " + (s.summary or "").lower()
-                )
+                haystack = (s.title or "").lower() + " " + (s.summary or "").lower()
                 hits = sum(1 for t in terms if t in haystack)
                 if hits > 0:
                     scored.append((doc_id, s.line_num, float(hits)))
@@ -1080,10 +1069,7 @@ class InMemoryPageIndexStore:
                 low = e.entity_name.lower()
                 if low in wanted:
                     per_section.setdefault((doc_id, e.line_num), set()).add(low)
-        scored = [
-            (doc_id, line_num, float(len(matches)))
-            for (doc_id, line_num), matches in per_section.items()
-        ]
+        scored = [(doc_id, line_num, float(len(matches))) for (doc_id, line_num), matches in per_section.items()]
         scored.sort(key=lambda x: x[2], reverse=True)
         return scored[:top_k]
 
@@ -1133,6 +1119,41 @@ class InMemoryPageIndexStore:
         scored.sort(key=lambda x: x[2], reverse=True)
         return scored[:top_k]
 
+    async def expand_sections_by_shared_entities(
+        self,
+        bank_id: str,
+        seeds: list[tuple[str, int]],
+        *,
+        top_k: int = 20,
+        exclude_seeds: bool = True,
+    ) -> list[tuple[str, int, float]]:
+        if not seeds:
+            return []
+        seed_set = {(d, ln) for d, ln in seeds}
+        doc_ids = self._docs_in_bank(bank_id)
+        # Collect seed entity names (case-insensitive set).
+        seed_entities: set[str] = set()
+        for doc_id, line_num in seed_set:
+            for e in self._section_entities.get(doc_id, []):
+                if e.line_num == line_num:
+                    seed_entities.add(e.entity_name.lower())
+        if not seed_entities:
+            return []
+        # For every section in the bank, count distinct overlap with seed_entities.
+        per_section: dict[tuple[str, int], set[str]] = {}
+        for doc_id in doc_ids:
+            for e in self._section_entities.get(doc_id, []):
+                low = e.entity_name.lower()
+                if low not in seed_entities:
+                    continue
+                key = (doc_id, e.line_num)
+                if exclude_seeds and key in seed_set:
+                    continue
+                per_section.setdefault(key, set()).add(low)
+        scored = [(doc_id, line_num, float(len(matches))) for (doc_id, line_num), matches in per_section.items()]
+        scored.sort(key=lambda x: x[2], reverse=True)
+        return scored[:top_k]
+
     async def list_distinct_entities(
         self,
         bank_id: str,
@@ -1178,6 +1199,7 @@ class InMemoryPageIndexStore:
 
     async def update_fact_embeddings(self, embeddings) -> int:
         from dataclasses import replace as _replace
+
         if not embeddings:
             return 0
         emb_by_id = dict(embeddings)
@@ -1199,20 +1221,22 @@ class InMemoryPageIndexStore:
         fact_type: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
+
         if not query_embedding:
             return []
 
         def _cos(a, b):
             import math
+
             dot = sum(x * y for x, y in zip(a, b))
             na = math.sqrt(sum(x * x for x in a))
             nb = math.sqrt(sum(x * x for x in b))
             return dot / (na * nb) if na > 0 and nb > 0 else 0.0
 
         scored: list[tuple[float, PageIndexFact]] = []
-        scope = self._facts.get(document_id, []) if document_id else [
-            f for bucket in self._facts.values() for f in bucket
-        ]
+        scope = (
+            self._facts.get(document_id, []) if document_id else [f for bucket in self._facts.values() for f in bucket]
+        )
         for f in scope:
             if f.bank_id != bank_id:
                 continue
@@ -1224,12 +1248,18 @@ class InMemoryPageIndexStore:
         scored.sort(key=lambda kv: kv[0], reverse=True)
         return [
             PageIndexFactHit(
-                fact_id=f.id, document_id=f.document_id, line_num=f.line_num,
-                text=f.text, fact_type=f.fact_type, speaker=f.speaker,
-                occurred_start=f.occurred_start, occurred_end=f.occurred_end,
-                entities=list(f.entities or []), score=float(s),
+                fact_id=f.id,
+                document_id=f.document_id,
+                line_num=f.line_num,
+                text=f.text,
+                fact_type=f.fact_type,
+                speaker=f.speaker,
+                occurred_start=f.occurred_start,
+                occurred_end=f.occurred_end,
+                entities=list(f.entities or []),
+                score=float(s),
             )
-            for s, f in scored[:max(1, top_k)]
+            for s, f in scored[: max(1, top_k)]
         ]
 
     async def search_facts_by_entity(
@@ -1241,22 +1271,31 @@ class InMemoryPageIndexStore:
         document_id: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
+
         needle = entity_name.casefold()
-        scope = self._facts.get(document_id, []) if document_id else [
-            f for bucket in self._facts.values() for f in bucket
-        ]
+        scope = (
+            self._facts.get(document_id, []) if document_id else [f for bucket in self._facts.values() for f in bucket]
+        )
         hits: list["PageIndexFactHit"] = []
         for f in scope:
             if f.bank_id != bank_id:
                 continue
             if not any(needle in (e or "").casefold() for e in (f.entities or [])):
                 continue
-            hits.append(PageIndexFactHit(
-                fact_id=f.id, document_id=f.document_id, line_num=f.line_num,
-                text=f.text, fact_type=f.fact_type, speaker=f.speaker,
-                occurred_start=f.occurred_start, occurred_end=f.occurred_end,
-                entities=list(f.entities or []), score=1.0,
-            ))
+            hits.append(
+                PageIndexFactHit(
+                    fact_id=f.id,
+                    document_id=f.document_id,
+                    line_num=f.line_num,
+                    text=f.text,
+                    fact_type=f.fact_type,
+                    speaker=f.speaker,
+                    occurred_start=f.occurred_start,
+                    occurred_end=f.occurred_end,
+                    entities=list(f.entities or []),
+                    score=1.0,
+                )
+            )
             if len(hits) >= top_k:
                 break
         return hits
@@ -1270,22 +1309,31 @@ class InMemoryPageIndexStore:
         document_id: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
+
         start, end = date_range
-        scope = self._facts.get(document_id, []) if document_id else [
-            f for bucket in self._facts.values() for f in bucket
-        ]
+        scope = (
+            self._facts.get(document_id, []) if document_id else [f for bucket in self._facts.values() for f in bucket]
+        )
         hits: list["PageIndexFactHit"] = []
         for f in scope:
             if f.bank_id != bank_id or f.occurred_start is None:
                 continue
             if not (start <= f.occurred_start <= end):
                 continue
-            hits.append(PageIndexFactHit(
-                fact_id=f.id, document_id=f.document_id, line_num=f.line_num,
-                text=f.text, fact_type=f.fact_type, speaker=f.speaker,
-                occurred_start=f.occurred_start, occurred_end=f.occurred_end,
-                entities=list(f.entities or []), score=1.0,
-            ))
+            hits.append(
+                PageIndexFactHit(
+                    fact_id=f.id,
+                    document_id=f.document_id,
+                    line_num=f.line_num,
+                    text=f.text,
+                    fact_type=f.fact_type,
+                    speaker=f.speaker,
+                    occurred_start=f.occurred_start,
+                    occurred_end=f.occurred_end,
+                    entities=list(f.entities or []),
+                    score=1.0,
+                )
+            )
             if len(hits) >= top_k:
                 break
         return hits
@@ -1319,6 +1367,7 @@ class InMemoryPageIndexStore:
         if not event_dates:
             return 0
         from dataclasses import replace as _replace
+
         sections = self._sections.get(document_id) or []
         if not sections:
             return 0
@@ -1372,12 +1421,11 @@ class InMemoryPageIndexStore:
         bucket = self._wiki_pages.get(bank_id, [])
         if not bucket or not query_embedding:
             return []
-        scope_filter = (
-            f"document:{document_id}" if document_id is not None else None
-        )
+        scope_filter = f"document:{document_id}" if document_id is not None else None
 
         def _cos(a: list[float], b: list[float]) -> float:
             import math
+
             dot = sum(x * y for x, y in zip(a, b))
             na = math.sqrt(sum(x * x for x in a))
             nb = math.sqrt(sum(x * x for x in b))
@@ -1395,16 +1443,18 @@ class InMemoryPageIndexStore:
         scored.sort(key=lambda kv: kv[0], reverse=True)
         out: list[WikiPageHit] = []
         for score, page in scored[: max(1, top_k)]:
-            out.append(WikiPageHit(
-                page_id=page.page_id,
-                title=page.title,
-                content=page.content,
-                scope=page.scope,
-                kind=page.kind,
-                score=float(score),
-                source_ids=list(page.source_ids),
-                bank_id=page.bank_id,
-            ))
+            out.append(
+                WikiPageHit(
+                    page_id=page.page_id,
+                    title=page.title,
+                    content=page.content,
+                    scope=page.scope,
+                    kind=page.kind,
+                    score=float(score),
+                    source_ids=list(page.source_ids),
+                    bank_id=page.bank_id,
+                )
+            )
         return out
 
     async def count_wiki_pages_for_doc(
@@ -1623,6 +1673,7 @@ class InMemorySourceStore:
         # Newest-first by created_at; tolerate Nones via a fallback.
         from datetime import UTC
         from datetime import datetime as _dt
+
         docs.sort(key=lambda d: d.created_at or _dt.fromtimestamp(0, UTC), reverse=True)
         return docs[:limit]
 
@@ -1680,10 +1731,7 @@ class InMemorySourceStore:
         document_id: str,
         bank_id: str,
     ) -> list["SourceChunk"]:
-        chunks = [
-            c for c in self._chunks.get(bank_id, {}).values()
-            if c.document_id == document_id
-        ]
+        chunks = [c for c in self._chunks.get(bank_id, {}).values() if c.document_id == document_id]
         chunks.sort(key=lambda c: c.chunk_index)
         return chunks
 

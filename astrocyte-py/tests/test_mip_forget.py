@@ -61,9 +61,7 @@ class TestForgetPresets:
         assert spec.respect_legal_hold is True
 
     def test_explicit_field_overrides_preset_default(self):
-        spec = expand_forget_preset(
-            ForgetSpec(version=1, preset="gdpr", min_age_days=30)
-        )
+        spec = expand_forget_preset(ForgetSpec(version=1, preset="gdpr", min_age_days=30))
         assert spec.mode == "hard"  # from preset
         assert spec.min_age_days == 30  # explicit override wins
 
@@ -84,14 +82,18 @@ class TestForgetPresets:
 
 class TestForgetLoader:
     def test_parses_minimal_forget_block(self):
-        cfg = _parse_mip_config({
-            "rules": [{
-                "name": "r",
-                "priority": 10,
-                "match": {"content_type": "pii"},
-                "action": {"bank": "vault", "forget": {"version": 1, "mode": "soft"}},
-            }],
-        })
+        cfg = _parse_mip_config(
+            {
+                "rules": [
+                    {
+                        "name": "r",
+                        "priority": 10,
+                        "match": {"content_type": "pii"},
+                        "action": {"bank": "vault", "forget": {"version": 1, "mode": "soft"}},
+                    }
+                ],
+            }
+        )
         rule = cfg.rules[0]
         assert rule.action.forget is not None
         assert rule.action.forget.version == 1
@@ -99,90 +101,131 @@ class TestForgetLoader:
 
     def test_missing_version_errors(self):
         with pytest.raises(ConfigError, match="forget.version is required"):
-            _parse_mip_config({
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "pii"},
-                    "action": {"bank": "vault", "forget": {"mode": "soft"}},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "pii"},
+                            "action": {"bank": "vault", "forget": {"mode": "soft"}},
+                        }
+                    ],
+                }
+            )
 
     def test_invalid_mode_errors(self):
         with pytest.raises(ConfigError, match="forget.mode"):
-            _parse_mip_config({
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "pii"},
-                    "action": {"bank": "vault", "forget": {"version": 1, "mode": "purge"}},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "pii"},
+                            "action": {"bank": "vault", "forget": {"version": 1, "mode": "purge"}},
+                        }
+                    ],
+                }
+            )
 
     def test_invalid_audit_errors(self):
         with pytest.raises(ConfigError, match="forget.audit"):
-            _parse_mip_config({
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "pii"},
-                    "action": {"bank": "vault", "forget": {"version": 1, "audit": "loud"}},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "pii"},
+                            "action": {"bank": "vault", "forget": {"version": 1, "audit": "loud"}},
+                        }
+                    ],
+                }
+            )
 
     def test_negative_min_age_errors(self):
         with pytest.raises(ConfigError, match="min_age_days"):
-            _parse_mip_config({
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "pii"},
-                    "action": {"bank": "vault", "forget": {"version": 1, "min_age_days": -1}},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "pii"},
+                            "action": {"bank": "vault", "forget": {"version": 1, "min_age_days": -1}},
+                        }
+                    ],
+                }
+            )
 
     def test_zero_max_per_call_errors(self):
         with pytest.raises(ConfigError, match="max_per_call"):
-            _parse_mip_config({
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "pii"},
-                    "action": {"bank": "vault", "forget": {"version": 1, "max_per_call": 0}},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "pii"},
+                            "action": {"bank": "vault", "forget": {"version": 1, "max_per_call": 0}},
+                        }
+                    ],
+                }
+            )
 
     def test_unknown_preset_errors_with_known_list(self):
         with pytest.raises(ConfigError, match="unknown forget preset"):
-            _parse_mip_config({
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "pii"},
-                    "action": {"bank": "vault", "forget": {"version": 1, "preset": "nope"}},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "pii"},
+                            "action": {"bank": "vault", "forget": {"version": 1, "preset": "nope"}},
+                        }
+                    ],
+                }
+            )
 
     def test_hard_mode_requires_audit_required(self):
         # Discipline rule: hard delete without required audit is rejected at load
         with pytest.raises(ConfigError, match="hard.*audit.*required"):
-            _parse_mip_config({
-                "rules": [{
-                    "name": "r", "priority": 10,
-                    "match": {"content_type": "pii"},
-                    "action": {"bank": "vault", "forget": {"version": 1, "mode": "hard"}},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "rules": [
+                        {
+                            "name": "r",
+                            "priority": 10,
+                            "match": {"content_type": "pii"},
+                            "action": {"bank": "vault", "forget": {"version": 1, "mode": "hard"}},
+                        }
+                    ],
+                }
+            )
 
     def test_gdpr_preset_satisfies_hard_audit_discipline(self):
         # gdpr preset is mode=hard + audit=required, so it must load cleanly.
-        cfg = _parse_mip_config({
-            "rules": [{
-                "name": "r", "priority": 10,
-                "match": {"content_type": "pii"},
-                "action": {"bank": "vault", "forget": {"version": 1, "preset": "gdpr"}},
-            }],
-        })
+        cfg = _parse_mip_config(
+            {
+                "rules": [
+                    {
+                        "name": "r",
+                        "priority": 10,
+                        "match": {"content_type": "pii"},
+                        "action": {"bank": "vault", "forget": {"version": 1, "preset": "gdpr"}},
+                    }
+                ],
+            }
+        )
         assert cfg.rules[0].action.forget.mode == "hard"
         assert cfg.rules[0].action.forget.audit == "required"
 
     def test_loader_via_yaml_file(self, tmp_path: Path):
         path = tmp_path / "mip.yaml"
-        path.write_text(textwrap.dedent("""\
+        path.write_text(
+            textwrap.dedent("""\
             version: "1.0"
             rules:
               - name: gdpr-erasure
@@ -193,7 +236,8 @@ class TestForgetLoader:
                   forget:
                     version: 1
                     preset: gdpr
-        """))
+        """)
+        )
         cfg = load_mip_config(path)
         spec = cfg.rules[0].action.forget
         assert spec.mode == "hard"
@@ -233,7 +277,8 @@ class TestResolveForgetForBank:
 
     def test_returns_none_when_rule_has_no_forget(self):
         rule = RoutingRule(
-            name="r", priority=10,
+            name="r",
+            priority=10,
             match=MatchBlock(all_conditions=[MatchSpec(field="content_type", operator="eq", value="x")]),
             action=ActionSpec(bank="vault"),  # no forget
         )
@@ -349,7 +394,8 @@ class TestForgetAuditLogging:
 @pytest.mark.asyncio
 class TestForgetRespectLegalHold:
     async def test_legal_hold_blocks_compliance_forget_when_mip_says_respect(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """A rule with respect_legal_hold=True overrides compliance=True bypass."""
         yaml = textwrap.dedent("""\
@@ -443,9 +489,12 @@ class TestForgetMinAgeDays:
         old_iso = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         brain._engine_provider._memories["vault"] = [
             MemoryHit(
-                text="old", score=1.0, fact_type="world",
+                text="old",
+                score=1.0,
+                fact_type="world",
                 metadata={"_created_at": old_iso},
-                memory_id="old-id", bank_id="vault",
+                memory_id="old-id",
+                bank_id="vault",
             )
         ]
         # No raise; deletion succeeds because the record is older than 7 days.
@@ -453,16 +502,21 @@ class TestForgetMinAgeDays:
         assert result.deleted_count == 1
 
     async def test_record_missing_created_at_is_skipped_with_warning(
-        self, tmp_path: Path, caplog,
+        self,
+        tmp_path: Path,
+        caplog,
     ):
         from astrocyte.types import MemoryHit
 
         brain = _make_brain_with_router(tmp_path, self._YAML)
         brain._engine_provider._memories["vault"] = [
             MemoryHit(
-                text="undated", score=1.0, fact_type="world",
+                text="undated",
+                score=1.0,
+                fact_type="world",
                 metadata={},  # no _created_at
-                memory_id="undated-id", bank_id="vault",
+                memory_id="undated-id",
+                bank_id="vault",
             )
         ]
         with caplog.at_level(logging.WARNING, logger="astrocyte.mip"):
@@ -498,8 +552,10 @@ class TestForgetCascadeFlag:
         brain = _make_brain_with_router(tmp_path, yaml)
         with caplog.at_level(logging.WARNING):
             await brain.forget(
-                "vault", memory_ids=["a"],
-                compliance=True, reason="rtbf",
+                "vault",
+                memory_ids=["a"],
+                compliance=True,
+                reason="rtbf",
                 context=AstrocyteContext(principal="user:test"),
             )
         audit = next(r for r in caplog.records if "mip.forget.audit" in r.getMessage())
@@ -523,8 +579,10 @@ class TestForgetCascadeFlag:
         brain = _make_brain_with_router(tmp_path, yaml)
         with caplog.at_level(logging.WARNING):
             await brain.forget(
-                "vault", memory_ids=["a"],
-                compliance=True, reason="rtbf",
+                "vault",
+                memory_ids=["a"],
+                compliance=True,
+                reason="rtbf",
                 context=AstrocyteContext(principal="user:test"),
             )
         audit = next(r for r in caplog.records if "mip.forget.audit" in r.getMessage())
@@ -545,8 +603,10 @@ class TestForgetCascadeFlag:
         brain = _make_brain_with_router(tmp_path, yaml)
         with caplog.at_level(logging.WARNING):
             await brain.forget(
-                "vault", memory_ids=["a"],
-                compliance=True, reason="rtbf",
+                "vault",
+                memory_ids=["a"],
+                compliance=True,
+                reason="rtbf",
                 context=AstrocyteContext(principal="user:test"),
             )
         audit = next(r for r in caplog.records if "mip.forget.audit" in r.getMessage())
@@ -554,18 +614,22 @@ class TestForgetCascadeFlag:
 
     async def test_cascade_loader_round_trip(self):
         """Loader preserves cascade=False (does not collapse to None default)."""
-        config = _parse_mip_config({
-            "version": "1.0",
-            "rules": [{
-                "name": "r",
-                "priority": 10,
-                "match": {"content_type": "pii"},
-                "action": {
-                    "bank": "vault",
-                    "forget": {"version": 1, "mode": "soft", "cascade": False},
-                },
-            }],
-        })
+        config = _parse_mip_config(
+            {
+                "version": "1.0",
+                "rules": [
+                    {
+                        "name": "r",
+                        "priority": 10,
+                        "match": {"content_type": "pii"},
+                        "action": {
+                            "bank": "vault",
+                            "forget": {"version": 1, "mode": "soft", "cascade": False},
+                        },
+                    }
+                ],
+            }
+        )
         spec = config.rules[0].action.forget
         assert spec.cascade is False  # explicit False, not None
 
@@ -633,8 +697,10 @@ class TestForgetSoftDelete:
             RetainRequest(bank_id="vault", content="bye", content_type="pii"),
         )
         result = await brain.forget(
-            "vault", memory_ids=[r1.memory_id],
-            compliance=True, reason="rtbf",
+            "vault",
+            memory_ids=[r1.memory_id],
+            compliance=True,
+            reason="rtbf",
             context=AstrocyteContext(principal="user:test"),
         )
         assert result.deleted_count == 1

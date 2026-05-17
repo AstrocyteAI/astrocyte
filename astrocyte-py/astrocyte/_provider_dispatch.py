@@ -61,7 +61,10 @@ class ProviderDispatcher:
         # Notify tiered retriever of new content (populates recent buffer, invalidates cache)
         if result.stored and self.tiered_retriever is not None and result.memory_id:
             self.tiered_retriever.notify_retain(
-                request.bank_id, result.memory_id, request.content, request.metadata,
+                request.bank_id,
+                result.memory_id,
+                request.content,
+                request.metadata,
             )
 
         return result

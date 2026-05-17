@@ -25,11 +25,13 @@ from tests.conftest import DIM, make_item
 class TestSearchFulltext:
     async def test_returns_matching_memories(self, store: PostgresStore) -> None:
         """Memories whose text matches the query are returned."""
-        await store.store_vectors([
-            make_item("m1", text="Alice went to the coffee shop on Tuesday"),
-            make_item("m2", text="Bob prefers tea over coffee"),
-            make_item("m3", text="The weather was sunny all week"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("m1", text="Alice went to the coffee shop on Tuesday"),
+                make_item("m2", text="Bob prefers tea over coffee"),
+                make_item("m3", text="The weather was sunny all week"),
+            ]
+        )
 
         hits = await store.search_fulltext("coffee", "bank-1", limit=10)
 
@@ -39,19 +41,23 @@ class TestSearchFulltext:
         assert "m3" not in ids
 
     async def test_returns_empty_for_no_match(self, store: PostgresStore) -> None:
-        await store.store_vectors([
-            make_item("m1", text="Alice loves hiking in the mountains"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("m1", text="Alice loves hiking in the mountains"),
+            ]
+        )
 
         hits = await store.search_fulltext("quantum computing", "bank-1", limit=10)
         assert hits == []
 
     async def test_results_ordered_by_relevance(self, store: PostgresStore) -> None:
         """Memory with more query-term occurrences ranks higher."""
-        await store.store_vectors([
-            make_item("low",  text="coffee mentioned once"),
-            make_item("high", text="coffee coffee coffee is Alice's favourite morning coffee"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("low", text="coffee mentioned once"),
+                make_item("high", text="coffee coffee coffee is Alice's favourite morning coffee"),
+            ]
+        )
 
         hits = await store.search_fulltext("coffee", "bank-1", limit=10)
         assert len(hits) == 2
@@ -59,10 +65,12 @@ class TestSearchFulltext:
 
     async def test_respects_bank_isolation(self, store: PostgresStore) -> None:
         """FTS does not cross bank boundaries."""
-        await store.store_vectors([
-            make_item("m1", bank_id="bank-a", text="unique term xyzzy appears here"),
-            make_item("m2", bank_id="bank-b", text="unique term xyzzy in another bank"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("m1", bank_id="bank-a", text="unique term xyzzy appears here"),
+                make_item("m2", bank_id="bank-b", text="unique term xyzzy in another bank"),
+            ]
+        )
 
         hits_a = await store.search_fulltext("xyzzy", "bank-a", limit=10)
         hits_b = await store.search_fulltext("xyzzy", "bank-b", limit=10)
@@ -72,10 +80,12 @@ class TestSearchFulltext:
 
     async def test_forgotten_memories_excluded(self, store: PostgresStore) -> None:
         """Soft-deleted memories must not appear in FTS results."""
-        await store.store_vectors([
-            make_item("alive", text="coffee is great"),
-            make_item("dead",  text="coffee is terrible"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("alive", text="coffee is great"),
+                make_item("dead", text="coffee is terrible"),
+            ]
+        )
         await store.delete(["dead"], "bank-1")
 
         hits = await store.search_fulltext("coffee", "bank-1", limit=10)
@@ -90,9 +100,11 @@ class TestSearchFulltext:
 
     async def test_hit_shape(self, store: PostgresStore) -> None:
         """Each DocumentHit has the required fields."""
-        await store.store_vectors([
-            make_item("m1", text="Alice attended the conference", metadata={"source": "chat"}),
-        ])
+        await store.store_vectors(
+            [
+                make_item("m1", text="Alice attended the conference", metadata={"source": "chat"}),
+            ]
+        )
 
         hits = await store.search_fulltext("conference", "bank-1", limit=5)
         assert len(hits) == 1
@@ -106,13 +118,17 @@ class TestSearchFulltext:
         """DocumentFilters.tags restricts FTS to tagged memories."""
         from astrocyte.types import DocumentFilters
 
-        await store.store_vectors([
-            make_item("tagged",   text="coffee shop visit", tags=["diary"]),
-            make_item("untagged", text="coffee shop visit"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("tagged", text="coffee shop visit", tags=["diary"]),
+                make_item("untagged", text="coffee shop visit"),
+            ]
+        )
 
         hits = await store.search_fulltext(
-            "coffee", "bank-1", limit=10,
+            "coffee",
+            "bank-1",
+            limit=10,
             filters=DocumentFilters(tags=["diary"]),
         )
         ids = {h.document_id for h in hits}
@@ -149,9 +165,11 @@ class TestGetDocument:
         assert result is None
 
     async def test_returns_document_for_stored_memory(self, store: PostgresStore) -> None:
-        await store.store_vectors([
-            make_item("m1", text="Alice's birthday party", metadata={"year": 2025}),
-        ])
+        await store.store_vectors(
+            [
+                make_item("m1", text="Alice's birthday party", metadata={"year": 2025}),
+            ]
+        )
 
         doc = await store.get_document("m1", "bank-1")
         assert doc is not None
@@ -193,10 +211,12 @@ class TestDocumentStoreProtocol:
         includes the keyword strategy in the fused result set."""
         from astrocyte.pipeline.retrieval import parallel_retrieve
 
-        await store.store_vectors([
-            make_item("m1", text="Alice loves jazz music"),
-            make_item("m2", text="Bob is a classical pianist"),
-        ])
+        await store.store_vectors(
+            [
+                make_item("m1", text="Alice loves jazz music"),
+                make_item("m2", text="Bob is a classical pianist"),
+            ]
+        )
         # Embed a dummy query vector (same dim as store)
         query_vector = [0.1] * DIM
 
@@ -205,7 +225,7 @@ class TestDocumentStoreProtocol:
             query_text="jazz music",
             bank_id="bank-1",
             vector_store=store,
-            document_store=store,   # <-- PostgresStore as DocumentStore
+            document_store=store,  # <-- PostgresStore as DocumentStore
             graph_store=None,
             limit=10,
         )

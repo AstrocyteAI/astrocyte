@@ -19,6 +19,7 @@ Usage::
     # Trajectory artifact (small; useful for CI/CLI trend views)
     python -m scripts.fetch_bench_results --trajectory --bench locomo
 """
+
 from __future__ import annotations
 
 import argparse
@@ -77,8 +78,7 @@ async def fetch_by_stage(stage: str, out: Path, cfg: R2Config) -> int:
     n = 0
     async with r2_client(cfg) as client:
         manifest_keys = [
-            k for k in await _list_keys(client, cfg.bucket_private, "runs/")
-            if k.endswith("/manifest.json")
+            k for k in await _list_keys(client, cfg.bucket_private, "runs/") if k.endswith("/manifest.json")
         ]
         for mkey in sorted(manifest_keys):
             manifest = await _get_json(client, cfg.bucket_private, mkey)
@@ -112,16 +112,13 @@ async def fetch_trajectory(bench: str, out: Path, cfg: R2Config) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--bench", choices=("locomo", "longmemeval"), default=None)
-    p.add_argument("--latest", action="store_true",
-                   help="Fetch latest/<bench>.json.gz (requires --bench).")
-    p.add_argument("--date", default=None,
-                   help="UTC date (YYYY-MM-DD): pull every run from that day.")
-    p.add_argument("--stage", default=None,
-                   help="Stage label: pull every run matching this stage.")
-    p.add_argument("--trajectory", action="store_true",
-                   help="Pull the small public trajectory artifact (requires --bench).")
-    p.add_argument("--out", type=Path, default=DEFAULT_OUT,
-                   help=f"Output directory (default: {DEFAULT_OUT}).")
+    p.add_argument("--latest", action="store_true", help="Fetch latest/<bench>.json.gz (requires --bench).")
+    p.add_argument("--date", default=None, help="UTC date (YYYY-MM-DD): pull every run from that day.")
+    p.add_argument("--stage", default=None, help="Stage label: pull every run matching this stage.")
+    p.add_argument(
+        "--trajectory", action="store_true", help="Pull the small public trajectory artifact (requires --bench)."
+    )
+    p.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"Output directory (default: {DEFAULT_OUT}).")
     return p
 
 
@@ -147,8 +144,7 @@ async def _amain(argv: list[str]) -> int:
     if args.stage:
         return await fetch_by_stage(args.stage, args.out, cfg)
 
-    print("ERROR: pass one of --latest / --date / --stage / --trajectory",
-          file=sys.stderr)
+    print("ERROR: pass one of --latest / --date / --stage / --trajectory", file=sys.stderr)
     return 2
 
 

@@ -151,8 +151,12 @@ async def build_lme_tree(
         # Inline the store path to avoid needing to mock the LoCoMo-
         # specific ``conv["conversation"]`` shape.
         conv_tree = await _build_lme_tree_via_store(
-            store=store, bank_id=bank_id, sample_id=sample_id,
-            md_path=md_path, md_text=md_text, model=model,
+            store=store,
+            bank_id=bank_id,
+            sample_id=sample_id,
+            md_path=md_path,
+            md_text=md_text,
+            model=model,
             provider=provider,
             entity_model=entity_model,
             embedding_model=embedding_model,
@@ -181,8 +185,13 @@ async def build_lme_tree(
 
 
 async def _build_lme_tree_via_store(
-    *, store, bank_id: str, sample_id: str,
-    md_path: Path, md_text: str, model: str,
+    *,
+    store,
+    bank_id: str,
+    sample_id: str,
+    md_path: Path,
+    md_text: str,
+    model: str,
     provider=None,
     entity_model: str | None = None,
     embedding_model: str | None = None,
@@ -194,12 +203,14 @@ async def _build_lme_tree_via_store(
         sections = await store.load_skeleton(cached_doc.id)
         compact = _BENCH._sections_to_compact_tree(sections)
         session_dates = [
-            (s.line_num, _BENCH._format_session_date(s.session_date))
-            for s in sections if s.session_date is not None
+            (s.line_num, _BENCH._format_session_date(s.session_date)) for s in sections if s.session_date is not None
         ]
         session_dates = [(ln, d) for ln, d in session_dates if d]
         return _BENCH._conv_tree_dict(
-            sample_id, md_text, compact, session_dates,
+            sample_id,
+            md_text,
+            compact,
+            session_dates,
             document_id=cached_doc.id,
         )
 
@@ -207,9 +218,7 @@ async def _build_lme_tree_via_store(
     raw_tree = await _BENCH._build_raw_tree(md_path, model)
     nodes = raw_tree.get("structure", raw_tree) if isinstance(raw_tree, dict) else raw_tree
     session_dates = _BENCH._enrich_nodes_with_dates(nodes)
-    reference_date_dt = (
-        _BENCH._parse_session_date(session_dates[-1][1]) if session_dates else None
-    )
+    reference_date_dt = _BENCH._parse_session_date(session_dates[-1][1]) if session_dates else None
 
     # Local import to avoid hard dep when --backend is not store-shaped.
     from astrocyte.types import PageIndexDocument
@@ -241,7 +250,10 @@ async def _build_lme_tree_via_store(
         )
 
     return _BENCH._conv_tree_dict(
-        sample_id, md_text, raw_tree, session_dates,
+        sample_id,
+        md_text,
+        raw_tree,
+        session_dates,
         document_id=document_id,
     )
 
@@ -352,6 +364,7 @@ async def main() -> None:
     if args.backend == "memory":
         store = InMemoryPageIndexStore()
         from astrocyte.testing.in_memory import InMemoryMentalModelStore  # noqa: PLC0415
+
         mental_model_store = InMemoryMentalModelStore()
         print(f"  [pi-lme] Backend: in-memory (bank_id={args.bank_id!r})")
     elif args.backend == "postgres":
@@ -359,6 +372,7 @@ async def main() -> None:
             PostgresMentalModelStore,
             PostgresPageIndexStore,
         )
+
         store = PostgresPageIndexStore(bootstrap_schema=True)
         mental_model_store = PostgresMentalModelStore(bootstrap_schema=True)
         print(f"  [pi-lme] Backend: postgres (bank_id={args.bank_id!r})")
@@ -379,8 +393,7 @@ async def main() -> None:
     )
     if reflect_provider is not None:
         print(
-            f"  [pi-lme] Reflect model override: {args.reflect_model} "
-            f"(default: {args.model})",
+            f"  [pi-lme] Reflect model override: {args.reflect_model} (default: {args.model})",
         )
     judge = LongMemEvalJudge(provider, model=args.model) if not args.no_judge else None
 
@@ -391,8 +404,12 @@ async def main() -> None:
         sample_id = sample["question_id"]
         try:
             trees[sample_id] = await build_lme_tree(
-                sample, sample_id, workspace, args.model,
-                store=store, bank_id=args.bank_id,
+                sample,
+                sample_id,
+                workspace,
+                args.model,
+                store=store,
+                bank_id=args.bank_id,
                 # PR2 commit A: entity + embedding pass at retain
                 # (only fires for store backends on cache miss).
                 provider=provider if store is not None else None,
@@ -429,7 +446,10 @@ async def main() -> None:
                 # multi-session / temporal-reasoning / knowledge-update
                 # categories from the PR2 LME gate.
                 answer, line_nums = await _BENCH.answer_question(
-                    provider, conv_tree, question, args.model,
+                    provider,
+                    conv_tree,
+                    question,
+                    args.model,
                     store=store,
                     bank_id=args.bank_id if store is not None else None,
                     cross_encoder=None,
@@ -459,15 +479,17 @@ async def main() -> None:
             correct += 1
             by_category_correct[question_type] = by_category_correct.get(question_type, 0) + 1
 
-        results.append({
-            "question_id": sample_id,
-            "question_type": question_type,
-            "question": question,
-            "expected": expected,
-            "response": answer,
-            "score": is_correct,
-            "picked_lines": line_nums,
-        })
+        results.append(
+            {
+                "question_id": sample_id,
+                "question_type": question_type,
+                "question": question,
+                "expected": expected,
+                "response": answer,
+                "score": is_correct,
+                "picked_lines": line_nums,
+            }
+        )
 
         if (i + 1) % 10 == 0:
             elapsed = time.monotonic() - t_score
@@ -497,8 +519,7 @@ async def main() -> None:
                 "evaluated_questions": len(lme_data),
                 "correct": correct,
                 "category_accuracy": {
-                    cat: by_category_correct.get(cat, 0) / max(by_category_total[cat], 1)
-                    for cat in by_category_total
+                    cat: by_category_correct.get(cat, 0) / max(by_category_total[cat], 1) for cat in by_category_total
                 },
                 "model": args.model,
                 "max_samples": args.max_samples,

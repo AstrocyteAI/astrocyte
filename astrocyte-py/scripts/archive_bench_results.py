@@ -19,6 +19,7 @@ Usage::
     # Verify both buckets are reachable (CI smoke / manual sanity)
     python -m scripts.archive_bench_results --selftest
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,6 +48,7 @@ KNOWN_BENCHES = ("locomo", "longmemeval")
 # Result-file shape detection
 # ---------------------------------------------------------------------------
 
+
 def _split_per_bench(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     """Return ``[(bench_name, bench_payload), ...]`` from one results JSON.
 
@@ -74,9 +76,7 @@ def _split_per_bench(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]
     for key, value in payload.items():
         if key.startswith("_"):
             continue
-        if isinstance(value, dict) and (
-            "overall_accuracy" in value or "benchmark" in value or "metrics" in value
-        ):
+        if isinstance(value, dict) and ("overall_accuracy" in value or "benchmark" in value or "metrics" in value):
             benches.append((_normalize_bench_name(key), value))
     return benches
 
@@ -143,6 +143,7 @@ def _summary_from_payload(bench: str, payload: dict[str, Any]) -> dict[str, Any]
 # R2 operations
 # ---------------------------------------------------------------------------
 
+
 async def _put_object(client, bucket: str, key: str, body: bytes, content_type: str) -> None:
     await client.put_object(
         Bucket=bucket,
@@ -186,9 +187,8 @@ async def _list_keys(client, bucket: str, prefix: str) -> list[str]:
 # Manifest + trajectory regeneration
 # ---------------------------------------------------------------------------
 
-async def _update_day_manifest(
-    client, cfg: R2Config, *, date: str, entry: dict[str, Any]
-) -> None:
+
+async def _update_day_manifest(client, cfg: R2Config, *, date: str, entry: dict[str, Any]) -> None:
     """Read-modify-write the per-day manifest. Single-writer assumption.
 
     NOTE: For the post-run hook (single-process) and the historical
@@ -211,10 +211,7 @@ async def _regenerate_trajectory(client, cfg: R2Config) -> dict[str, int]:
     """Walk every per-day manifest (plus the historical backfill manifest if
     present) and write one trajectory JSON per bench to the public bucket.
     Returns ``{bench: run_count}``."""
-    manifest_keys = [
-        k for k in await _list_keys(client, cfg.bucket_private, "runs/")
-        if k.endswith("/manifest.json")
-    ]
+    manifest_keys = [k for k in await _list_keys(client, cfg.bucket_private, "runs/") if k.endswith("/manifest.json")]
     # Pick up the historical backfill manifest (single file, optional).
     if await _get_json(client, cfg.bucket_private, "historical/manifest.json"):
         manifest_keys.append("historical/manifest.json")
@@ -239,9 +236,7 @@ async def _regenerate_trajectory(client, cfg: R2Config) -> dict[str, int]:
             "runs": runs_sorted,
         }
         body = json.dumps(artifact, indent=2).encode("utf-8")
-        await _put_object(
-            client, cfg.bucket_public, f"trajectory/{bench}.json", body, "application/json"
-        )
+        await _put_object(client, cfg.bucket_public, f"trajectory/{bench}.json", body, "application/json")
         counts[bench] = len(runs_sorted)
     return counts
 
@@ -249,6 +244,7 @@ async def _regenerate_trajectory(client, cfg: R2Config) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 # High-level archive
 # ---------------------------------------------------------------------------
+
 
 async def archive_files(
     files: Iterable[Path],
@@ -294,9 +290,7 @@ async def archive_files(
                     key = f"runs/{date}/{stage}/{bench}/results-{ts}-{sha}.json.gz"
 
                 gz = _gzip_bytes(json.dumps(bench_payload, default=str).encode("utf-8"))
-                await _put_object(
-                    client, cfg.bucket_private, key, gz, "application/gzip"
-                )
+                await _put_object(client, cfg.bucket_private, key, gz, "application/gzip")
 
                 # Manifest only updated for forward-going `runs/...` layout.
                 # Historical backfill aggregates separately via trajectory.
@@ -331,10 +325,7 @@ async def archive_files(
         if uploaded > 0 or historical_prefix:
             counts = await _regenerate_trajectory(client, cfg)
             for bench, n in counts.items():
-                print(
-                    f"  trajectory/{bench}.json -> {cfg.public_url}/trajectory/{bench}.json "
-                    f"({n} runs)"
-                )
+                print(f"  trajectory/{bench}.json -> {cfg.public_url}/trajectory/{bench}.json ({n} runs)")
 
     return uploaded
 
@@ -364,20 +355,22 @@ async def selftest(cfg: R2Config | None = None) -> int:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--files", nargs="*", type=Path, default=[],
-                   help="Result JSON files to upload.")
-    p.add_argument("--stage", default="local-ad-hoc",
-                   help="Stage label (e.g. weekly-ci, pr1-gate, local-ad-hoc).")
-    p.add_argument("--bench", default=None,
-                   help="Override bench name when the result file is unwrapped "
-                        "(e.g. /tmp/pr*-gate-*/results-*.json).")
-    p.add_argument("--rebuild-trajectory", action="store_true",
-                   help="Skip uploads; regenerate trajectory/<bench>.json from "
-                        "existing manifests in the private bucket.")
-    p.add_argument("--selftest", action="store_true",
-                   help="Verify both buckets are reachable; exit 0 on success.")
+    p.add_argument("--files", nargs="*", type=Path, default=[], help="Result JSON files to upload.")
+    p.add_argument("--stage", default="local-ad-hoc", help="Stage label (e.g. weekly-ci, pr1-gate, local-ad-hoc).")
+    p.add_argument(
+        "--bench",
+        default=None,
+        help="Override bench name when the result file is unwrapped (e.g. /tmp/pr*-gate-*/results-*.json).",
+    )
+    p.add_argument(
+        "--rebuild-trajectory",
+        action="store_true",
+        help="Skip uploads; regenerate trajectory/<bench>.json from existing manifests in the private bucket.",
+    )
+    p.add_argument("--selftest", action="store_true", help="Verify both buckets are reachable; exit 0 on success.")
     return p
 
 
@@ -396,8 +389,7 @@ async def _amain(argv: list[str]) -> int:
         return 0
 
     if not args.files:
-        print("ERROR: --files is required (or pass --selftest / --rebuild-trajectory)",
-              file=sys.stderr)
+        print("ERROR: --files is required (or pass --selftest / --rebuild-trajectory)", file=sys.stderr)
         return 2
 
     expanded: list[Path] = []

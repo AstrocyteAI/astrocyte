@@ -1,4 +1,5 @@
 """M11.2: mental-model compile pass unit tests."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -61,8 +62,12 @@ class TestFormatSections:
         sections = [
             _section(1, "real summary"),
             PageIndexSection(
-                document_id="doc-1", line_num=2, node_id="0002",
-                title="", summary=None, session_date=None,
+                document_id="doc-1",
+                line_num=2,
+                node_id="0002",
+                title="",
+                summary=None,
+                session_date=None,
             ),
         ]
         out = _format_sections_for_prompt(sections)
@@ -71,8 +76,12 @@ class TestFormatSections:
 
     def test_renders_no_date_for_missing_session_date(self) -> None:
         s = PageIndexSection(
-            document_id="doc-1", line_num=1, node_id="0001",
-            title="t", summary="s", session_date=None,
+            document_id="doc-1",
+            line_num=1,
+            node_id="0001",
+            title="t",
+            summary="s",
+            session_date=None,
         )
         out = _format_sections_for_prompt([s])
         assert "date=no-date" in out
@@ -92,16 +101,22 @@ class TestCompileMentalModels:
     async def populated_doc(self, stores) -> str:
         pi_store, _ = stores
         doc = PageIndexDocument(
-            id="", bank_id="b1", source_id="s1", md_text="# md",
+            id="",
+            bank_id="b1",
+            source_id="s1",
+            md_text="# md",
             reference_date=datetime(2023, 5, 8, tzinfo=timezone.utc),
             built_at=datetime(2026, 5, 11, tzinfo=timezone.utc),
         )
         doc_id = await pi_store.save_document(doc)
-        await pi_store.save_sections(doc_id, [
-            _section(1, "User discussed Sony A7 III and lens preferences"),
-            _section(5, "User mentioned weekly hip-hop classes at Street Beats"),
-            _section(10, "User shared vegetarian recipes"),
-        ])
+        await pi_store.save_sections(
+            doc_id,
+            [
+                _section(1, "User discussed Sony A7 III and lens preferences"),
+                _section(5, "User mentioned weekly hip-hop classes at Street Beats"),
+                _section(10, "User shared vegetarian recipes"),
+            ],
+        )
         return doc_id
 
     async def test_happy_path_upserts_models(self, stores, populated_doc) -> None:
@@ -109,13 +124,15 @@ class TestCompileMentalModels:
         doc_id = populated_doc
 
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"models": ['
-                 '{"title": "Camera preference", "content": "Sony A7 III"},'
-                 '{"title": "Dance practice", "content": "Hip-hop at Street Beats"}'
-                 ']}',
-            model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"models": ['
+                '{"title": "Camera preference", "content": "Sony A7 III"},'
+                '{"title": "Dance practice", "content": "Hip-hop at Street Beats"}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
 
         ids = await compile_mental_models_for_document(
             page_index_store=pi_store,
@@ -136,9 +153,12 @@ class TestCompileMentalModels:
     async def test_empty_models_list_returns_empty(self, stores, populated_doc) -> None:
         pi_store, mm_store = stores
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"models": []}', model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"models": []}',
+                model="gpt-4o-mini",
+            )
+        )
         ids = await compile_mental_models_for_document(
             page_index_store=pi_store,
             mental_model_store=mm_store,
@@ -151,9 +171,12 @@ class TestCompileMentalModels:
     async def test_json_parse_failure_returns_empty(self, stores, populated_doc) -> None:
         pi_store, mm_store = stores
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text="not valid json {{", model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text="not valid json {{",
+                model="gpt-4o-mini",
+            )
+        )
         ids = await compile_mental_models_for_document(
             page_index_store=pi_store,
             mental_model_store=mm_store,
@@ -166,14 +189,16 @@ class TestCompileMentalModels:
     async def test_missing_title_or_content_skipped(self, stores, populated_doc) -> None:
         pi_store, mm_store = stores
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"models": ['
-                 '{"title": "good", "content": "ok"},'
-                 '{"title": "", "content": "missing title"},'
-                 '{"title": "no content", "content": ""}'
-                 ']}',
-            model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"models": ['
+                '{"title": "good", "content": "ok"},'
+                '{"title": "", "content": "missing title"},'
+                '{"title": "no content", "content": ""}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
         ids = await compile_mental_models_for_document(
             page_index_store=pi_store,
             mental_model_store=mm_store,
@@ -211,10 +236,12 @@ class TestCompileMentalModels:
         """Second compile run bumps revisions instead of creating duplicates."""
         pi_store, mm_store = stores
         provider = MagicMock()
-        provider.complete = AsyncMock(return_value=Completion(
-            text='{"models": [{"title": "Diet", "content": "vegetarian"}]}',
-            model="gpt-4o-mini",
-        ))
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"models": [{"title": "Diet", "content": "vegetarian"}]}',
+                model="gpt-4o-mini",
+            )
+        )
         await compile_mental_models_for_document(
             page_index_store=pi_store,
             mental_model_store=mm_store,

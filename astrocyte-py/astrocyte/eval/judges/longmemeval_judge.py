@@ -188,7 +188,7 @@ class LongMemEvalJudge:
     ) -> None:
         self._llm = llm_provider
         self._model = model
-        self._max_tokens = max_tokens   # "yes"/"no" fit in 1 token; 4 is defensive
+        self._max_tokens = max_tokens  # "yes"/"no" fit in 1 token; 4 is defensive
         self._temperature = temperature
 
     async def score(
@@ -205,7 +205,10 @@ class LongMemEvalJudge:
         as 0 and log).
         """
         prompt = build_longmemeval_judge_prompt(
-            question_type, question, answer, response,
+            question_type,
+            question,
+            answer,
+            response,
         )
         completion = await self._llm.complete(
             messages=[Message(role="user", content=prompt)],

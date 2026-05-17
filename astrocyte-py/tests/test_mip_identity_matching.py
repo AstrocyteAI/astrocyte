@@ -155,10 +155,12 @@ class TestPrincipalTypeRouting:
     ``actor_identity=None`` disables principal_* rules cleanly."""
 
     def test_user_token_routes_to_user_rule(self) -> None:
-        cfg = MipConfig(rules=[
-            _rule("user-rule", 10, bank="user-bank", principal_type="user"),
-            _rule("svc-rule", 10, bank="svc-bank", principal_type="service"),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("user-rule", 10, bank="user-bank", principal_type="user"),
+                _rule("svc-rule", 10, bank="svc-bank", principal_type="service"),
+            ]
+        )
         cfg.tie_breaker = "error"  # there must be no ambiguity
         decision = MipRouter(cfg).route_sync(_input(actor_identity=_user_identity()))
         assert decision is not None
@@ -166,10 +168,12 @@ class TestPrincipalTypeRouting:
         assert decision.bank_id == "user-bank"
 
     def test_service_token_routes_to_service_rule(self) -> None:
-        cfg = MipConfig(rules=[
-            _rule("user-rule", 10, bank="user-bank", principal_type="user"),
-            _rule("svc-rule", 10, bank="svc-bank", principal_type="service"),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("user-rule", 10, bank="user-bank", principal_type="user"),
+                _rule("svc-rule", 10, bank="svc-bank", principal_type="service"),
+            ]
+        )
         cfg.tie_breaker = "error"
         decision = MipRouter(cfg).route_sync(_input(actor_identity=_service_identity()))
         assert decision is not None
@@ -180,22 +184,29 @@ class TestPrincipalTypeRouting:
         """Rules with ``principal_type`` must not fire for anonymous
         callers — otherwise enabling JWT middleware would be a breaking
         change for legacy integrations."""
-        cfg = MipConfig(rules=[
-            _rule("principal-only", 10, bank="principal-bank", principal_type="user"),
-            _rule("generic", 20, bank="generic-bank"),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("principal-only", 10, bank="principal-bank", principal_type="user"),
+                _rule("generic", 20, bank="generic-bank"),
+            ]
+        )
         decision = MipRouter(cfg).route_sync(_input())  # no actor_identity
         assert decision is not None
         assert decision.rule_name == "generic"
 
     def test_specific_principal_id_filter_matches(self) -> None:
         """Rules can pin to a specific principal (e.g. an admin OID)."""
-        cfg = MipConfig(rules=[
-            _rule(
-                "admin-only", 5, bank="admin-bank",
-                principal_type="user", principal_id="admin-oid",
-            ),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule(
+                    "admin-only",
+                    5,
+                    bank="admin-bank",
+                    principal_type="user",
+                    principal_id="admin-oid",
+                ),
+            ]
+        )
         admin = _input(actor_identity=_user_identity(oid="admin-oid"))
         decision = MipRouter(cfg).route_sync(admin)
         assert decision is not None
@@ -204,12 +215,17 @@ class TestPrincipalTypeRouting:
     def test_specific_principal_id_filter_excludes_non_admin(self) -> None:
         """The same rule must NOT match a different OID — otherwise the
         admin filter is not actually filtering."""
-        cfg = MipConfig(rules=[
-            _rule(
-                "admin-only", 5, bank="admin-bank",
-                principal_type="user", principal_id="admin-oid",
-            ),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule(
+                    "admin-only",
+                    5,
+                    bank="admin-bank",
+                    principal_type="user",
+                    principal_id="admin-oid",
+                ),
+            ]
+        )
         other = _input(actor_identity=_user_identity(oid="some-other-oid"))
         decision = MipRouter(cfg).route_sync(other)
         # No rule matched → None (no fallback rule here).
@@ -220,17 +236,21 @@ class TestPrincipalTemplateInterpolation:
     """Bank and tag templates must interpolate identity fields."""
 
     def test_bank_template_with_principal_oid(self) -> None:
-        cfg = MipConfig(rules=[
-            RoutingRule(
-                name="per-user",
-                priority=10,
-                match=MatchBlock(all_conditions=[
-                    MatchSpec(field="content_type", operator="eq", value="text"),
-                    MatchSpec(field="principal_type", operator="eq", value="user"),
-                ]),
-                action=ActionSpec(bank="user-{principal.oid_or_app_id}"),
-            ),
-        ])
+        cfg = MipConfig(
+            rules=[
+                RoutingRule(
+                    name="per-user",
+                    priority=10,
+                    match=MatchBlock(
+                        all_conditions=[
+                            MatchSpec(field="content_type", operator="eq", value="text"),
+                            MatchSpec(field="principal_type", operator="eq", value="user"),
+                        ]
+                    ),
+                    action=ActionSpec(bank="user-{principal.oid_or_app_id}"),
+                ),
+            ]
+        )
         decision = MipRouter(cfg).route_sync(
             _input(actor_identity=_user_identity(oid="alice-9")),
         )
@@ -238,17 +258,21 @@ class TestPrincipalTemplateInterpolation:
         assert decision.bank_id == "user-alice-9"
 
     def test_bank_template_with_principal_app_id_for_service(self) -> None:
-        cfg = MipConfig(rules=[
-            RoutingRule(
-                name="per-svc",
-                priority=10,
-                match=MatchBlock(all_conditions=[
-                    MatchSpec(field="content_type", operator="eq", value="text"),
-                    MatchSpec(field="principal_type", operator="eq", value="service"),
-                ]),
-                action=ActionSpec(bank="svc-{principal.app_id}"),
-            ),
-        ])
+        cfg = MipConfig(
+            rules=[
+                RoutingRule(
+                    name="per-svc",
+                    priority=10,
+                    match=MatchBlock(
+                        all_conditions=[
+                            MatchSpec(field="content_type", operator="eq", value="text"),
+                            MatchSpec(field="principal_type", operator="eq", value="service"),
+                        ]
+                    ),
+                    action=ActionSpec(bank="svc-{principal.app_id}"),
+                ),
+            ]
+        )
         decision = MipRouter(cfg).route_sync(
             _input(actor_identity=_service_identity(app_id="svc-77")),
         )
@@ -256,17 +280,21 @@ class TestPrincipalTemplateInterpolation:
         assert decision.bank_id == "svc-svc-77"  # template prefix + id
 
     def test_tag_template_with_principal_upn(self) -> None:
-        cfg = MipConfig(rules=[
-            RoutingRule(
-                name="tagged",
-                priority=10,
-                match=MatchBlock(all_conditions=[
-                    MatchSpec(field="content_type", operator="eq", value="text"),
-                    MatchSpec(field="principal_type", operator="eq", value="user"),
-                ]),
-                action=ActionSpec(bank="b", tags=["actor:{principal.upn}"]),
-            ),
-        ])
+        cfg = MipConfig(
+            rules=[
+                RoutingRule(
+                    name="tagged",
+                    priority=10,
+                    match=MatchBlock(
+                        all_conditions=[
+                            MatchSpec(field="content_type", operator="eq", value="text"),
+                            MatchSpec(field="principal_type", operator="eq", value="user"),
+                        ]
+                    ),
+                    action=ActionSpec(bank="b", tags=["actor:{principal.upn}"]),
+                ),
+            ]
+        )
         decision = MipRouter(cfg).route_sync(
             _input(actor_identity=_user_identity(upn="dana@co")),
         )
@@ -286,11 +314,13 @@ class TestBeneficiaryProxyRouting:
         return RoutingRule(
             name="proxied-user-data",
             priority=8,
-            match=MatchBlock(all_conditions=[
-                MatchSpec(field="content_type", operator="eq", value="text"),
-                MatchSpec(field="principal_type", operator="eq", value="service"),
-                MatchSpec(field="metadata.beneficiary_user_id", operator="present"),
-            ]),
+            match=MatchBlock(
+                all_conditions=[
+                    MatchSpec(field="content_type", operator="eq", value="text"),
+                    MatchSpec(field="principal_type", operator="eq", value="service"),
+                    MatchSpec(field="metadata.beneficiary_user_id", operator="present"),
+                ]
+            ),
             action=ActionSpec(
                 bank="user-{metadata.beneficiary_user_id}",
                 tags=["proxied", "m2m-on-behalf"],
@@ -319,14 +349,18 @@ class TestBeneficiaryProxyRouting:
         )
 
     def test_proxied_call_routes_to_user_bank(self) -> None:
-        cfg = MipConfig(rules=[
-            self._proxy_rule(),
-            self._svc_default_rule_with_beneficiary_absent(),
-        ])
-        decision = MipRouter(cfg).route_sync(_input(
-            actor_identity=_service_identity(app_id="hr-bot"),
-            metadata={"beneficiary_user_id": "user-42"},
-        ))
+        cfg = MipConfig(
+            rules=[
+                self._proxy_rule(),
+                self._svc_default_rule_with_beneficiary_absent(),
+            ]
+        )
+        decision = MipRouter(cfg).route_sync(
+            _input(
+                actor_identity=_service_identity(app_id="hr-bot"),
+                metadata={"beneficiary_user_id": "user-42"},
+            )
+        )
         assert decision is not None
         assert decision.rule_name == "proxied-user-data"
         assert decision.bank_id == "user-user-42"
@@ -336,14 +370,18 @@ class TestBeneficiaryProxyRouting:
         """Without a beneficiary declaration, data must land in the
         machine bank — Astrocyte never guesses which human a proxied
         call is for."""
-        cfg = MipConfig(rules=[
-            self._proxy_rule(),
-            self._svc_default_rule_with_beneficiary_absent(),
-        ])
-        decision = MipRouter(cfg).route_sync(_input(
-            actor_identity=_service_identity(app_id="hr-bot"),
-            # no beneficiary_user_id metadata
-        ))
+        cfg = MipConfig(
+            rules=[
+                self._proxy_rule(),
+                self._svc_default_rule_with_beneficiary_absent(),
+            ]
+        )
+        decision = MipRouter(cfg).route_sync(
+            _input(
+                actor_identity=_service_identity(app_id="hr-bot"),
+                # no beneficiary_user_id metadata
+            )
+        )
         assert decision is not None
         assert decision.rule_name == "svc-default"
         assert decision.bank_id == "svc-hr-bot"
@@ -353,10 +391,12 @@ class TestBeneficiaryProxyRouting:
         proxy rule even if beneficiary metadata is accidentally present
         — that would double-account the memory."""
         cfg = MipConfig(rules=[self._proxy_rule()])
-        decision = MipRouter(cfg).route_sync(_input(
-            actor_identity=_user_identity(oid="alice"),
-            metadata={"beneficiary_user_id": "carol"},
-        ))
+        decision = MipRouter(cfg).route_sync(
+            _input(
+                actor_identity=_user_identity(oid="alice"),
+                metadata={"beneficiary_user_id": "carol"},
+            )
+        )
         # The proxy rule requires principal_type=service, so no match.
         # Falling out of the rule set here is the correct behavior —
         # the real config would have a user-default rule to catch this.

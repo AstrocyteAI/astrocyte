@@ -74,10 +74,12 @@ def _input(content_type: str = "text", **kw) -> RuleEngineInput:
 
 class TestShadowMode:
     def test_shadow_rule_does_not_route(self, caplog) -> None:
-        cfg = MipConfig(rules=[
-            _rule("shadow-experiment", priority=5, shadow=True, bank="experimental"),
-            _rule("live-default", priority=10, bank="default"),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("shadow-experiment", priority=5, shadow=True, bank="experimental"),
+                _rule("live-default", priority=10, bank="default"),
+            ]
+        )
         router = MipRouter(cfg)
         with caplog.at_level(logging.INFO, logger="astrocyte.mip"):
             decision = router.route_sync(_input())
@@ -89,13 +91,20 @@ class TestShadowMode:
 
     def test_shadow_override_does_not_lock(self, caplog) -> None:
         """A shadow override is logged but does NOT short-circuit routing."""
-        cfg = MipConfig(rules=[
-            _rule(
-                "shadow-pii", priority=1, shadow=True, override=True,
-                bank="quarantine", match_field="pii_detected", match_value=True,
-            ),
-            _rule("live-default", priority=10, bank="default"),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule(
+                    "shadow-pii",
+                    priority=1,
+                    shadow=True,
+                    override=True,
+                    bank="quarantine",
+                    match_field="pii_detected",
+                    match_value=True,
+                ),
+                _rule("live-default", priority=10, bank="default"),
+            ]
+        )
         router = MipRouter(cfg)
         with caplog.at_level(logging.INFO, logger="astrocyte.mip"):
             decision = router.route_sync(_input(pii_detected=True))
@@ -104,10 +113,12 @@ class TestShadowMode:
         assert any("shadow match" in r.getMessage() for r in caplog.records)
 
     def test_non_matching_shadow_rule_is_silent(self, caplog) -> None:
-        cfg = MipConfig(rules=[
-            _rule("shadow-x", priority=5, shadow=True, match_value="other"),
-            _rule("live", priority=10, bank="default"),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("shadow-x", priority=5, shadow=True, match_value="other"),
+                _rule("live", priority=10, bank="default"),
+            ]
+        )
         router = MipRouter(cfg)
         with caplog.at_level(logging.INFO, logger="astrocyte.mip"):
             router.route_sync(_input())
@@ -125,9 +136,12 @@ class TestTieBreaker:
         # only 1 condition while 'specific' has 2 (used for most_specific).
         wide = _rule("wide", priority=10, bank="wide-bank")
         specific = _rule(
-            "specific", priority=10, bank="specific-bank",
-            extra_match=([MatchSpec(field="metadata.tier", operator="eq", value="gold")]
-                         if with_extra_specificity else None),
+            "specific",
+            priority=10,
+            bank="specific-bank",
+            extra_match=(
+                [MatchSpec(field="metadata.tier", operator="eq", value="gold")] if with_extra_specificity else None
+            ),
         )
         return MipConfig(rules=[wide, specific])
 
@@ -156,10 +170,12 @@ class TestTieBreaker:
     def test_no_tie_breaker_when_priorities_differ(self) -> None:
         # Both rules match content_type=text but at different priorities,
         # so tie_breaker=error must NOT raise (no priority tie).
-        cfg = MipConfig(rules=[
-            _rule("a", priority=5, bank="a"),
-            _rule("b", priority=10, bank="b"),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("a", priority=5, bank="a"),
+                _rule("b", priority=10, bank="b"),
+            ]
+        )
         cfg.tie_breaker = "error"
         # Should not raise (no priority tie). Decision may still be None due
         # to the existing escalation policy when multiple matches exist;
@@ -183,20 +199,24 @@ class TestTieBreaker:
 class TestActivationWindow:
     def test_rule_before_active_from_is_skipped(self) -> None:
         future = datetime.now(timezone.utc) + timedelta(days=1)
-        cfg = MipConfig(rules=[
-            _rule("future", priority=5, bank="future", active_from=future),
-            _rule("live", priority=10, bank="default"),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("future", priority=5, bank="future", active_from=future),
+                _rule("live", priority=10, bank="default"),
+            ]
+        )
         decision = MipRouter(cfg).route_sync(_input())
         assert decision is not None
         assert decision.rule_name == "live"
 
     def test_rule_after_active_until_is_skipped(self) -> None:
         past = datetime.now(timezone.utc) - timedelta(days=1)
-        cfg = MipConfig(rules=[
-            _rule("expired", priority=5, bank="expired", active_until=past),
-            _rule("live", priority=10, bank="default"),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("expired", priority=5, bank="expired", active_until=past),
+                _rule("live", priority=10, bank="default"),
+            ]
+        )
         decision = MipRouter(cfg).route_sync(_input())
         assert decision is not None
         assert decision.rule_name == "live"
@@ -204,17 +224,19 @@ class TestActivationWindow:
     def test_rule_inside_window_fires(self) -> None:
         start = datetime.now(timezone.utc) - timedelta(hours=1)
         end = datetime.now(timezone.utc) + timedelta(hours=1)
-        cfg = MipConfig(rules=[
-            _rule("scheduled", priority=5, bank="scheduled",
-                  active_from=start, active_until=end),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("scheduled", priority=5, bank="scheduled", active_from=start, active_until=end),
+            ]
+        )
         decision = MipRouter(cfg).route_sync(_input())
         assert decision is not None
         assert decision.rule_name == "scheduled"
 
     def test_loader_parses_iso_strings(self, tmp_path: Path) -> None:
         path = tmp_path / "mip.yaml"
-        path.write_text(textwrap.dedent("""\
+        path.write_text(
+            textwrap.dedent("""\
             version: "1.0"
             rules:
               - name: scheduled
@@ -223,7 +245,8 @@ class TestActivationWindow:
                 active_until: "2030-12-31T23:59:59+00:00"
                 match: { content_type: text }
                 action: { bank: b }
-        """))
+        """)
+        )
         cfg = load_mip_config(path)
         rule = cfg.rules[0]
         assert rule.active_from == datetime(2030, 1, 1, tzinfo=timezone.utc)
@@ -231,28 +254,38 @@ class TestActivationWindow:
 
     def test_loader_rejects_inverted_window(self) -> None:
         with pytest.raises(ConfigError, match="active_until must be strictly after"):
-            _parse_mip_config({
-                "version": "1.0",
-                "rules": [{
-                    "name": "bad", "priority": 10,
-                    "active_from": "2030-12-31T00:00:00+00:00",
-                    "active_until": "2030-01-01T00:00:00+00:00",
-                    "match": {"content_type": "text"},
-                    "action": {"bank": "b"},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "version": "1.0",
+                    "rules": [
+                        {
+                            "name": "bad",
+                            "priority": 10,
+                            "active_from": "2030-12-31T00:00:00+00:00",
+                            "active_until": "2030-01-01T00:00:00+00:00",
+                            "match": {"content_type": "text"},
+                            "action": {"bank": "b"},
+                        }
+                    ],
+                }
+            )
 
     def test_loader_rejects_malformed_datetime(self) -> None:
         with pytest.raises(ConfigError, match="active_from"):
-            _parse_mip_config({
-                "version": "1.0",
-                "rules": [{
-                    "name": "bad", "priority": 10,
-                    "active_from": "not-a-date",
-                    "match": {"content_type": "text"},
-                    "action": {"bank": "b"},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "version": "1.0",
+                    "rules": [
+                        {
+                            "name": "bad",
+                            "priority": 10,
+                            "active_from": "not-a-date",
+                            "match": {"content_type": "text"},
+                            "action": {"bank": "b"},
+                        }
+                    ],
+                }
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -262,9 +295,11 @@ class TestActivationWindow:
 
 class TestObservabilityTags:
     def test_tags_surface_on_routing_decision(self) -> None:
-        cfg = MipConfig(rules=[
-            _rule("tagged", priority=10, bank="b", observability_tags=["compliance", "pii"]),
-        ])
+        cfg = MipConfig(
+            rules=[
+                _rule("tagged", priority=10, bank="b", observability_tags=["compliance", "pii"]),
+            ]
+        )
         decision = MipRouter(cfg).route_sync(_input())
         assert decision is not None
         assert decision.observability_tags == ["compliance", "pii"]
@@ -277,7 +312,8 @@ class TestObservabilityTags:
 
     def test_loader_parses_tags(self, tmp_path: Path) -> None:
         path = tmp_path / "mip.yaml"
-        path.write_text(textwrap.dedent("""\
+        path.write_text(
+            textwrap.dedent("""\
             version: "1.0"
             rules:
               - name: r
@@ -285,18 +321,24 @@ class TestObservabilityTags:
                 observability_tags: [experiment, canary]
                 match: { content_type: text }
                 action: { bank: b }
-        """))
+        """)
+        )
         cfg = load_mip_config(path)
         assert cfg.rules[0].observability_tags == ["experiment", "canary"]
 
     def test_loader_rejects_non_string_tags(self) -> None:
         with pytest.raises(ConfigError, match="observability_tags"):
-            _parse_mip_config({
-                "version": "1.0",
-                "rules": [{
-                    "name": "bad", "priority": 10,
-                    "observability_tags": ["ok", 123],
-                    "match": {"content_type": "text"},
-                    "action": {"bank": "b"},
-                }],
-            })
+            _parse_mip_config(
+                {
+                    "version": "1.0",
+                    "rules": [
+                        {
+                            "name": "bad",
+                            "priority": 10,
+                            "observability_tags": ["ok", 123],
+                            "match": {"content_type": "text"},
+                            "action": {"bank": "b"},
+                        }
+                    ],
+                }
+            )

@@ -118,10 +118,7 @@ def weighted_rrf_fusion(
 
     for ranked_list, weight in ranked_lists_with_weights:
         if weight < 0.0:
-            raise ValueError(
-                f"RRF weight must be >= 0.0; got {weight!r}. "
-                "Pass weight=0.0 to mute a strategy."
-            )
+            raise ValueError(f"RRF weight must be >= 0.0; got {weight!r}. Pass weight=0.0 to mute a strategy.")
         effective_weight = weight
         if effective_weight == 0.0:
             continue

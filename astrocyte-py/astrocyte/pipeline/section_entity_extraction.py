@@ -58,6 +58,23 @@ _EXTRACT_PROMPT = """Extract two kinds of entities from the conversation excerpt
 - Products (named brands, books, movies, songs, games, foods)
 - Notable concepts (named events, named projects, named conditions)
 
+ALIAS CAPTURE for (A): for each PERSON mentioned, emit BOTH the
+form used in the excerpt AND any common short-form / nickname /
+formal-name variant they are likely to be referred to by. Use general
+Western-naming knowledge for the alias mapping:
+- "Joanna" → also emit "Jo", "Joey", "Jojo"
+- "Robert" → also emit "Rob", "Bob", "Bobby"
+- "Elizabeth" → also emit "Liz", "Beth", "Eliza", "Lizzie"
+- "Michael" → also emit "Mike", "Mickey"
+- "Catherine" / "Katherine" → also emit "Kate", "Cathy", "Katie"
+- "William" → also emit "Will", "Bill", "Billy"
+- "Jonathan" → also emit "Jon", "Jonny"
+- "Christopher" → also emit "Chris"
+- "Alexander" → also emit "Alex", "Sandy"
+Emit each alias as its OWN entry. Only emit aliases that are PLAUSIBLE
+for the person named (don't invent aliases when the name doesn't have
+a standard short form). Cap aliases per person at 3.
+
 Do NOT extract for (A):
 - Common nouns ("dog", "car", "school" without a name)
 - Pronouns
@@ -90,9 +107,9 @@ emit `role:doctor` 3 times across the relevant sections).
 - It's fine to emit nothing in (B) if the section is generic chit-chat.
 
 Return ONLY a JSON object with one key, ``entities``, containing an \
-array of strings (mixed (A) named entities + (B) `key:value` labels). \
-Cap at 15 entries total; prefer (B) labels when the section discusses \
-a countable category, since those drive the wiki recall layer.
+array of strings (mixed (A) named entities + (A) aliases + (B) `key:value` \
+labels). Cap at 20 entries total; prefer (B) labels when the section \
+discusses a countable category, since those drive the wiki recall layer.
 
 Excerpt:
 {text}
@@ -101,7 +118,7 @@ Output (JSON only):
 """
 
 
-_MAX_ENTITIES_PER_SECTION = 15
+_MAX_ENTITIES_PER_SECTION = 20
 
 
 async def extract_entities_for_section(
@@ -129,7 +146,7 @@ async def extract_entities_for_section(
     completion = await provider.complete(
         messages=[Message(role="user", content=msg)],
         model=model,
-        max_tokens=400,
+        max_tokens=500,
         temperature=0.0,
         response_format={"type": "json_object"},
     )
@@ -140,7 +157,8 @@ async def extract_entities_for_section(
     except json.JSONDecodeError:
         logger.warning(
             "section_entity_extraction: JSON parse failed for doc=%s line=%d",
-            document_id, section.line_num,
+            document_id,
+            section.line_num,
         )
         return []
 

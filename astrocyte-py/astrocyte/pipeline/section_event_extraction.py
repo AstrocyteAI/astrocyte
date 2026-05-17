@@ -127,11 +127,7 @@ async def extract_event_date_for_section(
     text = section_text.strip()
     if not text:
         return None, None
-    sess_iso = (
-        section.session_date.strftime("%Y-%m-%d")
-        if section.session_date is not None
-        else "unknown"
-    )
+    sess_iso = section.session_date.strftime("%Y-%m-%d") if section.session_date is not None else "unknown"
     msg = _EXTRACT_PROMPT.format(
         session_date=sess_iso,
         section_text=text[:6000],  # ~1500 tokens cap
@@ -147,7 +143,9 @@ async def extract_event_date_for_section(
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "section_event_extraction: LLM call failed doc=%s line=%d: %s",
-            section.document_id, section.line_num, exc,
+            section.document_id,
+            section.line_num,
+            exc,
         )
         return None, None
     try:
@@ -155,7 +153,9 @@ async def extract_event_date_for_section(
     except json.JSONDecodeError:
         _logger.warning(
             "section_event_extraction: JSON parse failed doc=%s line=%d text=%r",
-            section.document_id, section.line_num, completion.text[:200],
+            section.document_id,
+            section.line_num,
+            completion.text[:200],
         )
         return None, None
     start = _parse_iso_date(data.get("occurred_start"))

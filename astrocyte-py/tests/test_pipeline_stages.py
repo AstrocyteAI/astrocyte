@@ -272,7 +272,9 @@ class TestSynthesizeMipReflect:
         llm = MockLLMProvider(default_response="ok")
         hits = [MemoryHit(text="m1", score=0.9)]
         await synthesize(
-            "q", hits, llm,
+            "q",
+            hits,
+            llm,
             mip_reflect=ReflectSpec(prompt="evidence_strict"),
         )
         assert captured["variant"] == "evidence_strict"
@@ -283,7 +285,9 @@ class TestSynthesizeMipReflect:
         llm = MockLLMProvider(default_response="ok")
         hits = [MemoryHit(text="body", score=0.9, metadata={"author": "Ada"})]
         await synthesize(
-            "q", hits, llm,
+            "q",
+            hits,
+            llm,
             mip_reflect=ReflectSpec(promote_metadata=["author"]),
         )
         # Inspect the rendered user prompt sent to the LLM
@@ -387,7 +391,9 @@ class TestBasicRerankMipOverride:
 
         items = [ScoredItem(id="a", text="Alice talked to Bob", score=0.5)]
         with_default = basic_rerank(items, "What did Alice say?")[0].score
-        with_override = basic_rerank(items, "What did Alice say?", mip_rerank=RerankSpec(proper_noun_weight=1.0))[0].score
+        with_override = basic_rerank(items, "What did Alice say?", mip_rerank=RerankSpec(proper_noun_weight=1.0))[
+            0
+        ].score
         assert with_override > with_default
 
     def test_partial_override_lets_other_weight_default(self):

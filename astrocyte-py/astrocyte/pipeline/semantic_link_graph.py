@@ -85,12 +85,15 @@ async def compute_semantic_links(
             # Fetch a few extra so post-filtering for self + same-batch
             # exclusions still leaves us close to top_k.
             hits = await vector_store.search_similar(
-                embedding, bank_id, limit=top_k + len(same_batch) + 2,
+                embedding,
+                bank_id,
+                limit=top_k + len(same_batch) + 2,
             )
         except Exception as exc:
             _logger.warning(
                 "semantic_link_graph: search_similar failed for %r (%s)",
-                new_memory_ids[idx], exc,
+                new_memory_ids[idx],
+                exc,
             )
             return []
 
@@ -119,7 +122,5 @@ async def compute_semantic_links(
                 break
         return out
 
-    per_chunk = await asyncio.gather(
-        *[_search_one(i) for i in range(len(new_memory_ids))]
-    )
+    per_chunk = await asyncio.gather(*[_search_one(i) for i in range(len(new_memory_ids))])
     return [link for chunk_links in per_chunk for link in chunk_links]

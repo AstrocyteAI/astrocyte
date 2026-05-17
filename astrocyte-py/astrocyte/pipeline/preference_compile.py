@@ -158,33 +158,39 @@ async def compile_preferences_for_document(
     if len(pref_facts) < 2:
         _logger.debug(
             "preference_compile: doc=%s has %d preference facts (<2), skip",
-            document_id, len(pref_facts),
+            document_id,
+            len(pref_facts),
         )
         return []
 
     # Idempotency check — skip if we already have preference models for this scope.
     try:
         existing = await mental_model_store.list(
-            bank_id, scope=f"document:{document_id}", kind="preference",
+            bank_id,
+            scope=f"document:{document_id}",
+            kind="preference",
         )
     except TypeError:
         # Older MentalModelStore SPI without `kind` kwarg — fall back to
         # listing all and filtering client-side. Lets this module work
         # against not-yet-migrated stores (some tests use older fakes).
         all_for_scope = await mental_model_store.list(
-            bank_id, scope=f"document:{document_id}",
+            bank_id,
+            scope=f"document:{document_id}",
         )
         existing = [m for m in all_for_scope if m.kind == "preference"]
     if existing:
         _logger.debug(
             "preference_compile: doc=%s already has %d preference models — skip",
-            document_id, len(existing),
+            document_id,
+            len(existing),
         )
         return [m.model_id for m in existing]
 
     prefs_block = "\n".join(_format_pref_for_prompt(f) for f in pref_facts)
     msg = _COMPILE_PROMPT.format(
-        max_prefs=max_preferences, prefs_block=prefs_block,
+        max_prefs=max_preferences,
+        prefs_block=prefs_block,
     )
 
     try:
@@ -205,7 +211,8 @@ async def compile_preferences_for_document(
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "preference_compile.llm: call failed for doc=%s (%s)",
-            document_id, exc,
+            document_id,
+            exc,
         )
         return []
 
@@ -214,7 +221,9 @@ async def compile_preferences_for_document(
     except (json.JSONDecodeError, AttributeError) as exc:
         _logger.warning(
             "preference_compile.parse: bad JSON for doc=%s (%s) text=%r",
-            document_id, exc, getattr(completion, "text", "")[:200],
+            document_id,
+            exc,
+            getattr(completion, "text", "")[:200],
         )
         return []
 
@@ -237,9 +246,7 @@ async def compile_preferences_for_document(
         source_fact_ids = raw.get("source_fact_ids") or []
         if not isinstance(source_fact_ids, list):
             source_fact_ids = []
-        source_fact_ids = [
-            str(s) for s in source_fact_ids if isinstance(s, (str, int))
-        ]
+        source_fact_ids = [str(s) for s in source_fact_ids if isinstance(s, (str, int))]
         # Stable model_id: pref:<doc_short>:<title-slug>
         slug = _slugify(title)
         model_id = f"pref:{document_id[:8]}:{slug}"
@@ -264,11 +271,15 @@ async def compile_preferences_for_document(
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "preference_compile.save: doc=%s id=%s failed (%s)",
-                document_id, model_id, exc,
+                document_id,
+                model_id,
+                exc,
             )
 
     _logger.info(
         "preference_compile: doc=%s consolidated %d preferences from %d raw facts",
-        document_id, len(saved), len(pref_facts),
+        document_id,
+        len(saved),
+        len(pref_facts),
     )
     return saved

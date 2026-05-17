@@ -68,14 +68,8 @@ class TestResolveSkepticismForAbstention:
     def test_dispositions_take_precedence(self):
         # Per-call override beats the deployment fallback in either
         # direction.
-        assert (
-            _resolve_skepticism_for_abstention(Dispositions(skepticism=1), fallback_enabled=True)
-            == 1
-        )
-        assert (
-            _resolve_skepticism_for_abstention(Dispositions(skepticism=5), fallback_enabled=False)
-            == 5
-        )
+        assert _resolve_skepticism_for_abstention(Dispositions(skepticism=1), fallback_enabled=True) == 1
+        assert _resolve_skepticism_for_abstention(Dispositions(skepticism=5), fallback_enabled=False) == 5
 
     def test_fallback_when_no_dispositions(self):
         # Backward compat for callers that haven't migrated to passing
@@ -87,7 +81,4 @@ class TestResolveSkepticismForAbstention:
         # Dispositions(skepticism=3) is the dataclass default and
         # should preserve legacy behaviour even when the YAML bool
         # is False.
-        assert (
-            _resolve_skepticism_for_abstention(Dispositions(), fallback_enabled=False)
-            == 3
-        )
+        assert _resolve_skepticism_for_abstention(Dispositions(), fallback_enabled=False) == 3

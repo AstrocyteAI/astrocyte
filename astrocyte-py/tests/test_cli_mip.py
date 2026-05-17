@@ -111,9 +111,13 @@ class TestMipExplain:
     def test_explain_picks_pii_override_rule(self, mip_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         rc = main(
             [
-                "mip", "explain", str(mip_path),
-                "--content", "irrelevant body",
-                "--content-type", "text",
+                "mip",
+                "explain",
+                str(mip_path),
+                "--content",
+                "irrelevant body",
+                "--content-type",
+                "text",
                 "--pii-detected",
             ],
         )
@@ -123,14 +127,22 @@ class TestMipExplain:
         assert "private-encrypted" in out  # bank from override rule
         assert "redact_before_store" in out
 
-    def test_explain_picks_student_rule_and_renders_pipeline(self, mip_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_explain_picks_student_rule_and_renders_pipeline(
+        self, mip_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         rc = main(
             [
-                "mip", "explain", str(mip_path),
-                "--content", "an answer",
-                "--content-type", "student_answer",
-                "--metadata", "student_id=42",
-                "--metadata", "topic=algebra",
+                "mip",
+                "explain",
+                str(mip_path),
+                "--content",
+                "an answer",
+                "--content-type",
+                "student_answer",
+                "--metadata",
+                "student_id=42",
+                "--metadata",
+                "topic=algebra",
             ],
         )
         out = capsys.readouterr().out
@@ -144,12 +156,18 @@ class TestMipExplain:
         assert "dialogue" in out
         assert "version: 1" in out
 
-    def test_explain_with_no_match_returns_zero_and_says_so(self, mip_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_explain_with_no_match_returns_zero_and_says_so(
+        self, mip_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         rc = main(
             [
-                "mip", "explain", str(mip_path),
-                "--content", "random",
-                "--content-type", "weird_unknown_type",
+                "mip",
+                "explain",
+                str(mip_path),
+                "--content",
+                "random",
+                "--content-type",
+                "weird_unknown_type",
             ],
         )
         out = capsys.readouterr().out
@@ -160,10 +178,15 @@ class TestMipExplain:
         with pytest.raises(SystemExit):
             main(
                 [
-                    "mip", "explain", str(mip_path),
-                    "--content", "x",
-                    "--content-type", "text",
-                    "--metadata", "no_equals_sign",
+                    "mip",
+                    "explain",
+                    str(mip_path),
+                    "--content",
+                    "x",
+                    "--content-type",
+                    "text",
+                    "--metadata",
+                    "no_equals_sign",
                 ],
             )
 
@@ -206,7 +229,9 @@ _FORGET_VALID_MIP = textwrap.dedent("""\
 
 class TestCliForgetGuardrails:
     def test_lint_rejects_hard_mode_without_audit_required(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         path = tmp_path / "mip.yaml"
         path.write_text(_FORGET_INVALID_MIP)
@@ -217,7 +242,9 @@ class TestCliForgetGuardrails:
         assert "audit" in err.lower()
 
     def test_lint_accepts_gdpr_preset_forget_block(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         path = tmp_path / "mip.yaml"
         path.write_text(_FORGET_VALID_MIP)
@@ -227,16 +254,14 @@ class TestCliForgetGuardrails:
         assert "ok:" in out
 
     def test_sample_enterprise_identity_fixture_lints_clean(
-        self, capsys: pytest.CaptureFixture[str],
+        self,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """examples/mip-enterprise-identity.yaml is the canonical sample
         for identity-aware routing (m2u / m2m / m2m-proxied from the
         Astrocyte identity spec). Must lint clean so it can be copy-pasted
         into enterprise deployments without further edits."""
-        fixture = (
-            Path(__file__).resolve().parent.parent
-            / "examples" / "mip-enterprise-identity.yaml"
-        )
+        fixture = Path(__file__).resolve().parent.parent / "examples" / "mip-enterprise-identity.yaml"
         rc = main(["mip", "lint", str(fixture)])
         out = capsys.readouterr().out
         assert rc == 0, out
@@ -244,14 +269,13 @@ class TestCliForgetGuardrails:
         assert "5 rule(s)" in out
 
     def test_sample_code_preset_fixture_lints_clean(
-        self, capsys: pytest.CaptureFixture[str],
+        self,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """examples/mip-code.yaml is the canonical sample for the `code` preset
         and a forget-aware MIP config — it must always lint clean so it can be
         copy-pasted by users without further edits."""
-        fixture = (
-            Path(__file__).resolve().parent.parent / "examples" / "mip-code.yaml"
-        )
+        fixture = Path(__file__).resolve().parent.parent / "examples" / "mip-code.yaml"
         rc = main(["mip", "lint", str(fixture)])
         out = capsys.readouterr().out
         assert rc == 0, out
@@ -260,15 +284,23 @@ class TestCliForgetGuardrails:
         assert "2 bank(s)" in out
 
     def test_explain_renders_forget_block(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         path = tmp_path / "mip.yaml"
         path.write_text(_FORGET_VALID_MIP)
-        rc = main([
-            "mip", "explain", str(path),
-            "--content", "ssn 123",
-            "--content-type", "pii",
-        ])
+        rc = main(
+            [
+                "mip",
+                "explain",
+                str(path),
+                "--content",
+                "ssn 123",
+                "--content-type",
+                "pii",
+            ]
+        )
         out = capsys.readouterr().out
         assert rc == 0
         assert "forget:" in out

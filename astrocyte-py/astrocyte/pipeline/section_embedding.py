@@ -55,9 +55,7 @@ async def embed_sections(
     set; otherwise the provider's configured model wins.
     """
     targets: list[tuple[int, str]] = [
-        (s.line_num, (s.summary or "").strip())
-        for s in sections
-        if (s.summary or "").strip()
+        (s.line_num, (s.summary or "").strip()) for s in sections if (s.summary or "").strip()
     ]
     if not targets:
         return []
@@ -70,14 +68,17 @@ async def embed_sections(
     except Exception as exc:  # noqa: BLE001 — embedding failure shouldn't tank retain
         logger.warning(
             "section_embedding: embed failed for %d sections — %s: %s",
-            len(targets), type(exc).__name__, exc,
+            len(targets),
+            type(exc).__name__,
+            exc,
         )
         return []
 
     if len(vectors) != len(targets):
         logger.warning(
             "section_embedding: embed returned %d vectors for %d inputs",
-            len(vectors), len(targets),
+            len(vectors),
+            len(targets),
         )
         return []
 

@@ -217,9 +217,7 @@ class PostgresStore:
                 # before this column was added to the CREATE TABLE above.
                 # Mirrors the ALTER in migration 014; idempotent so it's
                 # safe on every _ensure_schema call.
-                await conn.execute(
-                    f"ALTER TABLE {vectors} ADD COLUMN IF NOT EXISTS chunk_id TEXT"
-                )
+                await conn.execute(f"ALTER TABLE {vectors} ADD COLUMN IF NOT EXISTS chunk_id TEXT")
                 await conn.execute(
                     f"CREATE INDEX IF NOT EXISTS {self._table}_chunk_idx "
                     f"ON {vectors} (chunk_id) WHERE chunk_id IS NOT NULL"
@@ -227,9 +225,7 @@ class PostgresStore:
                 # Mirrors 003_indexes.sql. Index names stay UNqualified —
                 # Postgres puts them in the same schema as the indexed table
                 # automatically and qualifying them here is a syntax error.
-                await conn.execute(
-                    f"CREATE INDEX IF NOT EXISTS {self._table}_bank_idx ON {vectors} (bank_id)"
-                )
+                await conn.execute(f"CREATE INDEX IF NOT EXISTS {self._table}_bank_idx ON {vectors} (bank_id)")
                 # Mirrors 006_lifecycle_indexes.sql.
                 await conn.execute(
                     f"""
@@ -379,9 +375,7 @@ class PostgresStore:
                 )
                 # Mirrors 011_text_fts.sql (BM25/full-text column +
                 # GIN index + trigger function + trigger + backfill).
-                await conn.execute(
-                    f"ALTER TABLE {vectors} ADD COLUMN IF NOT EXISTS text_fts tsvector"
-                )
+                await conn.execute(f"ALTER TABLE {vectors} ADD COLUMN IF NOT EXISTS text_fts tsvector")
                 await conn.execute(
                     f"""
                     CREATE INDEX IF NOT EXISTS {self._table}_fts_idx
@@ -401,9 +395,7 @@ class PostgresStore:
                 )
                 # DROP-then-CREATE so the function body change above takes
                 # effect on existing tables (CREATE TRIGGER has no OR REPLACE).
-                await conn.execute(
-                    f"DROP TRIGGER IF EXISTS {self._table}_fts_trigger ON {vectors}"
-                )
+                await conn.execute(f"DROP TRIGGER IF EXISTS {self._table}_fts_trigger ON {vectors}")
                 await conn.execute(
                     f"""
                     CREATE TRIGGER {self._table}_fts_trigger
@@ -843,7 +835,9 @@ class PostgresStore:
                 return cur.rowcount or 0
 
     async def get_by_chunk_ids(
-        self, chunk_ids: list[str], bank_id: str,
+        self,
+        chunk_ids: list[str],
+        bank_id: str,
     ) -> list[VectorHit]:
         """M10 chunk expansion: return all live vectors whose ``chunk_id``
         is in ``chunk_ids``. Used by the recall pipeline to fan out from a
@@ -872,18 +866,20 @@ class PostgresStore:
             md = row["metadata"]
             if isinstance(md, str):
                 md = json.loads(md)
-            hits.append(VectorHit(
-                id=row["id"],
-                text=row["text"],
-                score=1.0,
-                metadata=md,
-                tags=list(row["tags"]) if row["tags"] else None,
-                fact_type=row["fact_type"],
-                occurred_at=row["occurred_at"],
-                memory_layer=row.get("memory_layer"),
-                retained_at=row.get("retained_at"),
-                chunk_id=row.get("chunk_id"),
-            ))
+            hits.append(
+                VectorHit(
+                    id=row["id"],
+                    text=row["text"],
+                    score=1.0,
+                    metadata=md,
+                    tags=list(row["tags"]) if row["tags"] else None,
+                    fact_type=row["fact_type"],
+                    occurred_at=row["occurred_at"],
+                    memory_layer=row.get("memory_layer"),
+                    retained_at=row.get("retained_at"),
+                    chunk_id=row.get("chunk_id"),
+                )
+            )
         return hits
 
     async def close(self) -> None:
@@ -978,9 +974,7 @@ class PostgresStore:
         if filters and filters.tags:
             # The MV doesn't carry tags — join back to the source table for
             # the tag filter rather than denormalising into the view.
-            where.append(
-                f"id IN (SELECT id FROM {self._fq()} WHERE tags && %s::text[])"
-            )
+            where.append(f"id IN (SELECT id FROM {self._fq()} WHERE tags && %s::text[])")
             where_params.append(filters.tags)
 
         where_sql = " AND ".join(where)

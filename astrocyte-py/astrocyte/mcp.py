@@ -379,13 +379,15 @@ def create_mcp_server(
                 }
                 for h in result.hits
             ]
-            return json.dumps({
-                "hits": hits,
-                "total_available": result.total_available,
-                "truncated": result.truncated,
-                "as_of": result.as_of.isoformat(),
-                "bank_id": result.bank_id,
-            })
+            return json.dumps(
+                {
+                    "hits": hits,
+                    "total_available": result.total_available,
+                    "truncated": result.truncated,
+                    "as_of": result.as_of.isoformat(),
+                    "bank_id": result.bank_id,
+                }
+            )
         except Exception as exc:
             logger.exception("memory_history failed")
             return json.dumps({"hits": [], "error": type(exc).__name__})
@@ -419,17 +421,16 @@ def create_mcp_server(
                 max_memories=max(1, min(max_memories, 200)),
                 tags=tags,
             )
-            gaps = [
-                {"topic": g.topic, "severity": g.severity, "reason": g.reason}
-                for g in result.gaps
-            ]
-            return json.dumps({
-                "scope": result.scope,
-                "bank_id": result.bank_id,
-                "coverage_score": round(result.coverage_score, 3),
-                "memories_scanned": result.memories_scanned,
-                "gaps": gaps,
-            })
+            gaps = [{"topic": g.topic, "severity": g.severity, "reason": g.reason} for g in result.gaps]
+            return json.dumps(
+                {
+                    "scope": result.scope,
+                    "bank_id": result.bank_id,
+                    "coverage_score": round(result.coverage_score, 3),
+                    "memories_scanned": result.memories_scanned,
+                    "gaps": gaps,
+                }
+            )
         except Exception as exc:
             logger.exception("memory_audit failed")
             return json.dumps({"gaps": [], "coverage_score": 0.0, "error": type(exc).__name__})
@@ -493,17 +494,19 @@ def create_mcp_server(
         try:
             bid = _resolve_bank(bank_id)
             entities = await brain.graph_search(query, bid, limit=limit)
-            return json.dumps({
-                "entities": [
-                    {
-                        "id": e.id,
-                        "name": e.name,
-                        "entity_type": e.entity_type,
-                        "aliases": e.aliases or [],
-                    }
-                    for e in entities
-                ]
-            })
+            return json.dumps(
+                {
+                    "entities": [
+                        {
+                            "id": e.id,
+                            "name": e.name,
+                            "entity_type": e.entity_type,
+                            "aliases": e.aliases or [],
+                        }
+                        for e in entities
+                    ]
+                }
+            )
         except Exception as exc:
             logger.exception("memory_graph_search failed")
             return json.dumps({"entities": [], "error": type(exc).__name__})
@@ -532,18 +535,20 @@ def create_mcp_server(
         try:
             bid = _resolve_bank(bank_id)
             hits = await brain.graph_neighbors(entity_ids, bid, max_depth=max_depth, limit=limit)
-            return json.dumps({
-                "hits": [
-                    {
-                        "memory_id": h.memory_id,
-                        "text": h.text,
-                        "connected_entities": h.connected_entities,
-                        "depth": h.depth,
-                        "score": round(h.score, 4),
-                    }
-                    for h in hits
-                ]
-            })
+            return json.dumps(
+                {
+                    "hits": [
+                        {
+                            "memory_id": h.memory_id,
+                            "text": h.text,
+                            "connected_entities": h.connected_entities,
+                            "depth": h.depth,
+                            "score": round(h.score, 4),
+                        }
+                        for h in hits
+                    ]
+                }
+            )
         except Exception as exc:
             logger.exception("memory_graph_neighbors failed")
             return json.dumps({"hits": [], "error": type(exc).__name__})
@@ -564,12 +569,14 @@ def create_mcp_server(
             try:
                 bid = _resolve_bank(bank_id)
                 result = await brain.run_lifecycle(bid)
-                return json.dumps({
-                    "bank_id": bid,
-                    "archived_count": result.archived_count,
-                    "deleted_count": result.deleted_count,
-                    "skipped_count": result.skipped_count,
-                })
+                return json.dumps(
+                    {
+                        "bank_id": bid,
+                        "archived_count": result.archived_count,
+                        "deleted_count": result.deleted_count,
+                        "skipped_count": result.skipped_count,
+                    }
+                )
             except Exception as exc:
                 logger.exception("memory_lifecycle failed")
                 return json.dumps({"archived_count": 0, "deleted_count": 0, "error": type(exc).__name__})
@@ -587,32 +594,34 @@ def create_mcp_server(
             try:
                 if bank_id == "__all__":
                     results = await brain.all_bank_health()
-                    return json.dumps({
-                        "banks": [
-                            {
-                                "bank_id": r.bank_id,
-                                "score": round(r.score, 3),
-                                "status": r.status,
-                                "issues": [
-                                    {"severity": i.severity, "code": i.code, "message": i.message}
-                                    for i in r.issues
-                                ],
-                            }
-                            for r in results
-                        ]
-                    })
+                    return json.dumps(
+                        {
+                            "banks": [
+                                {
+                                    "bank_id": r.bank_id,
+                                    "score": round(r.score, 3),
+                                    "status": r.status,
+                                    "issues": [
+                                        {"severity": i.severity, "code": i.code, "message": i.message} for i in r.issues
+                                    ],
+                                }
+                                for r in results
+                            ]
+                        }
+                    )
                 bid = _resolve_bank(bank_id)
                 result = await brain.bank_health(bid)
-                return json.dumps({
-                    "bank_id": result.bank_id,
-                    "score": round(result.score, 3),
-                    "status": result.status,
-                    "issues": [
-                        {"severity": i.severity, "code": i.code, "message": i.message}
-                        for i in result.issues
-                    ],
-                    "metrics": result.metrics,
-                })
+                return json.dumps(
+                    {
+                        "bank_id": result.bank_id,
+                        "score": round(result.score, 3),
+                        "status": result.status,
+                        "issues": [
+                            {"severity": i.severity, "code": i.code, "message": i.message} for i in result.issues
+                        ],
+                        "metrics": result.metrics,
+                    }
+                )
             except Exception as exc:
                 logger.exception("memory_bank_health failed")
                 return json.dumps({"score": 0.0, "error": type(exc).__name__})
@@ -635,13 +644,15 @@ def create_mcp_server(
             try:
                 bid = _resolve_bank(bank_id)
                 hold = brain.set_legal_hold(bid, hold_id, reason, set_by=set_by)
-                return json.dumps({
-                    "hold_id": hold.hold_id,
-                    "bank_id": hold.bank_id,
-                    "reason": hold.reason,
-                    "set_by": hold.set_by,
-                    "set_at": hold.set_at.isoformat(),
-                })
+                return json.dumps(
+                    {
+                        "hold_id": hold.hold_id,
+                        "bank_id": hold.bank_id,
+                        "reason": hold.reason,
+                        "set_by": hold.set_by,
+                        "set_at": hold.set_at.isoformat(),
+                    }
+                )
             except Exception as exc:
                 logger.exception("memory_hold_set failed")
                 return json.dumps({"error": type(exc).__name__})

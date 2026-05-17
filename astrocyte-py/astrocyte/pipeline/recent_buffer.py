@@ -47,11 +47,7 @@ class _RecentEntry:
 
 def _tokenize(text: str) -> list[str]:
     """Lowercase, strip punctuation, remove stop words."""
-    return [
-        w
-        for raw in text.lower().split()
-        if len(w := raw.strip(punctuation)) > 1 and w not in _STOP_WORDS
-    ]
+    return [w for raw in text.lower().split() if len(w := raw.strip(punctuation)) > 1 and w not in _STOP_WORDS]
 
 
 def _fuzzy_token_score(query_tokens: list[str], memory_tokens: list[str]) -> float:

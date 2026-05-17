@@ -96,10 +96,7 @@ class TestExtractFactCausalRelations:
 
     @pytest.mark.asyncio
     async def test_self_loops_dropped(self):
-        llm = _ScriptedLLM(
-            '[{"source_fact_index": 1, "target_fact_index": 1,'
-            ' "evidence": "x", "confidence": 0.9}]'
-        )
+        llm = _ScriptedLLM('[{"source_fact_index": 1, "target_fact_index": 1, "evidence": "x", "confidence": 0.9}]')
 
         relations = await extract_fact_causal_relations(CHUNKS_BURNOUT, llm)
 
@@ -107,13 +104,12 @@ class TestExtractFactCausalRelations:
 
     @pytest.mark.asyncio
     async def test_low_confidence_dropped(self):
-        llm = _ScriptedLLM(
-            '[{"source_fact_index": 1, "target_fact_index": 0,'
-            ' "evidence": "weak", "confidence": 0.3}]'
-        )
+        llm = _ScriptedLLM('[{"source_fact_index": 1, "target_fact_index": 0, "evidence": "weak", "confidence": 0.3}]')
 
         relations = await extract_fact_causal_relations(
-            CHUNKS_BURNOUT, llm, min_confidence=0.6,
+            CHUNKS_BURNOUT,
+            llm,
+            min_confidence=0.6,
         )
 
         assert relations == []
@@ -128,7 +124,9 @@ class TestExtractFactCausalRelations:
         )
 
         relations = await extract_fact_causal_relations(
-            CHUNKS_BURNOUT, llm, max_pairs_per_fact=2,
+            CHUNKS_BURNOUT,
+            llm,
+            max_pairs_per_fact=2,
         )
 
         assert len(relations) == 2  # Third pair dropped (cap + dedup)
@@ -167,18 +165,24 @@ class TestBuildMemoryLinksFromRelations:
     def test_resolves_indices_to_memory_ids(self):
         relations = [
             FactCausalRelation(
-                source_fact_index=1, target_fact_index=0,
-                evidence="80-hour weeks", confidence=0.9,
+                source_fact_index=1,
+                target_fact_index=0,
+                evidence="80-hour weeks",
+                confidence=0.9,
             ),
             FactCausalRelation(
-                source_fact_index=2, target_fact_index=1,
-                evidence="burned out", confidence=0.85,
+                source_fact_index=2,
+                target_fact_index=1,
+                evidence="burned out",
+                confidence=0.85,
             ),
         ]
         memory_ids = ["mem-A", "mem-B", "mem-C"]
 
         links = build_memory_links_from_relations(
-            relations, memory_ids, bank_id="b1",
+            relations,
+            memory_ids,
+            bank_id="b1",
         )
 
         assert len(links) == 2
@@ -196,18 +200,24 @@ class TestBuildMemoryLinksFromRelations:
         LLM saw chunks, drop the now-invalid relations."""
         relations = [
             FactCausalRelation(
-                source_fact_index=99, target_fact_index=0,
-                evidence="x", confidence=0.9,
+                source_fact_index=99,
+                target_fact_index=0,
+                evidence="x",
+                confidence=0.9,
             ),
             FactCausalRelation(
-                source_fact_index=1, target_fact_index=0,
-                evidence="y", confidence=0.9,
+                source_fact_index=1,
+                target_fact_index=0,
+                evidence="y",
+                confidence=0.9,
             ),
         ]
         memory_ids = ["mem-A", "mem-B"]  # only 2 memories
 
         links = build_memory_links_from_relations(
-            relations, memory_ids, bank_id="b1",
+            relations,
+            memory_ids,
+            bank_id="b1",
         )
 
         assert len(links) == 1

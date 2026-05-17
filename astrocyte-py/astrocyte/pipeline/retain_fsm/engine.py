@@ -146,7 +146,8 @@ class RetainFSM:
                 ctx.errors.append(f"{current}: {entry.error}")
                 logger.warning(
                     "retain_fsm: state %r raised %s",
-                    current, entry.error,
+                    current,
+                    entry.error,
                 )
                 if checkpoint is not None:
                     await checkpoint.save(ctx)
@@ -160,7 +161,8 @@ class RetainFSM:
                 ctx.completed_at = datetime.now(tz=timezone.utc)
                 logger.info(
                     "retain_fsm: completed source=%s in %d states",
-                    ctx.source_id, len(ctx.step_log),
+                    ctx.source_id,
+                    len(ctx.step_log),
                 )
                 if checkpoint is not None:
                     await checkpoint.save(ctx)
@@ -170,7 +172,8 @@ class RetainFSM:
                 ctx.errors.append(f"{current}: {result.reason}")
                 logger.warning(
                     "retain_fsm: state %r reported Failed: %s",
-                    current, result.reason,
+                    current,
+                    result.reason,
                 )
                 if checkpoint is not None:
                     await checkpoint.save(ctx)
@@ -191,8 +194,7 @@ class RetainFSM:
             # Must be a state-name string at this point.
             if not isinstance(result, str):
                 ctx.errors.append(
-                    f"{current}: state returned unsupported type "
-                    f"{type(result).__name__}",
+                    f"{current}: state returned unsupported type {type(result).__name__}",
                 )
                 if checkpoint is not None:
                     await checkpoint.save(ctx)
@@ -218,6 +220,7 @@ class RetainFSM:
         future engine extension if needed). For M14.0 + M14.1 the
         parallel branches all do exactly one step then join.
         """
+
         async def _one(branch: str) -> tuple[str, str | None]:
             fn = self._registry.get(branch)
             if fn is None:
@@ -264,5 +267,7 @@ class RetainFSM:
         :meth:`Checkpoint.load`) before calling.
         """
         return await self.run(
-            ctx, initial_state=ctx.last_state, checkpoint=checkpoint,
+            ctx,
+            initial_state=ctx.last_state,
+            checkpoint=checkpoint,
         )

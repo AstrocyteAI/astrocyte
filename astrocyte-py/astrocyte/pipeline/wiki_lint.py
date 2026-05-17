@@ -40,6 +40,7 @@ logger = logging.getLogger("astrocyte.pipeline.wiki_lint")
 @dataclass
 class WikiLintIssue:
     """An issue detected by the lint pass for one wiki page."""
+
     page_id: str
     kind: str  # 'contradicted' | 'stale' | 'orphan'
     detail: str = ""
@@ -48,6 +49,7 @@ class WikiLintIssue:
 @dataclass
 class WikiLintReport:
     """Aggregate of lint issues for a set of pages."""
+
     bank_id: str
     issues: list[WikiLintIssue] = field(default_factory=list)
 
@@ -95,18 +97,23 @@ async def lint_one_wiki(
 
     facts_block = "\n".join(f"{i + 1}. {fact}" for i, fact in enumerate(facts))
     prompt = _CONTRADICTION_PROMPT.format(
-        title=title, content=content, facts_block=facts_block,
+        title=title,
+        content=content,
+        facts_block=facts_block,
     )
 
     try:
         completion = await llm_provider.complete(
-            prompt, model=model,
+            prompt,
+            model=model,
             response_format={"type": "json_object"},
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "wiki_lint llm call failed for page=%s: %s: %s",
-            page_id, type(exc).__name__, exc,
+            page_id,
+            type(exc).__name__,
+            exc,
         )
         return None
 
@@ -156,14 +163,21 @@ async def lint_wiki_pages(
         # caller can still treat orphans as clean for filtering; we
         # flag for visibility.
         if not facts:
-            report.issues.append(WikiLintIssue(
-                page_id=page_id, kind="orphan",
-                detail="no facts in scope",
-            ))
+            report.issues.append(
+                WikiLintIssue(
+                    page_id=page_id,
+                    kind="orphan",
+                    detail="no facts in scope",
+                )
+            )
             continue
         issue = await lint_one_wiki(
-            page_id=page_id, title=title, content=content,
-            facts=facts, llm_provider=llm_provider, model=model,
+            page_id=page_id,
+            title=title,
+            content=content,
+            facts=facts,
+            llm_provider=llm_provider,
+            model=model,
         )
         if issue is not None:
             report.issues.append(issue)

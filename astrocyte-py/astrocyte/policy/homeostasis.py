@@ -95,6 +95,7 @@ class RateLimiter:
 # Token counting — tiktoken if available, heuristic fallback
 # ---------------------------------------------------------------------------
 
+
 class _TiktokenCache:
     """Lazy singleton for optional tiktoken encoder."""
 
@@ -122,7 +123,9 @@ def _heuristic_token_count(text: str) -> int:
     word_count = len(text.split())
 
     # Detect CJK content
-    cjk_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or '\u3040' <= c <= '\u30ff' or '\uac00' <= c <= '\ud7af')
+    cjk_chars = sum(
+        1 for c in text if "\u4e00" <= c <= "\u9fff" or "\u3040" <= c <= "\u30ff" or "\uac00" <= c <= "\ud7af"
+    )
     cjk_ratio = cjk_chars / max(char_count, 1)
 
     if cjk_ratio > 0.3:

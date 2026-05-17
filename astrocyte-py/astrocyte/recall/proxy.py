@@ -42,12 +42,7 @@ def _expand_proxy_url(template: str, query: str) -> str:
 def _forbidden_proxy_target_ip_obj(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """True if this address must not be used for outbound proxy recall (SSRF mitigation)."""
     return bool(
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
+        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified
     )
 
 
@@ -103,8 +98,7 @@ def _sync_dns_validate_and_first_public_ip(
             continue
         if _forbidden_proxy_target_ip_obj(ip):
             raise ValueError(
-                "proxy recall DNS resolved to a forbidden address "
-                f"({addr_s!r} for host {host!r})",
+                f"proxy recall DNS resolved to a forbidden address ({addr_s!r} for host {host!r})",
             )
         picked.append(ip)
     if not picked:

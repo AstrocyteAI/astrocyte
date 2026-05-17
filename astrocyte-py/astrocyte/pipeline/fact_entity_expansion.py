@@ -109,7 +109,7 @@ async def expand_via_entity_graph(
     seed_entities: list[str] = []
     seen_entities: set[str] = set()
     for hit in initial_hits[:max_seed_hits]:
-        for entity in (hit.entities or []):
+        for entity in hit.entities or []:
             key = entity.lower()
             if key in seen_entities:
                 continue
@@ -134,14 +134,17 @@ async def expand_via_entity_graph(
             break
         try:
             neighbor_hits = await store.search_facts_by_entity(
-                bank_id, entity,
+                bank_id,
+                entity,
                 top_k=max_neighbor_facts_per_entity,
                 document_id=document_id,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "search_facts_by_entity(%r) failed: %s: %s",
-                entity, type(exc).__name__, exc,
+                entity,
+                type(exc).__name__,
+                exc,
             )
             continue
 

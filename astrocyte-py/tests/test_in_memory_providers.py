@@ -79,10 +79,12 @@ class TestInMemoryVectorStore:
     @pytest.mark.asyncio
     async def test_search_filters_by_bank(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1"),
-            VectorItem(id="v2", text="b", vector=[1.0], bank_id="b2"),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1"),
+                VectorItem(id="v2", text="b", vector=[1.0], bank_id="b2"),
+            ]
+        )
         results = await vs.search_similar([1.0], "b1")
         assert len(results) == 1
         assert results[0].id == "v1"
@@ -90,36 +92,33 @@ class TestInMemoryVectorStore:
     @pytest.mark.asyncio
     async def test_search_with_tag_filter(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1", tags=["important"]),
-            VectorItem(id="v2", text="b", vector=[1.0], bank_id="b1", tags=["trivial"]),
-        ])
-        results = await vs.search_similar(
-            [1.0], "b1", filters=VectorFilters(tags=["important"])
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1", tags=["important"]),
+                VectorItem(id="v2", text="b", vector=[1.0], bank_id="b1", tags=["trivial"]),
+            ]
         )
+        results = await vs.search_similar([1.0], "b1", filters=VectorFilters(tags=["important"]))
         assert len(results) == 1
         assert results[0].id == "v1"
 
     @pytest.mark.asyncio
     async def test_search_with_fact_type_filter(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1", fact_type="world"),
-            VectorItem(id="v2", text="b", vector=[1.0], bank_id="b1", fact_type="experience"),
-        ])
-        results = await vs.search_similar(
-            [1.0], "b1", filters=VectorFilters(fact_types=["experience"])
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1", fact_type="world"),
+                VectorItem(id="v2", text="b", vector=[1.0], bank_id="b1", fact_type="experience"),
+            ]
         )
+        results = await vs.search_similar([1.0], "b1", filters=VectorFilters(fact_types=["experience"]))
         assert len(results) == 1
         assert results[0].id == "v2"
 
     @pytest.mark.asyncio
     async def test_search_limit(self):
         vs = InMemoryVectorStore()
-        items = [
-            VectorItem(id=f"v{i}", text=f"item {i}", vector=[float(i)], bank_id="b1")
-            for i in range(5)
-        ]
+        items = [VectorItem(id=f"v{i}", text=f"item {i}", vector=[float(i)], bank_id="b1") for i in range(5)]
         await vs.store_vectors(items)
         results = await vs.search_similar([5.0], "b1", limit=2)
         assert len(results) == 2
@@ -128,13 +127,21 @@ class TestInMemoryVectorStore:
     async def test_search_preserves_metadata(self):
         vs = InMemoryVectorStore()
         now = datetime.now(timezone.utc)
-        await vs.store_vectors([
-            VectorItem(
-                id="v1", text="a", vector=[1.0], bank_id="b1",
-                metadata={"key": "val"}, tags=["t1"], fact_type="world",
-                occurred_at=now, memory_layer="semantic",
-            ),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="v1",
+                    text="a",
+                    vector=[1.0],
+                    bank_id="b1",
+                    metadata={"key": "val"},
+                    tags=["t1"],
+                    fact_type="world",
+                    occurred_at=now,
+                    memory_layer="semantic",
+                ),
+            ]
+        )
         results = await vs.search_similar([1.0], "b1")
         hit = results[0]
         assert hit.metadata == {"key": "val"}
@@ -146,10 +153,12 @@ class TestInMemoryVectorStore:
     @pytest.mark.asyncio
     async def test_delete(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1"),
-            VectorItem(id="v2", text="b", vector=[1.0], bank_id="b1"),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1"),
+                VectorItem(id="v2", text="b", vector=[1.0], bank_id="b1"),
+            ]
+        )
         count = await vs.delete(["v1"], "b1")
         assert count == 1
         results = await vs.search_similar([1.0], "b1")
@@ -159,9 +168,11 @@ class TestInMemoryVectorStore:
     @pytest.mark.asyncio
     async def test_delete_wrong_bank(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1"),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1"),
+            ]
+        )
         count = await vs.delete(["v1"], "b2")
         assert count == 0
 
@@ -174,21 +185,20 @@ class TestInMemoryVectorStore:
     @pytest.mark.asyncio
     async def test_list_vectors(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1"),
-            VectorItem(id="v2", text="b", vector=[1.0], bank_id="b1"),
-            VectorItem(id="v3", text="c", vector=[1.0], bank_id="b2"),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="a", vector=[1.0], bank_id="b1"),
+                VectorItem(id="v2", text="b", vector=[1.0], bank_id="b1"),
+                VectorItem(id="v3", text="c", vector=[1.0], bank_id="b2"),
+            ]
+        )
         items = await vs.list_vectors("b1")
         assert len(items) == 2
 
     @pytest.mark.asyncio
     async def test_list_vectors_pagination(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            VectorItem(id=f"v{i}", text=f"{i}", vector=[1.0], bank_id="b1")
-            for i in range(5)
-        ])
+        await vs.store_vectors([VectorItem(id=f"v{i}", text=f"{i}", vector=[1.0], bank_id="b1") for i in range(5)])
         page = await vs.list_vectors("b1", offset=2, limit=2)
         assert len(page) == 2
 
@@ -201,12 +211,16 @@ class TestInMemoryVectorStore:
     @pytest.mark.asyncio
     async def test_upsert_overwrites(self):
         vs = InMemoryVectorStore()
-        await vs.store_vectors([
-            VectorItem(id="v1", text="original", vector=[1.0], bank_id="b1"),
-        ])
-        await vs.store_vectors([
-            VectorItem(id="v1", text="updated", vector=[1.0], bank_id="b1"),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="original", vector=[1.0], bank_id="b1"),
+            ]
+        )
+        await vs.store_vectors(
+            [
+                VectorItem(id="v1", text="updated", vector=[1.0], bank_id="b1"),
+            ]
+        )
         items = await vs.list_vectors("b1")
         assert len(items) == 1
         assert items[0].text == "updated"
@@ -263,9 +277,7 @@ class TestInMemoryGraphStore:
     async def test_link_memories_and_query_neighbors(self):
         gs = InMemoryGraphStore()
         await gs.store_entities([Entity(id="e1", name="Alice", entity_type="PERSON")], "b1")
-        await gs.link_memories_to_entities(
-            [MemoryEntityAssociation(memory_id="m1", entity_id="e1")], "b1"
-        )
+        await gs.link_memories_to_entities([MemoryEntityAssociation(memory_id="m1", entity_id="e1")], "b1")
         hits = await gs.query_neighbors(["e1"], "b1")
         assert len(hits) == 1
         assert hits[0].memory_id == "m1"
@@ -273,19 +285,14 @@ class TestInMemoryGraphStore:
     @pytest.mark.asyncio
     async def test_query_neighbors_bank_isolation(self):
         gs = InMemoryGraphStore()
-        await gs.link_memories_to_entities(
-            [MemoryEntityAssociation(memory_id="m1", entity_id="e1")], "b1"
-        )
+        await gs.link_memories_to_entities([MemoryEntityAssociation(memory_id="m1", entity_id="e1")], "b1")
         hits = await gs.query_neighbors(["e1"], "b2")
         assert hits == []
 
     @pytest.mark.asyncio
     async def test_query_neighbors_limit(self):
         gs = InMemoryGraphStore()
-        assocs = [
-            MemoryEntityAssociation(memory_id=f"m{i}", entity_id="e1")
-            for i in range(10)
-        ]
+        assocs = [MemoryEntityAssociation(memory_id=f"m{i}", entity_id="e1") for i in range(10)]
         await gs.link_memories_to_entities(assocs, "b1")
         hits = await gs.query_neighbors(["e1"], "b1", limit=3)
         assert len(hits) == 3
@@ -443,10 +450,13 @@ class TestInMemoryEngineProvider:
         old = now - timedelta(days=30)
         await ep.retain(RetainRequest(content="recent", bank_id="b1", occurred_at=now))
         await ep.retain(RetainRequest(content="old", bank_id="b1", occurred_at=old))
-        recall = await ep.recall(RecallRequest(
-            query="*", bank_id="b1",
-            time_range=(now - timedelta(hours=1), now + timedelta(hours=1)),
-        ))
+        recall = await ep.recall(
+            RecallRequest(
+                query="*",
+                bank_id="b1",
+                time_range=(now - timedelta(hours=1), now + timedelta(hours=1)),
+            )
+        )
         assert len(recall.hits) == 1
         assert recall.hits[0].text == "recent"
 
@@ -549,11 +559,16 @@ class TestInMemoryEngineProvider:
     async def test_retain_preserves_metadata(self):
         ep = InMemoryEngineProvider()
         now = datetime.now(timezone.utc)
-        await ep.retain(RetainRequest(
-            content="test", bank_id="b1",
-            metadata={"k": "v"}, tags=["t1"],
-            occurred_at=now, source="test-source",
-        ))
+        await ep.retain(
+            RetainRequest(
+                content="test",
+                bank_id="b1",
+                metadata={"k": "v"},
+                tags=["t1"],
+                occurred_at=now,
+                source="test-source",
+            )
+        )
         recall = await ep.recall(RecallRequest(query="test", bank_id="b1"))
         hit = recall.hits[0]
         # InMemoryEngineProvider auto-stamps `_created_at` so MIP forget
@@ -629,16 +644,20 @@ class TestMockLLMProvider:
     @pytest.mark.asyncio
     async def test_complete_entity_extraction(self):
         llm = MockLLMProvider()
-        result = await llm.complete([
-            Message(role="system", content="Extract named entities from text"),
-            Message(role="user", content="Alice works at Acme Corp"),
-        ])
+        result = await llm.complete(
+            [
+                Message(role="system", content="Extract named entities from text"),
+                Message(role="user", content="Alice works at Acme Corp"),
+            ]
+        )
         assert "Test Entity" in result.text
 
     @pytest.mark.asyncio
     async def test_complete_synthesis(self):
         llm = MockLLMProvider()
-        prompt = "<memories>\n[Memory 1]: User likes dark mode\n</memories>\n\n<query>\nWhat does the user prefer?\n</query>"
+        prompt = (
+            "<memories>\n[Memory 1]: User likes dark mode\n</memories>\n\n<query>\nWhat does the user prefer?\n</query>"
+        )
         result = await llm.complete([Message(role="user", content=prompt)])
         assert "dark mode" in result.text.lower()
 
@@ -654,10 +673,12 @@ class TestMockLLMProvider:
     @pytest.mark.asyncio
     async def test_complete_records_last_user_message(self):
         llm = MockLLMProvider()
-        await llm.complete([
-            Message(role="system", content="system"),
-            Message(role="user", content="the query"),
-        ])
+        await llm.complete(
+            [
+                Message(role="system", content="system"),
+                Message(role="user", content="the query"),
+            ]
+        )
         assert llm.last_user_message == "the query"
 
     @pytest.mark.asyncio

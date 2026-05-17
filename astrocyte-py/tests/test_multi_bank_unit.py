@@ -138,10 +138,12 @@ class TestTagHitsWithBank:
 class TestParallelStrategy:
     @pytest.mark.asyncio
     async def test_merges_results_from_multiple_banks(self) -> None:
-        orch = _make_orchestrator({
-            "b1": _result(_hit("from b1", 0.9)),
-            "b2": _result(_hit("from b2", 0.8)),
-        })
+        orch = _make_orchestrator(
+            {
+                "b1": _result(_hit("from b1", 0.9)),
+                "b2": _result(_hit("from b2", 0.8)),
+            }
+        )
         result = await orch.recall(
             query="q",
             bank_ids=["b1", "b2"],
@@ -156,10 +158,12 @@ class TestParallelStrategy:
 
     @pytest.mark.asyncio
     async def test_sorted_by_score(self) -> None:
-        orch = _make_orchestrator({
-            "b1": _result(_hit("low", 0.3)),
-            "b2": _result(_hit("high", 0.9)),
-        })
+        orch = _make_orchestrator(
+            {
+                "b1": _result(_hit("low", 0.3)),
+                "b2": _result(_hit("high", 0.9)),
+            }
+        )
         result = await orch.recall(
             query="q",
             bank_ids=["b1", "b2"],
@@ -173,10 +177,12 @@ class TestParallelStrategy:
 
     @pytest.mark.asyncio
     async def test_dedup_across_banks(self) -> None:
-        orch = _make_orchestrator({
-            "b1": _result(_hit("same text", 0.9)),
-            "b2": _result(_hit("same text", 0.7)),
-        })
+        orch = _make_orchestrator(
+            {
+                "b1": _result(_hit("same text", 0.9)),
+                "b2": _result(_hit("same text", 0.7)),
+            }
+        )
         result = await orch.recall(
             query="q",
             bank_ids=["b1", "b2"],
@@ -191,10 +197,12 @@ class TestParallelStrategy:
 
     @pytest.mark.asyncio
     async def test_no_dedup_keeps_duplicates(self) -> None:
-        orch = _make_orchestrator({
-            "b1": _result(_hit("same text", 0.9)),
-            "b2": _result(_hit("same text", 0.7)),
-        })
+        orch = _make_orchestrator(
+            {
+                "b1": _result(_hit("same text", 0.9)),
+                "b2": _result(_hit("same text", 0.7)),
+            }
+        )
         result = await orch.recall(
             query="q",
             bank_ids=["b1", "b2"],
@@ -208,10 +216,12 @@ class TestParallelStrategy:
 
     @pytest.mark.asyncio
     async def test_bank_weights(self) -> None:
-        orch = _make_orchestrator({
-            "b1": _result(_hit("boosted", 0.5)),
-            "b2": _result(_hit("normal", 0.8)),
-        })
+        orch = _make_orchestrator(
+            {
+                "b1": _result(_hit("boosted", 0.5)),
+                "b2": _result(_hit("normal", 0.8)),
+            }
+        )
         result = await orch.recall(
             query="q",
             bank_ids=["b1", "b2"],
@@ -226,10 +236,12 @@ class TestParallelStrategy:
 
     @pytest.mark.asyncio
     async def test_max_results_limits_output(self) -> None:
-        orch = _make_orchestrator({
-            "b1": _result(_hit("a", 0.9), _hit("b", 0.8)),
-            "b2": _result(_hit("c", 0.7), _hit("d", 0.6)),
-        })
+        orch = _make_orchestrator(
+            {
+                "b1": _result(_hit("a", 0.9), _hit("b", 0.8)),
+                "b2": _result(_hit("c", 0.7), _hit("d", 0.6)),
+            }
+        )
         result = await orch.recall(
             query="q",
             bank_ids=["b1", "b2"],
@@ -244,6 +256,7 @@ class TestParallelStrategy:
     @pytest.mark.asyncio
     async def test_partial_failure_returns_successful_results(self) -> None:
         """If one bank fails, results from other banks are still returned."""
+
         async def failing_recall(request: RecallRequest) -> RecallResult:
             if request.bank_id == "bad":
                 raise RuntimeError("Bank unavailable")
@@ -415,10 +428,12 @@ class TestFirstMatchStrategy:
 
     @pytest.mark.asyncio
     async def test_returns_empty_if_no_bank_has_hits(self) -> None:
-        orch = _make_orchestrator({
-            "b1": _result(),
-            "b2": _result(),
-        })
+        orch = _make_orchestrator(
+            {
+                "b1": _result(),
+                "b2": _result(),
+            }
+        )
         result = await orch.recall(
             query="q",
             bank_ids=["b1", "b2"],

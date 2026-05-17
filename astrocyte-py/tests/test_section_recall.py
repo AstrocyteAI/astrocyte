@@ -59,7 +59,9 @@ class TestRRFFuseSectionHits:
         fused = _rrf_fuse_section_hits([sr], k=60)
 
         assert [(h.document_id, h.line_num) for h in fused] == [
-            ("d1", 1), ("d1", 2), ("d1", 3),
+            ("d1", 1),
+            ("d1", 2),
+            ("d1", 3),
         ]
         # rrf_score = 1/(k+rank), monotonically decreasing.
         assert fused[0].rrf_score > fused[1].rrf_score > fused[2].rrf_score
@@ -129,7 +131,10 @@ class TestSelectStrategiesForMode:
     @pytest.mark.parametrize("mode", ["temporal", "temporal-reasoning"])
     def test_temporal_modes_add_temporal_strategy(self, mode):
         assert select_strategies_for_mode(mode) == {
-            "semantic", "keyword", "entity", "temporal",
+            "semantic",
+            "keyword",
+            "entity",
+            "temporal",
         }
 
     @pytest.mark.parametrize(
@@ -138,7 +143,10 @@ class TestSelectStrategiesForMode:
     )
     def test_multi_hop_modes_add_graph_expand(self, mode):
         assert select_strategies_for_mode(mode) == {
-            "semantic", "keyword", "entity", "graph_expand",
+            "semantic",
+            "keyword",
+            "entity",
+            "graph_expand",
         }
 
     @pytest.mark.parametrize(
@@ -149,7 +157,9 @@ class TestSelectStrategiesForMode:
         """The speaker filter is applied inline by the orchestrator on
         the keyword strategy — the strategy SET is the baseline."""
         assert select_strategies_for_mode(mode) == {
-            "semantic", "keyword", "entity",
+            "semantic",
+            "keyword",
+            "entity",
         }
 
 
@@ -189,19 +199,26 @@ async def populated_store():
     await store.save_sections(doc_id, sections)
 
     # Entity rows so the entity strategy has something to return.
-    await store.save_section_entities([
-        PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Alice"),
-        PageIndexSectionEntity(document_id=doc_id, line_num=2, entity_name="Alice"),
-    ])
+    await store.save_section_entities(
+        [
+            PageIndexSectionEntity(document_id=doc_id, line_num=1, entity_name="Alice"),
+            PageIndexSectionEntity(document_id=doc_id, line_num=2, entity_name="Alice"),
+        ]
+    )
 
     # Section link 1 → 3 (graph-expand path).
-    await store.save_section_links([
-        PageIndexSectionLink(
-            from_doc=doc_id, from_line=1,
-            to_doc=doc_id, to_line=3,
-            link_type="semantic_knn", weight=0.9,
-        ),
-    ])
+    await store.save_section_links(
+        [
+            PageIndexSectionLink(
+                from_doc=doc_id,
+                from_line=1,
+                to_doc=doc_id,
+                to_line=3,
+                link_type="semantic_knn",
+                weight=0.9,
+            ),
+        ]
+    )
     return store, doc_id
 
 
@@ -277,8 +294,7 @@ class TestSectionRecallDispatch:
         kw = next(s for s in result.strategies if s.strategy == "keyword")
         kw_lines = {ln for _doc, ln, _ in kw.hits}
         assert kw_lines.issubset({2}), (
-            f"assistant-mode keyword should only return assistant-spoken "
-            f"sections; got lines {kw_lines}"
+            f"assistant-mode keyword should only return assistant-spoken sections; got lines {kw_lines}"
         )
 
 
@@ -329,17 +345,23 @@ class TestSectionRecallFailureIsolation:
 
         class FailingSemanticStore:
             """Wraps the populated store; raises only on semantic search."""
+
             def __init__(self, inner):
                 self._inner = inner
+
             async def search_sections_semantic(self, *a, **kw):
                 raise RuntimeError("synthetic semantic failure")
+
             # delegate the rest
             async def search_sections_keyword(self, *a, **kw):
                 return await self._inner.search_sections_keyword(*a, **kw)
+
             async def search_sections_by_entities(self, *a, **kw):
                 return await self._inner.search_sections_by_entities(*a, **kw)
+
             async def search_sections_temporal(self, *a, **kw):
                 return await self._inner.search_sections_temporal(*a, **kw)
+
             async def expand_section_links(self, *a, **kw):
                 return await self._inner.expand_section_links(*a, **kw)
 
@@ -370,14 +392,19 @@ class TestSectionRecallFailureIsolation:
         class FailingEntityStore:
             def __init__(self, inner):
                 self._inner = inner
+
             async def search_sections_semantic(self, *a, **kw):
                 return await self._inner.search_sections_semantic(*a, **kw)
+
             async def search_sections_keyword(self, *a, **kw):
                 return await self._inner.search_sections_keyword(*a, **kw)
+
             async def search_sections_by_entities(self, *a, **kw):
                 raise RuntimeError("synthetic entity failure")
+
             async def search_sections_temporal(self, *a, **kw):
                 return await self._inner.search_sections_temporal(*a, **kw)
+
             async def expand_section_links(self, *a, **kw):
                 return await self._inner.expand_section_links(*a, **kw)
 
@@ -402,14 +429,19 @@ class TestSectionRecallFailureIsolation:
         class FailingTemporalStore:
             def __init__(self, inner):
                 self._inner = inner
+
             async def search_sections_semantic(self, *a, **kw):
                 return await self._inner.search_sections_semantic(*a, **kw)
+
             async def search_sections_keyword(self, *a, **kw):
                 return await self._inner.search_sections_keyword(*a, **kw)
+
             async def search_sections_by_entities(self, *a, **kw):
                 return await self._inner.search_sections_by_entities(*a, **kw)
+
             async def search_sections_temporal(self, *a, **kw):
                 raise RuntimeError("synthetic temporal failure")
+
             async def expand_section_links(self, *a, **kw):
                 return await self._inner.expand_section_links(*a, **kw)
 
@@ -438,14 +470,19 @@ class TestSectionRecallFailureIsolation:
         class FailingExpandStore:
             def __init__(self, inner):
                 self._inner = inner
+
             async def search_sections_semantic(self, *a, **kw):
                 return await self._inner.search_sections_semantic(*a, **kw)
+
             async def search_sections_keyword(self, *a, **kw):
                 return await self._inner.search_sections_keyword(*a, **kw)
+
             async def search_sections_by_entities(self, *a, **kw):
                 return await self._inner.search_sections_by_entities(*a, **kw)
+
             async def search_sections_temporal(self, *a, **kw):
                 return await self._inner.search_sections_temporal(*a, **kw)
+
             async def expand_section_links(self, *a, **kw):
                 raise RuntimeError("synthetic graph-expand failure")
 

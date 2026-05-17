@@ -41,11 +41,7 @@ def _migration_embedding_dimensions() -> int:
     ``embedding vector(N)`` column at migration time. The actual values
     in the test vectors are zeros — only the WIDTH matters.
     """
-    raw = (
-        os.environ.get("ASTROCYTE_EMBEDDING_DIMENSIONS")
-        or os.environ.get("EMBEDDING_DIMENSIONS")
-        or "128"
-    )
+    raw = os.environ.get("ASTROCYTE_EMBEDDING_DIMENSIONS") or os.environ.get("EMBEDDING_DIMENSIONS") or "128"
     return int(raw)
 
 
@@ -98,7 +94,8 @@ async def seeded_store(dsn: str):
     conn = await psycopg.AsyncConnection.connect(dsn)
     async with conn:
         await conn.execute(
-            "DELETE FROM public.astrocyte_vectors WHERE bank_id = %s", [bank],
+            "DELETE FROM public.astrocyte_vectors WHERE bank_id = %s",
+            [bank],
         )
         await conn.commit()
 
@@ -122,9 +119,14 @@ class TestBm25IdfQuery:
     @pytest.mark.asyncio
     async def test_unknown_terms_return_no_hits(self, seeded_store):
         store, bank = seeded_store
-        assert await store.search_fulltext_bm25(
-            "termthatdoesntexist", bank, limit=10,
-        ) == []
+        assert (
+            await store.search_fulltext_bm25(
+                "termthatdoesntexist",
+                bank,
+                limit=10,
+            )
+            == []
+        )
 
     @pytest.mark.asyncio
     async def test_bm25_score_is_higher_for_rare_term_query(self, seeded_store):
@@ -165,9 +167,7 @@ class TestBm25IdfQuery:
         store, bank = seeded_store
         hits = await store.search_fulltext_bm25("Calvin", bank, limit=10)
         scores = [h.score for h in hits]
-        assert scores == sorted(scores, reverse=True), (
-            f"hits must be ordered by score DESC; got {scores}"
-        )
+        assert scores == sorted(scores, reverse=True), f"hits must be ordered by score DESC; got {scores}"
 
     @pytest.mark.asyncio
     async def test_limit_caps_returned_count(self, seeded_store):
@@ -190,27 +190,36 @@ class TestRefreshBm25Views:
 
         try:
             # Seed + refresh — baseline visible.
-            await store.store_vectors([
-                VectorItem(
-                    id=f"{bank}::initial", bank_id=bank, vector=zero,
-                    text="Klingon Bird-of-Prey", metadata={},
-                ),
-            ])
+            await store.store_vectors(
+                [
+                    VectorItem(
+                        id=f"{bank}::initial",
+                        bank_id=bank,
+                        vector=zero,
+                        text="Klingon Bird-of-Prey",
+                        metadata={},
+                    ),
+                ]
+            )
             await store.refresh_bm25_views(concurrent=False)
             initial = await store.search_fulltext_bm25("Klingon", bank, limit=10)
             assert len(initial) == 1
 
             # Add a new memory but DON'T refresh — should NOT show up yet.
-            await store.store_vectors([
-                VectorItem(
-                    id=f"{bank}::new", bank_id=bank, vector=zero,
-                    text="Romulan Warbird is also Klingon-adjacent", metadata={},
-                ),
-            ])
+            await store.store_vectors(
+                [
+                    VectorItem(
+                        id=f"{bank}::new",
+                        bank_id=bank,
+                        vector=zero,
+                        text="Romulan Warbird is also Klingon-adjacent",
+                        metadata={},
+                    ),
+                ]
+            )
             stale = await store.search_fulltext_bm25("Klingon", bank, limit=10)
             assert len(stale) == 1, (
-                "BM25 view is materialized — new memory must NOT appear "
-                "until refresh_bm25_views is called"
+                "BM25 view is materialized — new memory must NOT appear until refresh_bm25_views is called"
             )
 
             # Refresh — now the new memory IS visible.
@@ -221,6 +230,7 @@ class TestRefreshBm25Views:
             conn = await psycopg.AsyncConnection.connect(dsn)
             async with conn:
                 await conn.execute(
-                    "DELETE FROM public.astrocyte_vectors WHERE bank_id = %s", [bank],
+                    "DELETE FROM public.astrocyte_vectors WHERE bank_id = %s",
+                    [bank],
                 )
                 await conn.commit()

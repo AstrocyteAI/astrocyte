@@ -61,20 +61,19 @@ class _ScriptedToolLLM:
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = None,
     ) -> Completion:
-        self.calls.append({
-            "messages": list(messages),
-            "tool_names": [t.name for t in (tools or [])],
-            "tool_choice": tool_choice,
-        })
+        self.calls.append(
+            {
+                "messages": list(messages),
+                "tool_names": [t.name for t in (tools or [])],
+                "tool_choice": tool_choice,
+            }
+        )
         idx = min(len(self.calls) - 1, len(self._responses) - 1)
         item = self._responses[idx]
         if isinstance(item, Completion):
             return item
         # ``item`` is list of (name, args) tuples → build tool_calls.
-        tcs = [
-            ToolCall(id=f"call-{i}", name=name, arguments=args)
-            for i, (name, args) in enumerate(item)
-        ]
+        tcs = [ToolCall(id=f"call-{i}", name=name, arguments=args) for i, (name, args) in enumerate(item)]
         return Completion(
             text="",
             model="mock",
@@ -129,9 +128,11 @@ class TestNormalizeToolName:
 class TestAgenticLoop:
     @pytest.mark.asyncio
     async def test_done_first_turn_exits_with_citations(self):
-        llm = _ScriptedToolLLM([
-            [("done", {"answer": "Caroline went hiking.", "cited_ids": ["m1"]})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("done", {"answer": "Caroline went hiking.", "cited_ids": ["m1"]})],
+            ]
+        )
         recall = _RecallTracker([])
 
         result = await agentic_reflect(
@@ -149,13 +150,13 @@ class TestAgenticLoop:
     @pytest.mark.asyncio
     async def test_recall_then_done_accumulates_evidence(self):
         """Turn 1: recall(refined). Turn 2: done with new ID."""
-        llm = _ScriptedToolLLM([
-            [("recall", {"reason": "need date", "query": "support group date", "max_results": 5})],
-            [("done", {"answer": "On 7 May 2023.", "cited_ids": ["m2"]})],
-        ])
-        recall = _RecallTracker([
-            [_hit("m2", "I went to the LGBTQ support group on 7 May 2023.")]
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("recall", {"reason": "need date", "query": "support group date", "max_results": 5})],
+                [("done", {"answer": "On 7 May 2023.", "cited_ids": ["m2"]})],
+            ]
+        )
+        recall = _RecallTracker([[_hit("m2", "I went to the LGBTQ support group on 7 May 2023.")]])
 
         result = await agentic_reflect(
             "When did Caroline go?",
@@ -173,15 +174,21 @@ class TestAgenticLoop:
     async def test_recall_default_max_results_when_omitted(self):
         """If the model doesn't supply ``max_results``, the loop falls
         back to ``params.recall_step_max_results``."""
-        llm = _ScriptedToolLLM([
-            [("recall", {"reason": "broaden", "query": "Caroline"})],
-            [("done", {"answer": "x", "cited_ids": []})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("recall", {"reason": "broaden", "query": "Caroline"})],
+                [("done", {"answer": "x", "cited_ids": []})],
+            ]
+        )
         recall = _RecallTracker([[]])
         params = AgenticReflectParams(recall_step_max_results=7)
 
         await agentic_reflect(
-            "q", initial_hits=[], recall_fn=recall, llm_provider=llm, params=params,
+            "q",
+            initial_hits=[],
+            recall_fn=recall,
+            llm_provider=llm,
+            params=params,
         )
 
         assert recall.calls[0][1] == 7
@@ -190,15 +197,18 @@ class TestAgenticLoop:
     async def test_observations_tool_offered_when_callback_provided(self):
         """``search_observations`` is in the tool list iff
         ``observations_fn`` is non-None."""
-        llm = _ScriptedToolLLM([
-            [("done", {"answer": "x", "cited_ids": []})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("done", {"answer": "x", "cited_ids": []})],
+            ]
+        )
 
         async def obs_fn(q: str, n: int) -> list[MemoryHit]:
             return []
 
         await agentic_reflect(
-            "q", initial_hits=[],
+            "q",
+            initial_hits=[],
             recall_fn=_RecallTracker([]),
             observations_fn=obs_fn,
             llm_provider=llm,
@@ -211,12 +221,15 @@ class TestAgenticLoop:
 
     @pytest.mark.asyncio
     async def test_observations_tool_not_offered_when_callback_absent(self):
-        llm = _ScriptedToolLLM([
-            [("done", {"answer": "x", "cited_ids": []})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("done", {"answer": "x", "cited_ids": []})],
+            ]
+        )
 
         await agentic_reflect(
-            "q", initial_hits=[],
+            "q",
+            initial_hits=[],
             recall_fn=_RecallTracker([]),
             llm_provider=llm,
         )
@@ -230,15 +243,18 @@ class TestAgenticLoop:
         ``mental_models_fn`` is non-None.  Tool order matters: it's the
         FIRST tool in the priority hierarchy (mental_models → observations
         → recall → expand → done)."""
-        llm = _ScriptedToolLLM([
-            [("done", {"answer": "x", "cited_ids": []})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("done", {"answer": "x", "cited_ids": []})],
+            ]
+        )
 
         async def mm_fn(q: str, scope: str | None) -> list[MemoryHit]:
             return []
 
         await agentic_reflect(
-            "q", initial_hits=[],
+            "q",
+            initial_hits=[],
             recall_fn=_RecallTracker([]),
             mental_models_fn=mm_fn,
             llm_provider=llm,
@@ -253,12 +269,15 @@ class TestAgenticLoop:
 
     @pytest.mark.asyncio
     async def test_mental_models_tool_not_offered_when_callback_absent(self):
-        llm = _ScriptedToolLLM([
-            [("done", {"answer": "x", "cited_ids": []})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("done", {"answer": "x", "cited_ids": []})],
+            ]
+        )
 
         await agentic_reflect(
-            "q", initial_hits=[],
+            "q",
+            initial_hits=[],
             recall_fn=_RecallTracker([]),
             llm_provider=llm,
         )
@@ -271,13 +290,17 @@ class TestAgenticLoop:
         """The model picks search_mental_models → the loop forwards
         (query, scope) to mental_models_fn; results join the evidence pool
         and become citable."""
-        llm = _ScriptedToolLLM([
-            [(
-                "search_mental_models",
-                {"reason": "stable preference", "query": "alice prefs", "scope": "person:alice"},
-            )],
-            [("done", {"answer": "Alice prefers async.", "cited_ids": ["mm-1"]})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [
+                    (
+                        "search_mental_models",
+                        {"reason": "stable preference", "query": "alice prefs", "scope": "person:alice"},
+                    )
+                ],
+                [("done", {"answer": "Alice prefers async.", "cited_ids": ["mm-1"]})],
+            ]
+        )
 
         mm_calls: list[tuple[str, str | None]] = []
 
@@ -301,10 +324,12 @@ class TestAgenticLoop:
     async def test_expand_tool_routes_to_expand_fn(self):
         """The model picks expand → loop calls ``expand_fn`` with the
         memory_id; new evidence joins the pool."""
-        llm = _ScriptedToolLLM([
-            [("expand", {"reason": "need source", "memory_id": "obs-1", "max_sources": 3})],
-            [("done", {"answer": "from source", "cited_ids": ["raw-a"]})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("expand", {"reason": "need source", "memory_id": "obs-1", "max_sources": 3})],
+                [("done", {"answer": "from source", "cited_ids": ["raw-a"]})],
+            ]
+        )
 
         expand_calls: list[tuple[str, int]] = []
 
@@ -326,9 +351,11 @@ class TestAgenticLoop:
     @pytest.mark.asyncio
     async def test_normalized_tool_name_dispatches_correctly(self):
         """``functions.done`` (with prefix) routes to the done handler."""
-        llm = _ScriptedToolLLM([
-            [("functions.done", {"answer": "ok", "cited_ids": ["m1"]})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("functions.done", {"answer": "ok", "cited_ids": ["m1"]})],
+            ]
+        )
         result = await agentic_reflect(
             "q",
             initial_hits=[_hit("m1", "evidence")],
@@ -341,9 +368,11 @@ class TestAgenticLoop:
 
     @pytest.mark.asyncio
     async def test_unknown_cited_id_dropped_from_sources(self):
-        llm = _ScriptedToolLLM([
-            [("done", {"answer": "...", "cited_ids": ["m1", "imaginary"]})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("done", {"answer": "...", "cited_ids": ["m1", "imaginary"]})],
+            ]
+        )
         result = await agentic_reflect(
             "q",
             initial_hits=[_hit("m1", "real")],
@@ -361,9 +390,7 @@ class TestAgenticLoop:
         of legacy providers without tool-calling support — triggers the
         forced-synthesis fallback path."""
         # Plain Completion with no tool_calls field set.
-        llm = _ScriptedToolLLM([
-            Completion(text="prose response", model="mock", usage=None, tool_calls=None)
-        ])
+        llm = _ScriptedToolLLM([Completion(text="prose response", model="mock", usage=None, tool_calls=None)])
 
         synth_called = {}
 
@@ -386,16 +413,20 @@ class TestAgenticLoop:
     async def test_max_iterations_falls_back_to_forced_synthesis(self):
         """Loop hits the cap without ``done`` — forced synth runs over
         the accumulated evidence."""
-        llm = _ScriptedToolLLM([
-            [("recall", {"reason": "1", "query": "a", "max_results": 5})],
-            [("recall", {"reason": "2", "query": "b", "max_results": 5})],
-            [("recall", {"reason": "3", "query": "c", "max_results": 5})],
-        ])
-        recall = _RecallTracker([
-            [_hit("m2", "two")],
-            [_hit("m3", "three")],
-            [_hit("m4", "four")],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("recall", {"reason": "1", "query": "a", "max_results": 5})],
+                [("recall", {"reason": "2", "query": "b", "max_results": 5})],
+                [("recall", {"reason": "3", "query": "c", "max_results": 5})],
+            ]
+        )
+        recall = _RecallTracker(
+            [
+                [_hit("m2", "two")],
+                [_hit("m3", "three")],
+                [_hit("m4", "four")],
+            ]
+        )
 
         synth_called = {}
 
@@ -420,9 +451,11 @@ class TestAgenticLoop:
         """When ``adversarial_defense=True``, the system prompt seen by the
         provider includes the explicit premise-check / negative-existence /
         time-shift / "insufficient evidence is always valid" rules."""
-        llm = _ScriptedToolLLM([
-            [("done", {"answer": "x", "cited_ids": []})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("done", {"answer": "x", "cited_ids": []})],
+            ]
+        )
 
         await agentic_reflect(
             "q",
@@ -432,9 +465,7 @@ class TestAgenticLoop:
             params=AgenticReflectParams(adversarial_defense=True),
         )
 
-        sys_msg = next(
-            m for m in llm.calls[0]["messages"] if m.role == "system"
-        )
+        sys_msg = next(m for m in llm.calls[0]["messages"] if m.role == "system")
         assert "ADVERSARIAL DEFENSE" in sys_msg.content
         assert "presupposes" in sys_msg.content.lower()
         assert "insufficient evidence" in sys_msg.content.lower()
@@ -443,9 +474,11 @@ class TestAgenticLoop:
     async def test_adversarial_defense_off_keeps_base_prompt(self):
         """Default (``adversarial_defense=False``) does NOT inject the
         defense rules — keeps the prompt lean for non-adversarial workloads."""
-        llm = _ScriptedToolLLM([
-            [("done", {"answer": "x", "cited_ids": []})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("done", {"answer": "x", "cited_ids": []})],
+            ]
+        )
 
         await agentic_reflect(
             "q",
@@ -454,9 +487,7 @@ class TestAgenticLoop:
             llm_provider=llm,
         )
 
-        sys_msg = next(
-            m for m in llm.calls[0]["messages"] if m.role == "system"
-        )
+        sys_msg = next(m for m in llm.calls[0]["messages"] if m.role == "system")
         assert "ADVERSARIAL DEFENSE" not in sys_msg.content
 
     @pytest.mark.asyncio
@@ -469,9 +500,11 @@ class TestAgenticLoop:
         on questions where the answer WAS in recall hits (e.g. "James's
         favorite game" with recall containing "James: my favorite game
         is Apex Legends" yet the model returned 'insufficient evidence')."""
-        llm = _ScriptedToolLLM([
-            [("done", {"answer": "x", "cited_ids": []})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("done", {"answer": "x", "cited_ids": []})],
+            ]
+        )
 
         await agentic_reflect(
             "q",
@@ -481,14 +514,10 @@ class TestAgenticLoop:
             # No adversarial_defense — verifying base prompt content
         )
 
-        sys_msg = next(
-            m for m in llm.calls[0]["messages"] if m.role == "system"
-        )
+        sys_msg = next(m for m in llm.calls[0]["messages"] if m.role == "system")
         c = sys_msg.content
         # Required content for the extraction-discipline guard
-        assert "EXTRACTION DISCIPLINE" in c, (
-            "Base prompt must contain the EXTRACTION DISCIPLINE section."
-        )
+        assert "EXTRACTION DISCIPLINE" in c, "Base prompt must contain the EXTRACTION DISCIPLINE section."
         assert "MUST extract" in c
         # Must enumerate INVALID reasons to abstain (the bug we saw)
         assert "wording in evidence differs" in c.lower()
@@ -500,10 +529,12 @@ class TestAgenticLoop:
     async def test_unknown_tool_returns_error_to_model(self):
         """An unknown tool name is fed back as a structured error, then
         the model gets another turn to recover (call done in this case)."""
-        llm = _ScriptedToolLLM([
-            [("delete_database", {"sneaky": "yes"})],
-            [("done", {"answer": "recovered", "cited_ids": []})],
-        ])
+        llm = _ScriptedToolLLM(
+            [
+                [("delete_database", {"sneaky": "yes"})],
+                [("done", {"answer": "recovered", "cited_ids": []})],
+            ]
+        )
 
         result = await agentic_reflect(
             "q",
@@ -559,9 +590,7 @@ class TestResolvedTemporalSurfacing:
         assert "resolved_temporal" in entry
         rt = entry["resolved_temporal"]
         assert rt["anchor_date"] == "2023-05-08"
-        assert rt["items"] == [
-            {"phrase": "yesterday", "resolved_date": "2023-05-07", "granularity": "day"}
-        ]
+        assert rt["items"] == [{"phrase": "yesterday", "resolved_date": "2023-05-07", "granularity": "day"}]
 
     def test_resolved_temporal_omitted_when_absent(self):
         from astrocyte.pipeline.agentic_reflect import _format_hits_for_tool_response
@@ -576,11 +605,15 @@ class TestResolvedTemporalSurfacing:
         from astrocyte.pipeline.agentic_reflect import _format_hits_for_tool_response
 
         hit_phrase_only = MemoryHit(
-            text="x", score=0.5, memory_id="m1",
+            text="x",
+            score=0.5,
+            memory_id="m1",
             metadata={"temporal_phrase": "yesterday"},
         )
         hit_date_only = MemoryHit(
-            text="x", score=0.5, memory_id="m2",
+            text="x",
+            score=0.5,
+            memory_id="m2",
             metadata={"resolved_date": "2023-05-07"},
         )
         for hit in (hit_phrase_only, hit_date_only):
@@ -593,7 +626,9 @@ class TestResolvedTemporalSurfacing:
         from astrocyte.pipeline.agentic_reflect import _format_hits_for_tool_response
 
         hit = MemoryHit(
-            text="...", score=0.5, memory_id="m1",
+            text="...",
+            score=0.5,
+            memory_id="m1",
             metadata={
                 "temporal_anchor": "2023-05-08",
                 "temporal_phrase": "yesterday|last week",

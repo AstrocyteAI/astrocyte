@@ -132,8 +132,7 @@ class JwtIdentityMiddleware:
         except Exception as exc:  # pragma: no cover — decoder-specific
             logger.warning("JWT decode failed: %s", exc)
             raise AuthorizationError(
-                f"Bearer token decode/validation failed: {exc}. "
-                "Request rejected to prevent cross-user data leakage."
+                f"Bearer token decode/validation failed: {exc}. Request rejected to prevent cross-user data leakage."
             ) from exc
 
         identity = classify_jwt_claims(claims)
@@ -187,9 +186,7 @@ def make_pyjwt_decoder(config: JwtMiddlewareConfig) -> Decoder:
         ) from exc
 
     if not config.jwks_uri:
-        raise ValueError(
-            "identity.jwt_middleware.jwks_uri must be set when enabled."
-        )
+        raise ValueError("identity.jwt_middleware.jwks_uri must be set when enabled.")
     if not config.token_audience:
         raise ValueError(
             "identity.jwt_middleware.token_audience must be set when "

@@ -69,6 +69,7 @@ class ControlledLLMProvider:
     async def complete(self, messages, model=None, max_tokens=1024, temperature=0.0):
         self.calls.append(messages)
         from astrocyte.types import Completion, TokenUsage
+
         return Completion(
             text=self._response,
             model="controlled",
@@ -164,10 +165,12 @@ class TestParseResponse:
         return _parse_response(raw, "scope", "bank1", memories_scanned, trace=None)
 
     def test_valid_full_response(self):
-        raw = json.dumps({
-            "coverage_score": 0.7,
-            "gaps": [{"topic": "Start date", "severity": "medium", "reason": "Not mentioned."}],
-        })
+        raw = json.dumps(
+            {
+                "coverage_score": 0.7,
+                "gaps": [{"topic": "Start date", "severity": "medium", "reason": "Not mentioned."}],
+            }
+        )
         result = self._call(raw)
         assert result.coverage_score == pytest.approx(0.7)
         assert len(result.gaps) == 1
@@ -202,10 +205,12 @@ class TestParseResponse:
         assert result.coverage_score == pytest.approx(0.6)
 
     def test_unknown_severity_defaults_to_low(self):
-        raw = json.dumps({
-            "coverage_score": 0.5,
-            "gaps": [{"topic": "X", "severity": "critical", "reason": "r"}],
-        })
+        raw = json.dumps(
+            {
+                "coverage_score": 0.5,
+                "gaps": [{"topic": "X", "severity": "critical", "reason": "r"}],
+            }
+        )
         result = self._call(raw)
         assert result.gaps[0].severity == "low"
 

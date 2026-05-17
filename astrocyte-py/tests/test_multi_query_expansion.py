@@ -52,9 +52,7 @@ class _TrackingLLM(MockLLMProvider):
                 model=model or "mock",
                 usage=TokenUsage(input_tokens=10, output_tokens=20),
             )
-        return await super().complete(
-            messages, model=model, max_tokens=max_tokens, temperature=temperature
-        )
+        return await super().complete(messages, model=model, max_tokens=max_tokens, temperature=temperature)
 
 
 def _make_orch(
@@ -90,9 +88,11 @@ class TestMultiQueryConfidenceGate:
         # Querying with the same text produces cosine_sim = 1.0 → well above 0.72.
         text = "Alice is a software engineer at Acme"
         stored_vec = llm._bow_embed(text)
-        await vs.store_vectors([
-            VectorItem(id="m1", bank_id="test-bank", vector=stored_vec, text=text),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="m1", bank_id="test-bank", vector=stored_vec, text=text),
+            ]
+        )
 
         orch = _make_orch(vs, llm, threshold=0.72)
         await orch.recall(RecallRequest(query=text, bank_id="test-bank"))
@@ -107,14 +107,16 @@ class TestMultiQueryConfidenceGate:
 
         # Store content whose tokens share nothing with the query below.
         stored_vec = llm._bow_embed("oceanography marine biology coral reef tidal")
-        await vs.store_vectors([
-            VectorItem(
-                id="m1",
-                bank_id="test-bank",
-                vector=stored_vec,
-                text="Oceanography notes about coral reefs.",
-            ),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="m1",
+                    bank_id="test-bank",
+                    vector=stored_vec,
+                    text="Oceanography notes about coral reefs.",
+                ),
+            ]
+        )
 
         orch = _make_orch(vs, llm, threshold=0.72)
         # This query shares almost no tokens with the stored content → score ≈ 0.
@@ -146,9 +148,11 @@ class TestMultiQueryConfidenceGate:
         llm = _TrackingLLM()
 
         stored_vec = llm._bow_embed("Alice is an engineer")
-        await vs.store_vectors([
-            VectorItem(id="m1", bank_id="b", vector=stored_vec, text="Alice is an engineer"),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="m1", bank_id="b", vector=stored_vec, text="Alice is an engineer"),
+            ]
+        )
 
         orch = _make_orch(vs, llm, threshold=0.0)
         # Query overlaps with stored content → any positive score ≥ 0.0 = threshold
@@ -164,9 +168,11 @@ class TestMultiQueryConfidenceGate:
 
         # Stored text and query text differ → cosine sim < 1.0 → gate opens.
         stored_vec = llm._bow_embed("Alice designs distributed systems for Acme Corporation")
-        await vs.store_vectors([
-            VectorItem(id="m1", bank_id="b", vector=stored_vec, text="Alice designs systems"),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="m1", bank_id="b", vector=stored_vec, text="Alice designs systems"),
+            ]
+        )
 
         orch = _make_orch(vs, llm, threshold=1.0)
         await orch.recall(RecallRequest(query="Alice software engineering career", bank_id="b"))
@@ -181,9 +187,11 @@ class TestMultiQueryConfidenceGate:
         llm = _TrackingLLM(sub_query_lines="")
 
         stored_vec = llm._bow_embed("oceanography tidal coral marine")
-        await vs.store_vectors([
-            VectorItem(id="m1", bank_id="b", vector=stored_vec, text="Coral reef notes."),
-        ])
+        await vs.store_vectors(
+            [
+                VectorItem(id="m1", bank_id="b", vector=stored_vec, text="Coral reef notes."),
+            ]
+        )
 
         orch = _make_orch(vs, llm, threshold=0.72)
         result = await orch.recall(RecallRequest(query="Alice career engineering", bank_id="b"))

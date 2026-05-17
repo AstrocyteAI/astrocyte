@@ -225,12 +225,16 @@ async def find_event_date(
         # banks (50+ LME conversations) can't starve our top-K with
         # hits from sibling documents.
         hits = await store.search_sections_keyword(
-            bank_id, event_text, top_k=10, document_id=document_id,
+            bank_id,
+            event_text,
+            top_k=10,
+            document_id=document_id,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "find_event_date: keyword search failed for %r: %s",
-            event_text, exc,
+            event_text,
+            exc,
         )
         return None
 
@@ -245,16 +249,50 @@ async def find_event_date(
     if not hits:
         # Tokens worth probing: length ≥ 4, drop common stopwords.
         STOP = {
-            "between", "passed", "since", "ago", "did", "have", "the", "and",
-            "to", "from", "with", "for", "that", "this", "what", "when",
-            "where", "which", "who", "how", "many", "much", "day", "days",
-            "week", "weeks", "month", "months", "year", "years", "first",
-            "last", "happen", "happened", "event", "events", "meet", "attend",
-            "received", "receive", "visit", "visited",
+            "between",
+            "passed",
+            "since",
+            "ago",
+            "did",
+            "have",
+            "the",
+            "and",
+            "to",
+            "from",
+            "with",
+            "for",
+            "that",
+            "this",
+            "what",
+            "when",
+            "where",
+            "which",
+            "who",
+            "how",
+            "many",
+            "much",
+            "day",
+            "days",
+            "week",
+            "weeks",
+            "month",
+            "months",
+            "year",
+            "years",
+            "first",
+            "last",
+            "happen",
+            "happened",
+            "event",
+            "events",
+            "meet",
+            "attend",
+            "received",
+            "receive",
+            "visit",
+            "visited",
         }
-        toks = [
-            t.strip(".,?!'\"()") for t in event_text.split()
-        ]
+        toks = [t.strip(".,?!'\"()") for t in event_text.split()]
         toks = [t for t in toks if len(t) >= 4 and t.lower() not in STOP]
         # Probe in order of length desc — longer tokens are more
         # discriminative ("Nordstrom" before "sale").
@@ -262,12 +300,16 @@ async def find_event_date(
         for tok in toks[:5]:
             try:
                 ents = await store.list_distinct_entities(
-                    bank_id, document_id, pattern=tok, limit=10,
+                    bank_id,
+                    document_id,
+                    pattern=tok,
+                    limit=10,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "find_event_date: entity fallback failed for %r: %s",
-                    tok, exc,
+                    tok,
+                    exc,
                 )
                 continue
             if not ents:
@@ -277,16 +319,17 @@ async def find_event_date(
             # search for sections containing the entity name.
             try:
                 section_hits = await store.search_sections_by_entities(
-                    bank_id, [ents[0][0]], top_k=5,
+                    bank_id,
+                    [ents[0][0]],
+                    top_k=5,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "find_event_date: search_sections_by_entities failed: %s", exc,
+                    "find_event_date: search_sections_by_entities failed: %s",
+                    exc,
                 )
                 continue
-            hits = [
-                (d, ln, sc) for d, ln, sc in section_hits if d == document_id
-            ]
+            hits = [(d, ln, sc) for d, ln, sc in section_hits if d == document_id]
             if hits:
                 break
     if not hits:
@@ -303,7 +346,8 @@ async def find_event_date(
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "find_event_date: load_skeleton failed for doc=%s: %s",
-                document_id, exc,
+                document_id,
+                exc,
             )
             sections_by_key[sentinel] = None  # type: ignore[assignment]
             store_sections = []
@@ -368,10 +412,18 @@ async def compute_temporal_arithmetic_answer(
         if len(events) != 2:
             return None
         date_a = await find_event_date(
-            store, bank_id, document_id, events[0], sections_by_key,
+            store,
+            bank_id,
+            document_id,
+            events[0],
+            sections_by_key,
         )
         date_b = await find_event_date(
-            store, bank_id, document_id, events[1], sections_by_key,
+            store,
+            bank_id,
+            document_id,
+            events[1],
+            sections_by_key,
         )
         if date_a is None or date_b is None:
             return None
@@ -383,7 +435,11 @@ async def compute_temporal_arithmetic_answer(
         dates = []
         for ev in events:
             d = await find_event_date(
-                store, bank_id, document_id, ev, sections_by_key,
+                store,
+                bank_id,
+                document_id,
+                ev,
+                sections_by_key,
             )
             if d is None:
                 return None
@@ -399,10 +455,18 @@ async def compute_temporal_arithmetic_answer(
         if len(events) != 2:
             return None
         date_a = await find_event_date(
-            store, bank_id, document_id, events[0], sections_by_key,
+            store,
+            bank_id,
+            document_id,
+            events[0],
+            sections_by_key,
         )
         date_b = await find_event_date(
-            store, bank_id, document_id, events[1], sections_by_key,
+            store,
+            bank_id,
+            document_id,
+            events[1],
+            sections_by_key,
         )
         if date_a is None or date_b is None:
             return None
@@ -413,7 +477,11 @@ async def compute_temporal_arithmetic_answer(
         if len(events) != 1 or reference_date_dt is None:
             return None
         date_event = await find_event_date(
-            store, bank_id, document_id, events[0], sections_by_key,
+            store,
+            bank_id,
+            document_id,
+            events[0],
+            sections_by_key,
         )
         if date_event is None:
             return None
@@ -424,7 +492,11 @@ async def compute_temporal_arithmetic_answer(
         if len(events) != 1 or reference_date_dt is None:
             return None
         date_event = await find_event_date(
-            store, bank_id, document_id, events[0], sections_by_key,
+            store,
+            bank_id,
+            document_id,
+            events[0],
+            sections_by_key,
         )
         if date_event is None:
             return None

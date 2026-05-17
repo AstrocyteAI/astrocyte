@@ -19,6 +19,7 @@ Verifies ``update_affected_wikis_for_document`` against the in-memory
 These tests give pre-Postgres confidence in incremental-update semantics
 and reporting before the Postgres bench wiring lands.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -77,24 +78,32 @@ async def _seed_one_wiki_with_entities(
         revised_at=datetime.now(tz=timezone.utc),
     )
     await store.save_wiki_page(
-        page=page, embedding=None,
+        page=page,
+        embedding=None,
         provenance=[(doc_id, line_num)],
     )
-    await store.save_section_entities([
-        PageIndexSectionEntity(
-            document_id=doc_id, line_num=line_num, entity_name=e,
-        )
-        for e in entities
-    ])
+    await store.save_section_entities(
+        [
+            PageIndexSectionEntity(
+                document_id=doc_id,
+                line_num=line_num,
+                entity_name=e,
+            )
+            for e in entities
+        ]
+    )
     return page
 
 
 def _provider(text: str) -> MagicMock:
     """Build a MagicMock LLMProvider whose ``complete`` returns ``text``."""
     p = MagicMock()
-    p.complete = AsyncMock(return_value=Completion(
-        text=text, model="gpt-4o-mini",
-    ))
+    p.complete = AsyncMock(
+        return_value=Completion(
+            text=text,
+            model="gpt-4o-mini",
+        )
+    )
     return p
 
 
@@ -107,8 +116,10 @@ class TestSkeletonGuards:
         report = await update_affected_wikis_for_document(
             page_index_store=InMemoryPageIndexStore(),
             provider=provider,
-            bank_id="b1", document_id="doc-new",
-            new_entities=[], new_content_excerpts={},
+            bank_id="b1",
+            document_id="doc-new",
+            new_entities=[],
+            new_content_excerpts={},
         )
         assert isinstance(report, IncrementalUpdateReport)
         assert report.affected_count == 0
@@ -121,14 +132,21 @@ class TestSkeletonGuards:
         """No wikis whose provenance contains shared entities → no LLM call."""
         store = InMemoryPageIndexStore()
         await _seed_one_wiki_with_entities(
-            store=store, bank_id="b1", page_id="entity:charlie",
-            title="Charlie", content="Charlie likes jazz.",
-            doc_id="doc-old", line_num=5, entities=["Charlie"],
+            store=store,
+            bank_id="b1",
+            page_id="entity:charlie",
+            title="Charlie",
+            content="Charlie likes jazz.",
+            doc_id="doc-old",
+            line_num=5,
+            entities=["Charlie"],
         )
         provider = _provider("")
         report = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={"Alice": "Alice moved to Berlin."},
         )
@@ -140,9 +158,14 @@ class TestSingleWikiUpdate:
     async def test_update_verdict_bumps_revision(self) -> None:
         store = InMemoryPageIndexStore()
         await _seed_one_wiki_with_entities(
-            store=store, bank_id="b1", page_id="entity:alice",
-            title="Alice", content="Alice lives in Paris.",
-            doc_id="doc-old", line_num=3, entities=["Alice"],
+            store=store,
+            bank_id="b1",
+            page_id="entity:alice",
+            title="Alice",
+            content="Alice lives in Paris.",
+            doc_id="doc-old",
+            line_num=3,
+            entities=["Alice"],
         )
         # Baseline persisted state before the update — pins the
         # pre-condition we're comparing against (revision 1, Paris).
@@ -153,12 +176,13 @@ class TestSingleWikiUpdate:
         assert wikis_before[0].content == "Alice lives in Paris."
 
         provider = _provider(
-            '{"verdict": "UPDATE",'
-            ' "revised_content": "Alice lives in Berlin (previously Paris)."}',
+            '{"verdict": "UPDATE", "revised_content": "Alice lives in Berlin (previously Paris)."}',
         )
         report = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={"Alice": "Alice told me she moved to Berlin."},
         )
@@ -179,14 +203,21 @@ class TestSingleWikiUpdate:
     async def test_no_change_verdict_skips_save(self) -> None:
         store = InMemoryPageIndexStore()
         await _seed_one_wiki_with_entities(
-            store=store, bank_id="b1", page_id="entity:alice",
-            title="Alice", content="Alice lives in Paris.",
-            doc_id="doc-old", line_num=3, entities=["Alice"],
+            store=store,
+            bank_id="b1",
+            page_id="entity:alice",
+            title="Alice",
+            content="Alice lives in Paris.",
+            doc_id="doc-old",
+            line_num=3,
+            entities=["Alice"],
         )
         provider = _provider('{"verdict": "NO_CHANGE"}')
         report = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={"Alice": "Alice mentioned the weather."},
         )
@@ -204,14 +235,21 @@ class TestCappingAndOrdering:
         # 7 wikis, all overlapping the query entity "Alice".
         for i in range(7):
             await _seed_one_wiki_with_entities(
-                store=store, bank_id="b1", page_id=f"entity:alice-{i}",
-                title=f"Alice ({i})", content=f"Alice context {i}.",
-                doc_id=f"doc-old-{i}", line_num=1, entities=["Alice"],
+                store=store,
+                bank_id="b1",
+                page_id=f"entity:alice-{i}",
+                title=f"Alice ({i})",
+                content=f"Alice context {i}.",
+                doc_id=f"doc-old-{i}",
+                line_num=1,
+                entities=["Alice"],
             )
         provider = _provider('{"verdict": "NO_CHANGE"}')
         report = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={"Alice": "Alice context."},
             max_updates=3,
@@ -225,14 +263,21 @@ class TestErrorPaths:
     async def test_malformed_json_marks_failed(self) -> None:
         store = InMemoryPageIndexStore()
         await _seed_one_wiki_with_entities(
-            store=store, bank_id="b1", page_id="entity:alice",
-            title="Alice", content="Alice lives in Paris.",
-            doc_id="doc-old", line_num=3, entities=["Alice"],
+            store=store,
+            bank_id="b1",
+            page_id="entity:alice",
+            title="Alice",
+            content="Alice lives in Paris.",
+            doc_id="doc-old",
+            line_num=3,
+            entities=["Alice"],
         )
         provider = _provider("not valid json {")
         report = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={"Alice": "Some new info."},
         )
@@ -250,15 +295,22 @@ class TestErrorPaths:
     async def test_llm_call_failure_marks_failed(self) -> None:
         store = InMemoryPageIndexStore()
         await _seed_one_wiki_with_entities(
-            store=store, bank_id="b1", page_id="entity:alice",
-            title="Alice", content="Alice lives in Paris.",
-            doc_id="doc-old", line_num=3, entities=["Alice"],
+            store=store,
+            bank_id="b1",
+            page_id="entity:alice",
+            title="Alice",
+            content="Alice lives in Paris.",
+            doc_id="doc-old",
+            line_num=3,
+            entities=["Alice"],
         )
         provider = MagicMock()
         provider.complete = AsyncMock(side_effect=RuntimeError("api down"))
         report = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={"Alice": "Some new info."},
         )
@@ -271,14 +323,21 @@ class TestErrorPaths:
         → skip the LLM call and emit NO_CHANGE."""
         store = InMemoryPageIndexStore()
         await _seed_one_wiki_with_entities(
-            store=store, bank_id="b1", page_id="entity:alice",
-            title="Alice", content="Alice lives in Paris.",
-            doc_id="doc-old", line_num=3, entities=["Alice"],
+            store=store,
+            bank_id="b1",
+            page_id="entity:alice",
+            title="Alice",
+            content="Alice lives in Paris.",
+            doc_id="doc-old",
+            line_num=3,
+            entities=["Alice"],
         )
         provider = _provider("")
         report = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={},
         )
@@ -291,17 +350,23 @@ class TestIdempotency:
     async def test_second_run_with_updated_state_is_no_change(self) -> None:
         store = InMemoryPageIndexStore()
         await _seed_one_wiki_with_entities(
-            store=store, bank_id="b1", page_id="entity:alice",
-            title="Alice", content="Alice lives in Paris.",
-            doc_id="doc-old", line_num=3, entities=["Alice"],
+            store=store,
+            bank_id="b1",
+            page_id="entity:alice",
+            title="Alice",
+            content="Alice lives in Paris.",
+            doc_id="doc-old",
+            line_num=3,
+            entities=["Alice"],
         )
         provider1 = _provider(
-            '{"verdict": "UPDATE",'
-            ' "revised_content": "Alice lives in Berlin (previously Paris)."}',
+            '{"verdict": "UPDATE", "revised_content": "Alice lives in Berlin (previously Paris)."}',
         )
         first = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider1,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider1,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={"Alice": "Alice moved to Berlin."},
         )
@@ -310,8 +375,10 @@ class TestIdempotency:
         # already reflects the new state.
         provider2 = _provider('{"verdict": "NO_CHANGE"}')
         second = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider2,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider2,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={"Alice": "Alice moved to Berlin."},
         )
@@ -323,15 +390,22 @@ class TestMinOverlap:
     async def test_min_overlap_filter_rejects_single_entity(self) -> None:
         store = InMemoryPageIndexStore()
         await _seed_one_wiki_with_entities(
-            store=store, bank_id="b1", page_id="entity:alice-bob",
-            title="Alice & Bob", content="A & B share a band.",
-            doc_id="doc-old", line_num=3, entities=["Alice", "Bob"],
+            store=store,
+            bank_id="b1",
+            page_id="entity:alice-bob",
+            title="Alice & Bob",
+            content="A & B share a band.",
+            doc_id="doc-old",
+            line_num=3,
+            entities=["Alice", "Bob"],
         )
         provider = _provider('{"verdict": "NO_CHANGE"}')
         # Single overlap, below threshold 2.
         report = await update_affected_wikis_for_document(
-            page_index_store=store, provider=provider,
-            bank_id="b1", document_id="doc-new",
+            page_index_store=store,
+            provider=provider,
+            bank_id="b1",
+            document_id="doc-new",
             new_entities=["Alice"],
             new_content_excerpts={"Alice": "Alice news."},
             min_overlap=2,

@@ -9,6 +9,7 @@ Two surfaces:
    wikis, resolves provenance to sections, sorts chronologically,
    calls _revise_observation, and persists revisions.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -65,7 +66,8 @@ class TestReviseObservation:
     async def test_empty_sections_returns_none(self) -> None:
         provider = MagicMock()
         out = await _revise_observation(
-            provider=provider, model="gpt-4o-mini",
+            provider=provider,
+            model="gpt-4o-mini",
             page=_wiki_page(title="T", content="c", source_lines=[]),
             sections=[],
         )
@@ -74,7 +76,8 @@ class TestReviseObservation:
     async def test_empty_content_returns_none(self) -> None:
         provider = MagicMock()
         out = await _revise_observation(
-            provider=provider, model="gpt-4o-mini",
+            provider=provider,
+            model="gpt-4o-mini",
             page=_wiki_page(title="T", content="   ", source_lines=[1]),
             sections=[_section(1, "s", date_str="2023-01-01")],
         )
@@ -83,7 +86,8 @@ class TestReviseObservation:
     async def test_ok_verdict_returns_none(self) -> None:
         provider = _mock_complete('{"verdict": "OK"}')
         out = await _revise_observation(
-            provider=provider, model="gpt-4o-mini",
+            provider=provider,
+            model="gpt-4o-mini",
             page=_wiki_page(title="Doctors", content="User saw 1 doctor.", source_lines=[1]),
             sections=[_section(1, "saw Dr. Patel", date_str="2023-01-01")],
         )
@@ -95,7 +99,8 @@ class TestReviseObservation:
             '"revised_content": "User saw 2 doctors: Dr. Patel (Jan), Dr. Lee (Mar)."}'
         )
         out = await _revise_observation(
-            provider=provider, model="gpt-4o-mini",
+            provider=provider,
+            model="gpt-4o-mini",
             page=_wiki_page(title="Doctor", content="User saw 1 doctor.", source_lines=[1, 2]),
             sections=[
                 _section(1, "saw Dr. Patel", date_str="2023-01-01"),
@@ -111,18 +116,18 @@ class TestReviseObservation:
         # Defensive: judge returned REVISE but didn't supply title/content
         provider = _mock_complete('{"verdict": "REVISE"}')
         out = await _revise_observation(
-            provider=provider, model="gpt-4o-mini",
+            provider=provider,
+            model="gpt-4o-mini",
             page=_wiki_page(title="T", content="c", source_lines=[1]),
             sections=[_section(1, "s", date_str="2023-01-01")],
         )
         assert out is None
 
     async def test_revise_identical_to_existing_returns_none(self) -> None:
-        provider = _mock_complete(
-            '{"verdict": "REVISE", "revised_title": "T", "revised_content": "c"}'
-        )
+        provider = _mock_complete('{"verdict": "REVISE", "revised_title": "T", "revised_content": "c"}')
         out = await _revise_observation(
-            provider=provider, model="gpt-4o-mini",
+            provider=provider,
+            model="gpt-4o-mini",
             page=_wiki_page(title="T", content="c", source_lines=[1]),
             sections=[_section(1, "s", date_str="2023-01-01")],
         )
@@ -132,7 +137,8 @@ class TestReviseObservation:
     async def test_malformed_json_returns_none(self) -> None:
         provider = _mock_complete("not valid")
         out = await _revise_observation(
-            provider=provider, model="gpt-4o-mini",
+            provider=provider,
+            model="gpt-4o-mini",
             page=_wiki_page(title="T", content="c", source_lines=[1]),
             sections=[_section(1, "s", date_str="2023-01-01")],
         )
@@ -142,7 +148,8 @@ class TestReviseObservation:
         provider = MagicMock()
         provider.complete = AsyncMock(side_effect=RuntimeError("api down"))
         out = await _revise_observation(
-            provider=provider, model="gpt-4o-mini",
+            provider=provider,
+            model="gpt-4o-mini",
             page=_wiki_page(title="T", content="c", source_lines=[1]),
             sections=[_section(1, "s", date_str="2023-01-01")],
         )
@@ -154,7 +161,8 @@ class TestReviseObservation:
         # here can be caught.
         provider = _mock_complete('{"verdict": "OK"}')
         await _revise_observation(
-            provider=provider, model="gpt-4o-mini",
+            provider=provider,
+            model="gpt-4o-mini",
             page=_wiki_page(title="T", content="content", source_lines=[1, 2]),
             sections=[
                 _section(2, "second-text", date_str="2023-03-01"),
@@ -171,11 +179,16 @@ class TestReviseWikisForDocument:
     async def test_no_existing_wikis_returns_zero(self) -> None:
         store = InMemoryPageIndexStore()
         doc = PageIndexDocument(
-            id="", bank_id="b1", source_id="s1", md_text="# m",
+            id="",
+            bank_id="b1",
+            source_id="s1",
+            md_text="# m",
         )
         await store.save_document(doc)
         out = await revise_wikis_for_document(
-            store=store, bank_id="b1", document_id="doc-1",
+            store=store,
+            bank_id="b1",
+            document_id="doc-1",
             provider=MagicMock(),
         )
         assert out == 0
@@ -183,15 +196,23 @@ class TestReviseWikisForDocument:
     async def test_revises_and_persists(self) -> None:
         store = InMemoryPageIndexStore()
         doc = PageIndexDocument(
-            id="doc-1", bank_id="b1", source_id="s1", md_text="# m",
+            id="doc-1",
+            bank_id="b1",
+            source_id="s1",
+            md_text="# m",
         )
         doc_id = await store.save_document(doc)
-        await store.save_sections(doc_id, [
-            _section(1, "saw Dr. Patel", date_str="2023-01-01"),
-            _section(2, "switched to Dr. Lee", date_str="2023-03-01"),
-        ])
+        await store.save_sections(
+            doc_id,
+            [
+                _section(1, "saw Dr. Patel", date_str="2023-01-01"),
+                _section(2, "switched to Dr. Lee", date_str="2023-03-01"),
+            ],
+        )
         page = _wiki_page(
-            title="Doctor", content="User saw 1 doctor.", source_lines=[1, 2],
+            title="Doctor",
+            content="User saw 1 doctor.",
+            source_lines=[1, 2],
         )
         await store.save_wiki_page(page=page, embedding=[0.1] * 10, provenance=[(doc_id, 1), (doc_id, 2)])
 
@@ -200,7 +221,9 @@ class TestReviseWikisForDocument:
             '"revised_content": "User saw 2 doctors: Dr. Patel, then Dr. Lee."}'
         )
         revised = await revise_wikis_for_document(
-            store=store, bank_id="b1", document_id=doc_id,
+            store=store,
+            bank_id="b1",
+            document_id=doc_id,
             provider=provider,
         )
         assert revised == 1
@@ -213,16 +236,23 @@ class TestReviseWikisForDocument:
 
     async def test_idempotent_on_ok_verdict(self) -> None:
         store = InMemoryPageIndexStore()
-        doc_id = await store.save_document(PageIndexDocument(
-            id="", bank_id="b1", source_id="s1", md_text="# m",
-        ))
+        doc_id = await store.save_document(
+            PageIndexDocument(
+                id="",
+                bank_id="b1",
+                source_id="s1",
+                md_text="# m",
+            )
+        )
         await store.save_sections(doc_id, [_section(1, "s", date_str="2023-01-01")])
         page = _wiki_page(title="T", content="c", source_lines=[1])
         await store.save_wiki_page(page=page, embedding=[0.1] * 10, provenance=[(doc_id, 1)])
 
         provider = _mock_complete('{"verdict": "OK"}')
         revised = await revise_wikis_for_document(
-            store=store, bank_id="b1", document_id=doc_id,
+            store=store,
+            bank_id="b1",
+            document_id=doc_id,
             provider=provider,
         )
         assert revised == 0
@@ -231,9 +261,14 @@ class TestReviseWikisForDocument:
         # Wiki has provenance referencing a line that no longer exists.
         # Should skip cleanly, not crash.
         store = InMemoryPageIndexStore()
-        doc_id = await store.save_document(PageIndexDocument(
-            id="", bank_id="b1", source_id="s1", md_text="# m",
-        ))
+        doc_id = await store.save_document(
+            PageIndexDocument(
+                id="",
+                bank_id="b1",
+                source_id="s1",
+                md_text="# m",
+            )
+        )
         await store.save_sections(doc_id, [_section(1, "s", date_str="2023-01-01")])
         # Page claims provenance from line 99 (doesn't exist)
         page = _wiki_page(title="T", content="c", source_lines=[99])
@@ -241,7 +276,9 @@ class TestReviseWikisForDocument:
 
         provider = _mock_complete('{"verdict": "OK"}')
         revised = await revise_wikis_for_document(
-            store=store, bank_id="b1", document_id=doc_id,
+            store=store,
+            bank_id="b1",
+            document_id=doc_id,
             provider=provider,
         )
         # No sections resolved → nothing to revise against

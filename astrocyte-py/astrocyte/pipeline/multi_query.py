@@ -29,8 +29,7 @@ _DECOMPOSITION_SYSTEM = (
 )
 
 _DECOMPOSITION_USER = (
-    "Decompose this question into 2–3 focused sub-questions whose answers "
-    "together answer the original:\n\n{query}"
+    "Decompose this question into 2–3 focused sub-questions whose answers together answer the original:\n\n{query}"
 )
 
 # Hard cap on sub-questions to bound downstream recall cost.

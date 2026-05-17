@@ -196,8 +196,8 @@ _TOOL_LIST_ENTITIES = ToolDefinition(
         "List distinct entity names in the current document with their per-section "
         "mention counts — use this for COUNTING / AGGREGATION questions where you "
         "need the exact count of distinct items mentioned across the conversation. "
-        "Pass a substring `pattern` to filter (e.g. `\"doctor\"`, `\"kit\"`, "
-        "`\"trip\"`); pass no pattern to see the top-mentioned entities. Returns "
+        'Pass a substring `pattern` to filter (e.g. `"doctor"`, `"kit"`, '
+        '`"trip"`); pass no pattern to see the top-mentioned entities. Returns '
         "`[(entity_name, count), ...]` ordered by count desc. The agent counts the "
         "list — this is the deterministic counting primitive the recall+done loop "
         "lacks. If `list_entities` returns the right list, your answer is just "
@@ -624,9 +624,12 @@ async def agentic_reflect(
         evidence=list(initial_hits[: p.max_evidence_pool_size]),
         seen_ids={h.memory_id for h in initial_hits if h.memory_id},
         conversation=[
-            Message(role="system", content=_build_system_prompt(
-                adversarial_defense=p.adversarial_defense,
-            )),
+            Message(
+                role="system",
+                content=_build_system_prompt(
+                    adversarial_defense=p.adversarial_defense,
+                ),
+            ),
             Message(
                 role="user",
                 content=(
@@ -651,8 +654,9 @@ async def agentic_reflect(
             )
         except Exception as exc:
             _logger.warning(
-                "agentic_reflect: LLM call failed at iter %d (%s); "
-                "falling back to forced synthesis.", iteration, exc,
+                "agentic_reflect: LLM call failed at iter %d (%s); falling back to forced synthesis.",
+                iteration,
+                exc,
             )
             break
 
@@ -675,9 +679,7 @@ async def agentic_reflect(
                 break
             # Otherwise loop again — the model may have emitted prose
             # this turn but tool calls next turn.
-            state.conversation.append(
-                Message(role="assistant", content=completion.text or "")
-            )
+            state.conversation.append(Message(role="assistant", content=completion.text or ""))
             continue
 
         # Append the assistant's tool-calling turn so the model sees
@@ -758,11 +760,7 @@ async def agentic_reflect(
                 # the LLM pick).  ``scope`` filters at the SPI level.
                 sub_q = str(args.get("query") or query).strip() or query
                 scope_arg_raw = args.get("scope")
-                scope_arg = (
-                    str(scope_arg_raw).strip() or None
-                    if isinstance(scope_arg_raw, str)
-                    else None
-                )
+                scope_arg = str(scope_arg_raw).strip() or None if isinstance(scope_arg_raw, str) else None
                 try:
                     new_hits = await mental_models_fn(sub_q, scope_arg)
                 except Exception as exc:
@@ -781,11 +779,7 @@ async def agentic_reflect(
 
             if name == "list_entities" and list_entities_fn is not None:
                 pattern_arg = args.get("pattern")
-                pattern = (
-                    str(pattern_arg).strip() or None
-                    if isinstance(pattern_arg, str)
-                    else None
-                )
+                pattern = str(pattern_arg).strip() or None if isinstance(pattern_arg, str) else None
                 try:
                     limit = int(args.get("limit") or 50)
                 except (TypeError, ValueError):
@@ -801,10 +795,7 @@ async def agentic_reflect(
                 # under-counting from extraction errors.
                 payload = {
                     "total_distinct": len(entities),
-                    "entities": [
-                        {"name": name, "section_mentions": count}
-                        for name, count in entities
-                    ],
+                    "entities": [{"name": name, "section_mentions": count} for name, count in entities],
                 }
                 state.conversation.append(
                     Message(
@@ -845,17 +836,16 @@ async def agentic_reflect(
             # Unknown tool — feed a structured error back so the model
             # can recover rather than treating the response as terminal.
             _logger.info(
-                "agentic_reflect: unknown tool %r at iter %d; "
-                "informing model and continuing.", name, iteration,
+                "agentic_reflect: unknown tool %r at iter %d; informing model and continuing.",
+                name,
+                iteration,
             )
             state.conversation.append(
                 Message(
                     role="tool",
                     tool_call_id=tc.id,
                     name=name,
-                    content=json.dumps(
-                        {"error": f"unknown tool: {tc.name!r}; valid: {[t.name for t in tools]}"}
-                    ),
+                    content=json.dumps({"error": f"unknown tool: {tc.name!r}; valid: {[t.name for t in tools]}"}),
                 )
             )
 

@@ -120,8 +120,7 @@ def expand_forget_preset(spec: ForgetSpec) -> ForgetSpec:
         audit=spec.audit if spec.audit is not None else base.audit,
         cascade=spec.cascade if spec.cascade is not None else base.cascade,
         respect_legal_hold=(
-            spec.respect_legal_hold if spec.respect_legal_hold is not None
-            else base.respect_legal_hold
+            spec.respect_legal_hold if spec.respect_legal_hold is not None else base.respect_legal_hold
         ),
         min_age_days=spec.min_age_days if spec.min_age_days is not None else base.min_age_days,
         max_per_call=spec.max_per_call if spec.max_per_call is not None else base.max_per_call,
@@ -154,9 +153,7 @@ def expand_preset(spec: PipelineSpec) -> PipelineSpec:
         # don't currently set half-life but the field is forward-compatible
         # if a future preset does.
         temporal_half_life_days=(
-            spec.temporal_half_life_days
-            if spec.temporal_half_life_days is not None
-            else base.temporal_half_life_days
+            spec.temporal_half_life_days if spec.temporal_half_life_days is not None else base.temporal_half_life_days
         ),
     )
 
@@ -193,13 +190,9 @@ def _merge_rerank(base: RerankSpec | None, override: RerankSpec | None) -> Reran
         return override
     return replace(
         base,
-        keyword_weight=(
-            override.keyword_weight if override.keyword_weight is not None else base.keyword_weight
-        ),
+        keyword_weight=(override.keyword_weight if override.keyword_weight is not None else base.keyword_weight),
         proper_noun_weight=(
-            override.proper_noun_weight
-            if override.proper_noun_weight is not None
-            else base.proper_noun_weight
+            override.proper_noun_weight if override.proper_noun_weight is not None else base.proper_noun_weight
         ),
     )
 
@@ -213,8 +206,6 @@ def _merge_reflect(base: ReflectSpec | None, override: ReflectSpec | None) -> Re
         base,
         prompt=override.prompt if override.prompt is not None else base.prompt,
         promote_metadata=(
-            override.promote_metadata
-            if override.promote_metadata is not None
-            else base.promote_metadata
+            override.promote_metadata if override.promote_metadata is not None else base.promote_metadata
         ),
     )

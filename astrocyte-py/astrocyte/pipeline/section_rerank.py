@@ -33,9 +33,12 @@ from astrocyte.pipeline.cross_encoder_rerank import (
     CrossEncoderProtocol,
     cross_encoder_rerank,
 )
+from astrocyte.pipeline.rerank_boosts import RerankBoostConfig, apply_boosts
 from astrocyte.pipeline.reranking import ScoredItem
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from astrocyte.pipeline.section_recall import FusedHit
     from astrocyte.types import PageIndexSection
 
@@ -50,6 +53,9 @@ def rerank_fused_hits(
     model: CrossEncoderProtocol | None = None,
     rerank_top_k: int = 30,
     output_top_k: int = 15,
+    query_range: tuple[datetime, datetime] | None = None,
+    proof_counts: dict[tuple[str, int], int] | None = None,
+    boost_config: RerankBoostConfig | None = None,
 ) -> list[FusedHit]:
     """Rerank top-K fused hits with a cross-encoder; return top-N.
 
@@ -65,11 +71,19 @@ def rerank_fused_hits(
         at 30 by default. Items beyond this rank pass through with
         their original RRF score.
       output_top_k: Final length of the returned list.
+      query_range: Optional inferred date band from question_annotator.
+        Feeds the temporal-band boost; ``None`` makes it a no-op.
+      proof_counts: Optional ``(document_id, line_num) → fact count``
+        map. Feeds the proof-count boost; ``None`` makes it a no-op.
+      boost_config: Tuning + toggle for the multiplicative post-rerank
+        boosts. ``None`` uses defaults (enabled=True with Hindsight-
+        parity alphas).
 
     Returns:
-      ``FusedHit`` list, sorted by cross-encoder score descending,
-      truncated to ``output_top_k``. The ``rrf_score`` field is
-      replaced with the cross-encoder score for transparency.
+      ``FusedHit`` list, sorted by cross-encoder score (modulated by
+      post-rerank boosts) descending, truncated to ``output_top_k``.
+      The ``rrf_score`` field is replaced with the cross-encoder score
+      (then multiplicatively boosted) for transparency.
     """
     if not fused:
         return []
@@ -104,13 +118,18 @@ def rerank_fused_hits(
 
     out: list[FusedHit] = []
     by_key = {(h.document_id, h.line_num): h for h in fused}
-    for item in rescored[:output_top_k]:
+    # Gap 3 (2026-05-16): pre-truncation boost. Apply post-rerank
+    # multiplicative boosts BEFORE the output_top_k cut so the boosts
+    # can re-order adjacent rank-15/16 candidates into the visible set
+    # rather than rescoring an already-truncated list.
+    rescored_full: list[FusedHit] = []
+    for item in rescored:
         doc_id, line_str = item.id.split(":", 1)
         line_num = int(line_str)
         original = by_key.get((doc_id, line_num))
         if original is None:
             continue
-        out.append(
+        rescored_full.append(
             FusedHit(
                 document_id=doc_id,
                 line_num=line_num,
@@ -118,6 +137,15 @@ def rerank_fused_hits(
                 per_strategy_rank=dict(original.per_strategy_rank),
             )
         )
+
+    boosted = apply_boosts(
+        rescored_full,
+        sections_by_key,
+        query_range=query_range,
+        proof_counts=proof_counts,
+        config=boost_config,
+    )
+    out = boosted[:output_top_k]
     return out
 
 

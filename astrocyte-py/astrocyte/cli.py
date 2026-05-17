@@ -105,7 +105,9 @@ def _format_pipeline(pipeline: PipelineSpec | None) -> list[str]:
         if spec is None:
             continue
         # Show only fields that are set
-        set_fields = {f.name: getattr(spec, f.name) for f in dataclasses.fields(spec) if getattr(spec, f.name) is not None}
+        set_fields = {
+            f.name: getattr(spec, f.name) for f in dataclasses.fields(spec) if getattr(spec, f.name) is not None
+        }
         if set_fields:
             lines.append(f"    {field}: {set_fields}")
     return lines
@@ -117,9 +119,7 @@ def _format_forget(forget: ForgetSpec | None) -> list[str]:
         return []
     lines: list[str] = ["  forget:"]
     set_fields = {
-        f.name: getattr(forget, f.name)
-        for f in dataclasses.fields(forget)
-        if getattr(forget, f.name) is not None
+        f.name: getattr(forget, f.name) for f in dataclasses.fields(forget) if getattr(forget, f.name) is not None
     }
     for k, v in set_fields.items():
         lines.append(f"    {k}: {v}")
@@ -199,7 +199,8 @@ def _build_parser() -> argparse.ArgumentParser:
     lint.set_defaults(func=_cmd_mip_lint)
 
     explain = mip_sub.add_parser(
-        "explain", help="Show which rule fires for a hypothetical retain input",
+        "explain",
+        help="Show which rule fires for a hypothetical retain input",
     )
     explain.add_argument("path", help="Path to mip.yaml")
     explain.add_argument("--content", default="", help="Inbound content (text body)")

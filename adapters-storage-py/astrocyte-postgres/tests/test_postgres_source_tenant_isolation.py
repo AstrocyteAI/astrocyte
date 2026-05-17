@@ -52,8 +52,7 @@ def _doc(doc_id: str, *, content_hash: str | None = None, title: str = "T") -> S
     )
 
 
-def _chunk(chunk_id: str, document_id: str, *, chunk_index: int = 0,
-           content_hash: str | None = None) -> SourceChunk:
+def _chunk(chunk_id: str, document_id: str, *, chunk_index: int = 0, content_hash: str | None = None) -> SourceChunk:
     return SourceChunk(
         id=chunk_id,
         bank_id="bank-1",
@@ -143,15 +142,19 @@ class TestChunkIsolation:
 
         with use_schema(schema_a):
             await store.store_document(_doc("d1"))
-            await store.store_chunks([
-                _chunk("c-a", "d1", chunk_index=0, content_hash="h-shared"),
-            ])
+            await store.store_chunks(
+                [
+                    _chunk("c-a", "d1", chunk_index=0, content_hash="h-shared"),
+                ]
+            )
 
         with use_schema(schema_b):
             await store.store_document(_doc("d1"))
-            await store.store_chunks([
-                _chunk("c-b", "d1", chunk_index=0, content_hash="h-shared"),
-            ])
+            await store.store_chunks(
+                [
+                    _chunk("c-b", "d1", chunk_index=0, content_hash="h-shared"),
+                ]
+            )
 
         with use_schema(schema_a):
             a_chunks = await store.list_chunks("d1", "bank-1")
@@ -177,11 +180,7 @@ class TestChunkIsolation:
 
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    f'SELECT count(*) FROM "{schema_a}".astrocyte_source_chunks'
-                )
+                await cur.execute(f'SELECT count(*) FROM "{schema_a}".astrocyte_source_chunks')
                 assert (await cur.fetchone())[0] == 1
-                await cur.execute(
-                    f'SELECT count(*) FROM "{schema_b}".astrocyte_source_chunks'
-                )
+                await cur.execute(f'SELECT count(*) FROM "{schema_b}".astrocyte_source_chunks')
                 assert (await cur.fetchone())[0] == 1

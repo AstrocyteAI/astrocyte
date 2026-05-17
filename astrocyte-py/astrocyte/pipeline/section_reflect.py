@@ -100,11 +100,13 @@ def section_tuples_to_memory_hits(
         text = slice_fn(md, line_num) if md else ""
         if len(text) > max_chars:
             text = text[: max_chars - 3] + "..."
-        out.append(MemoryHit(
-            text=text,
-            score=float(score),
-            memory_id=format_section_memory_id(doc_id, line_num),
-        ))
+        out.append(
+            MemoryHit(
+                text=text,
+                score=float(score),
+                memory_id=format_section_memory_id(doc_id, line_num),
+            )
+        )
     return out
 
 
@@ -155,17 +157,16 @@ def make_section_recall_fn(
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "section_reflect.recall_fn failed for q=%r: %s: %s",
-                query[:60], type(exc).__name__, exc,
+                query[:60],
+                type(exc).__name__,
+                exc,
             )
             return []
         # Promote the top-N fused hits into MemoryHit shape. We don't
         # rerun the cross-encoder reranker here — the agent's
         # iterative loop is itself a form of reranking, and avoiding
         # the model load keeps each tool call cheap.
-        tuples = [
-            (h.document_id, h.line_num, h.rrf_score)
-            for h in result.fused[:max_results]
-        ]
+        tuples = [(h.document_id, h.line_num, h.rrf_score) for h in result.fused[:max_results]]
         return section_tuples_to_memory_hits(
             tuples,
             md_text_by_doc=md_text_by_doc,
@@ -207,7 +208,8 @@ def make_section_expand_fn(
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "section_reflect.expand_fn failed: %s: %s",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
             return []
         return section_tuples_to_memory_hits(
@@ -235,16 +237,22 @@ def make_list_entities_fn(
     """
 
     async def _list(
-        pattern: str | None, limit: int,
+        pattern: str | None,
+        limit: int,
     ) -> list[tuple[str, int]]:
         try:
             return await store.list_distinct_entities(
-                bank_id, document_id, pattern=pattern, limit=limit,
+                bank_id,
+                document_id,
+                pattern=pattern,
+                limit=limit,
             )
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "section_reflect.list_entities_fn failed pattern=%r: %s: %s",
-                pattern, type(exc).__name__, exc,
+                pattern,
+                type(exc).__name__,
+                exc,
             )
             return []
 
