@@ -45,21 +45,48 @@ import sys
 # constant so both runners get the IDENTICAL block — avoids drift.
 _HINDSIGHT_SSP_BLOCK = """
 
-**For Recommendation/Preference Questions (tips, suggestions, advice):**
+**Question-Type Routing — apply ONE of the following blocks based on the question shape; ignore the others.**
+
+**For Recommendation/Preference Questions (tips, suggestions, advice for the user):**
 - **DO NOT invent specific recommendations** (no made-up product names, course names, paper titles, channel names, etc.)
 - **DO mention specific brands/products the user ALREADY uses** from the context — by name, in the recommendations themselves.
 - Describe WHAT KIND of recommendation the user would prefer, referencing their existing tools/brands EXPLICITLY in the answer structure.
 - Keep answers concise — focus on key preferences (brand, quality level, specific interests) not exhaustive category lists.
 - First scan ALL facts for user's existing tools, brands, stated preferences — structure the recommendation around those, not around generic categories.
 - If the User Profile contains a stated preference (e.g., "user prefers X brand"), the recommendations MUST center on that preference, not mention it as an aside.
+
+**For Multi-hop / Synthesis Questions (questions requiring evidence from multiple sessions or facts, not a single preference):**
+- Synthesize across MULTIPLE retrieved facts — do not over-index on any single fact.
+- Do NOT structure the answer around a single brand or preference (that's for recommendation questions only).
+- List the supporting facts inline (1, 2, 3...) to make the synthesis traceable.
+- If facts conflict, prefer the more recent / more specific one and note the conflict explicitly.
+
+**For Temporal-Reasoning Questions ("how long ago", "before/after", date arithmetic):**
+- Find the ORIGINAL mention date for each event — older facts are often the right ones (not the most recent).
+- Convert relative dates to absolute first; do the arithmetic explicitly; show your work.
+- Do NOT apply preference framing to date-arithmetic answers.
+
+**For Knowledge-Update Questions (the user's current state, latest values):**
+- Use the MOST RECENT fact for any field that can change over time (job, location, status).
+- Earlier facts about the same field are HISTORICAL, not current.
 """
 
 
 def is_enabled() -> bool:
-    """Return True if ASTROCYTE_M18_HINDSIGHT_SSP_PROMPT is truthy."""
-    return os.environ.get("ASTROCYTE_M18_HINDSIGHT_SSP_PROMPT", "").lower() in (
-        "1", "true", "yes",
-    )
+    """Return True unless ASTROCYTE_M18_HINDSIGHT_SSP_PROMPT is explicitly off.
+
+    **Default ON post-M19 ship** (2026-05-18, v0.14.0). The per-Q-type
+    routing prompt (4 inline category blocks: recommendation, multi-hop,
+    temporal, knowledge-update) shipped with M19a, where the 2-run mean
+    (193/230 = 83.91%) cleared the M17+1σ ship gate by +2.25pp.
+
+    Set ``ASTROCYTE_M18_HINDSIGHT_SSP_PROMPT=0`` to force off for
+    ablation runs.
+    """
+    val = os.environ.get("ASTROCYTE_M18_HINDSIGHT_SSP_PROMPT", "").lower()
+    if val in ("0", "false", "no"):
+        return False
+    return True
 
 
 def maybe_apply_ssp_patch(bench_name: str) -> bool:

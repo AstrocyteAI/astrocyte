@@ -995,6 +995,27 @@ class AstrocyteClient:
             reranked = [ScoredItem(id=c["id"], text=c["text"], score=0.0) for c in candidates]
 
         by_id = {c["id"]: c for c in candidates}
+
+        # NOTE: M19 Workstream C (multiplicative bounded boosts on unified
+        # rerank, mirroring Hindsight reranking.py) was implemented and
+        # benched here in two iterations. Both regressed:
+        #   - C0 (boosts on, no date plumbing): parity-noise on bench-pool
+        #     because most candidates lacked date metadata; multipliers
+        #     collapsed to 1.0. No-op.
+        #   - C0' (boosts on + load_skeleton date plumbing): -7q vs shipped
+        #     B1-dp+RRF; top_50/top_200 IMPROVED but top_20 dropped because
+        #     the recency boost (Hindsight default alpha=0.2) penalises
+        #     OLDER sections — and our temporal-reasoning / multi-hop
+        #     questions often need older sections for date arithmetic and
+        #     cross-session synthesis.
+        # Conclusion: Hindsight's boost alpha defaults are tuned for their
+        # workload (recent = relevant); ours is mixed-temporality. The
+        # boost layer stays available via `astrocyte.pipeline.rerank_boosts`
+        # (still used by `section_rerank`), but is NOT applied to the
+        # unified fact+section+wiki pool in the bench. Per-question-type
+        # routing (M19a) achieved the +4q ship without the regression
+        # cost. Full diagnosis: docs/_design/m19-prompt-routing.md §8.
+
         out: list[dict[str, Any]] = []
         for item in reranked[:floor]:
             c = by_id.get(item.id)
