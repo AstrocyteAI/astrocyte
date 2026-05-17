@@ -75,6 +75,14 @@ from benchmarks.locomo import run as _locomo_run  # noqa: E402
 _locomo_run.Mem0Client = _LoCoMoAstrocyteClient
 _locomo_run.format_search_results = format_search_results
 
+# M18b experimental: optional Hindsight SSP prompt block.
+# Gated by ASTROCYTE_M18_HINDSIGHT_SSP_PROMPT=1. Default off — existing
+# benches unchanged. See _hindsight_prompt.py for rationale (B2 SSP
+# regression diagnosis).
+from scripts.mem0_harness._hindsight_prompt import maybe_apply_ssp_patch  # noqa: E402
+
+maybe_apply_ssp_patch("locomo")
+
 
 if __name__ == "__main__":
     _locomo_run.main()

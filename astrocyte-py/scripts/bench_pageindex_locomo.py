@@ -64,6 +64,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # PageIndex package is sibling to the astrocyte repo on the user's machine.
 # We don't take a hard dep — just sys.path-shim it so this script runs
@@ -103,6 +104,7 @@ _CATEGORY_MAP = {
 # ───────────────────────────────────────────────────────────────────────────
 # Markdown synthesis
 # ───────────────────────────────────────────────────────────────────────────
+
 
 def conversation_to_markdown(conv: dict, sample_id: str) -> str:
     """Render a LoCoMo conversation as PageIndex-friendly markdown.
@@ -145,6 +147,7 @@ def conversation_to_markdown(conv: dict, sample_id: str) -> str:
 # ───────────────────────────────────────────────────────────────────────────
 # Tree caching
 # ───────────────────────────────────────────────────────────────────────────
+
 
 async def _build_raw_tree(md_path: Path, model: str) -> dict:
     """Run md_to_tree once. Extracted so both file and store backends
@@ -292,14 +295,15 @@ async def _build_or_load_via_store(
         sections = await store.load_skeleton(cached_doc.id)
         compact = _sections_to_compact_tree(sections)
         session_dates: list[tuple[int, str]] = [
-            (s.line_num, _format_session_date(s.session_date))
-            for s in sections
-            if s.session_date is not None
+            (s.line_num, _format_session_date(s.session_date)) for s in sections if s.session_date is not None
         ]
         # Filter out any None date strings (shouldn't happen, but be safe).
         session_dates = [(ln, d) for ln, d in session_dates if d]
         return _conv_tree_dict(
-            sample_id, md_text, compact, session_dates,
+            sample_id,
+            md_text,
+            compact,
+            session_dates,
             document_id=cached_doc.id,
         )
 
@@ -308,9 +312,7 @@ async def _build_or_load_via_store(
     raw_tree = await _build_raw_tree(md_path, model)
     nodes = raw_tree.get("structure", raw_tree) if isinstance(raw_tree, dict) else raw_tree
     session_dates = _enrich_nodes_with_dates(nodes)
-    reference_date_dt = (
-        _parse_session_date(session_dates[-1][1]) if session_dates else None
-    )
+    reference_date_dt = _parse_session_date(session_dates[-1][1]) if session_dates else None
 
     doc_to_save = PageIndexDocument(
         id="",  # ignored on insert; store assigns UUID and returns it
@@ -343,7 +345,10 @@ async def _build_or_load_via_store(
         )
 
     return _conv_tree_dict(
-        sample_id, md_text, raw_tree, session_dates,
+        sample_id,
+        md_text,
+        raw_tree,
+        session_dates,
         document_id=document_id,
     )
 
@@ -386,7 +391,9 @@ async def _populate_section_index(
     embed_task = embed_sections(provider, sections, model=embedding_model)
     entity_tasks = [
         extract_entities_for_section(
-            provider, document_id, s,
+            provider,
+            document_id,
+            s,
             _slice_section_around_line(md_text, s.line_num),
             model=entity_model,
         )
@@ -400,7 +407,9 @@ async def _populate_section_index(
         prior = ordered_sections[:idx]
         link_tasks.append(
             extract_links_for_section(
-                provider, document_id, s,
+                provider,
+                document_id,
+                s,
                 _slice_section_around_line(md_text, s.line_num),
                 prior,
                 model=entity_model,  # share the entity model knob; same gpt-4o-mini
@@ -410,7 +419,9 @@ async def _populate_section_index(
     n_entity = len(entity_tasks)
     n_link = len(link_tasks)
     all_results = await asyncio.gather(
-        embed_task, *entity_tasks, *link_tasks,
+        embed_task,
+        *entity_tasks,
+        *link_tasks,
         return_exceptions=True,
     )
     embed_result = all_results[0]
@@ -452,7 +463,9 @@ async def _populate_section_index(
     if n_embeddings >= 2 and hasattr(store, "populate_semantic_knn_links"):
         try:
             n_knn = await store.populate_semantic_knn_links(
-                document_id, top_k=5, min_similarity=0.5,
+                document_id,
+                top_k=5,
+                min_similarity=0.5,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  [pageindex] semantic_knn failed for doc={document_id}: {type(exc).__name__}: {exc}")
@@ -465,6 +478,7 @@ async def _populate_section_index(
     n_wiki = 0
     if n_embeddings >= 2 and bank_id and hasattr(store, "save_wiki_page"):
         from astrocyte.pipeline.section_compile import compile_sections_for_document  # noqa: PLC0415
+
         try:
             page_ids = await compile_sections_for_document(
                 store=store,
@@ -484,11 +498,10 @@ async def _populate_section_index(
     # store's upsert semantics.
     n_mm = 0
     if (
-        mental_model_store is not None
-        and bank_id
-        and n_embeddings >= 2  # need real content to compile against
+        mental_model_store is not None and bank_id and n_embeddings >= 2  # need real content to compile against
     ):
         from astrocyte.pipeline.mental_model_compile import compile_mental_models_for_document  # noqa: PLC0415
+
         try:
             mm_ids = await compile_mental_models_for_document(
                 page_index_store=store,
@@ -507,16 +520,16 @@ async def _populate_section_index(
     # speaker, entities). Sections remain the picker's primitive; facts
     # are queried by the agent's counting / temporal / entity tools.
     n_facts = 0
-    if (
-        bank_id
-        and hasattr(store, "save_facts")
-        and provider is not None
-    ):
+    if bank_id and hasattr(store, "save_facts") and provider is not None:
         from astrocyte.pipeline.section_fact_extraction import extract_facts_for_section  # noqa: PLC0415
+
         fact_coros = [
             extract_facts_for_section(
-                provider, s, _slice_section_around_line(md_text, s.line_num),
-                bank_id=bank_id, model=entity_model,
+                provider,
+                s,
+                _slice_section_around_line(md_text, s.line_num),
+                bank_id=bank_id,
+                model=entity_model,
             )
             for s in sections
         ]
@@ -526,53 +539,95 @@ async def _populate_section_index(
             if isinstance(r, Exception):
                 continue
             all_facts.extend(r)
-        if all_facts:
-            try:
-                await store.save_facts(all_facts)
-                n_facts = len(all_facts)
-                # Batched embedding pass for the fact texts.
-                try:
-                    fact_texts = [f.text for f in all_facts]
-                    fact_embeds = await provider.embed(
-                        fact_texts, model=embedding_model,
-                    )
-                    pairs = [
-                        (f.id, e)
-                        for f, e in zip(all_facts, fact_embeds)
-                        if e
-                    ]
-                    if pairs:
-                        await store.update_fact_embeddings(pairs)
-                except Exception as exc:  # noqa: BLE001
-                    print(f"  [pageindex] fact embedding failed doc={document_id}: {type(exc).__name__}: {exc}")
-            except Exception as exc:  # noqa: BLE001
-                print(f"  [pageindex] save_facts failed doc={document_id}: {type(exc).__name__}: {exc}")
-
-    # M14.6: consolidate raw preference facts into preference-kind
-    # MentalModel rows. Distinct from M11.2's general mental_model_compile
-    # (which covers all profile dimensions) — this pass specifically
-    # produces structured preferences with qualifier/condition/context
-    # inline. Targets LME single-session-preference category.
     n_pref_mm = 0
-    if (
-        mental_model_store is not None
-        and bank_id
-        and n_facts > 0
-        and provider is not None
-    ):
-        from astrocyte.pipeline.preference_compile import compile_preferences_for_document  # noqa: PLC0415
-        try:
-            pref_ids = await compile_preferences_for_document(
-                mental_model_store=mental_model_store,
-                bank_id=bank_id,
-                document_id=document_id,
-                facts=all_facts,
-                provider=provider,
-                model=entity_model,
+    n_directive_mm = 0
+    if all_facts:
+        # M18a — all document-level retain post-processing runs through the
+        # core entry point ``run_document_postprocess``. The bench builds
+        # an ad-hoc AstrocyteConfig from env vars so the M18b ablation
+        # bench can flip each pass on/off without touching this code.
+        # Defaults: episodic + directive OFF (M17 parity), preference ON
+        # (M14.6 baseline behaviour).
+        from astrocyte.config import (  # noqa: PLC0415
+            AstrocyteConfig,
+            DirectiveCompileConfig,
+            EpisodicExtractConfig,
+            PreferenceCompileConfig,
+        )
+        from astrocyte.pipeline.document_postprocess import (  # noqa: PLC0415
+            run_document_postprocess,
+        )
+
+        def _envflag(name: str, default: bool) -> bool:
+            v = os.environ.get(name)
+            if v is None:
+                return default
+            return v.lower() in ("1", "true", "yes")
+
+        _pp_cfg = AstrocyteConfig()
+        _pp_cfg.episodic_extract = EpisodicExtractConfig(
+            enabled=_envflag("ASTROCYTE_M18_ENABLE_EPISODIC_EXTRACTION", False),
+        )
+        _pp_cfg.preference_compile = PreferenceCompileConfig(
+            enabled=_envflag("ASTROCYTE_M18_ENABLE_PREFERENCE_COMPILE", True),
+        )
+        _pp_cfg.directive_compile = DirectiveCompileConfig(
+            enabled=_envflag("ASTROCYTE_M18_ENABLE_DIRECTIVE_COMPILE", False),
+        )
+
+        # Fix 2 (conv-run-4): count distinct session dates so
+        # directive_compile can lower its ≥2-mentions threshold for
+        # single-session docs. Sections without a session_date count
+        # as one anonymous bucket — matches the bench's CE-path
+        # "no-date" chunks.
+        _session_keys: set[Any] = set()
+        for _s in sections:
+            sd = getattr(_s, "session_date", None)
+            if sd is not None:
+                _session_keys.add(sd.date() if hasattr(sd, "date") else sd)
+            else:
+                _session_keys.add("no-date")
+        _n_sessions = len(_session_keys) if _session_keys else None
+
+        _pp_result = await run_document_postprocess(
+            facts=all_facts,
+            store=store,
+            mental_model_store=mental_model_store,
+            provider=provider,
+            bank_id=bank_id,
+            document_id=document_id,
+            config=_pp_cfg,
+            model=entity_model,
+            n_sessions=_n_sessions,
+        )
+        n_pref_mm = _pp_result.preferences_compiled
+        n_directive_mm = _pp_result.directives_compiled
+        for _f in _pp_result.failures:
+            print(
+                f"  [pageindex] postprocess {_f['pass']} failed "
+                f"doc={document_id}: {_f['error']}"
             )
-            n_pref_mm = len(pref_ids)
+
+        # Persist facts AFTER post-processing so the EPISODIC_MARKER
+        # entity tags (when episodic_extract is enabled) are included
+        # in ``save_facts``.
+        try:
+            await store.save_facts(all_facts)
+            n_facts = len(all_facts)
+            # Batched embedding pass for the fact texts.
+            try:
+                fact_texts = [f.text for f in all_facts]
+                fact_embeds = await provider.embed(
+                    fact_texts,
+                    model=embedding_model,
+                )
+                pairs = [(f.id, e) for f, e in zip(all_facts, fact_embeds) if e]
+                if pairs:
+                    await store.update_fact_embeddings(pairs)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  [pageindex] fact embedding failed doc={document_id}: {type(exc).__name__}: {exc}")
         except Exception as exc:  # noqa: BLE001
-            print(f"  [pageindex] preference_compile failed doc={document_id}: {type(exc).__name__}: {exc}")
+            print(f"  [pageindex] save_facts failed doc={document_id}: {type(exc).__name__}: {exc}")
 
     # M14.2 wiki_incremental wiring REMOVED (Phase 0 revert, 2026-05-14).
     # Two consecutive M14.2 runs averaged LME top_20=58% vs M14.7-revert's
@@ -593,6 +648,7 @@ async def _populate_section_index(
         f"{n_wiki} wiki-pages, "
         f"{n_mm} mental-models, "
         f"{n_pref_mm} preference-models, "
+        f"{n_directive_mm} directive-models, "
         f"{n_facts} facts"
     )
 
@@ -622,8 +678,19 @@ _LME_DATE_RE = re.compile(
     r"(?:\s*\([A-Za-z]{3}\))?(?:\s+\d{1,2}:\d{2})?\s*\)",
 )
 _MONTH_NAMES = [
-    "", "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
+    "",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ]
 
 
@@ -692,8 +759,18 @@ _MONTH_NUMBER = {
     name.lower(): idx
     for idx, name in enumerate(
         [
-            "January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December",
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
         ],
         start=1,
     )
@@ -728,7 +805,8 @@ def _format_session_date(dt: datetime | None) -> str | None:
 
 
 def _flatten_tree_to_sections(
-    tree: dict | list, document_id: str,
+    tree: dict | list,
+    document_id: str,
 ) -> list[PageIndexSection]:
     """Walk a nested md_to_tree-shape (post-``_enrich_nodes_with_dates``)
     and return the flat ``PageIndexSection`` list to write to the store.
@@ -813,6 +891,7 @@ def _sections_to_compact_tree(
 # ───────────────────────────────────────────────────────────────────────────
 # Agent loop
 # ───────────────────────────────────────────────────────────────────────────
+
 
 def _strip_node_text(tree: list | dict) -> list | dict:
     """Strip ``text`` field from tree nodes, preserving structure +
@@ -925,6 +1004,7 @@ def _is_counting_question(question: str) -> bool:
     """
     q = question.lower()
     return any(re.search(p, q) for p in _COUNTING_PATTERNS)
+
 
 _TEMPORAL_PATTERNS = [
     r"\bwhen\s+(?:did|was|were|does|will|do)\b",
@@ -1220,6 +1300,39 @@ Question: {question}
 Format as a comma-separated list (e.g. "skiing (D1:3), painting (D4:2), running (D7:5)"). Don't ramble — every item should fit in one phrase. Answer:"""
 
 
+# Gap 6 (2026-05-16): open-domain hedging synth. LME open-domain
+# questions test whether the agent stays inside the memory boundary —
+# they ask about world / common-knowledge facts that may or may not
+# be in the conversation. The default synth answers too confidently
+# from any partial signal; the inference synth nudges toward "infer
+# from preferences". Open-domain needs an explicit knowledge-boundary
+# hedge: answer ONLY from excerpts, prefer abstention over base-model
+# knowledge, and frame uncertainty when the excerpts only partially
+# answer. Mirrors Hindsight's "Only say I don't have information if
+# the retrieved data is truly unrelated" phrasing but stricter for
+# open-domain because the abstention rate is the right answer for
+# many LME open-domain items.
+SYNTHESIZE_PROMPT_OPEN_DOMAIN = """You are answering an OPEN-DOMAIN question against a conversation transcript.
+
+<reference_date>{reference_date}</reference_date>
+
+The question may be about general knowledge that has nothing to do with this conversation. Your job is to stay strictly inside the excerpts — do NOT answer from your own training knowledge.
+
+Decision procedure:
+1. If the excerpts contain a direct answer, answer it concisely and cite the dia_id (e.g. D5:3).
+2. If the excerpts contain PARTIAL signal (related context, adjacent facts), say what the excerpts support and HEDGE — frame it as "Based on the available context, the most likely answer is …" so the reader knows you're inferring.
+3. If the excerpts have NO signal on the question subject — even tangentially — respond exactly: "Not in the provided memories."
+
+Do NOT invent facts. Do NOT substitute base-model knowledge for the excerpts. A hedged "based on the available context" answer is preferred over a confident wrong answer.
+
+Excerpts:
+{excerpts}
+
+Question: {question}
+
+Be concise (1-2 sentences). Answer:"""
+
+
 EXPAND_PROMPT = """A first attempt to answer this question said "Not in the provided memories", but a broader sweep of the conversation may surface evidence the first picker missed.
 
 Below is the conversation's table of contents. Pick a BROADER set of sections this time — 7-12 line_nums covering any session whose summary even tangentially relates to the question's subject, time period, or theme. Include neighbours of the originally-picked sections.
@@ -1237,7 +1350,9 @@ Output ONLY a JSON object: {{"line_nums": [<int>, ...], "reason": "<one short se
 
 
 async def _ask_picker(
-    provider: OpenAIProvider, prompt: str, model: str,
+    provider: OpenAIProvider,
+    prompt: str,
+    model: str,
     valid_lines: list[int],
 ) -> list[int]:
     """One picker call. Filters output to the allowlist, dedupes, caps
@@ -1311,46 +1426,225 @@ async def _ask_picker(
 # lowercase-only.
 _NOUN_RESCUE_STOPLIST = {
     # articles / determiners / quantifiers
-    "the", "a", "an", "this", "that", "these", "those", "some", "any",
-    "all", "many", "few", "much", "more", "most", "other", "another",
-    "both", "each", "every", "either", "neither",
+    "the",
+    "a",
+    "an",
+    "this",
+    "that",
+    "these",
+    "those",
+    "some",
+    "any",
+    "all",
+    "many",
+    "few",
+    "much",
+    "more",
+    "most",
+    "other",
+    "another",
+    "both",
+    "each",
+    "every",
+    "either",
+    "neither",
     # pronouns
-    "i", "me", "my", "mine", "you", "your", "yours", "he", "him", "his",
-    "she", "her", "hers", "it", "its", "we", "us", "our", "ours",
-    "they", "them", "their", "theirs", "who", "whom", "whose", "what",
-    "which", "where", "when", "why", "how",
+    "i",
+    "me",
+    "my",
+    "mine",
+    "you",
+    "your",
+    "yours",
+    "he",
+    "him",
+    "his",
+    "she",
+    "her",
+    "hers",
+    "it",
+    "its",
+    "we",
+    "us",
+    "our",
+    "ours",
+    "they",
+    "them",
+    "their",
+    "theirs",
+    "who",
+    "whom",
+    "whose",
+    "what",
+    "which",
+    "where",
+    "when",
+    "why",
+    "how",
     # common verbs that appear in questions
-    "is", "are", "was", "were", "be", "been", "being", "am",
-    "do", "does", "did", "doing", "done",
-    "have", "has", "had", "having",
-    "say", "said", "says", "saying", "tell", "told", "telling",
-    "go", "went", "gone", "going", "get", "got", "getting",
-    "take", "took", "taken", "taking", "make", "made", "making",
-    "know", "knew", "known", "knowing", "think", "thought", "thinking",
-    "want", "wanted", "wanting", "like", "liked", "liking",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "am",
+    "do",
+    "does",
+    "did",
+    "doing",
+    "done",
+    "have",
+    "has",
+    "had",
+    "having",
+    "say",
+    "said",
+    "says",
+    "saying",
+    "tell",
+    "told",
+    "telling",
+    "go",
+    "went",
+    "gone",
+    "going",
+    "get",
+    "got",
+    "getting",
+    "take",
+    "took",
+    "taken",
+    "taking",
+    "make",
+    "made",
+    "making",
+    "know",
+    "knew",
+    "known",
+    "knowing",
+    "think",
+    "thought",
+    "thinking",
+    "want",
+    "wanted",
+    "wanting",
+    "like",
+    "liked",
+    "liking",
     # prepositions / conjunctions
-    "of", "in", "on", "at", "by", "for", "with", "without", "from",
-    "to", "into", "onto", "from", "about", "against", "between",
-    "through", "during", "before", "after", "above", "below", "since",
-    "until", "as", "and", "or", "but", "if", "because", "so", "than",
+    "of",
+    "in",
+    "on",
+    "at",
+    "by",
+    "for",
+    "with",
+    "without",
+    "from",
+    "to",
+    "into",
+    "onto",
+    "from",
+    "about",
+    "against",
+    "between",
+    "through",
+    "during",
+    "before",
+    "after",
+    "above",
+    "below",
+    "since",
+    "until",
+    "as",
+    "and",
+    "or",
+    "but",
+    "if",
+    "because",
+    "so",
+    "than",
     # generic question scaffolding
-    "name", "names", "kind", "type", "thing", "things", "way", "ways",
-    "time", "times", "place", "places",  # too generic for noun-grep
-    "may", "might", "could", "would", "should", "must", "will", "can",
+    "name",
+    "names",
+    "kind",
+    "type",
+    "thing",
+    "things",
+    "way",
+    "ways",
+    "time",
+    "times",
+    "place",
+    "places",  # too generic for noun-grep
+    "may",
+    "might",
+    "could",
+    "would",
+    "should",
+    "must",
+    "will",
+    "can",
     # bench-specific scaffold
-    "memory", "memories", "session", "sessions", "conversation",
-    "answer", "question",
+    "memory",
+    "memories",
+    "session",
+    "sessions",
+    "conversation",
+    "answer",
+    "question",
 }
 
 
 _QUESTION_STOPWORDS = {
-    "What", "When", "Where", "Who", "Why", "How", "Which",
-    "Did", "Does", "Do", "Is", "Was", "Were", "Are",
-    "Has", "Have", "Had", "Would", "Could", "Should",
-    "Will", "Can", "May", "Might", "Must", "Tell", "Name",
-    "In", "On", "At", "By", "For", "Of", "About",
-    "After", "Before", "During", "Since", "Until",
-    "The", "A", "An", "This", "That", "These", "Those",
+    "What",
+    "When",
+    "Where",
+    "Who",
+    "Why",
+    "How",
+    "Which",
+    "Did",
+    "Does",
+    "Do",
+    "Is",
+    "Was",
+    "Were",
+    "Are",
+    "Has",
+    "Have",
+    "Had",
+    "Would",
+    "Could",
+    "Should",
+    "Will",
+    "Can",
+    "May",
+    "Might",
+    "Must",
+    "Tell",
+    "Name",
+    "In",
+    "On",
+    "At",
+    "By",
+    "For",
+    "Of",
+    "About",
+    "After",
+    "Before",
+    "During",
+    "Since",
+    "Until",
+    "The",
+    "A",
+    "An",
+    "This",
+    "That",
+    "These",
+    "Those",
 }
 
 
@@ -1521,7 +1815,8 @@ async def answer_question(
         # and gave the temporal strategy nothing to filter on — that's
         # why LME temporal-reasoning stayed at 0% in PR2-D.1-4).
         annotation = await annotate_question(
-            provider, question,
+            provider,
+            question,
             reference_date=conv_tree.get("reference_date"),
             model=model,
         )
@@ -1535,22 +1830,20 @@ async def answer_question(
         # least contributes session-date ordering. Without this fallback
         # LoCoMo temporal regresses 55→45 because temporal strategy
         # silently doesn't fire on date-less temporal questions.
-        if (
-            date_range is None
-            and mode in {"temporal", "temporal-reasoning"}
-            and conv_tree.get("session_dates")
-        ):
+        if date_range is None and mode in {"temporal", "temporal-reasoning"} and conv_tree.get("session_dates"):
             from datetime import timedelta
-            parsed = [
-                _parse_session_date(d) for _, d in conv_tree["session_dates"]
-            ]
+
+            parsed = [_parse_session_date(d) for _, d in conv_tree["session_dates"]]
             parsed = [p for p in parsed if p is not None]
             if parsed:
                 date_range = (min(parsed), max(parsed) + timedelta(days=1))
 
         try:
             recall_result = await section_recall(
-                store=store, bank_id=bank_id, question=question, mode=mode,
+                store=store,
+                bank_id=bank_id,
+                question=question,
+                mode=mode,
                 embedding_provider=provider,
                 question_entities=question_entities or None,
                 date_range=date_range,
@@ -1568,10 +1861,14 @@ async def answer_question(
                 # temporal/temporal-reasoning (event timelines),
                 # listing (enumeration), knowledge-update (stale-fact
                 # supersession).
-                wiki_enabled=mode in {
-                    "multi-session", "multi-hop",
-                    "temporal", "temporal-reasoning",
-                    "listing", "knowledge-update",
+                wiki_enabled=mode
+                in {
+                    "multi-session",
+                    "multi-hop",
+                    "temporal",
+                    "temporal-reasoning",
+                    "listing",
+                    "knowledge-update",
                 },
                 wiki_document_id=document_id,
                 # text-embedding-3-small produces cosine sims in the
@@ -1633,14 +1930,29 @@ async def answer_question(
                 # line_num if it disagrees with the rerank. This is
                 # the v6 lesson re-applied: don't lock the picker out
                 # of evidence the orchestrator missed.
+                # Gap 3 (2026-05-16): feed the date_range from
+                # question_annotator and (when cheap) per-section proof
+                # counts into the post-rerank multiplicative boosts.
+                # Proof counts are taken from the strategies that hit a
+                # section — sections promoted by multiple strategies are
+                # de-facto more "proven" by the retrieval ensemble.
+                proof_counts = {(h.document_id, h.line_num): len(h.per_strategy_rank) for h in recall_result.fused}
                 reranked = rerank_fused_hits(
-                    recall_result.fused, sections_by_key, question,
-                    model=cross_encoder, rerank_top_k=30, output_top_k=25,
+                    recall_result.fused,
+                    sections_by_key,
+                    question,
+                    model=cross_encoder,
+                    rerank_top_k=30,
+                    output_top_k=25,
+                    query_range=date_range,
+                    proof_counts=proof_counts,
                 )
                 if reranked:
                     keep_keys = {(h.document_id, h.line_num) for h in reranked}
                     constrained = build_constrained_skeleton(
-                        skeleton, keep_keys, document_id,
+                        skeleton,
+                        keep_keys,
+                        document_id,
                     )
                     if constrained:
                         # NOTE: ``skeleton`` and ``valid_lines`` deliberately
@@ -1653,9 +1965,9 @@ async def answer_question(
                 print(f"  [pageindex] rerank failed: {type(exc).__name__}: {exc}")
     reference_date = conv_tree.get("reference_date") or "unknown"
     session_dates = conv_tree.get("session_dates") or []
-    session_date_index = "\n".join(
-        f"  line {ln}: {d}" for ln, d in session_dates
-    ) or "  (none — header dates not parseable)"
+    session_date_index = (
+        "\n".join(f"  line {ln}: {d}" for ln, d in session_dates) or "  (none — header dates not parseable)"
+    )
 
     # PR2.5: counting/sum dispatch — REVERTED. The dedicated counting
     # synth and counting picker were tested and rolled back: the synth
@@ -1677,9 +1989,12 @@ async def answer_question(
     # loop lets the agent re-query until it has enough evidence. Bounded
     # to 5 iterations (default 10) to cap cost.
     if (
-        store is not None and bank_id and document_id
+        store is not None
+        and bank_id
+        and document_id
         and mode in {"multi-session", "multi-hop"}
-        and recall_result and recall_result.fused
+        and recall_result
+        and recall_result.fused
     ):
         from astrocyte.pipeline.agentic_reflect import (
             AgenticReflectParams,
@@ -1699,10 +2014,7 @@ async def answer_question(
         # The reranker's top-25 isn't in scope outside its try block;
         # taking fused[:15] keeps the agent warm without re-running
         # the cross-encoder.
-        initial_tuples = [
-            (h.document_id, h.line_num, h.rrf_score)
-            for h in recall_result.fused[:15]
-        ]
+        initial_tuples = [(h.document_id, h.line_num, h.rrf_score) for h in recall_result.fused[:15]]
         initial_hits = section_tuples_to_memory_hits(
             initial_tuples,
             md_text_by_doc=md_text_by_doc,
@@ -1727,20 +2039,26 @@ async def answer_question(
         )
 
         async def _reflect_final_synth(
-            *, query: str, hits, llm_provider, **_kw,
+            *,
+            query: str,
+            hits,
+            llm_provider,
+            **_kw,
         ) -> ReflectResult:
             """Fallback when reflect exits without a ``done`` call.
             Mirrors the bench's default synth shape so cited_ids still
             roundtrip back to line_nums."""
-            excerpts = "\n\n---\n\n".join(
-                (h.text or "").strip() for h in hits[:15]
-            ) or "(no relevant section found)"
+            excerpts = "\n\n---\n\n".join((h.text or "").strip() for h in hits[:15]) or "(no relevant section found)"
             msg = SYNTHESIZE_PROMPT_DEFAULT.format(
-                excerpts=excerpts, question=query, reference_date=reference_date,
+                excerpts=excerpts,
+                question=query,
+                reference_date=reference_date,
             )
             completion = await llm_provider.complete(
                 [Message(role="user", content=msg)],
-                model=model, max_tokens=250, temperature=0.0,
+                model=model,
+                max_tokens=250,
+                temperature=0.0,
             )
             return ReflectResult(answer=completion.text.strip(), sources=hits)
 
@@ -1761,11 +2079,10 @@ async def answer_question(
                 params=AgenticReflectParams(max_iterations=5),
                 final_synthesize_fn=_reflect_final_synth,
             )
-            cited_mids = [
-                h.memory_id for h in (result.sources or []) if h.memory_id
-            ]
+            cited_mids = [h.memory_id for h in (result.sources or []) if h.memory_id]
             reflect_lines = cited_ids_to_line_nums(
-                cited_mids, expected_doc_id=document_id,
+                cited_mids,
+                expected_doc_id=document_id,
             )
             return result.answer, reflect_lines
         except Exception as exc:  # noqa: BLE001 — fall through to picker+synth on failure
@@ -1781,8 +2098,7 @@ async def answer_question(
             if is_terminal_error(exc):
                 raise
             print(
-                f"  [pageindex] reflect failed for q={question[:40]!r}: "
-                f"{type(exc).__name__}: {exc}",
+                f"  [pageindex] reflect failed for q={question[:40]!r}: {type(exc).__name__}: {exc}",
             )
 
     if mode == "temporal":
@@ -1827,8 +2143,10 @@ async def answer_question(
     if category != "adversarial" and mode not in {"temporal", "temporal-reasoning"}:
         question_nouns = _extract_question_nouns(question)
         rescued = _rescue_specific_fact_lines(
-            question_nouns, conv_tree["md_text"],
-            valid_lines=valid_lines, max_rescues=3,
+            question_nouns,
+            conv_tree["md_text"],
+            valid_lines=valid_lines,
+            max_rescues=3,
         )
         if rescued:
             # Union with picker output, preserving picker's order first
@@ -1857,22 +2175,16 @@ async def answer_question(
         if section.session_date is not None:
             parts.append(f"session={section.session_date.strftime('%Y-%m-%d')}")
         if section.occurred_start is not None:
-            parts.append(
-                f"event={section.occurred_start.strftime('%Y-%m-%d')}"
-            )
+            parts.append(f"event={section.occurred_start.strftime('%Y-%m-%d')}")
             if section.occurred_end is not None and section.occurred_end != section.occurred_start:
-                parts.append(
-                    f"event_end={section.occurred_end.strftime('%Y-%m-%d')}"
-                )
+                parts.append(f"event_end={section.occurred_end.strftime('%Y-%m-%d')}")
         if not parts:
             return body
         header = f"[line={ln}, {', '.join(parts)}]"
         return f"{header}\n{body}"
 
     if line_nums:
-        excerpts = "\n\n---\n\n".join(
-            _render_section(ln) for ln in line_nums
-        ).strip()
+        excerpts = "\n\n---\n\n".join(_render_section(ln) for ln in line_nums).strip()
     else:
         excerpts = ""
 
@@ -1888,9 +2200,7 @@ async def answer_question(
     # directly from the observation when available. Only fires when
     # section_recall's wiki strategy returned high-confidence hits.
     wiki_hits = (
-        recall_result.wiki_hits
-        if (recall_result is not None and getattr(recall_result, "wiki_hits", None))
-        else []
+        recall_result.wiki_hits if (recall_result is not None and getattr(recall_result, "wiki_hits", None)) else []
     )
 
     # M12.5 (Karpathy gap): wiki lint pass — for each surfaced wiki,
@@ -1904,29 +2214,29 @@ async def answer_question(
 
             qvec = (await provider.embed([question]))[0]
             anchor_facts = await store.search_facts_semantic(
-                bank_id, qvec, top_k=8, document_id=document_id,
+                bank_id,
+                qvec,
+                top_k=8,
+                document_id=document_id,
             )
             fact_texts = [f.text for f in anchor_facts]
             clean_wiki_hits = []
             for w in wiki_hits:
                 issue = await lint_one_wiki(
-                    page_id=w.page_id, title=w.title, content=w.content,
-                    facts=fact_texts, llm_provider=provider,
+                    page_id=w.page_id,
+                    title=w.title,
+                    content=w.content,
+                    facts=fact_texts,
+                    llm_provider=provider,
                 )
                 if issue is None:
                     clean_wiki_hits.append(w)
             wiki_hits = clean_wiki_hits
         except Exception as exc:  # noqa: BLE001
-            print(
-                f"  [pageindex] wiki lint failed: "
-                f"{type(exc).__name__}: {exc} — keeping all wiki hits"
-            )
+            print(f"  [pageindex] wiki lint failed: {type(exc).__name__}: {exc} — keeping all wiki hits")
 
     if wiki_hits:
-        wiki_block = "\n\n".join(
-            f"[OBSERVATION: {h.title}]\n{h.content}"
-            for h in wiki_hits
-        )
+        wiki_block = "\n\n".join(f"[OBSERVATION: {h.title}]\n{h.content}" for h in wiki_hits)
         excerpts = f"{wiki_block}\n\n---\n\n{excerpts}"
 
     # M12.1: surface atomic facts from the picker's selected sections
@@ -1934,11 +2244,7 @@ async def answer_question(
     # with type / event_date / entities — the synth uses these for
     # precision answers (counting, temporal, preference). Generic
     # across benches.
-    if (
-        store is not None and bank_id and document_id
-        and line_nums
-        and hasattr(store, "search_facts_by_entity")
-    ):
+    if store is not None and bank_id and document_id and line_nums and hasattr(store, "search_facts_by_entity"):
         # Cheapest cross-grain join: pull facts for the picker's lines
         # via a direct read against the in-memory fact-store API. The
         # SPI doesn't yet expose `list_facts_for_lines`; use a single
@@ -1950,16 +2256,17 @@ async def answer_question(
             # M12.3: widen the candidate pool to 60 so the cross-encoder
             # rerank has enough to work with after the picker-line filter.
             fact_hits = await store.search_facts_semantic(
-                bank_id, qvec, top_k=60, document_id=document_id,
+                bank_id,
+                qvec,
+                top_k=60,
+                document_id=document_id,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  [pageindex] fact search failed: {type(exc).__name__}: {exc}")
             fact_hits = []
         if fact_hits:
             picker_lines = set(line_nums)
-            relevant = [
-                h for h in fact_hits if h.line_num in picker_lines
-            ]
+            relevant = [h for h in fact_hits if h.line_num in picker_lines]
             # M12.3: cross-encoder rerank the picker-line subset before
             # capping at 12. Bi-encoder cosine often ranks topically
             # related facts above question-answering ones; the cross-
@@ -1974,8 +2281,10 @@ async def answer_question(
                     from astrocyte.pipeline.fact_rerank import rerank_fact_hits  # noqa: PLC0415
 
                     relevant = rerank_fact_hits(
-                        relevant, question,
-                        rerank_top_k=30, output_top_k=12,
+                        relevant,
+                        question,
+                        rerank_top_k=30,
+                        output_top_k=12,
                     )
                 except Exception as exc:  # noqa: BLE001
                     print(
@@ -1992,9 +2301,7 @@ async def answer_question(
                     if h.speaker:
                         parts.append(f"speaker={h.speaker}")
                     if h.occurred_start:
-                        parts.append(
-                            f"occurred={h.occurred_start.strftime('%Y-%m-%d')}"
-                        )
+                        parts.append(f"occurred={h.occurred_start.strftime('%Y-%m-%d')}")
                     lines.append(f"- [{', '.join(parts)}] {h.text}")
                 facts_block = "[FACTS]\n" + "\n".join(lines)
                 excerpts = f"{facts_block}\n\n---\n\n{excerpts}"
@@ -2007,15 +2314,14 @@ async def answer_question(
     if mental_model_store is not None and bank_id and document_id:
         try:
             mms = await mental_model_store.list(
-                bank_id, scope=f"document:{document_id}",
+                bank_id,
+                scope=f"document:{document_id}",
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  [pageindex] mental_model list failed: {type(exc).__name__}: {exc}")
             mms = []
         if mms:
-            profile_block = "[USER PROFILE]\n" + "\n".join(
-                f"- {m.title}: {m.content}" for m in mms
-            )
+            profile_block = "[USER PROFILE]\n" + "\n".join(f"- {m.title}: {m.content}" for m in mms)
             excerpts = f"{profile_block}\n\n---\n\n{excerpts}"
 
     # M10.3 (REVERTED): an earlier attempt added ``prefers:<aspect>=<value>``
@@ -2049,14 +2355,19 @@ async def answer_question(
     #
     # PR2 D.3: inference questions get a permissive synth that's
     # instructed to read between the lines. Routes when:
-    #   - Category is open-domain or single-session-preference (dataset signal), OR
+    #   - Category is single-session-preference (dataset signal), OR
     #   - The question text matches an inference pattern (regex fallback).
     # PR2 D.4: answer-type hint goes to the inference synth so it
     # verifies its final answer matches the asked-for type.
-    is_inference = (
-        category in {"open-domain", "single-session-preference"}
-        or _is_inference_question(question)
-    )
+    #
+    # Gap 6 (2026-05-16): open-domain split out. The inference prompt's
+    # "ABSTAIN ONLY when zero signal" stance is exactly wrong for LME
+    # open-domain — those questions need a stricter knowledge-boundary
+    # hedge. Open-domain now dispatches to SYNTHESIZE_PROMPT_OPEN_DOMAIN
+    # below; single-session-preference (genuine inference shape) stays
+    # on the inference path.
+    is_open_domain = category == "open-domain"
+    is_inference = category == "single-session-preference" or _is_inference_question(question)
 
     # PR2 D.5.5: programmatic date-arithmetic short-circuit. LME
     # temporal-reasoning is 0% across PR2/D.1-4/D.4-fix/D.5 because
@@ -2071,13 +2382,11 @@ async def answer_question(
     #   - The arithmetic module recognizes the question shape AND finds
     #     the events in the document. Otherwise falls through to synth.
     arithmetic_answer: str | None = None
-    if (
-        store is not None and bank_id and document_id
-        and mode in {"temporal", "temporal-reasoning"}
-    ):
+    if store is not None and bank_id and document_id and mode in {"temporal", "temporal-reasoning"}:
         from astrocyte.pipeline.temporal_arithmetic import (
             compute_temporal_arithmetic_answer,
         )
+
         # ``sections_by_key`` was built earlier in the section recall block;
         # reach for it from the outer scope. ``reference_date_dt`` is
         # parsed from conv_tree.reference_date (a string).
@@ -2102,18 +2411,32 @@ async def answer_question(
 
     if mode == "listing":
         syn_msg = SYNTHESIZE_PROMPT_LISTING.format(
-            excerpts=excerpts, question=question, reference_date=reference_date,
+            excerpts=excerpts,
+            question=question,
+            reference_date=reference_date,
         )
         syn_max_tokens = 400  # listing answers are longer than 1-fact answers
+    elif is_open_domain and category != "adversarial":
+        # Gap 6 (2026-05-16): hedging synth for LME open-domain.
+        syn_msg = SYNTHESIZE_PROMPT_OPEN_DOMAIN.format(
+            excerpts=excerpts,
+            question=question,
+            reference_date=reference_date,
+        )
+        syn_max_tokens = 200
     elif is_inference and category != "adversarial":
         syn_msg = SYNTHESIZE_PROMPT_INFERENCE.format(
-            excerpts=excerpts, question=question, reference_date=reference_date,
+            excerpts=excerpts,
+            question=question,
+            reference_date=reference_date,
             answer_type_hint=_detect_answer_type_hint(question) or "(no hint)",
         )
         syn_max_tokens = 200
     else:
         syn_msg = SYNTHESIZE_PROMPT_DEFAULT.format(
-            excerpts=excerpts, question=question, reference_date=reference_date,
+            excerpts=excerpts,
+            question=question,
+            reference_date=reference_date,
         )
         syn_max_tokens = 250
 
@@ -2149,23 +2472,25 @@ async def answer_question(
         # Merge with prior picks — neighbours might still be useful.
         merged = list(dict.fromkeys([*line_nums, *wider_lines]))[:12]
         if merged != line_nums:  # actually expanded
-            wider_excerpts = "\n\n---\n\n".join(
-                _slice_section_around_line(conv_tree["md_text"], ln)
-                for ln in merged
-            ).strip() or "(no relevant section found)"
+            wider_excerpts = (
+                "\n\n---\n\n".join(_slice_section_around_line(conv_tree["md_text"], ln) for ln in merged).strip()
+                or "(no relevant section found)"
+            )
             # Use the same mode-appropriate synth on expansion. Listing
             # mode benefits most from the wider sweep (more items to
             # enumerate); temporal/default benefit from the broader
             # multi-hop chain assembly.
             if mode == "listing":
                 syn_msg2 = SYNTHESIZE_PROMPT_LISTING.format(
-                    excerpts=wider_excerpts, question=question,
+                    excerpts=wider_excerpts,
+                    question=question,
                     reference_date=reference_date,
                 )
                 syn2_max = 400
             else:
                 syn_msg2 = SYNTHESIZE_PROMPT_DEFAULT.format(
-                    excerpts=wider_excerpts, question=question,
+                    excerpts=wider_excerpts,
+                    question=question,
                     reference_date=reference_date,
                 )
                 syn2_max = 300
@@ -2184,8 +2509,10 @@ async def answer_question(
 # Scoring + driver
 # ───────────────────────────────────────────────────────────────────────────
 
+
 def stratified_questions(
-    locomo_data: list[dict], max_per_conversation: int,
+    locomo_data: list[dict],
+    max_per_conversation: int,
 ) -> list[dict]:
     """Take up to N questions per conversation, balanced across
     categories. Mirrors ``bench-locomo-fair`` semantics so the result
@@ -2292,6 +2619,7 @@ async def main() -> None:
     if args.backend == "memory":
         store = InMemoryPageIndexStore()
         from astrocyte.testing.in_memory import InMemoryMentalModelStore  # noqa: PLC0415
+
         mental_model_store = InMemoryMentalModelStore()
         print(f"  [pageindex] Backend: in-memory (bank_id={args.bank_id!r})")
     elif args.backend == "postgres":
@@ -2301,6 +2629,7 @@ async def main() -> None:
             PostgresMentalModelStore,
             PostgresPageIndexStore,
         )
+
         store = PostgresPageIndexStore(bootstrap_schema=True)
         mental_model_store = PostgresMentalModelStore(bootstrap_schema=True)
         print(f"  [pageindex] Backend: postgres (bank_id={args.bank_id!r})")
@@ -2327,8 +2656,7 @@ async def main() -> None:
     )
     if reflect_provider is not None:
         print(
-            f"  [pageindex] Reflect model override: {args.reflect_model} "
-            f"(default: {args.model})",
+            f"  [pageindex] Reflect model override: {args.reflect_model} (default: {args.model})",
         )
 
     # ── Step 1: build (or load cached) per-conversation trees.
@@ -2343,7 +2671,10 @@ async def main() -> None:
     for conv in locomo_data:
         sample_id = conv["sample_id"]
         trees_by_sample[sample_id] = await build_or_load_tree(
-            conv, sample_id, workspace, args.model,
+            conv,
+            sample_id,
+            workspace,
+            args.model,
             store=store,
             bank_id=args.bank_id,
             provider=provider if store is not None else None,
@@ -2376,7 +2707,10 @@ async def main() -> None:
         cat_label = _CATEGORY_MAP.get(cat_int) if cat_int is not None else None
         try:
             answer, line_nums = await answer_question(
-                provider, conv_tree, q["question"], args.model,
+                provider,
+                conv_tree,
+                q["question"],
+                args.model,
                 store=store,
                 bank_id=args.bank_id if store is not None else None,
                 cross_encoder=None,  # PR2-C: default Hindsight model lazy-loaded inside reranker
@@ -2419,16 +2753,18 @@ async def main() -> None:
             correct += 1
             by_category_correct[cat_name] = by_category_correct.get(cat_name, 0) + 1
 
-        results.append({
-            "conversation_id": sample_id,
-            "category": cat_name,
-            "question": q["question"],
-            "expected": expected_for_log,
-            "is_adversarial": is_adversarial,
-            "response": answer,
-            "score": is_correct,
-            "picked_lines": line_nums,
-        })
+        results.append(
+            {
+                "conversation_id": sample_id,
+                "category": cat_name,
+                "question": q["question"],
+                "expected": expected_for_log,
+                "is_adversarial": is_adversarial,
+                "response": answer,
+                "score": is_correct,
+                "picked_lines": line_nums,
+            }
+        )
 
         if (i + 1) % 10 == 0:
             elapsed = time.monotonic() - t_score
@@ -2452,18 +2788,23 @@ async def main() -> None:
     # Persist a compact result file so future iteration can compare
     # against this run without re-running the whole bench.
     out_path = workspace / f"results-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
-    out_path.write_text(json.dumps({
-        "overall_accuracy": overall,
-        "evaluated_questions": len(questions),
-        "correct": correct,
-        "category_accuracy": {
-            cat: by_category_correct.get(cat, 0) / max(by_category_total[cat], 1)
-            for cat in by_category_total
-        },
-        "model": args.model,
-        "max_questions_per_conversation": args.max_questions_per_conversation,
-        "results": results,
-    }, indent=2, default=str))
+    out_path.write_text(
+        json.dumps(
+            {
+                "overall_accuracy": overall,
+                "evaluated_questions": len(questions),
+                "correct": correct,
+                "category_accuracy": {
+                    cat: by_category_correct.get(cat, 0) / max(by_category_total[cat], 1) for cat in by_category_total
+                },
+                "model": args.model,
+                "max_questions_per_conversation": args.max_questions_per_conversation,
+                "results": results,
+            },
+            indent=2,
+            default=str,
+        )
+    )
     print(f"  [pageindex] Results written to {out_path}")
 
 

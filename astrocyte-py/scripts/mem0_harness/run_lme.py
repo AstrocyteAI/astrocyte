@@ -68,6 +68,14 @@ from benchmarks.longmemeval import run as _lme_run  # noqa: E402
 _lme_run.Mem0Client = _LMEAstrocyteClient
 _lme_run.format_search_results = format_search_results
 
+# M18b experimental: optional Hindsight SSP prompt block.
+# Gated by ASTROCYTE_M18_HINDSIGHT_SSP_PROMPT=1. Default off — existing
+# benches unchanged. See _hindsight_prompt.py for rationale (B2 SSP
+# regression diagnosis).
+from scripts.mem0_harness._hindsight_prompt import maybe_apply_ssp_patch  # noqa: E402
+
+maybe_apply_ssp_patch("longmemeval")
+
 
 if __name__ == "__main__":
     _lme_run.main()

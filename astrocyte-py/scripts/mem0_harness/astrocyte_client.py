@@ -748,84 +748,82 @@ class AstrocyteClient:
             logger.warning("embed failed for user=%s: %s", user_id, exc)
             return []
 
-        # ── Query-time temporal expansion ──────────────────────────
-        # Map relative expressions ("a few weeks ago", "3 days ago") to
-        # an absolute date range anchored at the latest session timestamp.
-        # When present, route extra recall through the temporal strategy
-        # (sections) and search_facts_temporal (facts).
-        from astrocyte.pipeline.temporal_expressions import (  # noqa: PLC0415
-            expand_temporal_expression,
-        )
+        # ── Query-time temporal expansion (M18a-1 core integration) ──
+        # Pass A (extended regex) + Pass B (dateparser, Hindsight parity).
+        # Invoked via `query_analyzer.analyze_query(allow_temporal_expansion=...)`,
+        # date range fed to `fact_recall` which RRF-fuses semantic +
+        # episodic + temporal as parallel siblings.
+        #
+        # **Default ON post-M18b ship** (2026-05-17): B1-dp+RRF cleared
+        # the M17+1σ LoCoMo ship gate by 1.75pp (2-run mean 83.75% vs
+        # baseline 80.5%). Bench env override:
+        #   ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION=0  → force off (ablation)
+        #   ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION=1  → force on (default)
+        #   unset                                       → on (post-ship)
+        from astrocyte.pipeline.query_analyzer import analyze_query  # noqa: PLC0415
 
+        _env = _os.environ.get("ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION", "").lower()
+        if _env in ("0", "false", "no"):
+            _allow_expansion = False
+        else:
+            _allow_expansion = True
         anchor = self._reference_date_by_user.get(user_id)
-        date_range = expand_temporal_expression(query, anchor) if anchor else None
+        analysis = await analyze_query(
+            query,
+            reference_date=anchor,
+            llm_provider=None,  # bench harness path stays regex-only
+            allow_llm_fallback=False,
+            allow_temporal_expansion=_allow_expansion,
+        )
+        date_range = (
+            (analysis.temporal_constraint.start_date, analysis.temporal_constraint.end_date)
+            if analysis.temporal_constraint and analysis.temporal_constraint.is_bounded()
+            else None
+        )
         recall_mode = "temporal" if date_range is not None else "single-hop"
 
         # ── (1) Fact-grain candidates ──────────────────────────────
-        try:
-            fact_hits = await self._store.search_facts_semantic(
-                bank_id,
-                qvec,
-                top_k=40,
-                document_id=document_id,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("fact semantic search failed for user=%s: %s", user_id, exc)
-            fact_hits = []
+        # Unified semantic + (optional) episodic via the core
+        # ``fact_recall`` entry point. The bench builds an ad-hoc
+        # AstrocyteConfig with ``episodic_extract.enabled`` driven by
+        # ASTROCYTE_M18_ENABLE_EPISODIC_EXTRACTION=1 (default OFF,
+        # parity with M17 baseline). When on, queries matching
+        # ``question_has_episodic_cue`` additionally search by
+        # EPISODIC_MARKER and merge the hits (dedupe by fact_id).
+        # The retain-side tag step is gated by the same env var via
+        # ``run_document_postprocess`` in bench_pageindex_locomo.
+        from astrocyte.config import (  # noqa: PLC0415
+            AstrocyteConfig,
+            EpisodicExtractConfig,
+        )
+        from astrocyte.pipeline.fact_recall import fact_recall  # noqa: PLC0415
 
-        # ── (1b) Temporal fact hits (only if query had a time cue) ─
-        temporal_fact_hits: list[Any] = []
-        if date_range is not None:
-            try:
-                temporal_fact_hits = await self._store.search_facts_temporal(
-                    bank_id,
-                    date_range,
-                    top_k=20,
-                    document_id=document_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "fact temporal search failed for user=%s: %s",
-                    user_id,
-                    exc,
-                )
-                temporal_fact_hits = []
+        _enable_episodic = _os.environ.get(
+            "ASTROCYTE_M18_ENABLE_EPISODIC_EXTRACTION", "",
+        ).lower() in ("1", "true", "yes")
+        _fr_cfg = AstrocyteConfig()
+        _fr_cfg.episodic_extract = EpisodicExtractConfig(enabled=_enable_episodic)
 
-        # ── (1c) Episodic fact hits (Fix 4) ────────────────────────
-        # When the question carries a location/event cue, query the
-        # episodic-marker index — facts tagged at retain time with
-        # ``episodic:event`` because their text reads as an encounter
-        # ("met X at Y", "attended Z"). These get prepended to the
-        # candidate pool so the cross-encoder rerank sees them
-        # alongside generic semantic hits.
-        episodic_fact_hits: list[Any] = []
-        try:
-            from astrocyte.pipeline.episodic_extract import (  # noqa: PLC0415
-                EPISODIC_MARKER,
-                question_has_episodic_cue,
-            )
-
-            if question_has_episodic_cue(query):
-                try:
-                    episodic_fact_hits = await self._store.search_facts_by_entity(
-                        bank_id,
-                        EPISODIC_MARKER,
-                        top_k=20,
-                        document_id=document_id,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "fact episodic search failed for user=%s: %s",
-                        user_id,
-                        exc,
-                    )
-                    episodic_fact_hits = []
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "episodic_extract import failed for user=%s: %s",
-                user_id,
-                exc,
-            )
+        # M18a-1 (RRF refactor): fact_recall now runs semantic + episodic +
+        # temporal as PARALLEL SIBLINGS internally and RRF-fuses them.
+        # When date_range is None, the temporal branch is simply skipped —
+        # same external behavior, just no separate post-fact_recall append.
+        # See docs/_design/m18-quick-wins.md §3.3 for the rationale
+        # (Hindsight-parity architecture; rerank pool is now source-blind
+        # but the candidates entering rerank have already been RRF-weighted
+        # so single-strategy junk gets damped).
+        fact_hits = await fact_recall(
+            store=self._store,
+            bank_id=bank_id,
+            document_id=document_id,
+            query=query,
+            query_embedding=qvec,
+            config=_fr_cfg,
+            temporal_range=date_range,
+            top_k_semantic=40,
+            top_k_episodic=20,
+            top_k_temporal=20,
+        )
 
         # ── (2) Section-grain candidates via section_recall ────────
         # ``mode="temporal"`` when the query has a relative-time cue —
@@ -836,6 +834,16 @@ class AstrocyteClient:
         # ``section_entity_extraction``) can actually fire.
         question_entities = _extract_proper_noun_entities(query)
         from astrocyte.pipeline.section_recall import section_recall  # noqa: PLC0415
+
+        # M18a-3 — entity-co-occurrence spread is now a section_recall
+        # internal post-fusion step, gated by `enable_spreading_activation`.
+        # Bench-time env override: ASTROCYTE_M18_ENABLE_SPREADING_ACTIVATION=1.
+        # Default OFF (parity with M17 baseline). The spread hits land
+        # inside `recall.fused`, so the downstream candidate-building loop
+        # needs no separate spread-merge code.
+        _enable_spreading = _os.environ.get(
+            "ASTROCYTE_M18_ENABLE_SPREADING_ACTIVATION", "",
+        ).lower() in ("1", "true", "yes")
 
         try:
             recall = await section_recall(
@@ -851,6 +859,7 @@ class AstrocyteClient:
                 wiki_min_score=0.25,
                 wiki_top_k=4,
                 per_strategy_top_k=20,
+                enable_spreading_activation=_enable_spreading,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("section_recall failed for user=%s: %s", user_id, exc)
@@ -875,64 +884,19 @@ class AstrocyteClient:
                 }
             )
 
-        for fh in temporal_fact_hits:
-            cid = f"fact:{fh.fact_id}"
-            if cid in seen_ids:
-                continue
-            seen_ids.add(cid)
-            candidates.append(
-                {
-                    "id": cid,
-                    "text": fh.text,
-                    "grain": "fact",
-                    "fact": fh,
-                }
-            )
+        # NOTE: the separate `temporal_fact_hits` candidate-build loop was
+        # removed in the M18a-1-rrf cycle — temporal candidates are now
+        # folded into `fact_hits` above by ``fact_recall`` (RRF fusion of
+        # semantic + episodic + temporal as parallel siblings, Hindsight-
+        # parity). The fact-grain `for fh in fact_hits` loop above already
+        # picks up any temporal hits.
 
-        for fh in episodic_fact_hits:
-            cid = f"fact:{fh.fact_id}"
-            if cid in seen_ids:
-                continue
-            seen_ids.add(cid)
-            candidates.append(
-                {
-                    "id": cid,
-                    "text": fh.text,
-                    "grain": "fact",
-                    "fact": fh,
-                }
-            )
-
-        # ── Fix 3 (conv-run-4): entity spreading activation ───────
-        # Before turning ``recall.fused`` into candidates, expand by
-        # one hop through entity co-occurrence. This bridges the
-        # Denver/Disneyland conflation case (initial top-K surfaces
-        # Disneyland by keyword; "Denver" entity overlap brings in
-        # the correct Red Rocks session). The expansion runs over
-        # ``astrocyte_pi_section_entities`` (dense per retain) rather
-        # than the sparse LLM-extracted link table, so it actually
-        # fires for conversation-ingest documents.
+        # M18a-3: spreading_activation is now done inside section_recall
+        # (gated by the flag passed above). `recall.fused` already contains
+        # any spread hits when the flag is on. The separate spread-merge
+        # block below is preserved as a no-op for compatibility (spread_hits
+        # always empty after M18a-3).
         spread_hits: list[tuple[str, int, float]] = []
-        if recall is not None and recall.fused:
-            from astrocyte.pipeline.spreading_activation import (  # noqa: PLC0415
-                expand_via_shared_entities,
-            )
-
-            top_seeds = [(h.document_id, h.line_num) for h in recall.fused[:10]]
-            try:
-                spread_hits = await expand_via_shared_entities(
-                    store=self._store,
-                    bank_id=bank_id,
-                    seeds=top_seeds,
-                    top_k=10,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "spreading_activation failed for user=%s: %s",
-                    user_id,
-                    exc,
-                )
-                spread_hits = []
 
         if recall is not None and recall.fused:
             # Ceiling raised 8 → 20 so the unified cross-encoder rerank
