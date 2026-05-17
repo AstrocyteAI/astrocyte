@@ -5,6 +5,8 @@
 [![Docker - astrocyte-gateway-py](https://img.shields.io/github/v/tag/AstrocyteAI/astrocyte?label=astrocyte-gateway-py&logo=docker&color=blue)](https://github.com/AstrocyteAI/astrocyte/pkgs/container/astrocyte%2Fastrocyte-gateway-py)
 [![CI](https://github.com/AstrocyteAI/astrocyte/actions/workflows/ci.yml/badge.svg)](https://github.com/AstrocyteAI/astrocyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://astrocyteai.github.io/astrocyte/coverage/badge.json)](https://astrocyteai.github.io/astrocyte/coverage/htmlcov/)
+[![LoCoMo](https://img.shields.io/endpoint?url=https://pub-fd2a5bf01e5b443085a14aedb49c4206.r2.dev/badges/locomo.json)](https://github.com/AstrocyteAI/astrocyte/blob/main/docs/_design/benchmark-trajectory.mdx)
+[![LongMemEval](https://img.shields.io/endpoint?url=https://pub-fd2a5bf01e5b443085a14aedb49c4206.r2.dev/badges/longmemeval.json)](https://github.com/AstrocyteAI/astrocyte/blob/main/docs/_design/benchmark-trajectory.mdx)
 
 **Astrocyte** is an open-source **memory framework** for AI systems. It sits between agents (or applications) and memory storage, and aims to give you a **production-shaped memory layer**: retrieval, governance, observability, and pluggable backends, with a **stable contract** you can implement twice (Python and Rust) without changing integrations.
 
