@@ -70,10 +70,22 @@ date and output absolute ISO-8601 timestamps.
 Output a JSON object with one key, ``facts``, containing an array of \
 fact objects. Each fact has:
 
-- "text": SELF-CONTAINED statement (include subject + verb + entities). \
-  GOOD: "User visited Dr. Patel for nasal spray prescription on May 5, \
-  2023." \
-  BAD: "Yesterday I went to the doctor" (missing date anchor, no subject)
+- "text": SELF-CONTAINED statement that captures WHAT happened AND WHY \
+  it matters / context / nuance. (Hindsight `why` parity — the answerer \
+  needs the original framing, not just the bare fact.) \
+  Include: subject + verb + entities + the REASON / STRENGTH / SCOPE / \
+  CONDITIONS. For preferences especially: capture HOW STRONG the \
+  preference is, WHY the user prefers it, and any conditions ("for X \
+  use case", "compared to Y"). \
+  GOOD (preference): "User strongly prefers Sony cameras for product \
+  photography because they already own a Sony 24-70mm lens for their \
+  candle business; would not consider switching to Canon or Nikon." \
+  GOOD (experience): "User visited Dr. Patel for nasal spray prescription \
+  on May 5, 2023; this was their third visit after recurring sinus \
+  issues from spring allergies." \
+  BAD: "Yesterday I went to the doctor" (missing date anchor, no subject) \
+  BAD: "User prefers Sony" (missing reason, scope, strength — answerer \
+  cannot structure recommendations around bare preference)
 - "fact_type": one of:
     - "experience" — something the user did or that happened to them
     - "preference" — stable taste, opinion, or choice the user holds
@@ -114,21 +126,21 @@ It clears post-nasal drip too. [user] About 6 months. I prefer his \
 clinic over the previous one."
 session_date=2023-05-08
 
-Output:
+Output (note: text fields capture WHY + context, not just bare facts):
 {{"facts": [
-  {{"text": "User visited Dr. Patel for a nasal spray on May 7, 2023.", \
+  {{"text": "User visited Dr. Patel on May 7, 2023 to get a prescribed nasal spray for ongoing sinus issues.", \
 "fact_type": "experience", "speaker": "user", \
 "occurred_start": "2023-05-07", "occurred_end": null, \
 "entities": ["Dr. Patel", "nasal spray", "role:doctor"]}},
-  {{"text": "User has been seeing Dr. Patel for about 6 months.", \
+  {{"text": "User has been seeing Dr. Patel for about 6 months — indicates an established care relationship.", \
 "fact_type": "experience", "speaker": "user", \
 "occurred_start": null, "occurred_end": null, \
 "entities": ["Dr. Patel", "role:doctor"]}},
-  {{"text": "User prefers Dr. Patel's clinic over their previous one.", \
+  {{"text": "User prefers Dr. Patel's clinic over their previous one — preference is comparative (Patel > previous), implying dissatisfaction with the prior provider.", \
 "fact_type": "preference", "speaker": "user", \
 "occurred_start": null, "occurred_end": null, \
 "entities": ["Dr. Patel", "role:doctor"]}},
-  {{"text": "Assistant recommended a saline rinse — clears post-nasal drip too.", \
+  {{"text": "Assistant recommended a saline rinse alongside the nasal spray because it also clears post-nasal drip; offered as complementary, not alternative, treatment.", \
 "fact_type": "assistant_statement", "speaker": "assistant", \
 "occurred_start": null, "occurred_end": null, \
 "entities": ["saline rinse", "post-nasal drip"]}}
