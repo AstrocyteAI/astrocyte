@@ -4,6 +4,49 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### M17 PageIndex-style ingestion + Conversation Engine — SHIPPED (2026-05-17)
+
+The M17 cycle delivered three composable engines (Memory, Document, Conversation) plus a composition layer, with a measurable bench lift over the M14-close baseline. Full design + cycle-close in [`docs/_design/m17-pageindex-ingestion.md`](docs/_design/m17-pageindex-ingestion.md). M18 quick-wins scoping in [`docs/_design/m18-quick-wins.md`](docs/_design/m18-quick-wins.md).
+
+**3-run mean (LME-30 + LoCoMo-200 fair subsets, gpt-4o-mini answerer + judge, --user-profile, top_k=200):**
+
+| Bench | M14 baseline | M17 conv (3-run mean) | Δ |
+|---|---|---|---|
+| LME top_20 | 65.0% ±3.3pp | **75.56%** ±5.09pp | **+10.56pp (3.2σ)** ✅ ship gate cleared |
+| LoCoMo top_20 | 78.25% ±1.5pp | **80.50%** ±1.50pp | **+2.25pp (1.5σ)** ✅ no-regression gate cleared |
+
+**Architecturally**, M17 establishes Astrocyte as a 3-engine composable framework:
+- **Memory Engine** (existing `astrocyte/` core) — facts, sections, wikis, banks, retrieval. Hindsight-inspired.
+- **Document Engine** (NEW `astrocyte/documents/`) — file → hierarchical tree. PageIndex-inspired (md_builder mirrors `md_to_tree`, adaptive summarizer uses PageIndex's exact prompt).
+- **Conversation Engine** (NEW `astrocyte/conversations/`) — turns → session-aware turn-boundary chunks. Hindsight-inspired (mirrors `_chunk_conversation`).
+- **Composition layer** — `DocumentIngestor` + `ConversationIngestor` bridge to Memory Engine via opaque metadata strings (no FK coupling). Each engine standalone-usable; zero cross-imports verified.
+
+**Bench attribution**: LME/LoCoMo are conversation workloads; the M17 bench measures **Conversation Engine + Memory Engine**. Document Engine ships but is not benched on these conversation datasets (its eventual bench is FinanceBench / DoubleBench, future cycle).
+
+**Code shipped:**
+
+- **Sprint 1** (Hindsight-parity adoptions): `astrocyte/audit.py` (migration 023), `astrocyte/operation_metadata.py`, `astrocyte/task_backend.py`, `astrocyte/pipeline/cross_encoder_rerank.py` (MPS device auto-detect + Apache-2.0 model presets — Jina-MLX deliberately excluded due to CC-BY-NC).
+- **Sprint 2** (Hindsight-parity adoptions): `astrocyte/db_budget.py` (connection-pool budgets), `astrocyte/disposition.py` + migration 024 (skepticism/literalism/empathy traits).
+- **M17 Phase 1+2** (Document Engine): `astrocyte/documents/` subpackage (types, parsers/{base,markdown}, builders/{md_builder,summarizer}, storage), Postgres impl in adapters, migrations 025 + 026.
+- **M17 Phase 2.5** (Conversation Engine): `astrocyte/conversations/` subpackage (types, chunking with session-aware boundaries, storage), Postgres impl in adapters, migrations 027 + 028.
+- **M17 Phase 3** (composition layer): `astrocyte/documents/ingestor.py`, `astrocyte/conversations/ingestor.py`, shared SPI in `astrocyte/_ingest_spi.py`; bench harness routes LME/LoCoMo through `ConversationIngestor` when `ASTROCYTE_M17_INGEST_PATH=conversation` (the new default for these workloads).
+
+**Tests:** 194 unit tests passing across Sprints 1+2 + M17 Phases 1+2+2.5+3.
+
+**Cost accounting:** ~$8 of M17's $400 budget cap consumed (significantly under). Budget headroom carries into M18.
+
+**What did NOT land:**
+
+- Phase 6 PDF parsers (markitdown + LlamaParse) — Document Engine API ships; PDF support arrives when there's a real PDF ingest use case.
+- Phase 7 external `pageindex` dep removal — the bench harness is wired around an env-var ingest-path switch; the external dep can still be imported for parity comparisons. Final removal waits for production-readiness confirmation.
+
+**Methodological lessons:**
+
+- The catastrophic conv-run-1 (−38pp LME) was a bridge-adapter bug — shoving 12k-char Conversation Engine chunks into single sections starved fact extraction. Session-aware chunking (turn-boundary AND session-boundary respect) fixed it; conv-run-3+ replicated cleanly.
+- LME has wider run-to-run variance than LoCoMo (±5.09pp vs ±1.50pp at the same flag). The conservative "central tendency" LME lift, accounting for one SSP outlier in run-4, is closer to +8pp than the headline +10.56pp from arithmetic 3-run mean. Both numbers clear the ship gate.
+
+**Gap to Hindsight after M17:** LME 75.56% vs Hindsight's published 94.6% → **−19.04pp remaining**. LoCoMo 80.50% vs Hindsight's 92.0% → **−11.50pp remaining**. M18 attacks the cheapest remaining engine-side levers (LLM-fallback flag flip + multiplicative score boosts, ~$60 budget).
+
 ### M14 retain pipeline overhaul — cycle closed with null bench verdict (2026-05-15)
 
 The M14 cycle ran an architectural experiment (atomic-fact consolidation + entity canonicalization + query-analyzer wiring) modelled on Hindsight's design. Implementation was built as working-tree WIP, benched across 3 runs of the wikis-off configuration, and **torn down without commit** when the null bench verdict made the implementation bench-unnecessary. Full retrospective in [`docs/_design/m13-m14-roadmap.md`](docs/_design/m13-m14-roadmap.md) §§8-12.

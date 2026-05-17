@@ -50,17 +50,35 @@ LoCoMo's gate is asymmetric: routing should not *hurt* LoCoMo even if it doesn't
 
 ### 3.1 Where the router lives
 
-Phase 1: **harness-side** in `astrocyte-py/scripts/mem0_harness/question_router.py`. Same blast-radius discipline as M15 — astrocyte core untouched; only the bench adapter invokes the router. If Phase 1 ships, promote to `astrocyte/pipeline/question_router.py` in a follow-up commit.
+**Framework code (`astrocyte/pipeline/question_router.py`) from day 1, behind a feature flag with default OFF.** Not harness-side.
+
+This is a correction from M15's pattern. M15's reflect agent and the original M16 draft both put the experiment harness-side with a "promote to core in Phase 4" plan. That pattern has three failure modes we want to avoid:
+
+1. **Bench measures something users will never run.** Production calls `AstrocyteClient.search()` (or the equivalent recall entry point). If the router only exists in the harness, the bench number reflects a code path no user will ever execute. The bench loses its value as a production indicator.
+2. **"Promote in Phase 4" rarely happens.** Once attention moves on, harness-only features become indefinite technical debt. Six months later, ripping out the harness implementation to re-build in core is a chore nobody volunteers for.
+3. **The harness can take API shortcuts that production can't.** Reaching into `client._bank_for(...)`, `client._doc_ids`, `client._md_text_by_user` private state works in-process. A real client (Cerebro calling Astrocyte over HTTP/gRPC) can't. By implementing in harness we postpone facing the API-design constraint.
+
+Concretely:
+
+- **`astrocyte/pipeline/question_router.py`** — generic, framework-level. Takes `RetrievalContext(store, embedding_provider, bank_id, document_id, md_text)` as an explicit argument. No private-attribute access. No bench-specific shortcuts. Any caller (Cerebro, future apps, the Mem0 adapter) constructs the context the same way.
+- **`AstrocyteClient`** — the Mem0 adapter. Adds an `enable_question_router: bool = False` constructor flag. When True, `search()` builds a `RetrievalContext` and dispatches via the core router; when False, the baseline path is unchanged.
+- **`run_lme.py` / `run_locomo.py`** — read `ASTROCYTE_QUESTION_ROUTER=1` env var, pass it to the client subclass at construction. No monkey-patching, no module-level injection.
+
+Ship = flip the default. Revert = remove the module + flag. There is no "promote to core" follow-up — the code already lives there.
 
 ```
-Mem0 harness answerer  →  AstrocyteClient.search(query, user_id)
-                          ├── classify_question(query) → QuestionType
-                          ├── grain_strategy = ROUTING_TABLE[type]
-                          └── retrieve_by_strategy(query, user_id, grain_strategy)
-                              └── returns flat reranked list (same shape as today)
+Mem0 harness answerer
+  → AstrocyteClient.search(query, user_id)
+    ├─ if not enable_question_router: baseline path (unchanged)
+    └─ else: ctx = RetrievalContext(...)
+              cls = classify_question(query, openai_client)
+              if cls.confidence < 0.6: route to "default"
+              results = retrieve_by_question_type(ctx, type, query, top_k)
+              (cross_encoder_rerank applied inside)
+              returns flat list with same shape as baseline
 ```
 
-The router changes WHICH retrieval functions get called and HOW their outputs are combined. The downstream contract (flat reranked list to the answerer) is unchanged.
+Production callers (e.g., Cerebro, future apps) can use the router directly without going through the Mem0 adapter — `astrocyte.pipeline.question_router.route_and_retrieve(...)` is a public composable.
 
 ### 3.2 Question-type taxonomy (generic across benches)
 
@@ -112,30 +130,31 @@ Each strategy returns a flat reranked list. The answerer never sees the grain �
 | Phase | Description | Bench gate | Budget |
 |---|---|---|---|
 | **0** | Skip — baseline (4-run M14 close) is current HEAD; no functional code change since. | None. | $0 |
-| **1** | Implement `question_router.py` + classifier + grain strategies. Wire into `astrocyte_client.search()` behind `ASTROCYTE_QUESTION_ROUTER=1` env flag. Smoke on LME-6. | LME-6 smoke must produce coherent results, no tracebacks, classification distribution looks sane (not all `default`). | ~$5 |
+| **1** | Implement `astrocyte/pipeline/question_router.py` (framework-side) + classifier + 6 grain strategies. Add `enable_question_router=False` flag to `AstrocyteClient`. Runners read `ASTROCYTE_QUESTION_ROUTER=1` env var and pass through to client. Smoke on LME-6. | LME-6 smoke must produce coherent results, no tracebacks, classification distribution looks sane (not all `default`). | ~$5 |
 | **2** | 3-run LME-30 + 1-run LoCoMo-200 with router enabled. | If LME 3-run mean ≥ 71.6% AND LoCoMo ≥ 76.7%: Phase 3. If LME any-run < 60%: HALT. Else: replicate vs improve decision. | ~$25 |
 | **3** | If Phase 2 borderline: 1 more LME run for 4-run mean. If Phase 2 clears gate: 1 LoCoMo replication. | Final 2σ confirmation. | ~$15 |
-| **4** | Promote router from harness to astrocyte core (`astrocyte/pipeline/question_router.py`). Update `AstrocyteClient` to use it by default (no env flag). Squash + push. | None — pure refactor. | ~$0 |
+| **4** | Flip the default: change `enable_question_router: bool = False` to `True` in `AstrocyteClient` constructor (and any production caller default). Squash + push. | None — single-line default change; router code already in framework. | ~$0 |
 
 **Hard halts:**
 - Any single LME run < 60% in Phase 2 ⇒ HALT (regression > 1σ).
 - LoCoMo any-run < 75% in Phase 2 ⇒ HALT (LoCoMo regression).
 - Cumulative spend ≥ $50 ⇒ HALT, document.
 
-## 5. Open design decisions (resolve before Phase 1 code)
+## 5. Resolved design decisions (was: open questions)
 
-1. **Classification caching scope.** Within a single bench run, the same question text never repeats (LME has distinct questions per user). But within an `AstrocyteClient.search()` call from per-cutoff iteration, the same `(user_id, question)` may classify multiple times. Cache per-call.
+Locked 2026-05-16 before Phase 1 implementation:
 
-2. **Multi-type questions.** Some questions are both temporal AND factual. Classifier returns one type. Mitigations:
-   - (a) Accept the single-type call and trust the classifier's primary signal.
-   - (b) Let classifier return a list with a primary; build a merge strategy.
-   - **Tentative answer: (a) for Phase 1.** Simplest; if Phase 1 borderline-passes, (b) becomes a Phase 2 lever.
+1. **Classification caching → per-`AstrocyteClient.search()`-call cache, in-memory.** The same `(user_id, question)` classifies once and reuses across the per-cutoff loop. Per-question cost: one ~$0.0001 classify + reused thereafter.
 
-3. **Default strategy when classifier fails (timeout, error).** Always `default` (flat-union) — degrades to baseline behavior. Never silently break the bench.
+2. **Multi-type questions → SINGLE PRIMARY.** Classifier returns ONE `question_type`. Rationale: Hindsight's own design has no static classifier (their analog is the reflect agent's iterative tool calls, which we already null-verdicted in M15). Engineering grounds: single-primary is simpler, smaller blast radius, easier to debug. If M16 borderline-passes, ranked-list becomes a hypothetical M17 lever; per the locked policy (§4), borderline misses null-verdict immediately.
 
-4. **Empty results from a non-default strategy.** If `factual` route returns 0 facts (no fact-grain hits), fall back to `default` for THIS question. Avoids the trap where a misclassified question gets nothing back.
+3. **Classifier failure → `default` (flat-union).** Timeouts, parse errors, missing-API-key all route to baseline behavior. Never silently break the bench. Logged at WARNING.
 
-5. **LoCoMo answer questions don't have categories like LME's.** Classifier doesn't need to know about benches; it operates on raw question text. The 6-class taxonomy applies regardless.
+4. **Empty results from a non-default strategy → fall back to `default` for THIS question.** A `factual` route that returns 0 facts is a misclassification or a question whose answer isn't fact-grained; instead of returning nothing, run the flat-union for that one question. Prevents the trap where misclassification = no evidence reaches the answerer.
+
+5. **Genericity (per locked policy §11).** Classifier operates on raw question text. The 6-class taxonomy is bench-agnostic — applies to LoCoMo, LME, and future benches without modification.
+
+6. **Additional locked decision: confidence threshold = 0.6 strict.** Classifier outputs below 0.6 confidence route to `default`. Conservative — reduces classification-noise-driven regressions. Hindsight's reflect agent has no equivalent constant; this is our engineering choice.
 
 ## 6. Out of scope for M16
 
