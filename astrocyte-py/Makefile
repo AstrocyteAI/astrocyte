@@ -538,6 +538,59 @@ bench-archive-trajectory:
 bench-archive-rebuild-trajectory:
 	uv run python -m scripts.archive_bench_results --rebuild-trajectory
 
+# Walk benchmark-results/ and archive every project lacking an _ARCHIVED
+# marker. Stage name is derived from the project directory; bench from
+# the file's metadata or path. Idempotent — already-archived projects are
+# skipped. The canonical sweep target — prefer this over the legacy
+# `bench-archive STAGE=foo --files ...` flow for cycle-level archiving.
+#
+# Common variants:
+#   make bench-archive-rescan                  # default cutoff (top_20)
+#   make bench-archive-rescan DRY=1            # preview without uploading
+#   make bench-archive-rescan MEM0_CUTOFF=top_50
+#   make bench-archive-rescan FORCE=1          # re-archive even with marker
+#   make bench-archive-rescan INCLUDE_SMOKE=1  # don't skip smoke / n<30 runs
+
+# Curation — mark a benchmark project as part of a SHIPPED cycle.
+# The trajectory regenerator picks the most-recent ship_label group and
+# means its overall scores for the README badge. Usage::
+#
+#   make bench-mark-shipped PROJECT=m18b-b1-dp-rrf-run-1 LABEL=m18b \
+#       RATIONALE="B1-dp+RRF: dateparser Pass B + RRF fact fusion"
+#
+# Typical cycle close marks 2 replicate projects with the same label.
+# After marking, re-run `make bench-archive-rescan` to propagate the
+# label into the manifest (and from there into the public badge).
+bench-mark-shipped:
+	@[ -n "$(PROJECT)" ] || { echo "ERROR: PROJECT=<project-dir-name> required" >&2; exit 2; }
+	@[ -n "$(LABEL)" ] || { echo "ERROR: LABEL=<cycle-label> required (e.g. m18b)" >&2; exit 2; }
+	uv run python -m scripts.mark_shipped \
+		--project $(PROJECT) \
+		--label $(LABEL) \
+		$(if $(RATIONALE),--rationale "$(RATIONALE)",) \
+		$(if $(FORCE),--force,) \
+		$(if $(ALLOW_UNARCHIVED),--allow-unarchived,)
+
+bench-mark-unshipped:
+	@[ -n "$(PROJECT)" ] || { echo "ERROR: PROJECT=<project-dir-name> required" >&2; exit 2; }
+	uv run python -m scripts.mark_shipped --project $(PROJECT) --unmark
+
+# After `bench-mark-shipped` (and again after `bench-mark-unshipped`),
+# patch ship_label fields into already-archived manifest entries and
+# regenerate the public badges. Doesn't re-upload result content.
+bench-refresh-labels:
+	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results \
+		--refresh-labels \
+		$(if $(DRY),--dry-run,)
+
+bench-archive-rescan:
+	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results \
+		--rescan \
+		--mem0-cutoff $(or $(MEM0_CUTOFF),top_20) \
+		$(if $(DRY),--dry-run,) \
+		$(if $(FORCE),--force,) \
+		$(if $(INCLUDE_SMOKE),--include-smoke,)
+
 # One-shot historical backfill — preview what would upload (default DRY).
 bench-archive-backfill-dry:
 	uv run python -m scripts.backfill_archive

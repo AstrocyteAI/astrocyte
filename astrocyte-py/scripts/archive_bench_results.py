@@ -43,6 +43,34 @@ else:
 
 KNOWN_BENCHES = ("locomo", "longmemeval")
 
+# Canonical root for all on-disk results. The rescan walker traverses
+# every subdirectory; each ``<harness>/<bench>/<project>/`` leaf is
+# treated as one logical "run".
+CANONICAL_RESULTS_ROOT = Path("benchmark-results")
+
+# When a run is successfully uploaded to R2, we drop this filename next
+# to the result JSON so a future rescan skips it. Delete the marker to
+# force re-archive.
+ARCHIVED_MARKER = "_ARCHIVED"
+
+# A successful cycle close can mark its shipping run pair with
+# ``_SHIP_LABEL.json``. The label propagates into the manifest entry and
+# the trajectory regenerator means scores within the most-recent label
+# group to drive the README badges. See ``scripts/mark_shipped.py``.
+SHIP_LABEL_FILE = "_SHIP_LABEL.json"
+
+# Mem0-harness result schemas expose a ``metrics_by_cutoff`` block. We
+# pick top_20 as the canonical cutoff for the trajectory because M18b's
+# cycle-close ablation matrix uses it as the headline number. Operators
+# can override per-rescan via ``--mem0-cutoff``.
+DEFAULT_MEM0_CUTOFF = "top_20"
+
+# Smoke / micro runs (n < SMOKE_MIN_QUESTIONS, or stage containing ``smoke``)
+# distort the trajectory and badge color when they happen to be the most
+# recent archived run. They're filtered out by the rescan by default;
+# pass ``--include-smoke`` to keep them.
+SMOKE_MIN_QUESTIONS = 30
+
 
 # ---------------------------------------------------------------------------
 # Result-file shape detection
@@ -137,6 +165,363 @@ def _summary_from_payload(bench: str, payload: dict[str, Any]) -> dict[str, Any]
         "judge": "llm" if payload.get("canonical_judge") or payload.get("judge_model") else "stemmed-f1",
         "model": payload.get("model"),
     }
+
+
+def _summary_from_mem0(payload: dict[str, Any], cutoff: str = DEFAULT_MEM0_CUTOFF) -> dict[str, Any] | None:
+    """Translate the Mem0-harness ``metrics_by_cutoff`` schema into the
+    trajectory shape.
+
+    Mem0-harness files look like::
+
+        {"metadata": {"benchmark": "locomo", "answerer_model": "gpt-4o-mini", ...},
+         "metrics_by_cutoff": {
+             "top_20": {"overall": {"total": 200, "correct": 171, "accuracy": 85.5}, ...},
+             ...
+         },
+         "evaluations": [...]}
+
+    Returns ``None`` when the payload doesn't carry the expected shape.
+    """
+    meta = payload.get("metadata") or {}
+    cutoffs = payload.get("metrics_by_cutoff") or {}
+    section = (cutoffs.get(cutoff) or {}).get("overall") or {}
+    if not section:
+        return None
+    accuracy_pct = section.get("accuracy")
+    if accuracy_pct is None:
+        return None
+    cats_block = (cutoffs.get(cutoff) or {}).get("categories") or {}
+    cats: dict[str, float] = {}
+    for name, body in cats_block.items():
+        if isinstance(body, dict) and "accuracy" in body:
+            try:
+                cats[str(name)] = round(float(body["accuracy"]) / 100, 4)
+            except (TypeError, ValueError):
+                continue
+    return {
+        "bench": _normalize_bench_name(meta.get("benchmark") or ""),
+        "overall": round(float(accuracy_pct) / 100, 4),
+        "categories": cats,
+        "n_questions": section.get("total"),
+        "judge": "llm" if meta.get("judge_model") else "stemmed-f1",
+        "model": meta.get("answerer_model") or meta.get("model"),
+        "cutoff": cutoff,
+        "project_name": meta.get("project_name"),
+        "run_id": meta.get("run_id"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Canonical-tree rescan
+# ---------------------------------------------------------------------------
+
+
+def _stage_from_project_dir(dir_name: str) -> str:
+    """Project dir → trajectory stage name.
+
+    ``astrocyte-m18b-b1-dp-rrf-run-1`` -> ``m18b-b1-dp-rrf-run-1``.
+    ``local-ad-hoc``                   -> ``local-ad-hoc``.
+    """
+    n = dir_name.strip()
+    if n.startswith("astrocyte-"):
+        n = n[len("astrocyte-"):]
+    return n or "local-ad-hoc"
+
+
+def _iter_canonical_runs(root: Path) -> Iterable[Path]:
+    """Yield each ``<harness>/<bench>/<project>/`` leaf containing a
+    result file. Order is deterministic (sorted depth-first)."""
+    if not root.exists():
+        return
+    # Pattern: benchmark-results/<harness>/<bench>/<project>/
+    # We accept either ``*_results_*.json`` (Mem0-harness) or
+    # ``results-*.json`` (PageIndex harness, legacy flat layout).
+    seen: set[Path] = set()
+    candidates = sorted(root.rglob("*_results_*.json")) + sorted(root.rglob("results-*.json"))
+    for f in candidates:
+        # Skip backfilled R2 fetches — they live under benchmark-results/_r2/.
+        if any(p == "_r2" for p in f.parts):
+            continue
+        leaf = f.parent
+        if leaf in seen:
+            continue
+        seen.add(leaf)
+        yield leaf
+
+
+def _project_already_archived(leaf: Path) -> bool:
+    return (leaf / ARCHIVED_MARKER).exists()
+
+
+def _read_ship_label(leaf: Path) -> dict[str, Any] | None:
+    """Return the contents of ``_SHIP_LABEL.json`` if present, else None."""
+    path = leaf / SHIP_LABEL_FILE
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _read_archived_marker(leaf: Path) -> dict[str, Any] | None:
+    """Return the contents of ``_ARCHIVED`` if present, else None.
+
+    The marker records the R2 keys this project was uploaded to — used
+    to look up the matching manifest entry for in-place ship_label
+    refreshes (no re-upload).
+    """
+    path = leaf / ARCHIVED_MARKER
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _mark_project_archived(leaf: Path, *, result_keys: list[str]) -> None:
+    """Write the ``_ARCHIVED`` marker with the R2 keys we uploaded."""
+    marker = leaf / ARCHIVED_MARKER
+    marker.write_text(
+        json.dumps(
+            {
+                "archived_at": datetime.now(timezone.utc).isoformat(),
+                "result_keys": sorted(result_keys),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _load_payload_for_leaf(leaf: Path) -> tuple[dict[str, Any], Path] | None:
+    """Pick the most recent result JSON in the project directory."""
+    candidates = sorted(leaf.glob("*_results_*.json")) + sorted(leaf.glob("results-*.json"))
+    candidates = [c for c in candidates if c.name != ARCHIVED_MARKER]
+    if not candidates:
+        return None
+    # Most recent by mtime — handles re-runs that produce multiple
+    # result files within one project directory.
+    chosen = max(candidates, key=lambda p: p.stat().st_mtime)
+    try:
+        return json.loads(chosen.read_text(encoding="utf-8")), chosen
+    except Exception as exc:
+        print(f"  SKIP {chosen}: parse failed: {exc}", file=sys.stderr)
+        return None
+
+
+async def refresh_ship_labels(
+    *,
+    root: Path = CANONICAL_RESULTS_ROOT,
+    cfg: R2Config | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Walk the canonical tree and surgically patch ship_label fields
+    into already-archived manifest entries. No re-upload — only updates
+    the per-day manifest JSONs in-place.
+
+    Returns the number of manifest entries updated.
+    """
+    cfg = cfg or R2Config.from_env()
+    updated = 0
+    # Group projects-with-labels by date (parsed from result_key) so we
+    # touch each per-day manifest at most once.
+    by_date: dict[str, list[tuple[Path, dict[str, Any], list[str]]]] = {}
+    for leaf in _iter_canonical_runs(root):
+        label = _read_ship_label(leaf)
+        archived = _read_archived_marker(leaf)
+        if not label or not archived:
+            continue
+        keys = archived.get("result_keys") or []
+        for key in keys:
+            # key shape: runs/<date>/<stage>/<bench>/results-<ts>-<sha>.json.gz
+            if not key.startswith("runs/"):
+                continue
+            date = key.split("/", 2)[1]
+            by_date.setdefault(date, []).append((leaf, label, [key]))
+
+    if not by_date:
+        print("  no projects carry _SHIP_LABEL.json (nothing to refresh)")
+        return 0
+
+    async with r2_client(cfg) as client:
+        for date in sorted(by_date.keys()):
+            manifest_key = f"runs/{date}/manifest.json"
+            manifest = await _get_json(client, cfg.bucket_private, manifest_key)
+            if not manifest:
+                print(f"  SKIP {manifest_key}: not found in private bucket")
+                continue
+            runs = manifest.get("runs", [])
+            mutated = False
+            for leaf, label, keys in by_date[date]:
+                target_keys = set(keys)
+                for run_entry in runs:
+                    if run_entry.get("result_key") not in target_keys:
+                        continue
+                    new_label = label.get("label")
+                    new_marked_at = label.get("marked_at")
+                    if (
+                        run_entry.get("ship_label") == new_label
+                        and run_entry.get("ship_marked_at") == new_marked_at
+                    ):
+                        continue
+                    run_entry["ship_label"] = new_label
+                    run_entry["ship_marked_at"] = new_marked_at
+                    if label.get("rationale"):
+                        run_entry["ship_rationale"] = label["rationale"]
+                    mutated = True
+                    updated += 1
+                    print(f"  patched {leaf} -> manifest {date} ship_label={new_label!r}")
+            if mutated and not dry_run:
+                manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+                body = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
+                await _put_object(client, cfg.bucket_private, manifest_key, body, "application/json")
+
+        if updated and not dry_run:
+            # Regenerate trajectory + badges so the new labels take effect immediately.
+            counts = await _regenerate_trajectory(client, cfg)
+            for bench, n in counts.items():
+                print(f"  trajectory/{bench}.json -> {cfg.public_url}/trajectory/{bench}.json ({n} runs)")
+
+    print(f"  refresh-labels done: {updated} manifest entries patched across {len(by_date)} day(s)")
+    return updated
+
+
+async def archive_rescan(
+    *,
+    root: Path = CANONICAL_RESULTS_ROOT,
+    cfg: R2Config | None = None,
+    mem0_cutoff: str = DEFAULT_MEM0_CUTOFF,
+    dry_run: bool = False,
+    force: bool = False,
+    include_smoke: bool = False,
+) -> int:
+    """Walk the canonical results tree and archive every project that
+    doesn't already carry an ``_ARCHIVED`` marker.
+
+    Stage names are derived from the project directory. The bench name
+    is read from the payload (Mem0 schema) or inferred from the parent
+    directory (PageIndex schema).
+
+    Returns the number of payloads uploaded.
+    """
+    cfg = cfg or R2Config.from_env()
+    sha = _short_sha()
+    uploaded = 0
+    skipped = 0
+
+    leaves = list(_iter_canonical_runs(root))
+    if not leaves:
+        print(f"  no result files found under {root}/")
+        return 0
+
+    print(f"  scanning {len(leaves)} project director{'y' if len(leaves) == 1 else 'ies'} under {root}/")
+
+    async with r2_client(cfg) as client:
+        for leaf in leaves:
+            relative = leaf.relative_to(root) if leaf.is_relative_to(root) else leaf
+            # Canonical layout requires <harness>/<bench>/<project>/ (3 segments).
+            # Older flat result files live at the root or under
+            # benchmark-results/<bench>/ without a project dir — skip them, they
+            # need to be re-organised into the canonical layout before archive.
+            if len(relative.parts) < 3:
+                print(f"  SKIP {leaf}: non-canonical layout (expected <harness>/<bench>/<project>/)")
+                continue
+            harness = relative.parts[0]
+            bench_from_path = _normalize_bench_name(relative.parts[1])
+            project_dir = relative.parts[-1]
+            stage = _stage_from_project_dir(project_dir)
+
+            if not force and _project_already_archived(leaf):
+                skipped += 1
+                continue
+
+            loaded = _load_payload_for_leaf(leaf)
+            if loaded is None:
+                continue
+            payload, source_file = loaded
+
+            # Schema dispatch — Mem0 first (richer), fall back to PageIndex.
+            summary = _summary_from_mem0(payload, cutoff=mem0_cutoff)
+            if summary:
+                bench = summary["bench"] or bench_from_path or "unknown"
+                bench_payload = payload  # archive the full file
+            elif "overall_accuracy" in payload:
+                bench = bench_from_path or _normalize_bench_name(payload.get("benchmark") or "")
+                summary = _summary_from_payload(bench, payload)
+                bench_payload = payload
+            else:
+                print(f"  SKIP {source_file}: unrecognised schema (no metrics_by_cutoff or overall_accuracy)")
+                continue
+
+            if bench not in KNOWN_BENCHES:
+                print(f"  SKIP {source_file}: bench={bench!r} not in KNOWN_BENCHES")
+                continue
+
+            # Smoke filter — drop tiny / smoke-named runs unless the
+            # caller explicitly opts them in. These otherwise show up
+            # as 0% / 100% / 67% extreme points on the trajectory and
+            # can swing the badge color when "latest" is a smoke.
+            if not include_smoke:
+                n_q = summary.get("n_questions")
+                if "smoke" in stage.lower():
+                    print(f"  SKIP {leaf}: smoke stage (stage={stage}); pass --include-smoke to archive")
+                    continue
+                if isinstance(n_q, int) and n_q < SMOKE_MIN_QUESTIONS:
+                    print(f"  SKIP {leaf}: micro run (n={n_q} < {SMOKE_MIN_QUESTIONS}); pass --include-smoke to archive")
+                    continue
+
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            date = ts[:4] + "-" + ts[4:6] + "-" + ts[6:8]
+            key = f"runs/{date}/{stage}/{bench}/results-{ts}-{sha}.json.gz"
+
+            if dry_run:
+                print(f"  DRY  would upload {harness}/{bench}/{project_dir}/  ->  s3://{cfg.bucket_private}/{key}  ({summary.get('overall')})")
+                uploaded += 1
+                continue
+
+            gz = _gzip_bytes(json.dumps(bench_payload, default=str).encode("utf-8"))
+            await _put_object(client, cfg.bucket_private, key, gz, "application/gzip")
+            ship_label = _read_ship_label(leaf)
+            manifest_entry: dict[str, Any] = {
+                "date": date,
+                "stage": stage,
+                "bench": bench,
+                "sha": sha,
+                "harness": harness,
+                "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                "result_key": key,
+                **summary,
+            }
+            if ship_label:
+                manifest_entry["ship_label"] = ship_label.get("label")
+                manifest_entry["ship_marked_at"] = ship_label.get("marked_at")
+                if ship_label.get("rationale"):
+                    manifest_entry["ship_rationale"] = ship_label["rationale"]
+            await _update_day_manifest(
+                client,
+                cfg,
+                date=date,
+                entry=manifest_entry,
+            )
+            await _put_object(
+                client, cfg.bucket_private,
+                f"latest/{bench}.json.gz",
+                gz, "application/gzip",
+            )
+            _mark_project_archived(leaf, result_keys=[key])
+            uploaded += 1
+            print(f"  uploaded {bench:<12} stage={stage:<32} overall={summary.get('overall')} -> {key}")
+
+        if uploaded > 0 and not dry_run:
+            counts = await _regenerate_trajectory(client, cfg)
+            for bench, n in counts.items():
+                print(f"  trajectory/{bench}.json -> {cfg.public_url}/trajectory/{bench}.json ({n} runs)")
+
+    print(f"  rescan done: uploaded={uploaded} skipped={skipped} (already-archived) total_scanned={len(leaves)}")
+    return uploaded
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +623,111 @@ async def _regenerate_trajectory(client, cfg: R2Config) -> dict[str, int]:
         body = json.dumps(artifact, indent=2).encode("utf-8")
         await _put_object(client, cfg.bucket_public, f"trajectory/{bench}.json", body, "application/json")
         counts[bench] = len(runs_sorted)
+
+        # Badge — shields.io endpoint format. Prefers the mean of the
+        # most-recent SHIPPED run pair (curated via mark_shipped); falls
+        # back to the latest non-smoke run when no shipped label exists.
+        badge = _build_badge_payload(bench, runs_sorted)
+        if badge:
+            badge_body = json.dumps(badge).encode("utf-8")
+            await _put_object(
+                client, cfg.bucket_public,
+                f"badges/{bench}.json",
+                badge_body, "application/json",
+            )
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Badge writer (shields.io endpoint format)
+# ---------------------------------------------------------------------------
+
+
+_BENCH_LABEL = {"locomo": "LoCoMo", "longmemeval": "LongMemEval"}
+
+
+def _badge_color(acc: float) -> str:
+    return (
+        "brightgreen" if acc >= 0.80
+        else "green" if acc >= 0.75
+        else "yellowgreen" if acc >= 0.70
+        else "yellow" if acc >= 0.65
+        else "orange" if acc >= 0.55
+        else "red"
+    )
+
+
+def _pick_shipped_group(runs: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Return the most-recent ship_label group, or None if no labels exist.
+
+    Recency is decided by the latest ``ship_marked_at`` among the runs
+    in each label. Ties broken by max ``uploaded_at``.
+    """
+    by_label: dict[str, list[dict[str, Any]]] = {}
+    for r in runs:
+        label = r.get("ship_label")
+        if not label:
+            continue
+        by_label.setdefault(label, []).append(r)
+    if not by_label:
+        return None
+
+    def _label_recency(label: str) -> tuple[str, str]:
+        group = by_label[label]
+        marked = max((r.get("ship_marked_at") or "" for r in group), default="")
+        uploaded = max((r.get("uploaded_at") or "" for r in group), default="")
+        return (marked, uploaded)
+
+    most_recent_label = max(by_label.keys(), key=_label_recency)
+    return by_label[most_recent_label]
+
+
+def _build_badge_payload(bench: str, runs_sorted: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Compute the shields.io endpoint badge JSON for one bench.
+
+    Strategy:
+    1. If any run carries a ``ship_label``, pick the most-recent label
+       group and mean its overall scores. Label encodes the cycle (e.g.
+       'M18b'); badge message is the mean accuracy + sample size.
+    2. Otherwise fall back to the most recent run with non-null overall.
+       This keeps the badge live before the first cycle close marks
+       its shipped pair.
+    """
+    label = _BENCH_LABEL.get(bench, bench)
+    bench_runs = [r for r in runs_sorted if isinstance(r.get("overall"), (int, float))]
+    if not bench_runs:
+        return None
+
+    shipped = _pick_shipped_group(bench_runs)
+    if shipped:
+        accs = [float(r["overall"]) for r in shipped]
+        mean_acc = sum(accs) / len(accs)
+        n = sum(int(r.get("n_questions") or 0) for r in shipped) // len(shipped)
+        ship_cycle = shipped[0].get("ship_label", "")
+        runs_suffix = f" × {len(shipped)} runs" if len(shipped) > 1 else ""
+        sub = ship_cycle.upper() if ship_cycle else ""
+        sub_block = f", {sub}" if sub else ""
+        return {
+            "schemaVersion": 1,
+            "label": f"{label} (n={n}{sub_block}{runs_suffix})" if n else label,
+            "message": f"{mean_acc * 100:.1f}%",
+            "color": _badge_color(mean_acc),
+        }
+
+    # Fallback — latest non-null overall.
+    latest = bench_runs[-1]
+    acc = float(latest["overall"])
+    n = latest.get("n_questions")
+    stage = latest.get("stage") or ""
+    n_block = f"n={n}" if n else ""
+    parts = [p for p in (n_block, stage) if p]
+    suffix = f" ({', '.join(parts)})" if parts else ""
+    return {
+        "schemaVersion": 1,
+        "label": f"{label}{suffix}",
+        "message": f"{acc * 100:.1f}%",
+        "color": _badge_color(acc),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +860,54 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip uploads; regenerate trajectory/<bench>.json from existing manifests in the private bucket.",
     )
     p.add_argument("--selftest", action="store_true", help="Verify both buckets are reachable; exit 0 on success.")
+    p.add_argument(
+        "--rescan",
+        action="store_true",
+        help=(
+            "Walk benchmark-results/ and archive every project that lacks an _ARCHIVED marker. "
+            "Stage names are derived from the project directory. Idempotent — safe to re-run."
+        ),
+    )
+    p.add_argument(
+        "--rescan-root",
+        type=Path,
+        default=CANONICAL_RESULTS_ROOT,
+        help=f"Root to walk when --rescan is set (default: {CANONICAL_RESULTS_ROOT}).",
+    )
+    p.add_argument(
+        "--mem0-cutoff",
+        default=DEFAULT_MEM0_CUTOFF,
+        help=f"Mem0-harness cutoff to canonicalize on (default: {DEFAULT_MEM0_CUTOFF}).",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what --rescan would upload without touching R2 or writing markers.",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-archive projects even when an _ARCHIVED marker is present.",
+    )
+    p.add_argument(
+        "--include-smoke",
+        action="store_true",
+        help=(
+            f"Archive smoke / micro runs too. By default the rescan skips "
+            f"any project whose stage contains 'smoke' or whose n_questions "
+            f"is below {SMOKE_MIN_QUESTIONS}."
+        ),
+    )
+    p.add_argument(
+        "--refresh-labels",
+        action="store_true",
+        help=(
+            "Walk benchmark-results/ and patch ship_label fields into "
+            "already-archived per-day manifests. Run this after "
+            "`make bench-mark-shipped` to propagate label changes without "
+            "re-uploading anything."
+        ),
+    )
     return p
 
 
@@ -387,6 +924,25 @@ async def _amain(argv: list[str]) -> int:
         for bench, n in counts.items():
             print(f"  trajectory/{bench}.json ({n} runs)")
         return 0
+
+    if args.refresh_labels:
+        n = await refresh_ship_labels(
+            root=args.rescan_root,
+            cfg=cfg,
+            dry_run=args.dry_run,
+        )
+        return 0  # zero is fine — nothing to patch may be a clean state
+
+    if args.rescan:
+        n = await archive_rescan(
+            root=args.rescan_root,
+            cfg=cfg,
+            mem0_cutoff=args.mem0_cutoff,
+            dry_run=args.dry_run,
+            force=args.force,
+            include_smoke=args.include_smoke,
+        )
+        return 0 if n > 0 or args.dry_run else 1
 
     if not args.files:
         print("ERROR: --files is required (or pass --selftest / --rebuild-trajectory)", file=sys.stderr)
