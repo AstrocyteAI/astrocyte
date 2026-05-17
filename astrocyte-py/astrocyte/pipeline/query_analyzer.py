@@ -92,10 +92,30 @@ class QueryAnalysis:
 # for either endpoint means open-ended.
 
 _MONTHS = {
-    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
-    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
-    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
-    "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+    "january": 1,
+    "jan": 1,
+    "february": 2,
+    "feb": 2,
+    "march": 3,
+    "mar": 3,
+    "april": 4,
+    "apr": 4,
+    "may": 5,
+    "june": 6,
+    "jun": 6,
+    "july": 7,
+    "jul": 7,
+    "august": 8,
+    "aug": 8,
+    "september": 9,
+    "sep": 9,
+    "sept": 9,
+    "october": 10,
+    "oct": 10,
+    "november": 11,
+    "nov": 11,
+    "december": 12,
+    "dec": 12,
 }
 
 
@@ -165,7 +185,9 @@ def _try_month_year(query: str) -> tuple[datetime | None, datetime | None, str] 
 
 
 def _try_relative(
-    query: str, *, reference: datetime,
+    query: str,
+    *,
+    reference: datetime,
 ) -> tuple[datetime | None, datetime | None, str] | None:
     """Resolve relative expressions (yesterday, last week, X days ago)."""
     q = query.lower()
@@ -201,8 +223,7 @@ def _try_relative(
         unit = m.group(2)
         if unit == "day":
             d = reference - timedelta(days=n)
-            return d.replace(hour=0, minute=0, second=0, microsecond=0), \
-                   reference, f"{n} day(s) ago"
+            return d.replace(hour=0, minute=0, second=0, microsecond=0), reference, f"{n} day(s) ago"
         if unit == "week":
             d = reference - timedelta(weeks=n)
             return d, reference, f"{n} week(s) ago"
@@ -216,12 +237,99 @@ def _try_relative(
     return None
 
 
+def _try_temporal_expansion(
+    query: str,
+    *,
+    reference: datetime,
+) -> tuple[datetime | None, datetime | None, str] | None:
+    """M18a-1 Pass A: extended relative-time patterns from temporal_expressions.
+
+    Covers patterns the core ``_try_relative`` misses:
+      - word-numbers ("one/two/.../ten X ago")
+      - "a few / few X ago" — vague pinned to roughly 2-5 units
+      - "couple of / a couple X ago" — ~2-3 units
+      - "the other day/week/month"
+      - "this / earlier this <unit>"
+      - "recently / just now / lately"
+
+    Imported lazily so the broader query_analyzer module load doesn't
+    pay the cost when the flag is off.
+    """
+    from astrocyte.pipeline.temporal_expressions import (  # noqa: PLC0415
+        expand_temporal_expression,
+    )
+
+    rng = expand_temporal_expression(query, reference)
+    if rng is None:
+        return None
+    start, end = rng
+    return start, end, "temporal-expansion match"
+
+
+def _try_dateparser(
+    query: str,
+    *,
+    reference: datetime,
+) -> tuple[datetime | None, datetime | None, str] | None:
+    """M18a-1 Pass B: Hindsight-parity wide-net date extraction via the
+    ``dateparser`` library.
+
+    Catches everything Pass A's curated regex set misses:
+      - Named dates ("March 15", "the 3rd of June")
+      - ISO ("2024-06-01") and weekday ("Tuesday", "last Friday") refs
+      - Ordinals ("the 5th of last month")
+      - Implicit multi-language ("ayer", "letztes Jahr") — when the
+        dataset is multilingual
+
+    Returns a widened neighbourhood (±1 day) around dateparser's
+    single-day hit, since fact-grain dates can be one day off the
+    question's mention date.
+
+    Imported lazily so the broader module load doesn't pay the
+    ``dateparser`` startup cost when the flag is off. Gracefully
+    no-ops (returns None) if the ``dateparser`` package isn't
+    installed — see ``pyproject.toml`` ``[bench]`` extras.
+    """
+    from astrocyte.pipeline.temporal_dateparser import (  # noqa: PLC0415
+        extract_temporal_range_via_dateparser,
+        widen_to_neighbourhood,
+    )
+
+    rng = extract_temporal_range_via_dateparser(query, reference)
+    if rng is None:
+        return None
+    start, end = widen_to_neighbourhood(rng, pad_days=1)
+    return start, end, "dateparser match (±1d)"
+
+
 def _regex_temporal_pass(
-    query: str, *, reference: datetime,
+    query: str,
+    *,
+    reference: datetime,
+    allow_temporal_expansion: bool = False,
 ) -> TemporalConstraint | None:
-    """Try each regex pattern in order; return the first match."""
-    for fn in (_try_iso_date, _try_relative, _try_month_year, _try_year):
-        if fn is _try_relative:
+    """Try each regex pattern in order; return the first match.
+
+    When ``allow_temporal_expansion=True`` (M18a-1 flag), the extended
+    pattern set from ``temporal_expressions`` runs as an additional
+    branch in the chain. Default off so behavior matches the legacy
+    pre-M18 path.
+    """
+    chain = [_try_iso_date, _try_relative, _try_month_year, _try_year]
+    if allow_temporal_expansion:
+        # Pass A: insert after _try_relative — narrow exact regex matches
+        # (yesterday/today/last week/N units ago) still win when they apply;
+        # the expansion patterns catch fuzzy quantifiers, word-numbers,
+        # "lately" that _try_relative missed.
+        chain.insert(2, _try_temporal_expansion)
+        # Pass B: Hindsight-parity dateparser. Appended LAST so all the
+        # precise regex passes get first crack — Pass B is the wide-net
+        # catchall for named dates ("March 15"), weekdays, ISO refs, etc.
+        # No-ops when the `dateparser` package isn't installed.
+        chain.append(_try_dateparser)
+
+    for fn in chain:
+        if fn in (_try_relative, _try_temporal_expansion, _try_dateparser):
             hit = fn(query, reference=reference)  # type: ignore[arg-type]
         else:
             hit = fn(query)  # type: ignore[arg-type]
@@ -237,12 +345,41 @@ def _regex_temporal_pass(
 
 
 _TEMPORAL_MARKERS = {
-    "yesterday", "today", "tomorrow", "last", "this", "next",
-    "ago", "before", "after", "since", "until", "during",
-    "when", "while", "then", "now", "recently", "earlier",
-    "later", "previous", "previously", "ever", "never", "always",
-    "year", "month", "week", "day", "morning", "evening",
-    "spring", "summer", "fall", "autumn", "winter",
+    "yesterday",
+    "today",
+    "tomorrow",
+    "last",
+    "this",
+    "next",
+    "ago",
+    "before",
+    "after",
+    "since",
+    "until",
+    "during",
+    "when",
+    "while",
+    "then",
+    "now",
+    "recently",
+    "earlier",
+    "later",
+    "previous",
+    "previously",
+    "ever",
+    "never",
+    "always",
+    "year",
+    "month",
+    "week",
+    "day",
+    "morning",
+    "evening",
+    "spring",
+    "summer",
+    "fall",
+    "autumn",
+    "winter",
 }
 
 
@@ -282,11 +419,7 @@ Rules:
 
 
 def _build_llm_user_prompt(query: str, reference: datetime) -> str:
-    return (
-        f"Reference date: {reference.isoformat()}\n"
-        f"Query: {query.strip()}\n\n"
-        f"Time range (JSON):"
-    )
+    return f"Reference date: {reference.isoformat()}\nQuery: {query.strip()}\n\nTime range (JSON):"
 
 
 def _parse_llm_response(raw: str) -> TemporalConstraint | None:
@@ -333,7 +466,8 @@ async def analyze_query(
     *,
     reference_date: datetime | None = None,
     llm_provider=None,
-    allow_llm_fallback: bool = False,
+    allow_llm_fallback: bool = True,
+    allow_temporal_expansion: bool = False,
 ) -> QueryAnalysis:
     """Extract structured constraints from a query.
 
@@ -348,6 +482,12 @@ async def analyze_query(
             contains a temporal-marker token. When False, only the
             regex path runs (deterministic, no LLM cost). Default
             False so callers explicitly opt in.
+        allow_temporal_expansion: M18a-1 flag. When True, the regex
+            pre-pass includes the extended pattern set from
+            ``astrocyte.pipeline.temporal_expressions`` (word-numbers,
+            "a few X ago", "the other day", "this/earlier this <unit>",
+            "recently/lately"). Default False — preserves legacy
+            behavior. Promotion to default = M18c step after bench gate.
 
     Returns:
         :class:`QueryAnalysis` whose ``temporal_constraint`` is set
@@ -361,8 +501,10 @@ async def analyze_query(
     if ref.tzinfo is None:
         ref = ref.replace(tzinfo=timezone.utc)
 
-    # Regex pre-pass.
-    regex_hit = _regex_temporal_pass(query, reference=ref)
+    # Regex pre-pass (with optional M18a-1 expansion).
+    regex_hit = _regex_temporal_pass(
+        query, reference=ref, allow_temporal_expansion=allow_temporal_expansion,
+    )
     if regex_hit is not None:
         return QueryAnalysis(
             temporal_constraint=regex_hit,

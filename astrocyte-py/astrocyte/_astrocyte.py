@@ -338,9 +338,7 @@ class Astrocyte:
         pipeline.structured_fact_extraction_chunk_strategy = sfe_cfg.chunk_strategy
         pipeline.structured_fact_extraction_chunk_max_size = sfe_cfg.chunk_max_size
         pipeline.structured_fact_extraction_parallel_chunks = sfe_cfg.parallel_chunks
-        pipeline.structured_fact_extraction_parallel_chunks_max_concurrency = (
-            sfe_cfg.parallel_chunks_max_concurrency
-        )
+        pipeline.structured_fact_extraction_parallel_chunks_max_concurrency = sfe_cfg.parallel_chunks_max_concurrency
 
         # Entity co-occurrence link cap (2026-05-06 retain-profile fix).
         # The all-pairs Cartesian product was 34% of retain wall on the
@@ -354,6 +352,18 @@ class Astrocyte:
         qa_cfg = self._config.query_analyzer
         pipeline.query_analyzer_enabled = qa_cfg.enabled
         pipeline.query_analyzer_allow_llm_fallback = qa_cfg.allow_llm_fallback
+        # M18a-1: extended temporal-expansion pattern set. Env-var override
+        # (``ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION=1``) gives bench-time
+        # control without code change; otherwise the per-bank config wins.
+        import os as _os  # noqa: PLC0415
+
+        _env = _os.environ.get("ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION", "").lower()
+        if _env in ("1", "true", "yes"):
+            pipeline.query_analyzer_enable_temporal_expansion = True
+        elif _env in ("0", "false", "no"):
+            pipeline.query_analyzer_enable_temporal_expansion = False
+        else:
+            pipeline.query_analyzer_enable_temporal_expansion = qa_cfg.enable_temporal_expansion
 
         # Link expansion (Hindsight parity, C3) — replaces the previous
         # spreading-activation BFS with the 3-parallel-signal path.

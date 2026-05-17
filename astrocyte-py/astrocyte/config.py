@@ -186,22 +186,26 @@ class BenchmarkPresetConfig:
     name: str = "custom"
     version: int = 1
     budget: str = "mid"
-    low: BenchmarkBudgetConfig = field(default_factory=lambda: BenchmarkBudgetConfig(
-        candidate_limit=12,
-        graph_expansion_limit=12,
-        rerank_top_k=12,
-        max_tokens=2048,
-        agentic_reflect_allowed=False,
-    ))
+    low: BenchmarkBudgetConfig = field(
+        default_factory=lambda: BenchmarkBudgetConfig(
+            candidate_limit=12,
+            graph_expansion_limit=12,
+            rerank_top_k=12,
+            max_tokens=2048,
+            agentic_reflect_allowed=False,
+        )
+    )
     mid: BenchmarkBudgetConfig = field(default_factory=BenchmarkBudgetConfig)
-    high: BenchmarkBudgetConfig = field(default_factory=lambda: BenchmarkBudgetConfig(
-        candidate_limit=60,
-        graph_expansion_limit=40,
-        rerank_top_k=40,
-        max_tokens=16384,
-        observation_weight=0.25,
-        agentic_reflect_allowed=True,
-    ))
+    high: BenchmarkBudgetConfig = field(
+        default_factory=lambda: BenchmarkBudgetConfig(
+            candidate_limit=60,
+            graph_expansion_limit=40,
+            rerank_top_k=40,
+            max_tokens=16384,
+            observation_weight=0.25,
+            agentic_reflect_allowed=True,
+        )
+    )
 
 
 @dataclass
@@ -309,7 +313,26 @@ class QueryAnalyzerConfig:
     """
 
     enabled: bool = False
-    allow_llm_fallback: bool = False
+    allow_llm_fallback: bool = True
+    #: M18a-1 — extended relative-time patterns plus Hindsight-parity
+    #: dateparser Pass B. The chain runs:
+    #:   1. ``_try_iso_date`` / ``_try_relative`` — narrow exact regex
+    #:   2. ``_try_temporal_expansion`` (Pass A) — fuzzy "a few weeks ago"
+    #:   3. ``_try_month_year`` / ``_try_year`` — calendar references
+    #:   4. ``_try_dateparser`` (Pass B) — wide-net for named dates,
+    #:      weekdays, ordinals, ISO refs (requires ``dateparser`` pkg —
+    #:      see ``pyproject.toml`` ``[bench]`` extras; no-ops if missing)
+    #: The extracted date range is fed to ``fact_recall`` which RRF-
+    #: fuses semantic + episodic + temporal as parallel siblings
+    #: (Hindsight architecture), so false-positive dateparser hits are
+    #: damped by cross-strategy agreement scoring.
+    #:
+    #: **Default True as of M18b ship** (2026-05-17): the B1-dp+RRF
+    #: 2-run mean was 83.75% LoCoMo (+3.25pp vs B0 baseline 80.5%,
+    #: +2.17σ above M17 mean — cleared M17+1σ ship gate by 1.75pp).
+    #: Bench env override ``ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION=0``
+    #: forces off for ablation replication.
+    enable_temporal_expansion: bool = True
 
 
 @dataclass
@@ -762,6 +785,85 @@ class WikiCompileConfig:
 
 
 @dataclass
+class PreferenceCompileConfig:
+    """M18a-4 follow-up — preference consolidation gate (Hindsight parity).
+
+    Per-document LLM pass that distills ``fact_type='preference'`` facts
+    into ``MentalModel(kind='preference')`` rows for advisory recall.
+    Default ON (matches pre-M18 bench behavior; was always run inline).
+
+    Disable to ablate the preference tier (useful for measuring its
+    isolated contribution vs the directive tier).
+    """
+
+    enabled: bool = True
+
+
+@dataclass
+class EpisodicExtractConfig:
+    """M18a-4 — episodic event index (tag + retrieve).
+
+    Two integration points (both bench-gated today; core orchestrator
+    hook deferred to a separate cycle):
+
+    1. **Retain side**: after fact extraction for a document,
+       ``tag_episodic_facts(all_facts)`` walks the fact list and tags
+       any matching an episodic verb pattern ("attended/visited/met X
+       at/during Y") by appending ``EPISODIC_MARKER`` ("episodic:event")
+       to the fact's ``entities`` array. Uses the existing fact_type
+       schema (migration 020) — no new SQL value, just a namespaced
+       marker entity. See ``astrocyte/pipeline/episodic_extract.py``.
+
+    2. **Recall side**: when ``question_has_episodic_cue(query)`` matches
+       (question contains "where did I", "when did I meet", etc.),
+       the recall path explicitly queries
+       ``store.search_facts_by_entity(bank_id, EPISODIC_MARKER, ...)``
+       to surface the episodic-tagged facts alongside generic
+       semantic hits.
+
+    Both call sites are bench-gated by ``ASTROCYTE_M18_ENABLE_EPISODIC_EXTRACTION=1``
+    today. When the orchestrator gains a "document post-process" hook,
+    the retain-side tagger moves there; the recall-side search becomes
+    a new strategy in ``section_recall``.
+    """
+
+    enabled: bool = False
+
+
+# NOTE: SpreadingActivationConfig is defined ~earlier in this file (line ~467).
+# The earlier definition is the live one — it carries the Hindsight-parity
+# link-walk fields (``max_hops``, ``decay_per_hop``, ``link_types``,
+# ``temporal_proximity_weight``) used by ``link_expansion.py`` and read in
+# ``_astrocyte.py:379``. The duplicate definition removed here was an
+# M18a-3 stub with ``seed_count``/``top_k`` fields that were never wired
+# (the actual M18a-3 entity-co-occurrence implementation takes those as
+# function parameters in ``section_recall.py``, not config fields).
+
+
+@dataclass
+class DirectiveCompileConfig:
+    """M18a-2 — directive-style preference compile (Hindsight parity).
+
+    Hindsight's ``mental_models.subtype='directive'`` rows are user-
+    curated hard rules treated as authoritative by the answerer. We
+    auto-distill preference facts into a tight directive tier (≤5 rows
+    per document) via ``astrocyte.pipeline.directive_compile``. The
+    advisory preference tier (consolidation pass) stays in the store
+    on-demand-recallable; only the directive tier surfaces verbatim.
+
+    Currently called from the bench harness pipeline only — the core
+    orchestrator does not yet have a "document post-process" hook for
+    document-level passes (preference_compile, directive_compile,
+    episodic_extract). Adding that hook is a separate cycle; until
+    then this flag controls the bench-side call only.
+
+    Bench-time env-var override: ``ASTROCYTE_M18_ENABLE_DIRECTIVE_COMPILE=1``.
+    """
+
+    enabled: bool = False
+
+
+@dataclass
 class EntityResolutionConfig:
     """Configuration for M11 retain-time entity resolution."""
 
@@ -890,6 +992,24 @@ class AstrocyteConfig:
     entity_resolution: EntityResolutionConfig = field(default_factory=EntityResolutionConfig)
     async_tasks: AsyncTasksConfig = field(default_factory=AsyncTasksConfig)
     benchmark_preset: BenchmarkPresetConfig = field(default_factory=BenchmarkPresetConfig)
+    # M18a-2 — directive-style preference compile (off by default; flip via
+    # this field per-bank or env var ASTROCYTE_M18_ENABLE_DIRECTIVE_COMPILE=1).
+    directive_compile: DirectiveCompileConfig = field(default_factory=DirectiveCompileConfig)
+    # M18a-3 spreading_activation field already declared above (line ~969,
+    # alongside cross_encoder_rerank, causal_links, etc.) — duplicate
+    # declaration removed when the duplicate dataclass was deleted.
+    # M18a-4 — episodic event index (retain-side tag + recall-side search).
+    # Both call paths integrated via document_postprocess + fact_recall in
+    # core. Off by default; flip via this field per-bank or env var
+    # ASTROCYTE_M18_ENABLE_EPISODIC_EXTRACTION=1.
+    episodic_extract: EpisodicExtractConfig = field(
+        default_factory=EpisodicExtractConfig,
+    )
+    # M18a-4 follow-up — preference compile gate (was always-on in bench
+    # before M18). Default True for back-compat; off only when ablating.
+    preference_compile: PreferenceCompileConfig = field(
+        default_factory=PreferenceCompileConfig,
+    )
 
     # MIP (Memory Intent Protocol)
     mip_config_path: str | None = None  # Path to mip.yaml
@@ -1073,7 +1193,9 @@ def _parse_barriers(data: dict) -> BarrierConfig:
     return BarrierConfig(
         pii=PiiConfig(**_filter_dataclass_fields(PiiConfig, _safe_sub_dict(data, "pii"))),
         validation=ValidationConfig(**_filter_dataclass_fields(ValidationConfig, _safe_sub_dict(data, "validation"))),
-        metadata=MetadataSanitizationConfig(**_filter_dataclass_fields(MetadataSanitizationConfig, _safe_sub_dict(data, "metadata"))),
+        metadata=MetadataSanitizationConfig(
+            **_filter_dataclass_fields(MetadataSanitizationConfig, _safe_sub_dict(data, "metadata"))
+        ),
     )
 
 
@@ -1129,9 +1251,7 @@ def _parse_access_grants(data: list) -> list[AccessGrant]:
                 f"Invalid access_grants entry at index {idx}: missing required field(s): {', '.join(missing)}"
             )
         if not isinstance(row["permissions"], list):
-            raise ConfigError(
-                f"Invalid access_grants entry at index {idx}: 'permissions' must be a list."
-            )
+            raise ConfigError(f"Invalid access_grants entry at index {idx}: 'permissions' must be a list.")
         grants.append(
             AccessGrant(
                 bank_id=str(row["bank_id"]),
@@ -1249,6 +1369,11 @@ _SIMPLE_SECTION_MAP: dict[str, type] = {
     "entity_resolution": EntityResolutionConfig,
     "async_tasks": AsyncTasksConfig,
     "dlp": DlpConfig,
+    "directive_compile": DirectiveCompileConfig,
+    # spreading_activation already in the map above (line ~1358) — duplicate
+    # key removed when the M18a-3 duplicate dataclass was consolidated.
+    "episodic_extract": EpisodicExtractConfig,
+    "preference_compile": PreferenceCompileConfig,
 }
 
 
@@ -1414,19 +1539,15 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
                     )
                 if not src.interval_seconds or int(src.interval_seconds) < 60:
                     raise ConfigError(
-                        f"sources.{name}: type poll requires interval_seconds >= 60 "
-                        "(GitHub API rate limits)"
+                        f"sources.{name}: type poll requires interval_seconds >= 60 (GitHub API rate limits)"
                     )
                 pr = (src.path or "").strip()
                 if not pr or "/" not in pr or pr.count("/") != 1:
                     raise ConfigError(
-                        f"sources.{name}: type poll with driver github requires path: owner/repo "
-                        f"(got {pr!r})"
+                        f"sources.{name}: type poll with driver github requires path: owner/repo (got {pr!r})"
                     )
                 if not (src.target_bank or "").strip() and not (src.target_bank_template or "").strip():
-                    raise ConfigError(
-                        f"sources.{name}: type poll requires target_bank or target_bank_template"
-                    )
+                    raise ConfigError(f"sources.{name}: type poll requires target_bank or target_bank_template")
                 tok = (src.auth or {}).get("token") if src.auth else None
                 if not (str(tok).strip() if tok is not None else ""):
                     raise ConfigError(
@@ -1436,9 +1557,7 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
             if st == "stream":
                 driver = (src.driver or "redis").strip().lower()
                 if driver not in ("redis", "kafka"):
-                    raise ConfigError(
-                        f"sources.{name}: stream driver {driver!r} is not supported (use redis or kafka)"
-                    )
+                    raise ConfigError(f"sources.{name}: stream driver {driver!r} is not supported (use redis or kafka)")
                 if not (src.url or "").strip():
                     raise ConfigError(
                         f"sources.{name}: type stream requires url (Redis URL or Kafka bootstrap servers)"
@@ -1449,9 +1568,7 @@ def validate_astrocyte_config(config: AstrocyteConfig) -> None:
                 if not (src.consumer_group or "").strip():
                     raise ConfigError(f"sources.{name}: type stream requires consumer_group")
                 if not (src.target_bank or "").strip() and not (src.target_bank_template or "").strip():
-                    raise ConfigError(
-                        f"sources.{name}: type stream requires target_bank or target_bank_template"
-                    )
+                    raise ConfigError(f"sources.{name}: type stream requires target_bank or target_bank_template")
             if src.extraction_profile:
                 if src.extraction_profile not in profiles:
                     raise ConfigError(
@@ -1561,10 +1678,7 @@ def load_config(path: str | Path) -> AstrocyteConfig:
         _cfg_logger = logging.getLogger("astrocyte.config")
         sensitive = [r for r in unresolved if _is_sensitive_field(r)]
         if sensitive:
-            raise ConfigError(
-                "Unresolved environment variables in sensitive config fields: "
-                + "; ".join(sensitive)
-            )
+            raise ConfigError("Unresolved environment variables in sensitive config fields: " + "; ".join(sensitive))
         for ref in unresolved:
             _cfg_logger.warning("Unresolved environment variable in config: %s", ref)
 

@@ -160,6 +160,11 @@ bench = [
     "astrocyte[dev,postgres,openai,kafka,redis,github]",
     # R2 archive scripts (scripts/archive_bench_results.py et al.) — async S3 client.
     "aiobotocore>=2.13",
+    # M18a-1 Pass B: dateparser-based temporal extraction (Hindsight parity).
+    # ~5 MB; used only when ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION=1 routes
+    # through astrocyte.pipeline.temporal_dateparser. Graceful no-op when
+    # absent. Promote to a core dep if M18c declares B1 a ship winner.
+    "dateparser>=1.2",
     # astrocyte-age removed in M9; see docs/_design/adr/adr-008-section-graph-replaces-age.md
 ]
 
