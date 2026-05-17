@@ -1305,24 +1305,41 @@ class PageIndexSection:
 
 
 @dataclass
-class PageIndexFact:
-    """M12.1: an atomic fact extracted from a PageIndex section.
+class MemoryFact:
+    """Astrocyte's fact-grain memory unit — the Memory Engine analogue of
+    Hindsight's :class:`MemoryUnit`.
 
-    Mirrors Hindsight's per-memory-unit grain on top of the
-    PageIndex tree. Sections remain the picker's navigation primitive
-    (one section = one chat session); facts give precision for
-    counting / temporal / preference queries.
+    Originally introduced as ``PageIndexFact`` in M12.1 when fact-grain
+    was first added bolted to PageIndex sections (one section = one chat
+    session). Renamed in the M18b post-ship cleanup (2026-05-17) to
+    reflect its actual role: this is the Memory Engine's primary fact
+    type, not a Document-Engine concept. ``PageIndexFact`` remains as
+    a deprecated alias at the bottom of this file.
 
-    Each fact references its parent section via ``(document_id, line_num)``.
-    Section deletion cascades to its facts.
+    **Section anchoring is now OPTIONAL** (was NOT NULL pre-M18b
+    cleanup, migration 029). Facts ingested through a
+    Document/Conversation Engine path get a ``(document_id, line_num)``
+    section anchor for cheap context-expansion and cascade-delete
+    semantics. Facts written directly via a future top-level retain
+    API (Hindsight-parity) can leave both fields ``None`` — Hindsight's
+    ``MemoryUnit.document_id`` is similarly nullable.
+
+    Anchored facts (typical today):
+      - ``document_id``: parent tree document UUID
+      - ``line_num``: section position within the tree
+      - FK to ``astrocyte_pi_sections``; ON DELETE CASCADE applies
+
+    Top-level facts (Hindsight-parity, future use):
+      - ``document_id = None``, ``line_num = None``
+      - Live directly under the bank; no cascade source
     """
 
     id: str
     bank_id: str
-    document_id: str
-    line_num: int
     text: str
     fact_type: str  # 'experience' | 'preference' | 'world' | 'plan' | 'opinion' | 'assistant_statement'
+    document_id: str | None = None
+    line_num: int | None = None
     speaker: str | None = None
     occurred_start: datetime | None = None
     occurred_end: datetime | None = None
@@ -1331,12 +1348,14 @@ class PageIndexFact:
 
 
 @dataclass
-class PageIndexFactHit:
-    """A fact returned from a fact-grain search strategy."""
+class MemoryFactHit:
+    """A :class:`MemoryFact` returned from a fact-grain search strategy.
+
+    Section anchor fields (``document_id``, ``line_num``) are nullable
+    — top-level facts (no document anchor) return ``None`` for both.
+    """
 
     fact_id: str
-    document_id: str
-    line_num: int
     text: str
     fact_type: str
     speaker: str | None
@@ -1344,6 +1363,20 @@ class PageIndexFactHit:
     occurred_end: datetime | None
     entities: list[str]
     score: float
+    document_id: str | None = None
+    line_num: int | None = None
+
+
+# ─── Backward-compat aliases (M18b post-ship rename, 2026-05-17) ───
+#
+# The pre-M18b names ``PageIndexFact`` / ``PageIndexFactHit`` remain
+# usable indefinitely; new code should prefer ``MemoryFact`` /
+# ``MemoryFactHit``. The aliases let the 15 existing call sites
+# migrate gradually rather than in one churning commit. Both names
+# resolve to the same dataclass — ``isinstance(x, PageIndexFact)``
+# and ``isinstance(x, MemoryFact)`` are equivalent.
+PageIndexFact = MemoryFact
+PageIndexFactHit = MemoryFactHit
 
 
 @dataclass
