@@ -76,10 +76,15 @@ def _section_date(section: PageIndexSection | None) -> datetime | None:
     """Pick the best timestamp for recency: prefer event date over
     session date when both are present, since the event date is when
     the *content* actually happened.
+
+    Defensive against duck-typed inputs: returns None if the object
+    doesn't have ``occurred_start`` or ``session_date`` attributes
+    (e.g. a ``FusedHit`` from section_recall, which only carries
+    ``document_id``/``line_num``/``rrf_score``).
     """
     if section is None:
         return None
-    return section.occurred_start or section.session_date
+    return getattr(section, "occurred_start", None) or getattr(section, "session_date", None)
 
 
 def _normalize_to_utc(dt: datetime) -> datetime:
@@ -113,6 +118,10 @@ def temporal_band_score(
     query's. 0.2 when both are dated and disjoint (penalise wrong-
     period sections — they were probably promoted by topical relevance
     despite missing the temporal target).
+
+    Defensive against duck-typed inputs (e.g. ``FusedHit`` lacks
+    ``occurred_start``/``session_date``): collapses to neutral 0.5
+    when the passed object doesn't have the needed attributes.
     """
     if query_range is None or section is None:
         return 0.5
@@ -121,8 +130,11 @@ def temporal_band_score(
     q_end = _normalize_to_utc(q_end)
 
     # Prefer event range when populated, else collapse to session_date.
-    s_start = section.occurred_start or section.session_date
-    s_end = section.occurred_end or section.occurred_start or section.session_date
+    occurred_start = getattr(section, "occurred_start", None)
+    occurred_end = getattr(section, "occurred_end", None)
+    session_date = getattr(section, "session_date", None)
+    s_start = occurred_start or session_date
+    s_end = occurred_end or occurred_start or session_date
     if s_start is None or s_end is None:
         return 0.5
     s_start = _normalize_to_utc(s_start)
@@ -144,6 +156,62 @@ def proof_count_score(proof_count: int | None) -> float:
         return 0.5
     # log curve centred at 0.5, clamped to 1.0 around proof_count=150.
     return min(1.0, max(0.0, 0.5 + (math.log(proof_count) / 10.0)))
+
+
+def compute_boost_multiplier(
+    section: PageIndexSection | None,
+    *,
+    query_range: tuple[datetime, datetime] | None = None,
+    proof_count: int | None = None,
+    now: datetime | None = None,
+    config: RerankBoostConfig | None = None,
+    section_date_override: datetime | None = None,
+) -> float:
+    """Return the multiplicative score boost for a single candidate.
+
+    Reusable helper so callers outside ``section_rerank`` (notably the
+    bench's unified fact+section+wiki rerank in ``astrocyte_client``)
+    can apply the same Hindsight-parity bounded boosts.
+
+    Args:
+      section: The ``PageIndexSection`` associated with the candidate.
+        ``None`` for candidates without a section anchor (e.g. wiki
+        grain, top-level facts) — collapses temporal_band to neutral
+        (0.5 → boost 1.0).
+      query_range: Inferred date band from question analyzer. ``None``
+        collapses the temporal_band boost to 1.0.
+      proof_count: Optional fact count for this section. ``None``
+        collapses the proof_count boost to 1.0.
+      now: Reference timestamp for recency. Defaults to
+        ``datetime.now(UTC)``.
+      config: Toggles + alphas. ``None`` uses defaults (``enabled=True``).
+        When ``config.enabled`` is False, returns 1.0 (no-op multiplier).
+      section_date_override: Use this datetime for the recency calculation
+        instead of the section's own date. Lets fact-grain callers pass
+        ``fact.occurred_start`` directly without round-tripping through
+        a section lookup.
+
+    Returns:
+      A float multiplier in roughly ``[0.81, 1.21]`` with default alphas.
+      Caller multiplies its CE score by this and re-sorts.
+    """
+    if config is None:
+        config = RerankBoostConfig()
+    if not config.enabled:
+        return 1.0
+    if now is None:
+        now = datetime.now(UTC)
+    now = _normalize_to_utc(now)
+
+    section_dt = section_date_override if section_date_override is not None else _section_date(section)
+    recency = recency_score(section_dt, now, window_days=config.recency_window_days)
+    temporal = temporal_band_score(section, query_range)
+    proof = proof_count_score(proof_count)
+
+    recency_boost = 1.0 + config.recency_alpha * (recency - 0.5)
+    temporal_boost = 1.0 + config.temporal_alpha * (temporal - 0.5)
+    proof_count_boost = 1.0 + config.proof_count_alpha * (proof - 0.5)
+    return recency_boost * temporal_boost * proof_count_boost
 
 
 def apply_boosts(
@@ -188,29 +256,19 @@ def apply_boosts(
     boosted: list[FusedHit] = []
     for h in hits:
         section = sections_by_key.get((h.document_id, h.line_num))
-        section_dt = _section_date(section)
-
-        recency = recency_score(
-            section_dt,
-            now,
-            window_days=config.recency_window_days,
+        multiplier = compute_boost_multiplier(
+            section,
+            query_range=query_range,
+            proof_count=(proof_counts or {}).get((h.document_id, h.line_num)),
+            now=now,
+            config=config,
         )
-        temporal = temporal_band_score(section, query_range)
-        proof = proof_count_score(
-            (proof_counts or {}).get((h.document_id, h.line_num)),
-        )
-
-        recency_boost = 1.0 + config.recency_alpha * (recency - 0.5)
-        temporal_boost = 1.0 + config.temporal_alpha * (temporal - 0.5)
-        proof_count_boost = 1.0 + config.proof_count_alpha * (proof - 0.5)
-
-        new_score = h.rrf_score * recency_boost * temporal_boost * proof_count_boost
 
         boosted.append(
             FusedHit(
                 document_id=h.document_id,
                 line_num=h.line_num,
-                rrf_score=new_score,
+                rrf_score=h.rrf_score * multiplier,
                 per_strategy_rank=dict(h.per_strategy_rank),
             )
         )
