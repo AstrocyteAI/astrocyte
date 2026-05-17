@@ -10,6 +10,22 @@ Live time-series of Astrocyte's LoCoMo and LongMemEval scores. Data is read from
 
 The chart is rendered client-side from `trajectory/<bench>.json` in the public R2 bucket. See [bench-archive](./bench-archive/) for the bucket layout, the `archive` / `fetch` tooling, and how the trajectory artifact is regenerated on each run.
 
+## README badges link here
+
+The two shields.io endpoint badges at the top of the [main README](https://github.com/AstrocyteAI/astrocyte/blob/main/README.md) link to this page:
+
+![LoCoMo](https://img.shields.io/endpoint?url=https://pub-fd2a5bf01e5b443085a14aedb49c4206.r2.dev/badges/locomo.json)
+![LongMemEval](https://img.shields.io/endpoint?url=https://pub-fd2a5bf01e5b443085a14aedb49c4206.r2.dev/badges/longmemeval.json)
+
+The badge JSON lives at `badges/<bench>.json` on the same public R2 bucket — regenerated whenever `make bench-refresh-labels` runs. Its content depends on what `BENCH_PARITY.yaml` (at the repo root) records:
+
+- **If a published release exists** for the `astrocyte` package: badge shows that release's frozen scores (e.g. `LoCoMo (astrocyte v0.14.0) 83.8%`). This is what `pip install astrocyte` actually produces.
+- **If no release exists yet but a cycle has been marked shipped:** badge shows the mean of that cycle's shipped run pair (e.g. `LoCoMo (n=200, M19 × 2 runs) 84.1%`).
+- **Otherwise:** falls back to the most recent non-smoke run.
+
+The full cycle-close + release ritual that drives badge changes lives in [`RELEASING.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/RELEASING.md#cutting-a-release) at the repo root.
+
+
 ## Current operating point (post-M17 close, 2026-05-17)
 
 Conversation Engine + Memory Engine, gpt-4o-mini answerer + judge, `--user-profile` enabled. Fair subsets: LME-30 via `--per-type 5`; LoCoMo-200 via `MEM0_HARNESS_LOCOMO_MAX_Q=20` (matches baseline subset). 3-run replication.
@@ -54,20 +70,41 @@ The **per-category accuracy** chart breaks the same runs down by category. For L
 
 ```text
 make bench-locomo / bench-longmemeval / bench-parallel
-   ↓ (writes results-*.json under benchmark-results/pageindex/)
-scripts/bench_pageindex_{locomo,lme}.py  ← post-run hook
-   ↓ (R2_* env vars present?)
-scripts/archive_bench_results.py
-   ↓ (gzip + put_object × 2 buckets)
+   ↓ writes per-project result JSON under
+   ↓ benchmark-results/<harness>/<bench>/<project>/<bench>_results_*.json
+   ↓
+make bench-archive-rescan
+   ↓ scripts/archive_bench_results.py walks the canonical tree,
+   ↓ skips projects with _ARCHIVED marker, ingests both schemas
+   ↓ (Mem0 metrics_by_cutoff.top_20 OR PageIndex overall_accuracy)
+   ↓ gzip + put_object → private bucket
+   ↓ patch per-day manifest, regenerate trajectory + badges
 private bucket: runs/<date>/<stage>/<bench>/results-*.json.gz
 public bucket:  trajectory/<bench>.json   ← this page reads from here
+public bucket:  badges/<bench>.json       ← README badges read from here
 ```
 
-A run that completes without R2 credentials still writes locally; it just doesn't show up here. To force-archive an existing run:
+A run that completes without R2 credentials still writes locally; it just doesn't show up here. To archive everything not already pushed (idempotent — projects with an `_ARCHIVED` marker are skipped):
 
 ```bash
-doppler run --config bench -- make bench-archive-push STAGE=local-ad-hoc
+cd astrocyte-py
+make bench-archive-rescan
 ```
+
+Smoke / micro runs (stage containing `smoke`, or `n_questions < 30`) are filtered out by default — they would otherwise show up as 0% / 100% extreme points on the trajectory. Pass `INCLUDE_SMOKE=1` to archive them anyway.
+
+## Cycle close → release wiring
+
+When a cycle's ship-gate condition is identified, mark its replicate runs with a label so the badge writer can pick them out cleanly:
+
+```bash
+make bench-mark-shipped PROJECT=m19-b1-dp-rrf-run-1 LABEL=m19 RATIONALE="..."
+make bench-mark-shipped PROJECT=m19-b1-dp-rrf-run-2 LABEL=m19 RATIONALE="..."
+make bench-refresh-labels        # patches R2 manifests, regenerates badges
+make bench-tag-shipped LABEL=m19 # annotated git tag bench/m19 anchors the cycle
+```
+
+At release time, `release-mark-all` links the released package version(s) to the cycle in `BENCH_PARITY.yaml` and the README badges flip to display the released version's frozen scores. Full ritual in [`RELEASING.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/RELEASING.md#cutting-a-release).
 
 ## Related
 

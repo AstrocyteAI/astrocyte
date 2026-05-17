@@ -37,17 +37,20 @@ astrocyte-benchmarks                (private — API-token-only)
 astrocyte-benchmarks-public         (public via r2.dev subdomain)
 └── trajectory/locomo.json
 └── trajectory/longmemeval.json
+└── badges/locomo.json              (shields.io endpoint format; README badge source)
+└── badges/longmemeval.json
 ```
 
 | Segment | Meaning |
 |---|---|
 | `<YYYY-MM-DD>` | UTC date the run started. One folder per day; orders chronologically when listed. |
-| `<stage>` | Free-form label: `pr1-gate`, `pr2-d.5.5c-fix`, `weekly-ci`, `local-ad-hoc`. |
+| `<stage>` | Free-form label: `pr1-gate`, `pr2-d.5.5c-fix`, `weekly-ci`, `local-ad-hoc`. Per-condition for ablation cycles (`m18b-b1-dp-rrf-run-1`, etc.) so each experiment surfaces individually on the trajectory. |
 | `<bench>` | `locomo` or `longmemeval`. |
 | `<short-sha>` | First 7 chars of the git commit the run was launched from (or `dirty` for uncommitted state). |
-| `manifest.json` | Per-day index: list of all archived runs with bench, stage, sha, scores, file path. Lets `fetch` and `trajectory` tools work without paginating the whole bucket. |
+| `manifest.json` | Per-day index: list of all archived runs with bench, stage, sha, scores, file path, optional `ship_label` / `ship_marked_at` / `ship_rationale` fields. Lets `fetch` and `trajectory` tools work without paginating the whole bucket. |
 | `latest/<bench>.json.gz` | Convenience pointer — copy of the most recent result for each bench. Overwritten on every archive. |
 | `trajectory/<bench>.json` | Aggregated time-series derived from the private bucket's manifests; ~20 KB; the file the docs site fetches. |
+| `badges/<bench>.json` | shields.io endpoint JSON for the README badge. Regenerated alongside the trajectory; sourced (in priority order) from `BENCH_PARITY.yaml`, the most-recent `ship_label` group, or the latest non-smoke run. |
 
 All `results-*.json` are gzipped before upload (typical 15–20× size
 reduction on bench output). The trajectory JSONs are uncompressed so
@@ -92,12 +95,123 @@ the trajectory shape, write to the public bucket. O(N) reads on small
 files; cheap enough to redo every run rather than incrementally
 appending.
 
+## Canonical local layout
+
+Result files on disk must live under the three-segment canonical layout
+so the rescan walker can find them and the stage label can be derived
+from the project directory:
+
+```
+benchmark-results/
+└── <harness>/                          # 'pageindex' | 'mem0_harness'
+    └── <bench>/                        # 'locomo' | 'longmemeval'
+        └── <project>/                  # 'astrocyte-m18b-b1-dp-rrf-run-1', 'local-ad-hoc', etc.
+            ├── <bench>_results_*.json  # The actual bench output
+            ├── _ARCHIVED               # Marker written after successful R2 upload (skip-on-rescan)
+            └── _SHIP_LABEL.json        # OPTIONAL — marks the run as part of a shipped cycle
+```
+
+The `<project>` segment is mandatory. The stage label on the trajectory
+is derived from it: `astrocyte-m18b-b1-dp-rrf-run-1` →
+`m18b-b1-dp-rrf-run-1` (the `astrocyte-` prefix is stripped).
+
+Two harness schemas are recognised at archive time. Both project into
+the same trajectory shape:
+
+- **Mem0-harness** — top-level `metadata` + `metrics_by_cutoff` keys.
+  The rescan reads `metrics_by_cutoff.top_20.overall.accuracy` and
+  treats it as the canonical headline (override with `MEM0_CUTOFF=...`).
+- **PageIndex harness** — top-level `overall_accuracy` +
+  `category_accuracy` keys. Read directly.
+
+Result files older than the canonical layout (flat `pageindex/locomo/results-*.json`
+without a project dir) are skipped by the rescan with a `non-canonical` warning.
+Re-organise or archive one-off via `make bench-archive STAGE=... --files ...`.
+
+## Idempotency markers
+
+- **`_ARCHIVED`** is written next to the result JSON when a successful
+  R2 upload completes. The marker stores `{archived_at, result_keys}`
+  so the manifest entry can be located later. The rescan skips any
+  project carrying this marker — re-runs are idempotent. Delete the
+  marker (or pass `FORCE=1`) to re-archive.
+- **`_SHIP_LABEL.json`** marks a run as part of a shipped cycle. Written
+  by `make bench-mark-shipped PROJECT=... LABEL=... RATIONALE="..."`.
+  Stores `{label, marked_at, rationale}`. The label propagates into the
+  per-day manifest on the next `bench-refresh-labels` (no re-upload) and
+  becomes available to the badge writer + tag composer.
+
+## Curation: ship labels and release parity
+
+The trajectory accumulates every archived run. To pick the one(s) that
+should drive the public-facing badge and tag, two curation layers
+sit on top:
+
+### Layer 1: `_SHIP_LABEL.json` — "this is the cycle's shipped condition"
+
+Typical M18b-style cycle has one B-condition that ships (e.g. B1-dp+RRF)
+with two replicate runs. Marking both runs with `LABEL=m18b` lets the
+badge writer mean their scores and surface "M18b mean 83.75%" rather
+than picking one extreme. The label is per-cycle, not per-release —
+cycles can exist that never produce a release (experimental, deferred).
+
+### Layer 2: `BENCH_PARITY.yaml` — "this release embeds that cycle's behavior"
+
+At the repo root. Each row links a released package version to a bench
+cycle:
+
+```yaml
+releases:
+  - package: astrocyte
+    version: "0.14.0"
+    bench_cycle: m19
+    bench_tag: bench/m19
+    bench_commit: <resolved sha of bench/m19>
+    released_at: "2026-05-30"
+    scores:
+      locomo:      {overall: 0.8410, n_questions: 200, runs: 2}
+      longmemeval: {overall: 0.7250, n_questions: 30,  runs: 2}
+```
+
+Maintained by `make release-mark-all VERSION=... CYCLE=... TAG=1`
+during the release ritual (see [`RELEASING.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/RELEASING.md#cutting-a-release)).
+The lockstep loop appends one row per ship-surface package
+(`astrocyte` + `astrocyte-postgres` + `astrocyte-gateway-py`) all at
+the same version + cycle.
+
+### Badge writer priority
+
+`badges/<bench>.json` is regenerated alongside the trajectory. The
+content is decided in this priority order:
+
+1. **`BENCH_PARITY.yaml` (released)** — most recent `astrocyte`
+   release's frozen scores. Label: `LoCoMo (astrocyte v0.14.0) 84.1%`.
+   This is the headline; the badge tracks "what `pip install astrocyte`
+   produces" rather than "what last night's ablation produced".
+2. **Most-recent `ship_label` group** — used between cycle close and
+   release. Label: `LoCoMo (n=200, M19 × 2 runs) 84.1%`.
+3. **Latest non-smoke run** — fallback when no curation has happened.
+   Label: `LoCoMo (n=200, stage-name) 84.1%`.
+
+Color thresholds: ≥80% brightgreen, ≥75% green, ≥70% yellowgreen,
+≥65% yellow, ≥55% orange, else red.
+
 ## Tooling
 
-Three scripts (under `astrocyte-py/scripts/`), all async via
-aiobotocore. They share one R2 client setup that reads
+Five scripts (under `astrocyte-py/scripts/`). The R2-touching ones are
+async via aiobotocore and share one client setup that reads
 `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` from
 env. The token is scoped to both buckets so one client handles both.
+
+| Script | Touches R2 | Purpose |
+|---|---|---|
+| `archive_bench_results.py` | yes | Walk + upload + manifest + trajectory + badges. The workhorse. |
+| `fetch_bench_results.py`   | yes | Pull archived runs back down for inspection. |
+| `backfill_archive.py`      | yes | One-shot historical ingest. |
+| `mark_shipped.py`          | no  | Local-only: writes `_SHIP_LABEL.json`. |
+| `tag_shipped.py`           | no  | Local-only: creates the annotated `bench/<label>` git tag. |
+| `release_mark.py`          | no  | Local-only: writes `BENCH_PARITY.yaml` rows + optional `v<X.Y.Z>` tag. |
+| `wipe_bad_m18b_archive.py` | yes | One-shot cleanup (historical; included for documentation). |
 
 ### `archive_bench_results.py`
 
@@ -176,17 +290,40 @@ local `benchmark-results/` copy is the fallback. Hook is opt-out via
 ## Makefile targets
 
 ```bash
-# Push a specific run (rarely needed; the post-run hook covers most cases)
-make bench-archive-push STAGE=local-ad-hoc
+# === Archive flow (canonical) ===
+# Walk benchmark-results/ and archive every project lacking an _ARCHIVED marker.
+# Idempotent. Filters smoke / micro runs by default (INCLUDE_SMOKE=1 to keep them).
+make bench-archive-rescan
+make bench-archive-rescan DRY=1            # preview without uploading
+make bench-archive-rescan FORCE=1          # re-archive even with marker
 
-# Pull latest + open in jq-friendly form
-make bench-archive-fetch BENCH=locomo
+# === Legacy single-run archive ===
+# Pre-canonical-layout fallback. Use only when --files points at one-offs
+# outside the benchmark-results/<harness>/<bench>/<project>/ tree.
+make bench-archive STAGE=foo --files path/to/results-*.json
 
-# Trajectory: per-day overall + per-category for one bench (markdown table view)
-make bench-archive-trajectory BENCH=locomo
+# === Curation ===
+# Mark a cycle's shipped run pair (writes _SHIP_LABEL.json locally)
+make bench-mark-shipped PROJECT=m19-b1-dp-rrf-run-1 LABEL=m19 RATIONALE="..."
+make bench-mark-unshipped PROJECT=m19-b1-dp-rrf-run-1
 
-# Rebuild the public trajectory artifact from scratch (after a wipe)
-make bench-archive-rebuild-trajectory
+# Patch ship_label fields into already-archived R2 manifests + regenerate badges
+# (no re-upload of result content)
+make bench-refresh-labels
+
+# Annotated git tag bench/<label> anchoring the cycle (reproducibility marker)
+make bench-tag-shipped LABEL=m19
+make bench-tag-shipped LABEL=m19 FORCE=1   # refresh message after release-mark
+
+# === Release-time parity ===
+# Append BENCH_PARITY.yaml rows for the lockstep release + optional v<X.Y.Z> tag
+make release-mark-all VERSION=0.14.0 CYCLE=m19 TAG=1
+
+# === Inspection ===
+make bench-archive-fetch BENCH=locomo               # pull latest run JSON locally
+make bench-archive-trajectory BENCH=locomo          # markdown table view
+make bench-archive-rebuild-trajectory               # regenerate public trajectory + badges
+make bench-archive-selftest                         # round-trip a probe to both buckets
 ```
 
 `bench-archive-trajectory` reads the per-day `manifest.json` files,
