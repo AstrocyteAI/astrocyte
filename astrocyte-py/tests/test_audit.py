@@ -109,14 +109,17 @@ class FakePool:
                 pass
 
             def cursor(self) -> Any:
+                # ``outer`` is the test-class instance captured via closure
+                # from the enclosing scope; ``self`` here is the inner
+                # cursor stub. PEP8 wants the first arg named 'self'.
                 class _Cur:
-                    async def __aenter__(self_inner) -> Any:
-                        return self_inner
+                    async def __aenter__(self) -> Any:
+                        return self
 
-                    async def __aexit__(self_inner, *a: Any) -> None:
+                    async def __aexit__(self, *a: Any) -> None:
                         pass
 
-                    async def execute(self_inner, sql: str, params: tuple) -> None:
+                    async def execute(self, sql: str, params: tuple) -> None:
                         outer.executed.append((sql, params))
 
                 return _Cur()

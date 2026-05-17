@@ -243,6 +243,9 @@ class AuditLogger:
         try:
             await self._sweep_task
         except asyncio.CancelledError:
+            # Expected — we just cancelled it on the line above. Awaiting
+            # a cancelled task always raises CancelledError; consuming it
+            # here is the canonical shutdown pattern.
             pass
         self._sweep_task = None
 

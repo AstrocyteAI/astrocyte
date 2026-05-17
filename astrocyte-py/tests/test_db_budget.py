@@ -26,12 +26,15 @@ class FakePsycopgPool:
     def connection(self):  # noqa: ANN201
         outer = self
 
+        # ``outer`` is the test-class instance captured via closure; ``self``
+        # inside the inner class refers to the inner connection stub. PEP8
+        # wants the first arg named 'self'.
         class _Conn:
-            async def __aenter__(self_inner) -> Any:
+            async def __aenter__(self) -> Any:
                 outer.acquire_count += 1
-                return self_inner
+                return self
 
-            async def __aexit__(self_inner, *a: Any) -> None:
+            async def __aexit__(self, *a: Any) -> None:
                 pass
 
         return _Conn()

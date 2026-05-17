@@ -993,12 +993,15 @@ async def _amain(argv: list[str]) -> int:
         return 0
 
     if args.refresh_labels:
-        n = await refresh_ship_labels(
+        # Count is logged by refresh_ship_labels itself; we don't gate
+        # the exit code on it because "no projects to refresh" is a
+        # clean state (e.g. nothing marked shipped yet).
+        await refresh_ship_labels(
             root=args.rescan_root,
             cfg=cfg,
             dry_run=args.dry_run,
         )
-        return 0  # zero is fine — nothing to patch may be a clean state
+        return 0
 
     if args.rescan:
         n = await archive_rescan(

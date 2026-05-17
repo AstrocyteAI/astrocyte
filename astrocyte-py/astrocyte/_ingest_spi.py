@@ -32,7 +32,11 @@ class MemoryRetainFn(Protocol):
         bank_id: str,
         content: str,
         metadata: dict[str, Any],
-    ) -> Awaitable[None]: ...
+    ) -> Awaitable[None]:
+        """Retain one segment into the named bank. Returns an awaitable
+        that resolves when the segment is persisted. Implementations:
+        ``AstrocyteClient.retain_text`` in production, list-appending
+        closure in tests."""
 
 
 @dataclass
