@@ -5,16 +5,28 @@ into hierarchical tree representations. Independent of the Memory Engine
 — no shared tables, no foreign keys. Memory Engine never sees a tree;
 Document Engine never sees a Memory.
 
-To compose them (most common case), use ``astrocyte.ingest.DocumentIngestor``
-which walks a tree and calls a Memory Engine's retain API with per-node
-text + opaque metadata. See ``docs/_design/m17-pageindex-ingestion.md``.
+Three retrieval paths (see docs/_design/document-engine-roadmap.md §2):
+  Path 1 (DE → ME):     DocumentIngestor → memory.retain() → memory.recall()
+  Path 2 (CE → ME):     ConversationIngestor → memory.retain() → memory.recall()
+  Path 3 (DE + CE → ME): both engines → same bank_id → DocumentNavigator or recall()
 
 Public API:
     from astrocyte.documents import (
+        # types
         Document, DocumentTree, TreeNode, NodeSummary,
+        # parsers
         Parser, ConvertResult, UnsupportedFileTypeError,
-        ParserRegistry, MarkdownParser,
-        build_markdown_tree,
+        ParserRegistry, MarkdownParser, MarkitdownParser,
+        # builders
+        build_markdown_tree, AdaptiveSummarizer,
+        # storage
+        DocumentStore, InMemoryDocumentStore, DocumentNotFoundError,
+        # ingestor
+        DocumentIngestor,
+        # retrieval (tree-search path)
+        DocumentRetriever, DocumentNavigator, make_retrieval_tools,
+        TreeSkeleton, SkeletonNode, NodeContent, SectionHit,
+        DocumentSearchResult, DocumentInfo,
     )
 """
 
@@ -31,6 +43,18 @@ from astrocyte.documents.parsers import (
     Parser,
     ParserRegistry,
     UnsupportedFileTypeError,
+)
+from astrocyte.documents.parsers.markitdown import MarkitdownParser
+from astrocyte.documents.retrieval import (
+    DocumentInfo,
+    DocumentNavigator,
+    DocumentRetriever,
+    DocumentSearchResult,
+    NodeContent,
+    SectionHit,
+    SkeletonNode,
+    TreeSkeleton,
+    make_retrieval_tools,
 )
 from astrocyte.documents.storage import (
     DocumentNotFoundError,
@@ -56,6 +80,7 @@ __all__ = [
     "UnsupportedFileTypeError",
     "ParserRegistry",
     "MarkdownParser",
+    "MarkitdownParser",
     # builders
     "build_markdown_tree",
     "AdaptiveSummarizer",
@@ -67,4 +92,14 @@ __all__ = [
     "DocumentNotFoundError",
     # ingestor (Memory-Engine bridge)
     "DocumentIngestor",
+    # retrieval (tree-search path)
+    "DocumentRetriever",
+    "DocumentNavigator",
+    "make_retrieval_tools",
+    "DocumentInfo",
+    "SkeletonNode",
+    "TreeSkeleton",
+    "NodeContent",
+    "SectionHit",
+    "DocumentSearchResult",
 ]
