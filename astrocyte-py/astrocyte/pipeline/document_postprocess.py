@@ -169,6 +169,19 @@ async def run_document_postprocess(
         result.passes_skipped.append("preference_compile (disabled)")
 
     # ─── 3. directive_compile.compile_directives_for_document ───
+    # DEPRECATED (M19, 2026-05-18): bench evidence (M18b B2 × 2 runs)
+    # showed replicated -30pp SSP regression — the compressed directives
+    # override the answerer's access to original preference nuance.
+    # Hindsight architecture has directives as USER-AUTHORED via the
+    # create_directive MCP tool, not LLM-compiled. Flag stays gated OFF
+    # by default; setting True emits a runtime warning here.
+    if _is_enabled(config, "directive_compile"):
+        _logger.warning(
+            "directive_compile.enabled=True is DEPRECATED — bench evidence "
+            "shows -30pp SSP regression; Hindsight architecture uses "
+            "user-authored directives via create_directive MCP tool. "
+            "See docs/_design/m19-prompt-routing.md.",
+        )
     if (
         _is_enabled(config, "directive_compile")
         and mental_model_store is not None

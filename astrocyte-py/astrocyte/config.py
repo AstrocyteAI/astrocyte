@@ -858,6 +858,15 @@ class DirectiveCompileConfig:
     then this flag controls the bench-side call only.
 
     Bench-time env-var override: ``ASTROCYTE_M18_ENABLE_DIRECTIVE_COMPILE=1``.
+
+    **DEPRECATED (M19, 2026-05-18):** the auto-compile architecture is
+    misaligned with Hindsight's user-authored ``create_directive`` MCP
+    tool. Bench evidence (M18b, B2 × 2 runs) showed a replicated −30pp
+    SSP regression because the compressed directives override the
+    answerer's access to the original preference facts' nuance. Keep
+    ``enabled=False``; the in-tree code stays as reference for the
+    future user-authored MCP-tool path (M20+). Setting ``enabled=True``
+    will emit a runtime warning when ``run_document_postprocess`` runs.
     """
 
     enabled: bool = False
