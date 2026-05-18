@@ -22,6 +22,21 @@
 
 schema_version: 1
 releases:
+- package: astrocyte-postgres
+  version: 0.14.0
+  bench_cycle: m19
+  bench_tag: bench/m19
+  bench_commit: 6716ca327fbca8b34a361c43447370fe51906f15
+  released_at: '2026-05-18'
+  scores:
+    longmemeval:
+      overall: 0.8167
+      n_questions: 30
+      runs: 2
+    locomo:
+      overall: 0.8425
+      n_questions: 200
+      runs: 2
 - package: astrocyte
   version: 0.14.0
   bench_cycle: m19
