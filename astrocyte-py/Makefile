@@ -389,14 +389,24 @@ MEM0_HARNESS_USER_PROFILE     ?= 1
 MEM0_HARNESS_ANSWERER_MODEL   ?= gpt-4o-mini
 MEM0_HARNESS_JUDGE_MODEL      ?= gpt-4o-mini
 
-# Optional question-cap knobs for fair-sample iteration:
-#   LOCOMO_MAX_Q  caps questions per LoCoMo conversation (e.g. 20 → 200 q total)
-#   LME_PER_TYPE  caps LME questions per question_type (default 5 → 30 q;
-#                 bump to 10/20 for sharper per-category signal, --all-questions
-#                 for full 500 q)
-# Empty = harness default (full LoCoMo, --per-type 5 LME).
-MEM0_HARNESS_LOCOMO_MAX_Q     ?=
-MEM0_HARNESS_LME_PER_TYPE     ?=
+# Question-cap defaults — standing methodology going forward:
+#   LOCOMO_MAX_Q  total-question cap for LoCoMo (run_locomo.py passes this
+#                 as ``--max-questions N`` — TOTAL across all 10 convs,
+#                 NOT per-conv). 200 is the published Mem0/LoCoMo subset
+#                 convention and the anchor we use in BENCH_PARITY.yaml
+#                 for cross-release comparability with v0.14.0. Override
+#                 to empty to run the full 1540-q dataset (expensive —
+#                 ~2-3 hrs; only for final-cycle statistical-confidence
+#                 runs, not iteration). v015w accidentally ran at 1540
+#                 because this var was empty — see the v0.15.0 ship-
+#                 decision memo §"LoCoMo n=1540 footnote".
+#   LME_PER_TYPE  per-question-type cap (15 × 6 types = 90 total).
+#                 Standing default per the ship-decision memo §"LME
+#                 measurement cadence". Reserved escalation: 30 (n=180)
+#                 for high-confidence cycle-close benches; leave empty
+#                 for harness default (--per-type 5, n=30).
+MEM0_HARNESS_LOCOMO_MAX_Q     ?= 200
+MEM0_HARNESS_LME_PER_TYPE     ?= 15
 
 .PHONY: bench-mem0-harness-locomo bench-mem0-harness-lme bench-mem0-harness-parallel
 
