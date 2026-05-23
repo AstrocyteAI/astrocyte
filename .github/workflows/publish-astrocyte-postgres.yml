@@ -69,33 +69,45 @@ jobs:
       # The postgres service container (pgvector/pgvector:pg16) ships
       # pgvector but not pgvectorscale. Migration 001 needs
       # `vectorscale.control` and the matching `.so` on disk before
-      # `CREATE EXTENSION vectorscale` can succeed. Install via
-      # Timescale's packagecloud apt repo, which ships
-      # `postgresql-16-pgvectorscale` for Debian Bookworm (the base of
-      # the pgvector/pgvector:pg16 image as of this writing).
+      # `CREATE EXTENSION vectorscale` can succeed.
+      #
+      # Install path mirrors docker/astrocyte-postgres/Dockerfile:
+      # Tiger Data's packagecloud apt repo does NOT reliably ship
+      # `postgresql-16-pgvectorscale` (broken on Trixie, also wasn't
+      # found on Bookworm in CI even though their docs claim it ships
+      # there). So we pull the release ZIP from GitHub, extract the
+      # .deb, and dpkg-install. Pin the version so the substrate is
+      # reproducible; bump in lockstep with the Dockerfile's
+      # PGVECTORSCALE_VERSION build arg.
       #
       # No postgres restart is needed — pgvectorscale runs as a normal
       # extension and does not require shared_preload_libraries.
       - name: Install pgvectorscale into postgres service
+        env:
+          PGVECTORSCALE_VERSION: "0.9.0"
         run: |
           set -euxo pipefail
           # `docker exec -u 0` runs as root inside the container so we
-          # can apt-install. ${{ job.services.postgres.id }} is the
+          # can dpkg-install. ${{ job.services.postgres.id }} is the
           # service-container ID the runner spun up.
-          docker exec -u 0 ${{ job.services.postgres.id }} bash -c '
+          docker exec -u 0 \
+            -e PGVECTORSCALE_VERSION="${PGVECTORSCALE_VERSION}" \
+            ${{ job.services.postgres.id }} bash -c '
             set -euxo pipefail
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
             apt-get install -y --no-install-recommends \
-              ca-certificates curl gnupg lsb-release
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey \
-              | gpg --dearmor -o /etc/apt/keyrings/timescaledb.gpg
-            CODENAME=$(lsb_release -cs)
-            echo "deb [signed-by=/etc/apt/keyrings/timescaledb.gpg] https://packagecloud.io/timescale/timescaledb/debian/ $CODENAME main" \
-              > /etc/apt/sources.list.d/timescaledb.list
-            apt-get update -qq
-            apt-get install -y --no-install-recommends postgresql-16-pgvectorscale
+              ca-certificates curl unzip
+            ARCH="$(dpkg --print-architecture)"
+            cd /tmp
+            curl -fsSL -o pgvectorscale.zip \
+              "https://github.com/timescale/pgvectorscale/releases/download/${PGVECTORSCALE_VERSION}/pgvectorscale-${PGVECTORSCALE_VERSION}-pg16-${ARCH}.zip"
+            mkdir -p pgvectorscale
+            unzip -j pgvectorscale.zip -d pgvectorscale
+            # The ZIP ships a main .deb plus a -dbgsym .deb (debug
+            # symbols, ~60 KB). Install only the main package.
+            dpkg -i $(find pgvectorscale -name "pgvectorscale-postgresql-16_*.deb" ! -name "*-dbgsym_*")
+            rm -rf pgvectorscale pgvectorscale.zip
             # Confirm the control file is in place; failing here gives a
             # clearer error than the downstream migrate step would.
             test -f /usr/share/postgresql/16/extension/vectorscale.control
