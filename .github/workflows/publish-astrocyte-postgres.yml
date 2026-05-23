@@ -18,15 +18,21 @@ jobs:
     name: Integration tests (PostgreSQL + pgvector)
     runs-on: ubuntu-latest
     services:
+      # pgvector/pgvector:pg16 ships pgvector but not pgvectorscale.
+      # Migration 001 runs `CREATE EXTENSION vectorscale`, which needs
+      # the extension's control file + shared library on disk inside
+      # the postgres container. We install them in the "Install
+      # pgvectorscale into postgres service" step below, before
+      # migrations run.
+      #
+      # Why install at runtime instead of swapping to our own
+      # astrocyte-postgres image: the install is explicit (you can see
+      # exactly what package is added), pgvectorscale doesn't require
+      # shared_preload_libraries (no postgres restart needed), and it
+      # keeps the test substrate honest — vanilla postgres + apt — vs
+      # testing against our own image which is what we're building.
       postgres:
-        # Use our own published image — it has pgvector + pgvectorscale
-        # baked in. `pgvector/pgvector:pg16` ships pgvector only, so the
-        # very first migration (001_extension.sql: CREATE EXTENSION
-        # vectorscale) failed with "extension not available". Pin to the
-        # last published release so a broken HEAD migration can't break
-        # its own test substrate. Bump the pin when the test set genuinely
-        # needs newer-image behaviour.
-        image: ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:v0.13.1
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: astrocyte
           POSTGRES_PASSWORD: astrocyte
@@ -59,6 +65,41 @@ jobs:
       # gateway-publish-test-gate.yml.
       - name: Install psql (migrations)
         run: sudo apt-get update -y && sudo apt-get install -y postgresql-client
+
+      # The postgres service container (pgvector/pgvector:pg16) ships
+      # pgvector but not pgvectorscale. Migration 001 needs
+      # `vectorscale.control` and the matching `.so` on disk before
+      # `CREATE EXTENSION vectorscale` can succeed. Install via
+      # Timescale's packagecloud apt repo, which ships
+      # `postgresql-16-pgvectorscale` for Debian Bookworm (the base of
+      # the pgvector/pgvector:pg16 image as of this writing).
+      #
+      # No postgres restart is needed — pgvectorscale runs as a normal
+      # extension and does not require shared_preload_libraries.
+      - name: Install pgvectorscale into postgres service
+        run: |
+          set -euxo pipefail
+          # `docker exec -u 0` runs as root inside the container so we
+          # can apt-install. ${{ job.services.postgres.id }} is the
+          # service-container ID the runner spun up.
+          docker exec -u 0 ${{ job.services.postgres.id }} bash -c '
+            set -euxo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y --no-install-recommends \
+              ca-certificates curl gnupg lsb-release
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey \
+              | gpg --dearmor -o /etc/apt/keyrings/timescaledb.gpg
+            CODENAME=$(lsb_release -cs)
+            echo "deb [signed-by=/etc/apt/keyrings/timescaledb.gpg] https://packagecloud.io/timescale/timescaledb/debian/ $CODENAME main" \
+              > /etc/apt/sources.list.d/timescaledb.list
+            apt-get update -qq
+            apt-get install -y --no-install-recommends postgresql-16-pgvectorscale
+            # Confirm the control file is in place; failing here gives a
+            # clearer error than the downstream migrate step would.
+            test -f /usr/share/postgresql/16/extension/vectorscale.control
+          '
 
       - name: Migrate Postgres (astrocyte-postgres SQL)
         run: adapters-storage-py/astrocyte-postgres/scripts/migrate.sh
