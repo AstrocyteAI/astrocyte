@@ -267,6 +267,17 @@ class _BenchRetainAdapter:
                 metadata.get("earliest_timestamp") or metadata.get("latest_timestamp"),
             )
 
+            # M31 Fix 2 — propagate session_id from turn metadata onto the
+            # emitted section. ``_do_ingest`` already tags every turn with
+            # ``metadata['session_id']`` (one of ``ts:<epoch>`` or
+            # ``no-ts:<idx>``). When ConversationIngestor groups turns into
+            # a chunk, it preserves shared metadata fields — so reading
+            # ``metadata.get('session_id')`` here recovers the session
+            # boundary for the chunk. Real (non-bench) callers can pass
+            # any opaque string they use to identify sessions in their
+            # application.
+            chunk_session_id = metadata.get("session_id")
+
             sections.append(
                 PageIndexSection(
                     document_id=document_id,
@@ -283,6 +294,7 @@ class _BenchRetainAdapter:
                     session_date=session_date,
                     parent_node=None,
                     depth=2,
+                    session_id=chunk_session_id,
                 ),
             )
             chunk_bodies.append(content)
@@ -630,6 +642,13 @@ class AstrocyteClient:
         self._store: Any | None = None
         self._provider: Any | None = None
         self._mental_model_store: Any | None = None
+        # M37b — per-user MM embedding cache. Computed lazily on first
+        # M37 retrieval per user, reused for all subsequent queries.
+        # Avoids a migration (no embedding column on MM table); cost
+        # is one batched embed call per user (~1-2s for ~1000 MMs)
+        # amortised across all of that user's questions.
+        # Shape: {user_id: {model_id: (mm, embedding_vec)}}
+        self._mm_embedding_cache: dict[str, dict[str, tuple[Any, list[float]]]] = {}
 
     # ── lifecycle ───────────────────────────────────────────────────────
 
@@ -717,6 +736,7 @@ class AstrocyteClient:
         top_k: int = 200,
         rerank: bool = False,
         score_debug: bool = False,
+        session_id: str | None = None,
     ) -> list[dict]:
         """Return ranked candidate memories — three grains, unified.
 
@@ -733,6 +753,16 @@ class AstrocyteClient:
           conversational context they need to bridge)
         - **wiki observations**: per-document aggregations (multi-
           session counting, knowledge-update)
+
+        M31 Fix 2 — ``session_id`` opt-in filter: when the calling
+        application knows which session a query targets (real chat
+        apps with explicit session boundaries; LME bench questions
+        with ``question_session_id`` metadata), filter fact retrieval
+        to that session. ``None`` (default) preserves v0.14.0 behaviour.
+        Threads through ``fact_recall(session_filter=...)`` which
+        applies it to semantic/episodic/temporal branches but NOT
+        link-expansion (the latter is cross-session by design — see
+        M31 cycle doc §3 Fix 2 rationale).
         """
         await self._ensure_resources()
         await self._ensure_ingested(user_id)
@@ -741,9 +771,59 @@ class AstrocyteClient:
         if document_id is None:
             return []
 
+        # M31 Fix 2 — when the bench harness's per-question wrapper has
+        # set the session_id contextvar (LME questions with
+        # ``question_session_id`` metadata), fall back to that if the
+        # caller didn't pass session_id explicitly. The upstream
+        # ``mem0.search(...)`` SPI doesn't take a session_id parameter,
+        # so contextvar plumbing is how the wrapper hands the value
+        # through without widening the SPI.
+        if session_id is None:
+            try:
+                from scripts.mem0_harness._hindsight_answerer import (  # noqa: PLC0415
+                    current_session_id,
+                )
+
+                session_id = current_session_id()
+            except ImportError:
+                pass
+
         floor = max(top_k, self.search_top_k_floor)
+
+        # M38 — LLM query rewriting (cheap, opt-in). Reformulates the
+        # natural question into a search-optimized form BEFORE retrieval.
+        # The ORIGINAL ``query`` still reaches the answerer prompt so
+        # reasoning context is preserved; only the retrieval embedding +
+        # entity extraction use ``retrieval_query``.
+        #
+        # Gated by ASTROCYTE_M38_QUERY_REWRITE (default OFF for ablation
+        # parity with v015p). When ON, one extra gpt-4o-mini call per
+        # question (~300ms, ~$0.0001).
+        retrieval_query = query
+        if _os.environ.get("ASTROCYTE_M38_QUERY_REWRITE", "").lower() in ("1", "true", "yes"):
+            try:
+                from astrocyte.pipeline.query_rewrite import (  # noqa: PLC0415
+                    rewrite_query,
+                )
+
+                rewritten = await rewrite_query(
+                    query,
+                    llm_provider=self._provider,
+                    model=getattr(self, "tree_build_model", None),
+                )
+                if rewritten:
+                    retrieval_query = rewritten
+                    logger.info(
+                        "M38 query_rewrite: %r → %r",
+                        query[:60],
+                        rewritten[:60],
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("M38 query_rewrite failed user=%s: %s", user_id, exc)
+                # retrieval_query stays as original
+
         try:
-            qvec = (await self._provider.embed([query]))[0]
+            qvec = (await self._provider.embed([retrieval_query]))[0]
         except Exception as exc:  # noqa: BLE001
             logger.warning("embed failed for user=%s: %s", user_id, exc)
             return []
@@ -812,27 +892,22 @@ class AstrocyteClient:
         # (Hindsight-parity architecture; rerank pool is now source-blind
         # but the candidates entering rerank have already been RRF-weighted
         # so single-strategy junk gets damped).
-        fact_hits = await fact_recall(
-            store=self._store,
-            bank_id=bank_id,
-            document_id=document_id,
-            query=query,
-            query_embedding=qvec,
-            config=_fr_cfg,
-            temporal_range=date_range,
-            top_k_semantic=40,
-            top_k_episodic=20,
-            top_k_temporal=20,
-        )
+        # M27 — extract query entities BEFORE fact_recall so we can
+        # pass them in for the new cross-session link-expansion branch.
+        # Cheap regex pass; the same entities are also re-used by
+        # section_recall below. M38 — use ``retrieval_query`` (the
+        # rewritten form when M38 is on) so entity extraction works
+        # off the search-optimized text. Falls back to original when
+        # M38 is off.
+        question_entities = _extract_proper_noun_entities(retrieval_query)
 
         # ── (2) Section-grain candidates via section_recall ────────
         # ``mode="temporal"`` when the query has a relative-time cue —
         # the orchestrator then fires the temporal strategy alongside
         # semantic/keyword/entity. Without a cue, fall back to single-hop.
-        # ``question_entities`` is a cheap proper-noun extraction so the
-        # entity strategy (and the alias-enriched entity index from
-        # ``section_entity_extraction``) can actually fire.
-        question_entities = _extract_proper_noun_entities(query)
+        # ``question_entities`` was extracted above for fact_recall's
+        # link-expansion branch (M27); reused here for section_recall's
+        # entity strategy.
         from astrocyte.pipeline.section_recall import section_recall  # noqa: PLC0415
 
         # M18a-3 — entity-co-occurrence spread is now a section_recall
@@ -845,42 +920,152 @@ class AstrocyteClient:
             "ASTROCYTE_M18_ENABLE_SPREADING_ACTIVATION", "",
         ).lower() in ("1", "true", "yes")
 
-        try:
-            recall = await section_recall(
-                store=self._store,
-                bank_id=bank_id,
-                question=query,
-                mode=recall_mode,
-                embedding_provider=self._provider,
-                question_entities=question_entities,
-                date_range=date_range,
-                wiki_enabled=True,
-                wiki_document_id=document_id,
-                wiki_min_score=0.25,
-                wiki_top_k=4,
-                per_strategy_top_k=20,
-                enable_spreading_activation=_enable_spreading,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("section_recall failed for user=%s: %s", user_id, exc)
+        # M34-7 (v015l) — per-fact-type segmentation ONLY, no intent
+        # classification. v015k's forensic showed the regex intent
+        # classifier mis-routed LME questions (7/15 TR queries
+        # classified as FACTUAL → temporal weight 0.3 → killed TR's
+        # gain; SSP queries fell through to UNKNOWN with no
+        # PREFERENCE intent; SSA queries 15/15 UNKNOWN). This matches
+        # Hindsight's architecture exactly: they have NO intent
+        # classifier — only temporal-presence detection (already in
+        # query_analyzer) plus per-fact-type segmentation. The
+        # segmentation alone delivered LoCoMo wins in v015k
+        # (multi-hop +5.1pp, open-domain +3.2pp); LME regression was
+        # the intent-bias damage. Removing intent should keep the
+        # LoCoMo wins while letting LME categories use the
+        # equal-weight RRF that worked in v015f.
+        # Per fact_type-segmentation: the LME corpus is dominated by
+        # experience + preference + world facts. Plan / opinion are
+        # rare and fold into experience semantically at retrieval time.
+        _BENCH_FACT_TYPES = ["experience", "preference", "world"]
+
+        # M30-L1 — fact_recall + section_recall are independent retrieval
+        # pipelines; running them sequentially wastes ~1-3s per question.
+        # Fire as parallel sibling tasks via asyncio.gather. fact_recall
+        # internally already fans semantic+episodic+temporal+link_expansion
+        # in parallel; this lifts the same pattern one level up so the
+        # section pipeline runs concurrently with the fact pipeline rather
+        # than waiting for it. Per-branch exceptions are isolated so a
+        # section_recall failure can't take fact_recall down.
+        fact_coro = fact_recall(
+            store=self._store,
+            bank_id=bank_id,
+            document_id=document_id,
+            # M38 — pass the rewritten query (when M38 is on) so any
+            # text-based fact retrieval (BM25, episodic cue match) sees
+            # the search-optimized form. qvec was already embedded
+            # from retrieval_query above.
+            query=retrieval_query,
+            query_embedding=qvec,
+            config=_fr_cfg,
+            temporal_range=date_range,
+            query_entities=question_entities,  # M27 cross-session graph
+            top_k_semantic=40,
+            top_k_episodic=20,
+            # M34-6 — restore top_k_temporal=20 now that per-fact-type
+            # segmentation prevents the v015i flood. The M33-3 Path A
+            # cap=5 was a workaround for the single-pool dilution; with
+            # M34's segmentation the temporal channel can't drown out
+            # other fact_types' pools (each type has its own RRF).
+            top_k_temporal=20,
+            top_k_link_expansion=20,
+            # M34-7 (v015l) — segmentation only, NO intent.
+            # When intent is None, fact_recall uses equal-weight RRF
+            # and the BM25 channel stays off (M31c-era decision).
+            fact_types=_BENCH_FACT_TYPES,
+            # M35-2 — token budget cap on the merged output. Hindsight
+            # uses max_tokens=8192 as their bench default. v015l's
+            # winning top_20 cap roughly translates to ~1500-3000
+            # tokens; we set a more generous 4096 budget here so
+            # focused-but-not-starved context reaches the answerer.
+            # Per-cutoff sweep will tell us the real curve in v015m.
+            max_tokens=4096,
+            # M31 Fix 2 — caller-supplied session boundary. ``None`` (the
+            # default) preserves v0.14.0 behaviour; non-None scopes
+            # semantic/episodic/temporal to facts whose anchoring section
+            # has matching session_id. Link-expansion stays cross-session
+            # (its whole purpose).
+            session_filter=session_id,
+        )
+        section_coro = section_recall(
+            store=self._store,
+            bank_id=bank_id,
+            # M38 — section_recall consumes the question text for its
+            # keyword + embedding strategies. Use retrieval_query for
+            # the same reason as fact_recall.
+            question=retrieval_query,
+            mode=recall_mode,
+            embedding_provider=self._provider,
+            question_entities=question_entities,
+            date_range=date_range,
+            wiki_enabled=True,
+            wiki_document_id=document_id,
+            wiki_min_score=0.25,
+            wiki_top_k=4,
+            per_strategy_top_k=20,
+            enable_spreading_activation=_enable_spreading,
+            session_filter=session_id,  # M31 Fix 2
+        )
+        fact_result, section_result = await asyncio.gather(
+            fact_coro, section_coro, return_exceptions=True,
+        )
+        if isinstance(fact_result, BaseException):
+            logger.warning("fact_recall failed for user=%s: %s", user_id, fact_result)
+            fact_hits = []
+        else:
+            fact_hits = fact_result
+        if isinstance(section_result, BaseException):
+            logger.warning("section_recall failed for user=%s: %s", user_id, section_result)
             recall = None
+        else:
+            recall = section_result
 
         # ── (3) Build unified candidate list with grain metadata ───
         md_text = self._md_text_by_user.get(user_id, "")
         candidates: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
 
+        # M24 architectural fix — pair each fact with its source-chunk
+        # text inline (Hindsight parity for ``_format_context_structured``).
+        # Without this pairing the answerer can't cross-reference fact
+        # → source chunk and M22's ``read the chunks carefully`` rule
+        # lands on a flat unpaired list, regressing LME SSP by −2q.
+        # See ``MemoryFact.chunk_id`` for the stable identity contract.
         for fh in fact_hits:
             cid = f"fact:{fh.fact_id}"
             if cid in seen_ids:
                 continue
             seen_ids.add(cid)
+            # Look up the source chunk via the fact's (document_id, line_num)
+            # anchor when available. Top-level facts (no anchor) leave
+            # ``source_chunk`` as ``None`` and render without the inline
+            # Source: block — same behaviour as Hindsight's facts that
+            # have ``chunk_id IS NULL``.
+            source_chunk: str | None = None
+            if md_text and fh.line_num is not None:
+                excerpt = _slice_section_around_line(md_text, fh.line_num)
+                if excerpt:
+                    source_chunk = _truncate_chars(excerpt, max_chars=1200)
             candidates.append(
                 {
                     "id": cid,
                     "text": fh.text,
                     "grain": "fact",
                     "fact": fh,
+                    "chunk_id": fh.chunk_id,  # Hindsight parity
+                    "source_chunk": source_chunk,
+                    # M28 Workstream B — surface M27 per-fact confidence
+                    # and mentioned-at timestamp so the answerer can hedge
+                    # on low-confidence claims and disambiguate "occurred"
+                    # vs "mentioned" date arithmetic. None when absent
+                    # (legacy rows / facts without a session date).
+                    "confidence_score": fh.confidence_score,
+                    "mentioned_at": fh.mentioned_at,
+                    # M31 Fix 4 — surface resolved absolute event date so
+                    # the answerer reads ``Event: 2024-05-07`` instead of
+                    # doing "last Tuesday" → "2024-05-07" arithmetic at
+                    # query time. ``None`` for legacy / no-anchor facts.
+                    "event_date": fh.event_date,
                 }
             )
 
@@ -899,23 +1084,42 @@ class AstrocyteClient:
         spread_hits: list[tuple[str, int, float]] = []
 
         if recall is not None and recall.fused:
-            # Ceiling raised 8 → 20 so the unified cross-encoder rerank
-            # below sees enough section candidates to surface the
-            # correct chunk even when section_recall's fused ranking
-            # ranks it past the previous cutoff. The rerank still
-            # truncates to ``floor`` after scoring, so this only
-            # widens the pre-rerank pool, not the final output size.
-            for sh in recall.fused[:20]:
+            # M35-aside — token-budget the section excerpts that flow
+            # into the unified cross-encoder rerank. Pre-M35 we hard-
+            # capped at recall.fused[:20] + max_chars=2400 (~600 tokens)
+            # per excerpt = ~12000 tokens of section input to the
+            # rerank. That mixes "rank cap" (20 items) with "per-item
+            # text cap" (2400 chars).
+            #
+            # Post-M35: still cap each excerpt at ~600 tokens (slicing
+            # cost is per-section, not corpus-wide), but cap the TOTAL
+            # section budget at 6000 tokens — matches Hindsight's
+            # section context bound and gives the rerank a coherent
+            # input size. Per-fact-type segmentation in fact_recall
+            # already gives the rerank fact-grain diversity; sections
+            # complement at the chunk level.
+            _SECTION_TOTAL_TOKEN_BUDGET = 6000
+            _section_tokens_used = 0
+            from astrocyte.pipeline.token_budget import count_tokens  # noqa: PLC0415
+
+            for sh in recall.fused[:30]:  # widened pre-budget pool to 30
                 excerpt = _truncate_chars(
                     _slice_section_around_line(md_text, sh.line_num),
-                    max_chars=2400,  # ~600 tokens
+                    max_chars=2400,  # ~600 tokens per excerpt
                 )
                 if not excerpt:
                     continue
                 cid = f"section:{sh.document_id}:{sh.line_num}"
                 if cid in seen_ids:
                     continue
+                excerpt_tokens = count_tokens(excerpt)
+                # Always accept the first section (avoid empty section
+                # pool on oversize top hit); after that, stop when the
+                # cumulative section-token total would exceed the budget.
+                if candidates and _section_tokens_used + excerpt_tokens > _SECTION_TOTAL_TOKEN_BUDGET:
+                    break
                 seen_ids.add(cid)
+                _section_tokens_used += excerpt_tokens
                 candidates.append(
                     {
                         "id": cid,
@@ -978,6 +1182,145 @@ class AstrocyteClient:
                     }
                 )
 
+        # ── (3.5) M37 — Mental-model candidates ──────────────────────
+        # Surface top-K query-relevant mental models alongside fact /
+        # section / wiki candidates. The cross-encoder rerank below
+        # decides whether they survive into the final top-N.
+        #
+        # 2003+ MMs typically exist per LME user (1015 preference +
+        # 988 general). Pre-M37 they were either:
+        #   - dumped wholesale into user_profile (M14.6 — regressed
+        #     SSU 5/5 → 1/5 from prompt bloat)
+        #   - skipped entirely (M14.7 revert — preference kind suppressed)
+        # M37: score MMs by token-overlap with the question, take top-K,
+        # mix into candidate pool. Cross-encoder picks the few that
+        # actually match.
+        #
+        # Gated by ASTROCYTE_M37_MM_CANDIDATES (default ON = "1"); set
+        # to "0" to skip for ablation. Default ON because M37 is the
+        # cycle's central thesis.
+        _m37_on = _os.environ.get("ASTROCYTE_M37_MM_CANDIDATES", "1").lower() in ("1", "true", "yes")
+        if _m37_on and self._mental_model_store is not None:
+            # M35 — token-budget cap is the API consistent primitive.
+            # Default 512 tokens ≈ 2-4 MMs of typical length. The
+            # downstream unified candidate pool already gets cross-
+            # encoder reranked and token-budgeted at max_tokens=4096
+            # via fact_recall's pack_to_budget, so this knob is just
+            # the upper bound on how many MMs the reranker even sees.
+            try:
+                _m37_mm_max_tokens = int(_os.environ.get("ASTROCYTE_M37_MM_MAX_TOKENS", "512"))
+            except ValueError:
+                _m37_mm_max_tokens = 512
+            _m37_mm_max_tokens = max(0, _m37_mm_max_tokens)
+            # M37b — embedding-based MM search. When ON, cosine score
+            # MMs against the query embedding (catches paraphrases that
+            # token-overlap misses). When OFF (default), use token-overlap
+            # for backward compat with v015p baseline.
+            _m37b_embed = _os.environ.get("ASTROCYTE_M37B_MM_EMBED", "1").lower() in ("1", "true", "yes")
+            if _m37_mm_max_tokens > 0:
+                try:
+                    bank_id = self._bank_for(user_id)
+                    all_mms = await self._mental_model_store.list(
+                        bank_id,
+                        scope=f"document:{self._doc_ids.get(user_id, '')}",
+                    )
+                    scored: list[tuple[float, Any]] = []
+                    if _m37b_embed:
+                        # M37b — cosine on cached MM embeddings.
+                        # First call per user: batched embed of all MMs
+                        # (~1-2s for ~1000 MMs); subsequent calls use
+                        # cache (sub-ms).
+                        if user_id not in self._mm_embedding_cache:
+                            self._mm_embedding_cache[user_id] = {}
+                            uncached_mms = [
+                                mm for mm in all_mms if mm is not None
+                                and getattr(mm, "model_id", None) is not None
+                            ]
+                            if uncached_mms:
+                                _mm_texts = [
+                                    f"{(getattr(mm, 'title', '') or '').strip()} {(getattr(mm, 'content', '') or '').strip()}".strip()
+                                    for mm in uncached_mms
+                                ]
+                                try:
+                                    _mm_vecs = await self._provider.embed(_mm_texts)
+                                except Exception as exc:  # noqa: BLE001
+                                    logger.warning("M37b MM embed batch failed: %s", exc)
+                                    _mm_vecs = []
+                                for mm, vec in zip(uncached_mms, _mm_vecs):
+                                    if vec:
+                                        self._mm_embedding_cache[user_id][mm.model_id] = (mm, vec)
+                        # Cosine score (qvec was computed earlier from retrieval_query).
+                        cache = self._mm_embedding_cache.get(user_id, {})
+                        if cache and qvec:
+                            from math import sqrt  # noqa: PLC0415
+
+                            _q_norm = sqrt(sum(x * x for x in qvec))
+                            for _model_id, (mm, vec) in cache.items():
+                                if not vec:
+                                    continue
+                                _v_norm = sqrt(sum(x * x for x in vec))
+                                if _q_norm == 0 or _v_norm == 0:
+                                    continue
+                                dot = sum(a * b for a, b in zip(qvec, vec))
+                                cos = dot / (_q_norm * _v_norm)
+                                if cos > 0.0:  # cheap dedupe; cosine [0,1] expected
+                                    scored.append((float(cos), mm))
+                    else:
+                        # Token-overlap scoring (v015p behaviour): count
+                        # distinct query terms appearing in the MM's
+                        # title + content.
+                        _q_terms = {t for t in query.lower().split() if len(t) > 2}
+                        for mm in all_mms:
+                            if mm is None:
+                                continue
+                            haystack = f"{getattr(mm, 'title', '') or ''} {getattr(mm, 'content', '') or ''}".lower()
+                            if not haystack.strip() or not _q_terms:
+                                continue
+                            score = sum(1 for t in _q_terms if t in haystack)
+                            if score > 0:
+                                scored.append((float(score), mm))
+                    scored.sort(key=lambda kv: kv[0], reverse=True)
+                    # M35 — pack scored MMs into the token budget. The
+                    # always-include-first rule (see pack_to_budget) means
+                    # an oversize top MM still surfaces (we'd rather show
+                    # a long highly-scored MM than skip it for budget).
+                    from astrocyte.pipeline.token_budget import pack_to_budget  # noqa: PLC0415
+
+                    mm_text_of = lambda kv: (  # noqa: E731
+                        f"[Mental Model: {(getattr(kv[1], 'title', '') or '').strip()} "
+                        f"(kind={getattr(kv[1], 'kind', 'general')})] "
+                        f"{(getattr(kv[1], 'content', '') or '').strip()}"
+                    )
+                    packed = pack_to_budget(
+                        scored,
+                        max_tokens=_m37_mm_max_tokens,
+                        text_of=mm_text_of,
+                    )
+                    for _score, mm in packed:
+                        title = (getattr(mm, "title", "") or "").strip()
+                        content = (getattr(mm, "content", "") or "").strip()
+                        if not title and not content:
+                            continue
+                        mm_id = f"mental_model:{getattr(mm, 'model_id', '')}"
+                        if mm_id in seen_ids:
+                            continue
+                        kind = getattr(mm, "kind", "general")
+                        mm_text = f"[Mental Model: {title} (kind={kind})] {content}".strip()
+                        seen_ids.add(mm_id)
+                        candidates.append(
+                            {
+                                "id": mm_id,
+                                "text": mm_text,
+                                "grain": "mental_model",
+                                "mental_model": mm,
+                            },
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "M37 mental-model candidate injection failed user=%s: %s",
+                        user_id, exc,
+                    )
+
         if not candidates:
             return []
 
@@ -989,12 +1332,107 @@ class AstrocyteClient:
             from astrocyte.pipeline.reranking import ScoredItem  # noqa: PLC0415
 
             items = [ScoredItem(id=c["id"], text=c["text"], score=0.0) for c in candidates]
-            reranked = cross_encoder_rerank(items, query)
+            # M38 — the cross-encoder scores text similarity between
+            # query and candidate. retrieval_query (rewritten) is the
+            # search-intent expression; using it here keeps the ranker
+            # aligned with the retrieval. Falls back to original when
+            # M38 is off.
+            reranked = cross_encoder_rerank(items, retrieval_query)
         except Exception as exc:  # noqa: BLE001
             logger.warning("unified rerank failed for user=%s: %s", user_id, exc)
             reranked = [ScoredItem(id=c["id"], text=c["text"], score=0.0) for c in candidates]
 
         by_id = {c["id"]: c for c in candidates}
+
+        # ── M40 — Trend-based rerank boost on mental-model candidates ─────
+        # When ASTROCYTE_M40_TREND_BOOST is enabled, multiply each MM
+        # candidate's rerank score by a per-trend weight. For v1 we only
+        # boost mental_model grain — facts mostly have single-evidence
+        # (NEW/STALE collapse) so the signal is degenerate there.
+        # The MM "evidence timestamp" is the model's refreshed_at (single-
+        # point fallback in compute_observation_trend semantics): a
+        # recently-refreshed MM trends NEW; an old one trends STALE.
+        # Reference time = the question's reference_date (anchor for the
+        # LME conversation timeline), not wall-clock now.
+        _m40_boost_on = _os.environ.get("ASTROCYTE_M40_TREND_BOOST", "0").lower() in ("1", "true", "yes")
+        _m40_trends_by_id: dict[str, str] = {}
+        if _m40_boost_on:
+            try:
+                from astrocyte.pipeline.trend import (  # noqa: PLC0415
+                    Trend,
+                    compute_trend,
+                )
+
+                _trend_recent_days = int(_os.environ.get("ASTROCYTE_TREND_RECENT_DAYS", "30"))
+                _trend_old_days = int(_os.environ.get("ASTROCYTE_TREND_OLD_DAYS", "90"))
+                # Additive deltas — applied as fractions of the observed
+                # score range in this candidate pool. Sign-agnostic across
+                # MiniLM (logits [-12, 0]) / mxbai-rerank-v2 (sigmoid
+                # [0, 1]) / bge-reranker (logits). STALE gets the sharpest
+                # penalty because a stale preference is the SSP failure
+                # mode we want to suppress.
+                _trend_deltas = {
+                    Trend.STRENGTHENING: 0.05,
+                    Trend.STABLE: 0.0,
+                    Trend.NEW: 0.0,
+                    Trend.WEAKENING: -0.05,
+                    Trend.STALE: -0.15,
+                }
+                ref_now = self._reference_date_by_user.get(user_id)
+                _scores_all = [float(it.score) for it in reranked]
+                _score_range = (
+                    (max(_scores_all) - min(_scores_all))
+                    if len(_scores_all) >= 2 else 1.0
+                )
+                if _score_range <= 0:
+                    _score_range = 1.0
+                _boosted: list[Any] = []
+                for item in reranked:
+                    c = by_id.get(item.id)
+                    if c is None or c.get("grain") != "mental_model":
+                        _boosted.append(item)
+                        continue
+                    mm = c.get("mental_model")
+                    # M40-5 — prefer persisted source_timestamps (in
+                    # conversation/LME time) over refreshed_at (wall-
+                    # clock). The latter is broken in bench-time because
+                    # ingest just ran "now" while reference_date is in
+                    # 2023 — every MM trends NEW under that fallback.
+                    # Legacy rows pre-M40-4 (source_timestamps=None)
+                    # still fall back to refreshed_at — degraded signal
+                    # but not crashing.
+                    evidence_ts: list[Any] = []
+                    if mm is not None:
+                        persisted = getattr(mm, "source_timestamps", None)
+                        if persisted:
+                            evidence_ts = list(persisted)
+                        else:
+                            refreshed = getattr(mm, "refreshed_at", None)
+                            if refreshed is not None:
+                                evidence_ts = [refreshed]
+                    if not evidence_ts:
+                        _boosted.append(item)
+                        continue
+                    trend = compute_trend(
+                        evidence_ts,
+                        now=ref_now,
+                        recent_days=_trend_recent_days,
+                        old_days=_trend_old_days,
+                    )
+                    _m40_trends_by_id[item.id] = trend.value
+                    delta = _trend_deltas.get(trend, 0.0)
+                    _boosted.append(
+                        ScoredItem(
+                            id=item.id,
+                            text=item.text,
+                            score=float(item.score) + (delta * _score_range),
+                        ),
+                    )
+                # Re-sort after boost; rerank scores are no longer monotonic.
+                _boosted.sort(key=lambda s: float(s.score), reverse=True)
+                reranked = _boosted
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("M40 trend boost failed user=%s: %s", user_id, exc)
 
         # NOTE: M19 Workstream C (multiplicative bounded boosts on unified
         # rerank, mirroring Hindsight reranking.py) was implemented and
@@ -1032,6 +1470,31 @@ class AstrocyteClient:
                 fh = c["fact"]
                 if fh.occurred_start:
                     entry["created_at"] = fh.occurred_start.isoformat()
+                # M24 architectural fix — surface the Hindsight-parity
+                # chunk_id + inline source_chunk text so the answerer
+                # prompt can render Fact ↔ Source as a pair (not in
+                # separate sections of the context).
+                if c.get("chunk_id"):
+                    entry["chunk_id"] = c["chunk_id"]
+                if c.get("source_chunk"):
+                    entry["source_chunk"] = c["source_chunk"]
+                # M28 Workstream B — surface M27 fields so the answerer's
+                # structured context renderer can show confidence and the
+                # dual occurred/mentioned timestamps.
+                if c.get("confidence_score") is not None:
+                    entry["confidence_score"] = c["confidence_score"]
+                mentioned = c.get("mentioned_at")
+                if mentioned is not None:
+                    entry["mentioned_at"] = (
+                        mentioned.isoformat() if hasattr(mentioned, "isoformat") else mentioned
+                    )
+                # M31 Fix 4 — resolved absolute event date (when present).
+                # Answerer renderer prefers this over relative-phrase math.
+                event_date = c.get("event_date")
+                if event_date is not None:
+                    entry["event_date"] = (
+                        event_date.isoformat() if hasattr(event_date, "isoformat") else event_date
+                    )
                 if score_debug:
                     entry["score_debug"] = {
                         "combined_score": float(item.score),
@@ -1051,6 +1514,25 @@ class AstrocyteClient:
                     "grain": "wiki",
                     "page_id": c["wiki"].page_id,
                 }
+
+            # ── M40 — Trend annotation on mental_model context text ──────
+            # When ASTROCYTE_M40_TREND_ANNOTATE is enabled, prefix MM
+            # memory text with a short trend tag so the answerer prompt
+            # can prefer stable preferences over weakening ones. Always
+            # surface trend on entry["metadata"] for debug regardless of
+            # annotation, when it was computed by the boost branch above.
+            if c["grain"] == "mental_model":
+                _trend_value = _m40_trends_by_id.get(item.id)
+                if _trend_value:
+                    entry["metadata"]["trend"] = _trend_value
+                    _m40_annotate_on = _os.environ.get(
+                        "ASTROCYTE_M40_TREND_ANNOTATE", "0",
+                    ).lower() in ("1", "true", "yes")
+                    # Skip the "stable" no-signal default — it would just
+                    # pollute the prompt with the common case.
+                    if _m40_annotate_on and _trend_value != "stable":
+                        entry["memory"] = f"[trend:{_trend_value}] {entry['memory']}"
+
             out.append(entry)
 
         # B-1 / B-1.1 / B-1.2 anchor injection removed (M14.7 revert,
@@ -1068,23 +1550,148 @@ class AstrocyteClient:
         # ── Fix 1 (conv-run-4): raw conversation excerpts ──────────
         # Single-session-preference failures: implicit preferences
         # ("no screens after 9:30pm", said in passing) are visible in
-        # the raw chunk but never extracted as facts, so the answerer
-        # only sees summaries and atomic facts — both miss the cue.
-        # Inject the top-3 raw chunks as separately-labeled context so
-        # the answerer can read the implicit preference verbatim. They
-        # ride above the existing reranked output by carrying a high
-        # synthetic score, and are prefixed "[Conversation excerpt — ...]"
-        # so the answerer prompt's "- {memory}" bullet list still
-        # delimits them clearly from "Facts:" entries.
-        excerpts = self._build_raw_conversation_excerpts(
-            recall=recall,
-            query=query,
-            md_text=md_text,
-            top_k=3,
-        )
-        if excerpts:
-            out = excerpts + out
+        # M31b Fix A — DISABLED raw-chunk anchor-injection (was: prepend
+        # top-3 raw chunks at synthetic score=1_000_000 forcing them to
+        # the top of the answerer's context regardless of cross-encoder
+        # relevance). Diagnosis in M31b post-mortem: the override was
+        # BURYING relevant facts at ranks 15-55 because cross-encoder
+        # scores are typically in [-12, 0]; the 1M override jumped all
+        # generic raw chunks to top-3 of the answerer prompt, crowding
+        # out user-specific facts that actually answer the question
+        # (concrete example: SSP 06f04340 — "tomatoes/herbs" question
+        # — relevant basil/mint/cherry-tomato facts ranked 15-55, never
+        # made it into the answerer's attention window).
+        #
+        # The same sections fed by ``recall.fused`` already enter the
+        # candidate pool at the section-grain loop above (line ~944),
+        # where they get scored by cross-encoder alongside facts. Keep
+        # ``_build_raw_conversation_excerpts`` defined for ad-hoc reuse
+        # but no longer prepend its output. If a future cycle wants
+        # raw-chunk context, it should feed it through the rerank pool
+        # at a sane score (not a hard-coded override).
         return out
+
+    async def reflect(
+        self,
+        question: str,
+        user_id: str,
+        *,
+        max_iterations: int | None = None,
+        top_k_seed: int | None = None,
+    ) -> dict[str, Any]:
+        """Run the native-function-calling reflect loop and return the
+        synthesized answer directly.
+
+        Hindsight-parity integrated mode (M20 Day 3 rewrite, see
+        ``docs/_design/m20-reflect-agent.md`` §7): the predicted answer
+        is ``result.text`` from the reflect loop — NOT routed through
+        a downstream answerer. Mirrors
+        ``hindsight-dev/benchmarks/locomo/locomo_benchmark.py:LoComoReflectAnswerGenerator``
+        which sets ``needs_external_search() = False`` so the runner
+        skips the recall+answerer chain entirely.
+
+        Returns:
+            ``{"answer": str, "sources": [{"text", "score", "id"}, ...],
+              "iterations": int}``. Caller should use ``answer`` as the
+            predicted answer at every cutoff (reflect has no cutoff
+            concept — same answer for top_10/20/50/200).
+        """
+        await self._ensure_resources()
+        await self._ensure_ingested(user_id)
+        from astrocyte.pipeline.agentic_reflect import (  # noqa: PLC0415
+            AgenticReflectParams,
+            agentic_reflect,
+        )
+        from astrocyte.types import MemoryHit  # noqa: PLC0415
+
+        # Seed evidence: reuse the existing search() pipeline so reflect
+        # starts from the same retrieval pool the recall+answerer baseline
+        # gets. ``search()`` already integrates fact_recall + section_recall
+        # + cross-encoder rerank + raw excerpt injection.
+        #
+        # **M20 R1c**: bumped default from 50 → 200 so reflect's loop sees
+        # the SAME breadth of evidence the R0 answerer sees at top_200
+        # (where R0 scores 173/200, +12q above R1b's 162/200). Tests
+        # whether reflect's regression is information-limited (loop sees
+        # less than answerer) or synthesis-limited (loop sees same but
+        # composes worse). Env override: ``ASTROCYTE_REFLECT_SEED_TOP_K``.
+        if top_k_seed is None:
+            _env_seed = _os.environ.get("ASTROCYTE_REFLECT_SEED_TOP_K", "")
+            if _env_seed.isdigit():
+                top_k_seed = int(_env_seed)
+            else:
+                top_k_seed = 200
+        seed_top = max(top_k_seed, self.search_top_k_floor)
+        base_candidates = await self.search(
+            query=question,
+            user_id=user_id,
+            top_k=seed_top,
+        )
+
+        def _to_hit(c: dict) -> MemoryHit:
+            # M26 Phase 3: thread M24's inline ``source_chunk`` into the
+            # MemoryHit's metadata so the agent's tool-response formatter
+            # (``_format_hits_for_tool_response`` in agentic_reflect.py)
+            # can render Fact + Source pair inline — Hindsight parity for
+            # the reflect loop's sub-recall outputs. Without this, the
+            # agent sees fact text only and loses the chunk-level
+            # verbatim cross-reference that made M24 work for SSP.
+            meta = dict(c.get("metadata") or {})
+            if c.get("source_chunk"):
+                meta["source_chunk"] = c["source_chunk"]
+            if c.get("chunk_id"):
+                meta["chunk_id"] = c["chunk_id"]
+            return MemoryHit(
+                text=c.get("memory", ""),
+                score=float(c.get("score", 0.0)),
+                memory_id=c.get("id"),
+                metadata=meta if meta else None,
+            )
+
+        initial_hits = [_to_hit(c) for c in base_candidates]
+
+        async def _loop_recall(sub_query: str, max_results: int) -> list[MemoryHit]:
+            sub_candidates = await self.search(
+                query=sub_query,
+                user_id=user_id,
+                top_k=max(max_results, self.search_top_k_floor),
+            )
+            return [_to_hit(c) for c in sub_candidates[:max_results]]
+
+        if max_iterations is None:
+            max_iter_env = _os.environ.get("ASTROCYTE_REFLECT_MAX_ITERATIONS", "5")
+            try:
+                max_iterations = max(1, int(max_iter_env))
+            except ValueError:
+                max_iterations = 5
+
+        params = AgenticReflectParams(
+            max_iterations=max_iterations,
+            recall_step_max_results=10,
+            max_evidence_pool_size=30,
+            adversarial_defense=False,
+        )
+
+        result = await agentic_reflect(
+            query=question,
+            initial_hits=initial_hits,
+            recall_fn=_loop_recall,
+            llm_provider=self._provider,
+            params=params,
+        )
+
+        return {
+            "answer": result.answer,
+            "sources": [
+                {
+                    "text": src.text,
+                    "score": float(src.score),
+                    "id": src.memory_id or "",
+                }
+                for src in result.sources
+            ],
+            "iterations": max_iterations,
+        }
 
     def _build_raw_conversation_excerpts(
         self,
@@ -1231,6 +1838,107 @@ class AstrocyteClient:
 
         return profile or None
 
+    async def list_mental_models_for_bench(
+        self,
+        user_id: str,
+        limit: int = 10,
+    ) -> list[dict]:
+        """M22 Gap 3 — return user's mental models as JSON dicts for the
+        Hindsight-style answerer prompt's ``=== Mental Models ===``
+        section.
+
+        Filters to ``kind in {general, directive}`` per the M14.7 revert
+        rationale (``preference`` rows bloated context and regressed LME
+        single-session-user 5/5 → 1/5). The list is bounded by ``limit``
+        with most-recently-refreshed first.
+
+        Returns an empty list when no models exist or the bench hasn't
+        ingested this user yet — the prompt formatter then skips the
+        section gracefully.
+        """
+        await self._ensure_resources()
+        if self._mental_model_store is None:
+            return []
+        if user_id not in self._ingested:
+            return []
+        document_id = self._doc_ids.get(user_id)
+        if document_id is None:
+            return []
+        try:
+            models = await self._mental_model_store.list(
+                self._bank_for(user_id),
+                scope=f"document:{document_id}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("list_mental_models_for_bench user=%s: %s", user_id, exc)
+            return []
+        out: list[dict] = []
+        for m in models:
+            kind = getattr(m, "kind", "general")
+            if kind not in {"general", "directive"}:
+                continue
+            title = (m.title or "").strip()
+            content = (m.content or "").strip()
+            if not title or not content:
+                continue
+            out.append({"title": title, "content": content, "kind": kind})
+            if len(out) >= limit:
+                break
+        return out
+
+    async def list_observations_for_bench(
+        self,
+        user_id: str,
+        limit: int = 20,
+    ) -> list[dict]:
+        """M22 Gap 3 — return user's wiki-page observations as JSON dicts
+        for the Hindsight-style answerer prompt's ``=== Entity
+        Observations ===`` section.
+
+        The bench harness ingest path (``_build_document_pageindex`` →
+        ``wiki_compile``) produces per-document wiki summaries that
+        consolidate facts across sessions — the closest analog in the
+        bench-side ingestion to Hindsight's reflective observations.
+        True ``ObservationConsolidator`` output never reaches the bench
+        because the bench bypasses ``PipelineOrchestrator``; surfacing
+        wikis under the same prompt section gives the answerer the
+        same cross-session aggregate signal at the same cost.
+
+        Returns an empty list when no wikis exist yet (e.g. small
+        sessions where the compiler produced zero pages).
+        """
+        await self._ensure_resources()
+        if self._store is None:
+            return []
+        if user_id not in self._ingested:
+            return []
+        document_id = self._doc_ids.get(user_id)
+        if document_id is None:
+            return []
+        try:
+            wikis = await self._store.list_wiki_pages_for_doc(
+                self._bank_for(user_id),
+                document_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("list_observations_for_bench user=%s: %s", user_id, exc)
+            return []
+        out: list[dict] = []
+        for w in wikis:
+            text = (getattr(w, "content", "") or "").strip()
+            if not text:
+                continue
+            out.append(
+                {
+                    "text": text,
+                    "trend": "stable",  # wikis don't carry computed trend; render as stable
+                    "proof_count": getattr(w, "n_sources", 1) or 1,
+                }
+            )
+            if len(out) >= limit:
+                break
+        return out
+
     async def delete_user(self, user_id: str) -> bool:
         """Clear the user's buffer and ingest state. Postgres rows for
         prior runs persist (cheaper than a cascading DELETE here); a
@@ -1260,6 +1968,7 @@ class AstrocyteClient:
 
     async def _do_ingest(self, user_id: str) -> None:
         from scripts.bench_pageindex_locomo import (  # noqa: PLC0415
+            _enrich_nodes_with_dates,  # M33-3a — fixes section.session_date population
             _flatten_tree_to_sections,
             _populate_section_index,
         )
@@ -1395,6 +2104,11 @@ class AstrocyteClient:
                 )
                 await summarizer.summarize_tree(doc_tree)
                 raw_tree = _document_tree_to_pageindex_dict(doc_tree)
+                # M33-3a — populate per-node ``date`` field from section
+                # titles so _flatten_tree_to_sections can set
+                # section.session_date. Without this, mentioned_at /
+                # event_date / temporal recall all degrade to no-ops.
+                _enrich_nodes_with_dates(raw_tree)
                 sections = _flatten_tree_to_sections(raw_tree, document_id)
             else:  # pragma: no cover — legacy parity path
                 md_tmp = Path(f"/tmp/astrocyte-mem0-harness-{user_id.replace('/', '_')}.md")
@@ -1407,6 +2121,8 @@ class AstrocyteClient:
                     if_add_node_text="no",
                     if_add_node_id="yes",
                 )
+                # M33-3a — same enrichment as the framework-native path.
+                _enrich_nodes_with_dates(raw_tree)
                 sections = _flatten_tree_to_sections(raw_tree, document_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("ingest tree/conversation build failed for user=%s: %s", user_id, exc)

@@ -677,6 +677,19 @@ _LME_DATE_RE = re.compile(
     r"\(\s*(\d{4})/(\d{1,2})/(\d{1,2})"
     r"(?:\s*\([A-Za-z]{3}\))?(?:\s+\d{1,2}:\d{2})?\s*\)",
 )
+# M33-3a — mem0_harness LME heading format:
+#   "Session 1 (2023-05-20 00:48)"
+#   "Session 2 (2023-05-20)"
+# Parenthesised hyphenated ISO date, optional time, optional weekday. Live
+# DB inspection showed 100% of LME conversation sections use this shape
+# and 0% were matching the pre-fix regex set. Distinct from
+# ``_LME_DATE_RE`` which expects slash-separated dates inside parens
+# (the standalone bench_pageindex_lme.py shape).
+_ISO_PAREN_DATE_RE = re.compile(
+    r"\(\s*(\d{4})-(\d{1,2})-(\d{1,2})"
+    r"(?:\s*\([A-Za-z]{3}\))?"
+    r"(?:\s+\d{1,2}:\d{2})?\s*\)",
+)
 _MONTH_NAMES = [
     "",
     "January",
@@ -697,15 +710,28 @@ _MONTH_NAMES = [
 def _extract_date_from_title(title: str) -> str | None:
     """Pull a normalised "D Month, YYYY" date out of a section title.
 
-    Tries LoCoMo's `(1:56 pm on 8 May, 2023)` form first, then LME's
-    `(2023/05/20 (Sat) 02:21)` ISO-with-weekday form. Returns ``None``
-    when neither matches (caller falls back to NULL session_date)."""
+    Tries three formats in order:
+
+    1. LoCoMo: ``(1:56 pm on 8 May, 2023)``
+    2. LME: ``(2023/05/20 (Sat) 02:21)`` — ISO-with-weekday
+    3. **mem0_harness (M33-3a):** ``Session 2023-08-16 — topic`` —
+       bare ISO date prefixed by ``Session ``
+
+    Returns ``None`` when none match (caller falls back to NULL
+    session_date).
+    """
     if not isinstance(title, str):
         return None
     m = _DATE_RE.search(title)
     if m:
         return m.group(1).strip()
     m = _LME_DATE_RE.search(title)
+    if m:
+        year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= month <= 12:
+            return f"{day} {_MONTH_NAMES[month]}, {year}"
+    # M33-3a — mem0_harness chunk heading parenthesised-ISO form.
+    m = _ISO_PAREN_DATE_RE.search(title)
     if m:
         year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if 1 <= month <= 12:
@@ -718,7 +744,23 @@ def _enrich_nodes_with_dates(nodes: list | dict) -> list[tuple[int, str]]:
 
     Returns the ordered list of ``(line_num, date)`` pairs encountered —
     later passed to the picker so it sees a sortable date index.
+
+    Accepts either:
+      - a flat ``list[dict]`` of nodes (standalone bench scripts), or
+      - a ``{"structure": [...]}`` wrapper dict (the shape
+        ``_document_tree_to_pageindex_dict`` produces for the
+        mem0_harness path). Mirrors the unwrap that
+        ``_flatten_tree_to_sections`` already does so date enrichment
+        works on the same input both downstream consumers do.
     """
+    # M33-3a — unwrap the same way _flatten_tree_to_sections does.
+    # Without this the mem0_harness bench's raw_tree (a structure dict)
+    # silently skipped enrichment, leaving session_date NULL on every
+    # section and cascading mentioned_at / event_date to NULL on every
+    # fact (confirmed via direct DB inspection on aborted v015i run 1).
+    if isinstance(nodes, dict):
+        nodes = nodes.get("structure", nodes)
+
     found: list[tuple[int, str]] = []
 
     def _walk(n):
