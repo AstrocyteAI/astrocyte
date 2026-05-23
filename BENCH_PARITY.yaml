@@ -23,6 +23,27 @@
 schema_version: 1
 releases:
 - package: astrocyte-postgres
+  version: 0.15.0
+  bench_cycle: v015w
+  bench_tag: bench/v015w
+  bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
+  released_at: '2026-05-23'
+  scores: {}
+- package: astrocyte-gateway-py
+  version: 0.15.0
+  bench_cycle: v015w
+  bench_tag: bench/v015w
+  bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
+  released_at: '2026-05-23'
+  scores: {}
+- package: astrocyte
+  version: 0.15.0
+  bench_cycle: v015w
+  bench_tag: bench/v015w
+  bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
+  released_at: '2026-05-23'
+  scores: {}
+- package: astrocyte-postgres
   version: 0.14.0
   bench_cycle: m19
   bench_tag: bench/m19
