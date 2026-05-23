@@ -29,7 +29,7 @@ Used when `provider_tier: storage`.
 |-----|------|---------|-------------|
 | `vector_store` | string \| null | `null` | Vector store provider: `in_memory`, `postgres`, `qdrant`, etc. |
 | `vector_store_config` | dict \| null | `null` | Provider-specific settings (connection URL, dimensions, etc.) |
-| `graph_store` | string \| null | `null` | Graph store provider: `age`, `neo4j`, etc. |
+| `graph_store` | string \| null | `null` | Graph store provider: `neo4j`, or `in_memory` for testing. Section-level graph traversal (entity bridging, causal links) runs over built-in flat SQL tables without a graph store adapter. |
 | `graph_store_config` | dict \| null | `null` | Provider-specific settings |
 | `document_store` | string \| null | `null` | Document store provider: `postgres` (pg_tsvector + GIN + BM25, same adapter as `vector_store: postgres`), `elasticsearch`, etc. |
 | `document_store_config` | dict \| null | `null` | Provider-specific settings |

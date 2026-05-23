@@ -10,8 +10,7 @@ summaries when the recall pipeline elects to use the compiled layer.
 Examples: "Caroline prefers async updates", "Project X status: blocked on
 review", "User's stated tone preference: concise + technical".
 
-This page documents the M9 architecture (dedicated SPI + Postgres table)
-and the migration path from the prior wiki-piggyback design.
+This page documents the M9 architecture (dedicated SPI + Postgres table) and the migration path from the prior wiki-piggyback design. For the M21 extensions — structured-doc schema, delta operations, and CRUD MCP tools — see [Observation evolution](/plugins/observation-evolution/).
 
 ## Quick start
 
@@ -261,16 +260,20 @@ for the same RBAC as `/v1/recall`, `/v1/retain`, `/v1/forget`:
 All return `501 Not Implemented` if `mental_model_store` is unset in
 config — operators must explicitly opt in.
 
-## What's deferred (not in M9)
+## M21 extensions (shipped in v0.15.0)
 
-- **`structured_content` JSONB column** for non-textual mental models
-  (Hindsight has this; we don't yet)
-- **`max_tokens` / `last_refreshed_source_query` columns** for
-  refresh-budgeting workflows
-- **Auto-refresh hook** triggered by retain — currently mental models
-  are explicitly created/refreshed by callers
-- **Vector-indexed retrieval over mental models** — they're searchable
-  by `bank_id + model_id` only today; semantic recall over them would
-  need an embedding column + HNSW index (similar to wiki page embeddings)
+M21 delivered the structured-doc and live-memory capabilities that were deferred from M9:
 
-These are future-work items, none blocking M9 ship.
+- **`structured_doc` JSONB column** — Pydantic-typed sections + blocks (paragraph, bullet_list, ordered_list, code). Deterministic markdown render. Slug-based section ids. Legacy `content` string rows lazy-migrate on first refresh.
+- **Delta operations** — `update_via_ops(model_id, ops)` applies typed operations (Append/Insert/Replace/Remove block, Add/Remove/Rename section) to an existing structured doc. Untouched blocks are physically copied through; drift on unchanged content is structurally impossible.
+- **Mental model refresh via delta ops** — the `mental_model_compile` retain-time path now emits operations against the existing structured doc instead of regenerating the whole document.
+- **MCP CRUD tools** — `memory_create_mental_model`, `memory_update_mental_model`, `memory_delete_mental_model`, `memory_list_mental_models` — agents can now author and curate mental models directly via the MCP server.
+- **`create_directive` MCP tool** — stores a user-authored hard rule as `MentalModel(kind="directive")`. Replaces the deprecated auto-compilation path (`directive_compile`).
+
+See [Observation evolution](/plugins/observation-evolution/) for the full M21 guide including usage examples.
+
+## What remains deferred (post-M21)
+
+- **`max_tokens` / `last_refreshed_source_query` columns** for refresh-budgeting workflows — not yet added
+- **Auto-refresh scheduling** — triggered by retain on new evidence; Hindsight has this; M22+ territory
+- **Vector-indexed retrieval over mental models** — searchable by `bank_id + model_id` today; semantic recall would need an embedding column + HNSW index

@@ -9,8 +9,10 @@ How to install, configure, and run each Astrocyte storage adapter. All adapters 
 | Store type | Role | Adapters | When to use |
 |------------|------|----------|-------------|
 | **Vector store** | Semantic search (embeddings) | `pgvector`, `qdrant` | Always — required for Tier 1 recall |
-| **Graph store** | Entity relationships and traversal | `age`, `neo4j` | When you need "who knows whom" or relationship-aware recall |
+| **Graph store** | Entity relationships and traversal | `neo4j` | When you need "who knows whom" or relationship-aware recall beyond the built-in flat-table graph |
 | **Document store** | BM25 full-text / keyword search | `elasticsearch` | When you need keyword recall alongside semantic |
+
+> **Built-in graph traversal**: section-level graph traversal (entity bridging, causal links, semantic kNN links) runs over flat SQL tables (`section_links`, `section_entities`) inside `astrocyte-postgres` with no additional adapter. A `GraphStore` adapter (Neo4j) is only needed for cross-bank relationship queries and explicit `graph_search()` / `graph_neighbors()` API calls.
 
 You can combine stores for **hybrid recall** — e.g. pgvector (semantic) + Neo4j (graph) + Elasticsearch (keyword). Results are fused with reciprocal rank fusion (RRF).
 
@@ -30,12 +32,12 @@ No persistence — data is lost on restart.
 
 ## PostgreSQL Reference Stack
 
-Recommended default for production and Hindsight-comparable deployments. One PostgreSQL instance provides:
+Recommended default for production. One PostgreSQL instance provides:
 
 - Durable memory rows, lifecycle columns, banks, and access grants.
 - Dense retrieval through `pgvector`.
-- Durable wiki pages, revisions, source provenance, links, and lint state through the `pgvector` package's `WikiStore`.
-- Graph traversal through Apache AGE, with canonical entity/link truth mirrored in SQL tables.
+- Durable wiki pages, revisions, source provenance, links, and lint state through the `WikiStore`.
+- Graph traversal via flat SQL tables (`section_links`, `section_entities`) — no extension required; entity bridging, causal links, and semantic kNN links all run as plain SQL CTEs.
 - Durable background work through PgQueuer.
 
 ### Install
@@ -55,23 +57,19 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The Compose stack uses the repository's combined Postgres image with `pgvector` and Apache AGE. For production-shaped local runs with migrations applied first, use `./scripts/runbook-up.sh` from `astrocyte-services-py/`.
+The Compose stack uses the repository's combined Postgres image with `pgvector`. For production-shaped local runs with migrations applied first, use `./scripts/runbook-up.sh` from `astrocyte-services-py/`.
 
 ### Configure
 
 ```yaml
 provider_tier: storage
 vector_store: postgres
-graph_store: age
 wiki_store: postgres
 llm_provider: mock
 vector_store_config:
   dsn: ${DATABASE_URL}
   embedding_dimensions: 1536        # must match your embedding model
   bootstrap_schema: true            # auto-create tables (dev)
-graph_store_config:
-  dsn: ${DATABASE_URL}
-  bootstrap_schema: true
 wiki_store_config:
   dsn: ${DATABASE_URL}
   bootstrap_schema: true
@@ -86,6 +84,16 @@ async_tasks:
   dsn: ${DATABASE_URL}
   install_on_start: true
   auto_start_worker: true
+```
+
+To add Neo4j for cross-bank relationship queries, add:
+
+```yaml
+graph_store: neo4j
+graph_store_config:
+  uri: bolt://localhost:7687
+  user: neo4j
+  password: ${NEO4J_PASSWORD}
 ```
 
 | Key | Type | Default | Description |

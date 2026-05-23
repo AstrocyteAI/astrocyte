@@ -6,7 +6,7 @@ A mid-level overview of Astrocyte's architecture — what happens when you call 
 
 ## The core operations
 
-Most interactions with Astrocyte use the memory operations below. `retain`, `recall`, `reflect`, and `forget` are the basic loop; `history`, `audit`, and `compile` add the current `0.9.x` pre-GA intelligence surface.
+Most interactions with Astrocyte use the memory operations below. `retain`, `recall`, `reflect`, and `forget` are the basic loop; `history`, `audit`, `compile`, and the M21 live-memory surface (`create_directive`, mental model CRUD, observation CRUD) extend it.
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -26,19 +26,22 @@ Most interactions with Astrocyte use the memory operations below. `retain`, `rec
                                │
                ┌───────────────┼───────────────┐
                ▼               ▼               ▼
-          pgvector          Apache AGE       Qdrant
-         (vector)            (graph)        (vector)
+          pgvector          Neo4j          Qdrant
+         (vector)     (graph, optional)   (vector)
 ```
 
 | Operation | What it does |
 |-----------|-------------|
-| **retain** | Ingest text → extract entities and facts → resolve entities → deduplicate → chunk → embed → store in a memory bank |
-| **recall** | Parse query → search vector + keyword + graph stores → rerank → return scored hits; optional `as_of` for point-in-time queries |
-| **reflect** | Run recall, then pass hits to an LLM to synthesize a natural-language answer |
+| **retain** | Ingest text → route through Document or Conversation Engine → extract entities and facts → deduplicate → embed → store in a memory bank |
+| **recall** | Parse query → search vector + keyword + optional graph stores → RRF fusion → rerank → return scored hits; optional `as_of` for point-in-time queries |
+| **reflect** | Runs an agentic recall loop and synthesizes a finished natural-language answer with citations |
 | **forget** | Soft-delete memories — writes `forgotten_at` timestamp; hard delete available; compliance audit support |
 | **history** | Convenience wrapper around `recall(as_of=...)` for point-in-time snapshots |
 | **audit** | Reason about absence — scan coverage of a scope in a bank, surface missing topics and thin areas, return `AuditResult(gaps, coverage_score)` |
 | **compile** | Optional wiki compile that materializes topic pages from raw memories for higher-quality recall |
+| **create_directive** | Author a user-curated hard rule stored as a `MentalModel(kind="directive")` — consulted at recall time before raw memories |
+| **create/update/delete mental model** | CRUD for curated, refreshable summaries with structured-doc schema and typed delta operations (M21) |
+| **create/list/delete observation** | CRUD for autonomously or manually authored observations with trend tracking (M21) |
 
 The **audit** operation is what separates Astrocyte from a retrieval index. A retrieval system finds what exists; audit surfaces what doesn't.
 
@@ -59,22 +62,34 @@ Banks are created automatically on first `retain()`, or explicitly in `astrocyte
 
 ---
 
+## The three engines (M17+)
+
+Astrocyte routes incoming content through one of two dedicated ingest engines before the Memory Engine stores it. Choosing the right engine gives the Memory Engine richer structural signals at recall time.
+
+| Engine | Input shape | What it preserves |
+|--------|-------------|-------------------|
+| **Document Engine** | PDFs, markdown, long-form text | PageIndex tree (title + nested section hierarchy, line anchors, adaptive summaries) |
+| **Conversation Engine** | Chat transcripts, turn arrays | Speaker identity, turn ordering, session boundaries, per-turn timestamps |
+| **Memory Engine** | Output of either engine | Facts, observations, mental models, section links, wiki pages, embeddings |
+
+Select the engine via `content_type` on `retain()`: `"text"` / `"document"` routes through the Document Engine; `"conversation"` routes through the Conversation Engine. Both write to the same Memory Engine downstream — so a chat session with an attached PDF can be ingested through both engines into one bank.
+
+---
+
 ## The retain pipeline
 
 When you call `retain()`, content flows through several stages:
 
 1. **Policy check** — access control, rate limits, token budgets
 2. **PII scanning** — regex and optional LLM-based detection; redact, warn, or reject
-3. **Fact extraction** — break content into discrete facts (configurable profiles)
-4. **Entity extraction + resolution** — when `entity_resolution.enabled` and a graph store are configured, extract named entities; query the graph store for candidates; LLM confirms matches with evidence quote; write `EntityLink(link_type="alias_of", evidence=...)` to graph
+3. **Engine routing** — `content_type` selects Document Engine (tree extraction) or Conversation Engine (turn-aware chunking)
+4. **Fact + entity extraction** — break content into discrete facts; optionally extract named entities and resolve aliases via LLM with evidence quotes
 5. **Deduplication** — skip facts that already exist in the bank
-6. **Chunking** — split into embeddable pieces (sentence, dialogue, or fixed-size)
-7. **Embedding** — convert chunks to vectors via the configured LLM provider
-8. **Storage** — write to the configured backend; `retained_at` system timestamp is set at this point
+6. **Embedding** — convert chunks to vectors via the configured LLM provider
+7. **Storage** — write to the configured backend; `retained_at` system timestamp is set at this point
+8. **Observation consolidation** — autonomous consolidator runs in the background; observations accumulate evidence and acquire computed trends (NEW / STRENGTHENING / STABLE / WEAKENING / STALE)
 
 Each stage is configurable. The default pipeline works out of the box — override only what you need.
-
-The entity resolution stage (step 4) is what enables cross-document identity unification. Without it, "Calvin" and "the CTO" remain separate memories with no link. With it, they become connected nodes in the graph, retrievable together and auditable as the same entity.
 
 ---
 
@@ -151,8 +166,8 @@ Policies are configured in `astrocyte.yaml` at the instance level and can be ove
 Astrocyte supports **two kinds of providers**:
 
 **Storage providers** (you pick your backend; Astrocyte's pipeline owns recall):
-- **VectorStore** — semantic search (pgvector, Qdrant, Elasticsearch)
-- **GraphStore** — relationship queries (Neo4j)
+- **VectorStore** — semantic search (pgvector, Qdrant)
+- **GraphStore** — relationship-aware recall and entity resolution (Neo4j). Optional — graph traversal over flat SQL tables (section_links, section_entities) is built-in without any graph adapter.
 - **DocumentStore** — full-text / keyword search (Elasticsearch, BM25)
 
 Astrocyte runs its own pipeline (chunking, embedding, reranking, synthesis) and calls providers for storage and retrieval.

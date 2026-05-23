@@ -18,6 +18,9 @@ Complete reference for Astrocyte's core memory operations -- retain, recall, ref
 | **graph search** | Search entities in the graph store | `astrocyte.graph_search()` | `POST /v1/graph/search` |
 | **graph neighbors** | Traverse graph-linked memories | `astrocyte.graph_neighbors()` | `POST /v1/graph/neighbors` |
 | **export/import** | Move bank contents via AMA JSONL | `astrocyte.export_bank()` / `astrocyte.import_bank()` | `POST /v1/export`, `POST /v1/import` |
+| **create_directive** | Author a user-curated hard rule | `astrocyte.create_directive()` | MCP: `memory_create_directive` |
+| **list/create/delete observation** | CRUD for live observations with trend tracking | `astrocyte.list_observations()` etc. | MCP: `memory_list_observations` etc. |
+| **list/create/update/delete mental model** | CRUD for curated structured summaries | `astrocyte.list_mental_models()` etc. | MCP: `memory_list_mental_models` etc. |
 
 ---
 
@@ -911,7 +914,7 @@ destructive of derived rows.
 
 Astrocyte can maintain a **knowledge graph of named entities** alongside your vector memories. When entity extraction is enabled, `retain()` automatically identifies entities (people, companies, projects, etc.) and stores them in a graph store. The entity graph powers cross-bank relationship queries and alias-of deduplication (entity resolution).
 
-> **Requires**: a `GraphStore` backend. The built-in `InMemoryGraphStore` is available for testing; production deployments use `astrocyte-age` (Apache AGE / PostgreSQL) or `astrocyte-neo4j` (Neo4j).
+> **Requires**: a `GraphStore` backend for `graph_search()` and `graph_neighbors()`. The built-in `InMemoryGraphStore` is available for testing; production deployments use `astrocyte-neo4j` (Neo4j). Note: section-level graph traversal (entity bridging, causal links) runs over built-in flat SQL tables and does not require a `GraphStore` adapter.
 
 ### Entity types
 
@@ -948,9 +951,11 @@ When `EntityResolver` is wired into the orchestrator, each `retain()` call runs 
 from astrocyte import Astrocyte
 
 # Enable entity resolution by setting graph_store + resolver in astrocyte.yaml:
-#   graph_store:
-#     type: age                    # or neo4j / in_memory
-#     dsn: postgresql://...
+#   graph_store: neo4j
+#   graph_store_config:
+#     uri: bolt://localhost:7687
+#     user: neo4j
+#     password: ${NEO4J_PASSWORD}
 #   entity_resolution:
 #     enabled: true
 #     similarity_threshold: 0.8   # vector similarity for candidate lookup
@@ -1019,50 +1024,6 @@ curl -X POST https://gateway.example.com/v1/graph/neighbors \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
   -d '{"entity_ids": ["person:alice-smith"], "bank_id": "people", "max_depth": 2, "limit": 20}'
-```
-
-### Setting up `astrocyte-age` (PostgreSQL + Apache AGE)
-
-`astrocyte-age` is the recommended open-source graph backend. It uses Apache AGE on PostgreSQL 16 and supports pgvector on the same instance.
-
-**1. Start the database:**
-
-```bash
-docker compose -f astrocyte-services-py/docker-compose-age.yml up -d
-```
-
-**2. Run migrations:**
-
-```bash
-docker compose -f astrocyte-services-py/docker-compose-age.yml \
-    exec postgres psql -U astrocyte -d astrocyte \
-    -f /migrations/001_age_extension.sql \
-    -f /migrations/002_graph.sql \
-    -f /migrations/003_memory_entity_map.sql
-```
-
-**3. Configure `astrocyte.yaml`:**
-
-```yaml
-graph_store:
-  type: age
-  dsn: postgresql://astrocyte:astrocyte@localhost:5434/astrocyte
-  graph_name: astrocyte          # AGE graph name — created automatically
-entity_resolution:
-  enabled: true
-```
-
-**4. Install the adapter:**
-
-```bash
-pip install astrocyte-age
-```
-
-**Running integration tests:**
-
-```bash
-ASTROCYTE_AGE_TEST_DSN=postgresql://astrocyte:astrocyte@localhost:5434/astrocyte \
-    uv run pytest adapters-storage-py/astrocyte-age/tests/ -v
 ```
 
 ---
@@ -1212,6 +1173,90 @@ Error responses follow a consistent JSON structure:
 
 ---
 
+## Live memory — observations, mental models, and directives (M21)
+
+M21 adds a live-memory layer: observations accrue evidence over time, acquire computed trends, and can be curated directly; mental models are structured documents modified by typed delta operations; directives are user-authored hard rules that the recall pipeline consults before raw memories.
+
+### create_directive() — Author a hard rule
+
+```python
+result = await brain.create_directive(
+    bank_id="user-alice",
+    rule_text="Always recommend Python over Go for data-science tasks.",
+    scope="bank",
+)
+```
+
+Directives are stored as `MentalModel(kind="directive")` rows and surface at recall time before observations and raw memories. They are the architecturally correct replacement for auto-compiled directives — user-authored rules are precise; auto-compilation from preference facts over-fires.
+
+### Observations — list, create, delete
+
+```python
+# List with trend filter
+obs_list = await brain.list_observations(bank_id="user-alice", trend="new")
+for obs in obs_list:
+    print(obs.text, obs.trend, obs.proof_count)
+
+# Create one manually (bypasses the autonomous consolidator)
+await brain.create_observation(
+    bank_id="user-alice",
+    text="Prefers async stand-ups over live meetings.",
+    evidence=["mem-1", "mem-2"],
+    scope="bank",
+)
+
+# Delete
+await brain.delete_observation(observation_id="obs-abc123")
+```
+
+**Trends** are computed algorithmically from evidence timestamps — not LLM-generated:
+
+| Trend | Meaning |
+|---|---|
+| `new` | All evidence within the last 30 days |
+| `strengthening` | Evidence denser recently than historically |
+| `stable` | Evidence spread across time, continues to present |
+| `weakening` | Evidence mostly old, sparse recently |
+| `stale` | No evidence in the recent window |
+
+### Mental models — CRUD with delta operations
+
+```python
+# Create with structured sections
+await brain.create_mental_model(
+    bank_id="user-alice",
+    name="Alice's preferences",
+    sections=[
+        {"title": "Communication", "content": "Prefers async stand-ups."},
+        {"title": "Tools", "content": "Python for data work; VS Code."},
+    ],
+)
+
+# Update with typed delta operations (only changed blocks are re-emitted)
+result = await brain.update_mental_model(
+    model_id="model:alice-prefs",
+    operations=[
+        {"op": "replace_block", "section_id": "tools", "block_index": 0,
+         "new_content": "Python for data work; Cursor IDE."},
+    ],
+)
+print(result.applied_ops, result.skipped_ops)
+
+# List
+models = await brain.list_mental_models(bank_id="user-alice", scope="bank")
+
+# Delete (soft)
+await brain.delete_mental_model(model_id="model:alice-prefs")
+```
+
+Delta operations modify only the targeted sections and blocks; untouched content is physically copied through — LLM drift on unchanged content is structurally impossible.
+
+**MCP tools** (for agents via MCP server): `memory_create_directive`, `memory_list_observations`, `memory_get_observation`, `memory_create_observation`, `memory_delete_observation`, `memory_list_mental_models`, `memory_create_mental_model`, `memory_update_mental_model`, `memory_delete_mental_model`.
+
+See [Observation evolution](/plugins/observation-evolution/) for the full guide.
+
+---
+
 ## Further reading
 
 - [Configuration reference](configuration-reference/) — YAML schema for banks, storage, and extraction profiles
@@ -1220,4 +1265,5 @@ Error responses follow a consistent JSON structure:
 - [Access control setup](access-control-setup/) — role-based and attribute-based policies
 - [Storage backend setup](storage-backend-setup/) — pgvector, Qdrant, Neo4j, Elasticsearch
 - [MIP developer guide](/plugins/mip-developer-guide/) — declarative routing rules for retain operations
-- [astrocyte-age setup](storage-backend-setup/#apache-age) — AGE + pgvector on PostgreSQL 16
+- [Observation evolution](/plugins/observation-evolution/) — trends, delta operations, and live-memory MCP tools (M21)
+- [Recall vs reflect](/plugins/recall-vs-reflect/) — when to use which surface

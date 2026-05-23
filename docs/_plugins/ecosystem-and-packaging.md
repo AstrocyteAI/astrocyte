@@ -2,7 +2,7 @@
 
 This document defines how Astrocyte is distributed, how providers plug in at both tiers, how optional **memory export sinks**, outbound transport, and **access policy** plugins register, and how the open-source / proprietary boundary works. For the two-tier model and the read vs export split, see `architecture.md` §2 and `storage-and-data-planes.md`. For SPI definitions, see `provider-spi.md`. For warehouse / lakehouse export design, see `memory-export-sink.md`. For credential gateways and proxy wiring, see `outbound-transport.md`. For identity wiring and external PDP integration, see `identity-and-external-policy.md`.
 
-**Current release line (`v0.9.x`, latest patch `0.9.1`):** Tier 1 storage adapters under `adapters-storage-py/` (including **`astrocyte-postgres`** and **`astrocyte-age`**), optional **`astrocyte-gateway-py`**, optional **`recall_authority`** ([ADR-004](/design/adr/adr-004-recall-authority/)), ingest connectors (Kafka, Redis streams, GitHub poll), and the M8–M11 pre-GA intelligence surface. Release history: [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) in the repository root.
+**Current release line (`v0.14.0`):** Tier 1 storage adapters under `adapters-storage-py/` (including **`astrocyte-postgres`**, **`astrocyte-neo4j`**, **`astrocyte-qdrant`**, **`astrocyte-elasticsearch`**), optional **`astrocyte-gateway-py`**, optional **`recall_authority`** ([ADR-004](/design/adr/adr-004-recall-authority/)), ingest connectors (Kafka, Redis streams, GitHub poll), the three-engine pipeline (Document Engine + Conversation Engine + Memory Engine, M17), per-Q-type prompt routing (M19), and the M21 live-memory surface (observation trends, delta ops, mental model CRUD, directives MCP). Release history: [`CHANGELOG.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/CHANGELOG.md) in the repository root.
 
 ---
 
@@ -628,7 +628,6 @@ DTOs use `dataclass` with default values for all optional fields. New fields are
 | astrocyte-postgres | VectorStore | >=0.1 | VS 1 | Official |
 | astrocyte-neo4j | GraphStore | >=0.1 | GS 1 | Official |
 | astrocyte-qdrant | VectorStore | >=0.1 | VS 1 | Official |
-| astrocyte-age | GraphStore | >=0.8 | GS 1 | Official |
 | astrocyte-mystique | EngineProvider | TBD | EP 1 | Planned |
 | astrocyte-mem0 | EngineProvider | TBD | EP 1 | Planned |
 | astrocyte-zep | EngineProvider | TBD | EP 1 | Planned |

@@ -4,20 +4,26 @@ title: Benchmark presets and the v1 default
 
 # Benchmark presets and the v1 default
 
-:::caution[Operational recipes stale (M12 PageIndex bench)]
-The ``make bench-locomo-fair`` recipes below ran against the old ``scripts/run_benchmarks.py`` harness which was removed in the M12 PageIndex refactor. The preset analysis (fast-recall as v1 default, the rationale, the matrix) is still accurate as a historical decision record, but to reproduce numbers you now use ``make bench-locomo`` (Postgres + Doppler) — see the README for current invocation.
+:::caution[Historical decision record — scores are pre-M17]
+This page documents the five-preset ablation matrix that established **fast-recall** as the v1 default (2026-05-03, LoCoMo 51.5%). It is a historical decision record, not a current performance report.
+
+**Current performance (v0.14.0, M19):** LoCoMo 84.25% · LME 81.67% · combined 83.91% (193/230). The accuracy improvement from 51.5% → 84.25% came from M17 (three-engine split), M18b (dateparser + RRF fact fusion), and M19 (per-Q-type prompt routing + enriched fact extraction) — none of which are reflected in the preset matrix below.
+
+The ``make bench-locomo-fair`` recipes ran against the old ``scripts/run_benchmarks.py`` harness (removed in M12). Current invocation: ``make bench-locomo`` (Postgres + Doppler). See ``docs/_design/benchmark-roadmap.md`` for the current bench surface and competitor comparison methodology.
+
+The preset analysis (trade-offs, why fast-recall won at the time, the abstention floor post-mortem) remains accurate as a record of the decision process.
 :::
 
-Astrocyte ships **fast-recall** as the v1 default benchmark configuration
+Astrocyte shipped **fast-recall** as the v1 default benchmark configuration
 (`benchmarks/config.yaml`), selected after the five-preset ablation matrix
 described below. This page explains the trade-offs each preset embodies, the
-empirical results that drove the v1 decision, and what is deliberately
+empirical results that drove the v1 decision, and what was deliberately
 deferred for v1.1.
 
 ## The five presets
 
 Each preset is a complete config under `benchmarks/`. They share the
-Postgres + pgvector + AGE + OpenAI stack and differ only in the retrieval
+Postgres + pgvector + OpenAI stack and differ only in the retrieval
 and reasoning bundles enabled. The ablation matrix
 (`benchmarks/ablation-matrix.json`) registers each scenario plus its
 promotion gates.
@@ -73,9 +79,7 @@ The matrix made several limitations explicit. None blocks v1, all are worth purs
   synthesis quality (3/200 synth-misses). Available as
   `--config benchmarks/config-hindsight-parity.yaml` for runs where adversarial
   is not on the scoreboard
-- **Hindsight published 92% on LoCoMo.** Astrocyte v1 ships at 51.5%. The
-  gap is not a single preset choice; it is a long roadmap of investments
-  documented in the matrix
+- **Hindsight published 92% on LoCoMo.** Astrocyte v1 shipped at 51.5%; v0.14.0 (M19) reaches 84.25% on the same benchmark. The remaining gap is documented in `benchmark-roadmap.md` and the CE+ME architecture docs.
 
 ## Why abstention_floor was dropped (post-mortem)
 

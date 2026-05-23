@@ -6,9 +6,8 @@ title: Schema-per-tenant
 
 Astrocyte supports tenant isolation at the **PostgreSQL schema** level. Each
 tenant gets a dedicated schema (e.g. `tenant_acme`); every storage adapter
-(`astrocyte-postgres`, `astrocyte-age`) qualifies its SQL with that schema
-on every statement, and Apache AGE graphs are namespaced per-tenant. The
-result: cryptographic-strength isolation between tenants, with `pg_dump`
+(`astrocyte-postgres`) qualifies its SQL with that schema
+on every statement. The result: cryptographic-strength isolation between tenants, with `pg_dump`
 per-tenant, optional Row-Level Security, and zero accidental cross-tenant
 leak risk from missing `WHERE bank_id = ?` clauses in application code.
 
@@ -74,7 +73,7 @@ behavior change.
 │       │                                                          │
 │       ▼                                                          │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Adapter SQL (astrocyte-postgres / astrocyte-age)         │   │
+│  │ Adapter SQL (astrocyte-postgres)                         │   │
 │  │   "SELECT ... FROM " + fq_table("astrocyte_vectors")     │   │
 │  │   → "SELECT ... FROM \"tenant_acme\".astrocyte_vectors"  │   │
 │  └──────────────────────────────────────────────────────────┘   │
@@ -276,29 +275,6 @@ Each worker holds its own pgqueuer connection bound to its tenant's
 schema; failures during startup roll back all already-started workers
 to avoid leaking connections.
 
-## Apache AGE specifics
-
-AGE graphs are **cluster-global**, not schema-scoped, so the AGE adapter
-namespaces them per-tenant by appending `__<schema>` to the base name:
-
-| Schema | Graph name |
-|---|---|
-| `public` (default) | `astrocyte` (unmangled — backward-compat) |
-| `tenant_acme` | `astrocyte__tenant_acme` |
-| `tenant_globex` | `astrocyte__tenant_globex` |
-
-The helper SQL tables (`astrocyte_age_mem_entity`, `astrocyte_memory_links`,
-`astrocyte_entities`, `astrocyte_entity_aliases`, `astrocyte_entity_links`,
-`astrocyte_memory_entities`) live in the tenant's regular Postgres schema
-and route through `fq_table()` like everything else.
-
-To drop a tenant's graph:
-
-```sql
-LOAD 'age';
-SELECT ag_catalog.drop_graph('astrocyte__tenant_acme', true);
-```
-
 ## Trade-offs vs other approaches
 
 | Concern | Schema-per-tenant | `bank_id` column | Database-per-tenant |
@@ -348,7 +324,6 @@ def test_my_extension():
 
 For the storage layer, see
 `adapters-storage-py/astrocyte-postgres/tests/test_postgres_tenant_isolation.py`
-and `adapters-storage-py/astrocyte-age/tests/test_age_tenant_isolation.py`
 for the patterns: spin up two schemas, write distinct data into each via
 `use_schema()`, assert neither tenant can see the other's data.
 
