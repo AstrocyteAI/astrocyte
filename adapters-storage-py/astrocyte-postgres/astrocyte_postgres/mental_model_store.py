@@ -149,6 +149,18 @@ class PostgresMentalModelStore:
                 await conn.execute(
                     f"ALTER TABLE {models} ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'general'"
                 )
+                # M21: structured-doc JSONB column. NULLable — legacy rows
+                # lazy-migrate on first update_via_ops via parse_markdown.
+                await conn.execute(
+                    f"ALTER TABLE {models} ADD COLUMN IF NOT EXISTS structured_doc JSONB"
+                )
+                # M40: per-source-id evidence timestamps, positionally
+                # aligned with source_ids. NULLable — legacy rows fall
+                # back to refreshed_at as a single-point timestamp in
+                # compute_trend.
+                await conn.execute(
+                    f"ALTER TABLE {models} ADD COLUMN IF NOT EXISTS source_timestamps TIMESTAMPTZ[]"
+                )
                 await conn.execute(
                     f"""
                     CREATE INDEX IF NOT EXISTS astrocyte_mental_models_bank_scope_idx
@@ -187,6 +199,12 @@ class PostgresMentalModelStore:
                     ON {versions} (bank_id, model_id, revision DESC)
                     """
                 )
+                # M40 — same nullable column on the versions table (parity
+                # so revision history can also be trend-computed if a
+                # future use case needs it).
+                await conn.execute(
+                    f"ALTER TABLE {versions} ADD COLUMN IF NOT EXISTS source_timestamps TIMESTAMPTZ[]"
+                )
                 await conn.commit()
             self._bootstrapped_schemas.add(active_schema)
 
@@ -211,7 +229,7 @@ class PostgresMentalModelStore:
                 # updated but the prior revision hasn't been archived.
                 await cur.execute(
                     f"""
-                    SELECT revision, title, content, source_ids, metadata
+                    SELECT revision, title, content, source_ids, metadata, source_timestamps
                     FROM {models}
                     WHERE bank_id = %s AND model_id = %s AND deleted_at IS NULL
                     """,
@@ -226,8 +244,9 @@ class PostgresMentalModelStore:
                     await cur.execute(
                         f"""
                         INSERT INTO {versions}
-                            (bank_id, model_id, revision, title, content, source_ids, metadata)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            (bank_id, model_id, revision, title, content, source_ids,
+                             metadata, source_timestamps)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (bank_id, model_id, revision) DO NOTHING
                         """,
                         [
@@ -238,8 +257,19 @@ class PostgresMentalModelStore:
                             existing["content"],
                             list(existing["source_ids"] or []),
                             Json(existing["metadata"] or {}),
+                            list(existing.get("source_timestamps") or []) or None,
                         ],
                     )
+
+                # M40 — normalize source_timestamps before write. Must be
+                # positionally aligned with source_ids; if caller passes
+                # a length mismatch we drop it (NULL) rather than persist
+                # a wrong-alignment array that would silently corrupt
+                # trend computation downstream.
+                _src_ts = model.source_timestamps
+                if _src_ts is not None and len(_src_ts) != len(model.source_ids):
+                    _src_ts = None
+                _src_ts_param = list(_src_ts) if _src_ts else None
 
                 # Upsert the current row. ON CONFLICT branches handle both
                 # the create and update cases without a second SELECT.
@@ -247,8 +277,9 @@ class PostgresMentalModelStore:
                     f"""
                     INSERT INTO {models}
                         (bank_id, model_id, title, content, scope, source_ids,
-                         revision, metadata, refreshed_at, deleted_at, kind)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s)
+                         revision, metadata, refreshed_at, deleted_at, kind, structured_doc,
+                         source_timestamps)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
                     ON CONFLICT (bank_id, model_id) DO UPDATE SET
                         title = EXCLUDED.title,
                         content = EXCLUDED.content,
@@ -258,7 +289,9 @@ class PostgresMentalModelStore:
                         metadata = EXCLUDED.metadata,
                         refreshed_at = EXCLUDED.refreshed_at,
                         deleted_at = NULL,
-                        kind = EXCLUDED.kind
+                        kind = EXCLUDED.kind,
+                        structured_doc = EXCLUDED.structured_doc,
+                        source_timestamps = EXCLUDED.source_timestamps
                     """,
                     [
                         bank_id,
@@ -271,6 +304,8 @@ class PostgresMentalModelStore:
                         Json({}),
                         now,
                         model.kind,
+                        Json(model.structured_doc) if model.structured_doc else None,
+                        _src_ts_param,
                     ],
                 )
             await conn.commit()
@@ -285,7 +320,8 @@ class PostgresMentalModelStore:
                 await cur.execute(
                     f"""
                     SELECT model_id, bank_id, title, content, scope,
-                           source_ids, revision, refreshed_at
+                           source_ids, revision, refreshed_at, kind, structured_doc,
+                           source_timestamps
                     FROM {models}
                     WHERE bank_id = %s AND model_id = %s AND deleted_at IS NULL
                     """,
@@ -317,7 +353,8 @@ class PostgresMentalModelStore:
                 await cur.execute(
                     f"""
                     SELECT model_id, bank_id, title, content, scope,
-                           source_ids, revision, refreshed_at, kind
+                           source_ids, revision, refreshed_at, kind, structured_doc,
+                           source_timestamps
                     FROM {models}
                     WHERE {" AND ".join(where)}
                     ORDER BY refreshed_at DESC, model_id
@@ -326,6 +363,106 @@ class PostgresMentalModelStore:
                 )
                 rows = await cur.fetchall()
         return [_row_to_model(row) for row in rows]
+
+    async def update_via_ops(
+        self,
+        model_id: str,
+        bank_id: str,
+        operations_json: list[dict],
+    ) -> "tuple[int, dict] | None":
+        """M21 — apply delta operations and re-upsert atomically.
+
+        Lazy-migrates legacy rows whose ``structured_doc`` is NULL by
+        parsing the raw markdown ``content`` on first refresh. Re-
+        renders ``content`` from the new structured doc so markdown
+        readers see the updated text without a separate migration pass.
+
+        Conservative-failure contract: schema-invalid op lists return
+        the existing revision with a zero-ops summary (no DB write).
+        Per-op validation failures (unknown section_id, out-of-range
+        index) drop quietly in :func:`apply_operations`; only changed
+        documents trigger an upsert.
+        """
+        from dataclasses import replace as _replace
+
+        from astrocyte.pipeline.delta_ops import (
+            DeltaOperationList,
+            apply_operations,
+        )
+        from astrocyte.pipeline.structured_doc import (
+            StructuredDocument,
+            parse_markdown,
+            render_document,
+        )
+
+        current = await self.get(model_id, bank_id)
+        if current is None:
+            return None
+
+        if current.structured_doc is None:
+            doc = parse_markdown(current.content or "")
+        else:
+            doc = StructuredDocument.model_validate(current.structured_doc)
+
+        try:
+            ops_container = DeltaOperationList.model_validate({"operations": operations_json})
+        except Exception:
+            return (current.revision, {"applied": [], "skipped": [], "changed": False})
+
+        applied = apply_operations(doc, ops_container.operations)
+        if not applied.changed:
+            return (
+                current.revision,
+                {"applied": applied.applied, "skipped": applied.skipped, "changed": False},
+            )
+
+        new_doc_dict = applied.document.model_dump()
+        new_content = render_document(applied.document)
+        new_model = _replace(
+            current,
+            content=new_content,
+            structured_doc=new_doc_dict,
+        )
+        new_revision = await self.upsert(new_model, bank_id)
+        return (
+            new_revision,
+            {"applied": applied.applied, "skipped": applied.skipped, "changed": True},
+        )
+
+    async def refresh(
+        self,
+        model_id: str,
+        bank_id: str,
+        new_source_ids: list[str],
+    ) -> MentalModel | None:
+        """M28 — merge new source_ids into existing model and bump revision.
+
+        Matches the in-memory contract: order-preserving dedup against
+        the existing ``source_ids`` then re-upsert (which archives the
+        prior revision and bumps the revision counter).
+
+        Future enhancement: the LLM compile re-run against the merged
+        source set lives at the service layer once Hindsight-parity
+        ``mental_model_compile`` is wired through. The store-level SPI
+        provides the surface today so gateway/MCP callers can refresh
+        the provenance without a separate update path.
+        """
+        from dataclasses import replace as _replace
+
+        current = await self.get(model_id, bank_id)
+        if current is None:
+            return None
+
+        seen: set[str] = set(current.source_ids)
+        merged = list(current.source_ids)
+        for sid in new_source_ids:
+            if sid not in seen:
+                seen.add(sid)
+                merged.append(sid)
+
+        refreshed = _replace(current, source_ids=merged)
+        await self.upsert(refreshed, bank_id)
+        return await self.get(model_id, bank_id)
 
     async def delete(self, model_id: str, bank_id: str) -> bool:
         pool = await self._ensure_pool()
@@ -366,6 +503,16 @@ def _row_to_model(row: dict[str, Any]) -> MentalModel:
     refreshed_at = row["refreshed_at"]
     if refreshed_at.tzinfo is None:
         refreshed_at = refreshed_at.replace(tzinfo=UTC)
+    # M40 — normalize timestamps to UTC; row may have naive datetimes
+    # from a legacy migration run. Empty/NULL array → None (legacy/missing).
+    raw_ts = row.get("source_timestamps") or []
+    source_timestamps: list[datetime] | None
+    if raw_ts:
+        source_timestamps = [
+            (ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts) for ts in raw_ts
+        ]
+    else:
+        source_timestamps = None
     return MentalModel(
         model_id=row["model_id"],
         bank_id=row["bank_id"],
@@ -376,4 +523,6 @@ def _row_to_model(row: dict[str, Any]) -> MentalModel:
         revision=int(row["revision"]),
         refreshed_at=refreshed_at,
         kind=row.get("kind") or "general",  # M14.6 — defaults for pre-migration rows
+        structured_doc=row.get("structured_doc"),  # M21 — NULL for legacy rows
+        source_timestamps=source_timestamps,  # M40 — NULL for legacy rows
     )

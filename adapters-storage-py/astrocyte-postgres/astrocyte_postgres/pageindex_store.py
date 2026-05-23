@@ -165,6 +165,7 @@ class PostgresPageIndexStore:
                     await cur.execute(self._ddl_sections())
                     await cur.execute(self._ddl_section_entities())
                     await cur.execute(self._ddl_section_links())
+                    await cur.execute(self._ddl_facts_alter())
                 await conn.commit()
             self._bootstrapped_schemas.add(active_schema)
 
@@ -187,6 +188,9 @@ class PostgresPageIndexStore:
         # PR2 commit A adds the summary_embedding column + DiskANN index.
         # Bootstrap path includes both — operators on plain pgvector who
         # can't run the diskann index should ALTER it manually.
+        # M31 Fix 2: ``session_id`` column mirrors migration 035 — opaque
+        # identifier for the source conversation session; populated by
+        # conversation-ingest paths, NULL for document-ingest paths.
         return f"""
         CREATE TABLE IF NOT EXISTS {self._fq("astrocyte_pi_sections")} (
             document_id        UUID         NOT NULL
@@ -198,14 +202,20 @@ class PostgresPageIndexStore:
             summary_embedding  vector(1536),
             speaker            TEXT,
             session_date       TIMESTAMPTZ,
+            session_id         TEXT,
             parent_node        TEXT,
             depth              INT          NOT NULL,
             PRIMARY KEY (document_id, line_num)
         );
         ALTER TABLE {self._fq("astrocyte_pi_sections")}
             ADD COLUMN IF NOT EXISTS summary_embedding vector(1536);
+        ALTER TABLE {self._fq("astrocyte_pi_sections")}
+            ADD COLUMN IF NOT EXISTS session_id TEXT;
         CREATE INDEX IF NOT EXISTS ix_pi_sections_skeleton
             ON {self._fq("astrocyte_pi_sections")} (document_id, depth, line_num);
+        CREATE INDEX IF NOT EXISTS astrocyte_pi_sections_session_id_idx
+            ON {self._fq("astrocyte_pi_sections")} (session_id)
+            WHERE session_id IS NOT NULL;
         """
 
     def _ddl_section_entities(self) -> str:
@@ -241,6 +251,37 @@ class PostgresPageIndexStore:
         );
         CREATE INDEX IF NOT EXISTS ix_pi_section_links_from
             ON {self._fq("astrocyte_pi_section_links")} (from_doc, from_line, link_type);
+        """
+
+    def _ddl_facts_alter(self) -> str:
+        """M28 + M31 Fix 4: ensure ``confidence_score``, ``mentioned_at``,
+        and ``event_date`` exist on ``astrocyte_pi_facts`` (mirrors
+        migrations 033 + 034 + 036).
+
+        The facts table itself is NOT created by bootstrap (only
+        migration 020 creates it). These ALTERs are guarded by a
+        ``to_regclass`` check inside a DO block so the bootstrap path
+        no-ops when migration 020 hasn't run yet — without the guard
+        the bare ALTER would error on a missing table. When operators
+        run ``migrate.sh`` (production / bench), the table exists and
+        the ALTERs are pure no-ops on second-run thanks to
+        ``ADD COLUMN IF NOT EXISTS``.
+        """
+        facts = self._fq("astrocyte_pi_facts")
+        return f"""
+        DO $$
+        BEGIN
+            IF to_regclass('{facts}') IS NOT NULL THEN
+                ALTER TABLE {facts}
+                    ADD COLUMN IF NOT EXISTS confidence_score DOUBLE PRECISION
+                        CHECK (confidence_score IS NULL OR
+                               (confidence_score >= 0.0 AND confidence_score <= 1.0));
+                ALTER TABLE {facts}
+                    ADD COLUMN IF NOT EXISTS mentioned_at TIMESTAMPTZ;
+                ALTER TABLE {facts}
+                    ADD COLUMN IF NOT EXISTS event_date TIMESTAMPTZ;
+            END IF;
+        END $$;
         """
 
     # ── document upsert ─────────────────────────────────────────────────
@@ -302,6 +343,7 @@ class PostgresPageIndexStore:
                 s.session_date,
                 s.parent_node,
                 s.depth,
+                s.session_id,  # M31 Fix 2 — opaque session identifier
             )
             for s in sorted(sections, key=lambda x: x.line_num)
         ]
@@ -318,8 +360,9 @@ class PostgresPageIndexStore:
                     f"""
                     INSERT INTO {self._fq("astrocyte_pi_sections")}
                         (document_id, line_num, node_id, title, summary,
-                         summary_embedding, speaker, session_date, parent_node, depth)
-                    VALUES (%s, %s, %s, %s, %s, %s::vector, %s, %s, %s, %s)
+                         summary_embedding, speaker, session_date, parent_node, depth,
+                         session_id)
+                    VALUES (%s, %s, %s, %s, %s, %s::vector, %s, %s, %s, %s, %s)
                     """,
                     rows,
                 )
@@ -397,7 +440,7 @@ class PostgresPageIndexStore:
                 await cur.execute(
                     f"""
                     SELECT document_id, line_num, node_id, title, summary,
-                           speaker, session_date, parent_node, depth
+                           speaker, session_date, parent_node, depth, session_id
                     FROM {self._fq("astrocyte_pi_sections")}
                     WHERE document_id = %s
                     ORDER BY line_num
@@ -417,6 +460,7 @@ class PostgresPageIndexStore:
                 session_date=r["session_date"],
                 parent_node=r["parent_node"],
                 depth=r["depth"],
+                session_id=r.get("session_id"),  # M31 Fix 2; legacy rows return None
             )
             for r in rows
         ]
@@ -579,12 +623,21 @@ class PostgresPageIndexStore:
         query_embedding: list[float],
         *,
         top_k: int = 20,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
         embed_param = _embedding_param(query_embedding)
         if embed_param is None:
             return []
+        # M31 Fix 2 — section session_id lives directly on the row, no
+        # subquery needed (unlike facts which need EXISTS).
+        session_clause = ""
+        params: list = [embed_param, bank_id]
+        if session_filter:
+            session_clause = "AND s.session_id = %s"
+            params.append(session_filter)
+        params.extend([embed_param, top_k])
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 # ``1 - (a <=> b)`` converts cosine distance → similarity
@@ -598,10 +651,11 @@ class PostgresPageIndexStore:
                     JOIN {self._fq("astrocyte_pi_documents")} AS d ON d.id = s.document_id
                     WHERE d.bank_id = %s
                       AND s.summary_embedding IS NOT NULL
+                      {session_clause}
                     ORDER BY s.summary_embedding <=> %s::vector
                     LIMIT %s
                     """,
-                    (embed_param, bank_id, embed_param, top_k),
+                    tuple(params),
                 )
                 rows = await cur.fetchall()
         return [(str(r[0]), r[1], float(r[2])) for r in rows]
@@ -614,6 +668,7 @@ class PostgresPageIndexStore:
         top_k: int = 20,
         speaker: str | None = None,
         document_id: str | None = None,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         if not query.strip():
             return []
@@ -625,11 +680,15 @@ class PostgresPageIndexStore:
         # PR2.6: optional single-doc scope so temporal_arithmetic.find_event_date
         # isn't starved by bank-wide top-K when 50+ docs share a bank.
         doc_clause = "AND s.document_id = %s::uuid" if document_id else ""
+        # M31 Fix 2 — section-level session filter.
+        session_clause = "AND s.session_id = %s" if session_filter else ""
         params: list = [query, bank_id]
         if speaker:
             params.append(speaker)
         if document_id:
             params.append(document_id)
+        if session_filter:
+            params.append(session_filter)
         params.extend([query, top_k])
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -648,6 +707,7 @@ class PostgresPageIndexStore:
                     WHERE d.bank_id = %s
                       {speaker_clause}
                       {doc_clause}
+                      {session_clause}
                       AND to_tsvector('english',
                               coalesce(s.title, '') || ' ' || coalesce(s.summary, '')
                           ) @@ (SELECT tsq FROM q)
@@ -670,6 +730,7 @@ class PostgresPageIndexStore:
         entity_names: list[str],
         *,
         top_k: int = 20,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         if not entity_names:
             return []
@@ -680,6 +741,20 @@ class PostgresPageIndexStore:
             return []
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
+        # M31 Fix 2 — section_entities is JOINed to sections to recover
+        # session_id (the FK pair (document_id, line_num) → sections.PK
+        # is already established).
+        session_join = ""
+        session_clause = ""
+        params: list = [bank_id, [n.lower() for n in normalized]]
+        if session_filter:
+            session_join = (
+                f"JOIN {self._fq('astrocyte_pi_sections')} AS s "
+                "ON s.document_id = se.document_id AND s.line_num = se.line_num"
+            )
+            session_clause = "AND s.session_id = %s"
+            params.append(session_filter)
+        params.append(top_k)
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 # Hindsight's CTE pattern at section grain: count distinct
@@ -690,13 +765,15 @@ class PostgresPageIndexStore:
                            COUNT(DISTINCT lower(se.entity_name))::float AS score
                     FROM {self._fq("astrocyte_pi_section_entities")} AS se
                     JOIN {self._fq("astrocyte_pi_documents")} AS d ON d.id = se.document_id
+                    {session_join}
                     WHERE d.bank_id = %s
                       AND lower(se.entity_name) = ANY(%s::text[])
+                      {session_clause}
                     GROUP BY se.document_id, se.line_num
                     ORDER BY score DESC
                     LIMIT %s
                     """,
-                    (bank_id, [n.lower() for n in normalized], top_k),
+                    tuple(params),
                 )
                 rows = await cur.fetchall()
         return [(str(r[0]), r[1], float(r[2])) for r in rows]
@@ -707,10 +784,17 @@ class PostgresPageIndexStore:
         date_range,  # tuple[datetime, datetime]
         *,
         top_k: int = 20,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         start, end = date_range
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
+        # M31 Fix 2 — direct column filter (sections own session_id).
+        session_clause = "AND s.session_id = %s" if session_filter else ""
+        params: list = [bank_id, start, end]
+        if session_filter:
+            params.append(session_filter)
+        params.append(top_k)
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 # Uses ix_pi_sections_date partial index from migration
@@ -724,10 +808,11 @@ class PostgresPageIndexStore:
                     WHERE d.bank_id = %s
                       AND s.session_date IS NOT NULL
                       AND s.session_date BETWEEN %s AND %s
+                      {session_clause}
                     ORDER BY s.session_date
                     LIMIT %s
                     """,
-                    (bank_id, start, end, top_k),
+                    tuple(params),
                 )
                 rows = await cur.fetchall()
         return [(str(r[0]), r[1], float(r[2])) for r in rows]
@@ -908,6 +993,16 @@ class PostgresPageIndexStore:
                     f.occurred_end,
                     list(f.entities or []),
                     _embedding_param(f.embedding) if f.embedding else None,
+                    # M28 Workstream A: M27 fields that previously dead-
+                    # lettered at the adapter layer. ``None`` is the
+                    # legacy / unspecified value (both columns are
+                    # NULLable per migrations 033/034).
+                    f.confidence_score,
+                    f.mentioned_at,
+                    # M31 Fix 4 — resolved absolute event date from
+                    # retain-time temporal_resolution; NULL when no
+                    # relative phrase parsed.
+                    getattr(f, "event_date", None),
                 )
             )
         async with pool.connection() as conn:
@@ -917,10 +1012,12 @@ class PostgresPageIndexStore:
                     INSERT INTO {self._fq("astrocyte_pi_facts")}
                         (id, bank_id, document_id, line_num,
                          fact_text, fact_type, speaker,
-                         occurred_start, occurred_end, entities, embedding)
+                         occurred_start, occurred_end, entities, embedding,
+                         confidence_score, mentioned_at, event_date)
                     VALUES (%s, %s, %s::uuid, %s,
                             %s, %s, %s,
-                            %s, %s, %s, %s::vector)
+                            %s, %s, %s, %s::vector,
+                            %s, %s, %s)
                     """,
                     rows,
                 )
@@ -956,6 +1053,7 @@ class PostgresPageIndexStore:
         top_k: int = 20,
         document_id: str | None = None,
         fact_type: str | None = None,
+        session_filter: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
 
@@ -972,6 +1070,21 @@ class PostgresPageIndexStore:
         if fact_type:
             type_clause = "AND fact_type = %s"
             params.append(fact_type)
+        # M31 Fix 2 — session_filter: require fact's anchoring section to
+        # have a matching session_id. EXISTS subquery avoids a JOIN that
+        # would change row shape. Top-level facts (no document/line anchor)
+        # are excluded when session_filter is set, which is the desired
+        # behaviour — they have no session by definition.
+        session_clause = ""
+        if session_filter:
+            session_clause = (
+                "AND EXISTS ("
+                f"SELECT 1 FROM {self._fq('astrocyte_pi_sections')} s "
+                f"WHERE s.document_id = {self._fq('astrocyte_pi_facts')}.document_id "
+                f"AND s.line_num = {self._fq('astrocyte_pi_facts')}.line_num "
+                "AND s.session_id = %s)"
+            )
+            params.append(session_filter)
         params.extend([_embedding_param(query_embedding), top_k])
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -979,12 +1092,14 @@ class PostgresPageIndexStore:
                     f"""
                     SELECT id, document_id, line_num, fact_text, fact_type,
                            speaker, occurred_start, occurred_end, entities,
+                           confidence_score, mentioned_at, event_date,
                            1 - (embedding <=> %s::vector) AS score
                     FROM {self._fq("astrocyte_pi_facts")}
                     WHERE bank_id = %s
                       AND embedding IS NOT NULL
                       {doc_clause}
                       {type_clause}
+                      {session_clause}
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s
                     """,
@@ -1002,7 +1117,10 @@ class PostgresPageIndexStore:
                 occurred_start=r[6],
                 occurred_end=r[7],
                 entities=list(r[8] or []),
-                score=float(r[9]),
+                confidence_score=(float(r[9]) if r[9] is not None else None),
+                mentioned_at=r[10],
+                event_date=r[11],  # M31 Fix 4
+                score=float(r[12]),
             )
             for r in rows
         ]
@@ -1014,6 +1132,8 @@ class PostgresPageIndexStore:
         *,
         top_k: int = 50,
         document_id: str | None = None,
+        fact_type: str | None = None,  # M34-3 — per-fact-type segmentation
+        session_filter: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
 
@@ -1024,17 +1144,42 @@ class PostgresPageIndexStore:
         if document_id:
             doc_clause = "AND document_id = %s::uuid"
             params.append(document_id)
+        # M34-3 — per-fact-type segment for the intent-aware retrieval
+        # pipeline. Optional; legacy callers pass None and get
+        # cross-type results.
+        type_clause = ""
+        if fact_type:
+            type_clause = "AND fact_type = %s"
+            params.append(fact_type)
+        # M31 Fix 2 — section-anchored session filter (mirror of
+        # search_facts_semantic). For cross-session link-expansion
+        # (the typical caller path), session_filter should usually
+        # be None; the explicit override exists for the rare case
+        # of "facts about entity X within session Y only".
+        session_clause = ""
+        if session_filter:
+            session_clause = (
+                "AND EXISTS ("
+                f"SELECT 1 FROM {self._fq('astrocyte_pi_sections')} s "
+                f"WHERE s.document_id = {self._fq('astrocyte_pi_facts')}.document_id "
+                f"AND s.line_num = {self._fq('astrocyte_pi_facts')}.line_num "
+                "AND s.session_id = %s)"
+            )
+            params.append(session_filter)
         params.append(top_k)
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""
                     SELECT id, document_id, line_num, fact_text, fact_type,
-                           speaker, occurred_start, occurred_end, entities
+                           speaker, occurred_start, occurred_end, entities,
+                           confidence_score, mentioned_at, event_date
                     FROM {self._fq("astrocyte_pi_facts")}
                     WHERE bank_id = %s
                       AND entities && %s::text[]
                       {doc_clause}
+                      {type_clause}
+                      {session_clause}
                     LIMIT %s
                     """,
                     tuple(params),
@@ -1051,6 +1196,9 @@ class PostgresPageIndexStore:
                 occurred_start=r[6],
                 occurred_end=r[7],
                 entities=list(r[8] or []),
+                confidence_score=(float(r[9]) if r[9] is not None else None),
+                mentioned_at=r[10],
+                event_date=r[11],  # M31 Fix 4
                 score=1.0,
             )
             for r in rows
@@ -1063,30 +1211,67 @@ class PostgresPageIndexStore:
         *,
         top_k: int = 50,
         document_id: str | None = None,
+        fact_type: str | None = None,  # M34-3 — per-fact-type segmentation
+        session_filter: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
 
         start, end = date_range
         pool = await self._ensure_pool()
         await self._ensure_schema(pool)
-        params: list = [bank_id, start, end]
+        # M33-3b — Hindsight-parity 4-way OR for temporal matching:
+        # any of {spanning occurred range overlap, mentioned_at in range,
+        # occurred_start in range, occurred_end in range} qualifies. Order
+        # DESC by the freshest available date so the top_k cap keeps the
+        # newest candidates (Hindsight: ORDER BY COALESCE(occurred_start,
+        # mentioned_at, occurred_end) DESC). Without this we miss spanning
+        # events and facts whose only populated date is mentioned_at.
+        # Param positions: $1=bank_id, $2=start, $3=end, then doc/session.
+        params: list = [bank_id, start, end, start, end, start, end, start, end]
         doc_clause = ""
         if document_id:
             doc_clause = "AND document_id = %s::uuid"
             params.append(document_id)
+        # M34-3 — per-fact-type segment for intent-aware retrieval.
+        type_clause = ""
+        if fact_type:
+            type_clause = "AND fact_type = %s"
+            params.append(fact_type)
+        # M31 Fix 2 — session-anchored filter (mirror of semantic / by_entity).
+        session_clause = ""
+        if session_filter:
+            session_clause = (
+                "AND EXISTS ("
+                f"SELECT 1 FROM {self._fq('astrocyte_pi_sections')} s "
+                f"WHERE s.document_id = {self._fq('astrocyte_pi_facts')}.document_id "
+                f"AND s.line_num = {self._fq('astrocyte_pi_facts')}.line_num "
+                "AND s.session_id = %s)"
+            )
+            params.append(session_filter)
         params.append(top_k)
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""
                     SELECT id, document_id, line_num, fact_text, fact_type,
-                           speaker, occurred_start, occurred_end, entities
+                           speaker, occurred_start, occurred_end, entities,
+                           confidence_score, mentioned_at, event_date
                     FROM {self._fq("astrocyte_pi_facts")}
                     WHERE bank_id = %s
-                      AND occurred_start IS NOT NULL
-                      AND occurred_start BETWEEN %s AND %s
+                      AND (
+                          (occurred_start IS NOT NULL AND occurred_end IS NOT NULL
+                           AND occurred_start <= %s AND occurred_end >= %s)
+                          OR
+                          (mentioned_at IS NOT NULL AND mentioned_at BETWEEN %s AND %s)
+                          OR
+                          (occurred_start IS NOT NULL AND occurred_start BETWEEN %s AND %s)
+                          OR
+                          (occurred_end IS NOT NULL AND occurred_end BETWEEN %s AND %s)
+                      )
                       {doc_clause}
-                    ORDER BY occurred_start
+                      {type_clause}
+                      {session_clause}
+                    ORDER BY COALESCE(occurred_start, mentioned_at, occurred_end) DESC NULLS LAST
                     LIMIT %s
                     """,
                     tuple(params),
@@ -1103,7 +1288,110 @@ class PostgresPageIndexStore:
                 occurred_start=r[6],
                 occurred_end=r[7],
                 entities=list(r[8] or []),
+                confidence_score=(float(r[9]) if r[9] is not None else None),
+                mentioned_at=r[10],
+                event_date=r[11],  # M31 Fix 4
                 score=1.0,
+            )
+            for r in rows
+        ]
+
+    async def search_facts_keyword(
+        self,
+        bank_id: str,
+        query: str,
+        *,
+        top_k: int = 20,
+        document_id: str | None = None,
+        fact_type: str | None = None,  # M34-3 — per-fact-type segmentation
+        session_filter: str | None = None,
+    ):
+        """M31c — Hindsight-parity BM25 over fact text.
+
+        Mirrors ``search_sections_keyword`` (M9-era validated): builds
+        a ``tsvector`` on-the-fly from ``fact_text`` and ranks via
+        ``ts_rank_cd`` against a ``plainto_tsquery`` of the user
+        question. No schema migration — the cost is one ``to_tsvector``
+        per row at query time (Postgres caches per-plan). For
+        production scale we'd add a precomputed ``fact_text_tsv``
+        column with a GIN index; for v0.15.0 ship and bench
+        validation, on-the-fly is fast enough (~ms/q on bench
+        corpus).
+        """
+        from astrocyte.types import PageIndexFactHit
+
+        if not query or not query.strip():
+            return []
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        # Build optional clause + params (mirror pattern of other
+        # search_facts_* methods in this module).
+        doc_clause = ""
+        type_clause = ""
+        session_clause = ""
+        params: list = [query, bank_id]
+        if document_id:
+            doc_clause = "AND document_id = %s::uuid"
+            params.append(document_id)
+        # M34-3 — per-fact-type segment for intent-aware retrieval.
+        if fact_type:
+            type_clause = "AND fact_type = %s"
+            params.append(fact_type)
+        if session_filter:
+            # M31 Fix 2 — session-anchored EXISTS subquery, same
+            # shape as semantic / by_entity / temporal.
+            session_clause = (
+                "AND EXISTS ("
+                f"SELECT 1 FROM {self._fq('astrocyte_pi_sections')} s "
+                f"WHERE s.document_id = {self._fq('astrocyte_pi_facts')}.document_id "
+                f"AND s.line_num = {self._fq('astrocyte_pi_facts')}.line_num "
+                "AND s.session_id = %s)"
+            )
+            params.append(session_filter)
+        params.extend([query, top_k])
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    WITH q AS (SELECT plainto_tsquery('english', %s) AS tsq)
+                    SELECT id, document_id, line_num, fact_text, fact_type,
+                           speaker, occurred_start, occurred_end, entities,
+                           confidence_score, mentioned_at, event_date,
+                           ts_rank_cd(
+                               to_tsvector('english', fact_text),
+                               (SELECT tsq FROM q)
+                           ) AS score
+                    FROM {self._fq("astrocyte_pi_facts")}
+                    WHERE bank_id = %s
+                      AND to_tsvector('english', fact_text)
+                          @@ (SELECT tsq FROM q)
+                      {doc_clause}
+                      {type_clause}
+                      {session_clause}
+                    ORDER BY ts_rank_cd(
+                        to_tsvector('english', fact_text),
+                        plainto_tsquery('english', %s)
+                    ) DESC
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = await cur.fetchall()
+        return [
+            PageIndexFactHit(
+                fact_id=str(r[0]),
+                document_id=str(r[1]),
+                line_num=r[2],
+                text=r[3],
+                fact_type=r[4],
+                speaker=r[5],
+                occurred_start=r[6],
+                occurred_end=r[7],
+                entities=list(r[8] or []),
+                confidence_score=(float(r[9]) if r[9] is not None else None),
+                mentioned_at=r[10],
+                event_date=r[11],
+                score=float(r[12]),
             )
             for r in rows
         ]
@@ -1186,7 +1474,8 @@ class PostgresPageIndexStore:
                     f"""
                     SELECT line_num, node_id, title, summary,
                            summary_embedding, speaker, session_date,
-                           parent_node, depth, occurred_start, occurred_end
+                           parent_node, depth, occurred_start, occurred_end,
+                           session_id
                     FROM {self._fq("astrocyte_pi_sections")}
                     WHERE document_id = %s
                     ORDER BY line_num
@@ -1211,6 +1500,7 @@ class PostgresPageIndexStore:
                     depth=r[8] or 0,
                     occurred_start=r[9],
                     occurred_end=r[10],
+                    session_id=r[11],  # M31 Fix 2 — None for legacy rows
                 )
             )
         return out
