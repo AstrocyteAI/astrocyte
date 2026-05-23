@@ -28,21 +28,45 @@ releases:
   bench_tag: bench/v015w
   bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
   released_at: '2026-05-23'
-  scores: {}
+  scores:
+    longmemeval:
+      overall: 0.7444
+      n_questions: 90
+      runs: 1
+    locomo:
+      overall: 0.8208
+      n_questions: 1540
+      runs: 1
 - package: astrocyte-gateway-py
   version: 0.15.0
   bench_cycle: v015w
   bench_tag: bench/v015w
   bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
   released_at: '2026-05-23'
-  scores: {}
+  scores:
+    longmemeval:
+      overall: 0.7444
+      n_questions: 90
+      runs: 1
+    locomo:
+      overall: 0.8208
+      n_questions: 1540
+      runs: 1
 - package: astrocyte
   version: 0.15.0
   bench_cycle: v015w
   bench_tag: bench/v015w
   bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
   released_at: '2026-05-23'
-  scores: {}
+  scores:
+    longmemeval:
+      overall: 0.7444
+      n_questions: 90
+      runs: 1
+    locomo:
+      overall: 0.8208
+      n_questions: 1540
+      runs: 1
 - package: astrocyte-postgres
   version: 0.14.0
   bench_cycle: m19

@@ -107,7 +107,19 @@ def _read_bench_score(project_dir: Path) -> tuple[str | None, float | None, int 
     meta = data.get("metadata") or {}
     cutoffs = data.get("metrics_by_cutoff") or {}
     if cutoffs:
-        section = (cutoffs.get("top_20") or {}).get("overall") or {}
+        # Cutoff priority list — M35 (v0.15.0) migrated the bench harness
+        # from item-count cutoffs (``top_N``) to token-budget cutoffs
+        # (``max_tokens_N``). The new ship-floor convention picked at
+        # M44 (v0.15.0 close) anchors on ``max_tokens_8192`` — see
+        # ``docs/_design/v0.15.0-ship-decision.md`` Appendix A. Try the
+        # new ship-floor first; fall back to the legacy ``top_20`` so
+        # pre-M35 result JSONs (m18b, m19a, m30c, ...) still parse for
+        # their BENCH_PARITY rows.
+        section: dict[str, Any] = {}
+        for cutoff_name in ("max_tokens_8192", "top_20"):
+            section = (cutoffs.get(cutoff_name) or {}).get("overall") or {}
+            if section:
+                break
         if section:
             acc = section.get("accuracy")
             n = section.get("total")
