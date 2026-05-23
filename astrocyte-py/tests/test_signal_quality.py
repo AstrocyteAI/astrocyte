@@ -82,6 +82,67 @@ class TestDedupDetector:
         assert is_dup is False
         assert sim == 0.0
 
+    def test_remove_drops_single_entry(self):
+        """Forget pipeline invalidates just the one memory; others remain."""
+        detector = DedupDetector(similarity_threshold=0.95)
+        detector.add("bank-1", "m1", [1.0, 0.0, 0.0])
+        detector.add("bank-1", "m2", [0.0, 1.0, 0.0])
+
+        # Remove m1; subsequent retain of same-content shouldn't dedup.
+        removed = detector.remove("bank-1", "m1")
+        assert removed is True
+
+        is_dup_m1, _ = detector.is_duplicate("bank-1", [1.0, 0.0, 0.0])
+        assert is_dup_m1 is False, "m1's embedding should no longer block retain"
+
+        # m2 should still be there.
+        is_dup_m2, _ = detector.is_duplicate("bank-1", [0.0, 1.0, 0.0])
+        assert is_dup_m2 is True, "m2 should still be cached"
+
+    def test_remove_idempotent_unknown_id(self):
+        """Removing a non-existent id is a no-op (forget can be called twice)."""
+        detector = DedupDetector()
+        detector.add("bank-1", "m1", [1.0, 0.0])
+
+        assert detector.remove("bank-1", "ghost") is False
+        # Original entry still there.
+        is_dup, _ = detector.is_duplicate("bank-1", [1.0, 0.0])
+        assert is_dup is True
+
+    def test_remove_unknown_bank(self):
+        """Removing from a bank that has no cache entry is a no-op."""
+        detector = DedupDetector()
+        assert detector.remove("never-touched", "m1") is False
+
+    def test_remove_last_entry_drops_bank_slot(self):
+        """Bank cache entry should be reclaimed when its last memory leaves."""
+        detector = DedupDetector()
+        detector.add("bank-1", "m1", [1.0, 0.0])
+        detector.remove("bank-1", "m1")
+
+        # Internal: bank should no longer be present in the cache.
+        assert "bank-1" not in detector._cache
+
+
+class TestDedupCacheForgetInvalidation:
+    """Regression: re-retain after forget previously silently no-op'd with
+    ``stored=False, error="All chunks are near-duplicates"`` because the
+    DedupDetector cache kept the forgotten memory's embedding.
+    """
+
+    def test_retain_after_remove_does_not_dedup(self):
+        detector = DedupDetector(similarity_threshold=0.95)
+        embedding = [1.0, 0.0, 0.0]
+
+        detector.add("bank-1", "mem-original", embedding)
+
+        # Forget pipeline calls remove(); a new retain of identical content
+        # must now produce a fresh duplicate check (is_dup=False) rather
+        # than the stale-cache match the bug surfaced.
+        detector.remove("bank-1", "mem-original")
+        is_dup, _ = detector.is_duplicate("bank-1", embedding)
+        assert is_dup is False
+
 
 class TestDedupDetectorThresholdOverride:
     """Per-call threshold override for MIP DedupSpec.threshold (Phase 1, Step 5)."""

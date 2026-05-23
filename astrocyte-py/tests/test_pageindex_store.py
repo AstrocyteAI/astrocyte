@@ -282,6 +282,248 @@ def bench_module():
     return _import_bench_module()
 
 
+class TestFactTypeFilterSPI:
+    """M34-3 — per-fact-type filter on search_facts_* SPI methods.
+
+    Enables per-fact-type segmented retrieval in M34-4. Each SPI must
+    correctly filter by fact_type when provided AND remain
+    backward-compatible when not provided (returns cross-type results)."""
+
+    @pytest.fixture
+    def store(self):
+        return InMemoryPageIndexStore()
+
+    def _fact(self, store, *, fid, ft, text="", mentioned_at=None, entities=None):
+        from astrocyte.types import MemoryFact
+
+        f = MemoryFact(
+            id=fid, bank_id="b1", text=text, fact_type=ft,
+            document_id="doc1", line_num=1,
+            mentioned_at=mentioned_at,
+            entities=entities or [],
+        )
+        store._facts.setdefault("doc1", []).append(f)
+
+    async def test_search_facts_temporal_filters_by_fact_type(
+        self,
+        store: InMemoryPageIndexStore,
+    ) -> None:
+        from datetime import datetime as _dt
+
+        mentioned = _dt(2026, 3, 15)
+        self._fact(store, fid="exp", ft="experience", text="went to wedding", mentioned_at=mentioned)
+        self._fact(store, fid="pref", ft="preference", text="prefers tea", mentioned_at=mentioned)
+        self._fact(store, fid="world", ft="world", text="sky is blue", mentioned_at=mentioned)
+
+        window = (_dt(2026, 3, 10), _dt(2026, 3, 20))
+        # No filter → all three
+        all_hits = await store.search_facts_temporal("b1", window)
+        assert {h.fact_id for h in all_hits} == {"exp", "pref", "world"}
+        # fact_type='preference' → only the preference fact
+        pref_hits = await store.search_facts_temporal("b1", window, fact_type="preference")
+        assert [h.fact_id for h in pref_hits] == ["pref"]
+
+    async def test_search_facts_keyword_filters_by_fact_type(
+        self,
+        store: InMemoryPageIndexStore,
+    ) -> None:
+        self._fact(store, fid="exp", ft="experience", text="attended wedding ceremony")
+        self._fact(store, fid="pref", ft="preference", text="favourite wedding cake flavor")
+
+        # No filter → both
+        all_hits = await store.search_facts_keyword("b1", "wedding")
+        assert {h.fact_id for h in all_hits} == {"exp", "pref"}
+        # fact_type='experience' → only the experience fact
+        exp_hits = await store.search_facts_keyword("b1", "wedding", fact_type="experience")
+        assert [h.fact_id for h in exp_hits] == ["exp"]
+
+    async def test_search_facts_by_entity_filters_by_fact_type(
+        self,
+        store: InMemoryPageIndexStore,
+    ) -> None:
+        self._fact(store, fid="exp", ft="experience", text="t1", entities=["Sarah"])
+        self._fact(store, fid="pref", ft="preference", text="t2", entities=["Sarah"])
+
+        # No filter → both
+        all_hits = await store.search_facts_by_entity("b1", "Sarah")
+        assert {h.fact_id for h in all_hits} == {"exp", "pref"}
+        # fact_type='preference' → only the preference fact
+        pref_hits = await store.search_facts_by_entity("b1", "Sarah", fact_type="preference")
+        assert [h.fact_id for h in pref_hits] == ["pref"]
+
+
+class TestSearchFactsTemporal4WayOR:
+    """M33-3b — Hindsight-parity 4-way OR temporal recall.
+
+    The legacy filter only matched ``occurred_start BETWEEN start AND
+    end``. That misses three large classes of facts:
+
+      1. Spanning events whose ``[occurred_start, occurred_end]``
+         contains the query window but neither endpoint is in it
+         (e.g. fact says "April 1-30", query is "in April 10-20").
+      2. Facts with only ``mentioned_at`` populated (typical in our
+         bench corpus where the LLM often omits ``occurred_start``).
+      3. Facts with only ``occurred_end`` populated (rare but real:
+         "the event ended on Mar 15", no start).
+
+    These tests pin the new behaviour so a future refactor doesn't
+    silently regress to the single-column filter.
+    """
+
+    @pytest.fixture
+    def store(self):
+        return InMemoryPageIndexStore()
+
+    @pytest.fixture
+    def window(self):
+        from datetime import datetime as _dt
+
+        return _dt(2026, 3, 10), _dt(2026, 3, 20)
+
+    def _fact(
+        self,
+        store: InMemoryPageIndexStore,
+        *,
+        fid: str,
+        text: str,
+        occurred_start=None,
+        occurred_end=None,
+        mentioned_at=None,
+    ):
+        """Drop a fact directly into the in-memory store. We bypass
+        ``save_facts`` to keep the test focused on the recall filter
+        rather than the embed-and-persist path."""
+        from astrocyte.types import MemoryFact
+
+        f = MemoryFact(
+            id=fid,
+            bank_id="b1",
+            text=text,
+            fact_type="experience",
+            document_id="doc1",
+            line_num=1,
+            occurred_start=occurred_start,
+            occurred_end=occurred_end,
+            mentioned_at=mentioned_at,
+        )
+        store._facts.setdefault("doc1", []).append(f)
+        return f
+
+    async def test_spanning_event_matches_when_window_inside_range(
+        self,
+        store: InMemoryPageIndexStore,
+        window,
+    ) -> None:
+        # Pre-M33-3b this would MISS: occurred_start (Mar 1) is outside
+        # the window (Mar 10-20), and the old SQL only checked
+        # occurred_start BETWEEN start AND end.
+        from datetime import datetime as _dt
+
+        self._fact(
+            store,
+            fid="f-span",
+            text="conference ran Mar 1 to Mar 30",
+            occurred_start=_dt(2026, 3, 1),
+            occurred_end=_dt(2026, 3, 30),
+        )
+        hits = await store.search_facts_temporal("b1", window)
+        assert [h.fact_id for h in hits] == ["f-span"]
+
+    async def test_mentioned_at_only_matches(
+        self,
+        store: InMemoryPageIndexStore,
+        window,
+    ) -> None:
+        # Typical bench fact: LLM didn't extract occurred_start, but
+        # ``mentioned_at`` is the section's session_date — which lands
+        # inside the query window. The fact MUST surface.
+        from datetime import datetime as _dt
+
+        self._fact(
+            store,
+            fid="f-mentioned",
+            text="user said this on Mar 15",
+            mentioned_at=_dt(2026, 3, 15),
+        )
+        hits = await store.search_facts_temporal("b1", window)
+        assert [h.fact_id for h in hits] == ["f-mentioned"]
+
+    async def test_occurred_end_only_matches(
+        self,
+        store: InMemoryPageIndexStore,
+        window,
+    ) -> None:
+        # Edge case: end populated but no start. Hindsight catches this
+        # via the dedicated occurred_end IN range branch.
+        from datetime import datetime as _dt
+
+        self._fact(
+            store,
+            fid="f-end-only",
+            text="finished on Mar 15",
+            occurred_end=_dt(2026, 3, 15),
+        )
+        hits = await store.search_facts_temporal("b1", window)
+        assert [h.fact_id for h in hits] == ["f-end-only"]
+
+    async def test_occurred_start_in_range_still_matches(
+        self,
+        store: InMemoryPageIndexStore,
+        window,
+    ) -> None:
+        # The pre-M33-3b code path is preserved as one of the 4 branches.
+        from datetime import datetime as _dt
+
+        self._fact(
+            store,
+            fid="f-start",
+            text="event Mar 15",
+            occurred_start=_dt(2026, 3, 15),
+        )
+        hits = await store.search_facts_temporal("b1", window)
+        assert [h.fact_id for h in hits] == ["f-start"]
+
+    async def test_fact_with_no_dates_excluded(
+        self,
+        store: InMemoryPageIndexStore,
+        window,
+    ) -> None:
+        # Without any of the 3 date columns populated, nothing to match.
+        self._fact(store, fid="f-no-date", text="undateable factoid")
+        hits = await store.search_facts_temporal("b1", window)
+        assert hits == []
+
+    async def test_results_sorted_newest_first_via_coalesce(
+        self,
+        store: InMemoryPageIndexStore,
+        window,
+    ) -> None:
+        # Hindsight order: COALESCE(occurred_start, mentioned_at,
+        # occurred_end) DESC NULLS LAST. Top-k cap then keeps newest.
+        from datetime import datetime as _dt
+
+        self._fact(
+            store,
+            fid="oldest",
+            text="early",
+            occurred_start=_dt(2026, 3, 11),
+        )
+        self._fact(
+            store,
+            fid="middle",
+            text="mid",
+            mentioned_at=_dt(2026, 3, 15),
+        )
+        self._fact(
+            store,
+            fid="newest",
+            text="late",
+            occurred_end=_dt(2026, 3, 19),
+        )
+        hits = await store.search_facts_temporal("b1", window)
+        assert [h.fact_id for h in hits] == ["newest", "middle", "oldest"]
+
+
 class TestBenchHarnessConversion:
     """Pin the bench harness's tree ⇄ sections round-trip. The picker
     prompt was tuned against the nested-dict shape Phase A produced; the
@@ -438,6 +680,90 @@ class TestBenchHarnessConversion:
         assert bench_module._parse_session_date("") is None
         assert bench_module._parse_session_date("not a date") is None
         assert bench_module._format_session_date(None) is None
+
+    # M33-3a — bare-ISO heading regex coverage
+    def test_extract_date_from_title_locomo_form(self, bench_module) -> None:
+        title = "(1:56 pm on 8 May, 2023)"
+        assert bench_module._extract_date_from_title(title) == "8 May, 2023"
+
+    def test_extract_date_from_title_lme_form(self, bench_module) -> None:
+        title = "Session 4 (2023/05/20 (Sat) 02:21)"
+        assert bench_module._extract_date_from_title(title) == "20 May, 2023"
+
+    def test_extract_date_from_title_mem0_harness_form(self, bench_module) -> None:
+        # M33-3a — the actual format LME sections use in mem0_harness:
+        # ``Session N (YYYY-MM-DD HH:MM)``. Live-DB inspection on
+        # v015i-aborted showed 100% of LME sections looked like
+        # "Session 1 (2023-05-20 00:48)" and 0% were being matched
+        # by the pre-fix regex set, leaving session_date NULL on
+        # every fact downstream.
+        title = "Session 1 (2023-05-20 00:48)"
+        assert bench_module._extract_date_from_title(title) == "20 May, 2023"
+
+    def test_extract_date_from_title_mem0_harness_form_no_time(self, bench_module) -> None:
+        # Same shape without the trailing HH:MM (e.g. when the
+        # timestamp was just a date).
+        title = "Session 2 (2023-08-16)"
+        assert bench_module._extract_date_from_title(title) == "16 August, 2023"
+
+    def test_extract_date_from_title_no_match_returns_none(self, bench_module) -> None:
+        for title in [
+            "Conversation longmemeval_18bc8abd_1dd7eef8",  # top-level w/ no date
+            "## Random Heading",
+            "8 May, 2023",  # bare without parens — LoCoMo regex requires them
+            "",
+            None,
+        ]:
+            assert bench_module._extract_date_from_title(title) is None
+
+    def test_enrich_nodes_with_dates_populates_date_field(self, bench_module) -> None:
+        # Mem0-harness shape: ``Session N (YYYY-MM-DD HH:MM)``.
+        tree = [
+            {
+                "title": "Session 1 (2023-08-16 09:48)",
+                "line_num": 3,
+                "node_id": "n1",
+            },
+            {
+                "title": "Conversation longmemeval_xyz_abc",  # no date
+                "line_num": 5,
+                "node_id": "n2",
+            },
+        ]
+        pairs = bench_module._enrich_nodes_with_dates(tree)
+        # First node should be enriched; second should not.
+        assert tree[0]["date"] == "16 August, 2023"
+        assert "date" not in tree[1]
+        assert pairs == [(3, "16 August, 2023")]
+
+    def test_enrich_nodes_with_dates_unwraps_structure_dict(self, bench_module) -> None:
+        # M33-3a regression — _document_tree_to_pageindex_dict in the
+        # mem0_harness path returns ``{"structure": [...]}`` rather
+        # than a bare list. The enrich walker has to handle BOTH or
+        # it silently no-ops on the entire bench, leaving session_date
+        # NULL on every fact (the v015i-run-1 failure mode).
+        wrapped = {
+            "structure": [
+                {
+                    "title": "Session 1 (2023-05-20 00:48)",
+                    "line_num": 3,
+                    "node_id": "n1",
+                    "nodes": [
+                        {
+                            "title": "Session 2 (2023-05-21 12:55)",
+                            "line_num": 7,
+                            "node_id": "n2",
+                        },
+                    ],
+                },
+            ],
+        }
+        pairs = bench_module._enrich_nodes_with_dates(wrapped)
+        # Both root and child should be enriched.
+        assert wrapped["structure"][0]["date"] == "20 May, 2023"
+        assert wrapped["structure"][0]["nodes"][0]["date"] == "21 May, 2023"
+        # Order follows the depth-first walk.
+        assert pairs == [(3, "20 May, 2023"), (7, "21 May, 2023")]
 
 
 # ── Tests: end-to-end build_or_load_tree via in-memory store ──────────

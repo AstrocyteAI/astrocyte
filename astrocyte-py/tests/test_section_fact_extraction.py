@@ -102,20 +102,23 @@ class TestExtractFactsForSection:
         )
         assert facts == []
 
-    async def test_assistant_statement_extracted(self, section) -> None:
-        """M14.1: ``assistant_statement`` is a first-class fact_type.
+    async def test_assistant_utterance_extracted_as_experience(self, section) -> None:
+        """M25 (Hindsight-parity): assistant utterances are extracted as
+        ``fact_type='experience'`` with ``speaker='assistant'``, NOT as
+        a separate ``assistant_statement`` type.
 
-        Targets LME single-session-assistant lift — when the assistant
-        says something substantive, the extractor produces a row
-        preserving the assistant's phrasing so the answerer can quote it
-        directly.
+        Replaces the pre-M25 ``assistant_statement`` fact_type. The
+        speaker field carries the perspective signal; fact_type uses
+        Hindsight's binary world/experience taxonomy. See
+        ``section_fact_extraction.py`` `_VALID_FACT_TYPES` docstring
+        for the architecture decision.
         """
         provider = MagicMock()
         provider.complete = AsyncMock(
             return_value=Completion(
                 text='{"facts": ['
                 '{"text": "Assistant recommended a saline rinse for post-nasal drip.",'
-                ' "fact_type": "assistant_statement", "speaker": "assistant",'
+                ' "fact_type": "experience", "speaker": "assistant",'
                 ' "occurred_start": null, "occurred_end": null,'
                 ' "entities": ["saline rinse", "post-nasal drip"]}'
                 "]}",
@@ -129,14 +132,142 @@ class TestExtractFactsForSection:
             bank_id="b1",
         )
         assert len(facts) == 1
-        assert facts[0].fact_type == "assistant_statement"
+        assert facts[0].fact_type == "experience"
         assert facts[0].speaker == "assistant"
         assert "saline rinse" in facts[0].entities
 
+    async def test_m27_confidence_score_extracted(self, section) -> None:
+        """M27 #2 — extraction prompt asks for ``confidence`` per fact;
+        when the LLM emits a valid 0.0-1.0 float it's stored on
+        ``MemoryFact.confidence_score`` and ``MemoryFactHit.confidence_score``.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "User loves hiking.", "fact_type": "preference",'
+                ' "speaker": "user", "entities": ["hiking"], "confidence": 0.95}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(provider, section, "text", bank_id="b1")
+        assert len(facts) == 1
+        assert facts[0].confidence_score == 0.95
+
+    async def test_m27_confidence_score_clamps_out_of_range(self, section) -> None:
+        """Out-of-range values are clamped to [0.0, 1.0] rather than dropped."""
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "f1", "fact_type": "experience", "entities": [], "confidence": 1.5},'
+                '{"text": "f2", "fact_type": "experience", "entities": [], "confidence": -0.3}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(provider, section, "text", bank_id="b1")
+        assert len(facts) == 2
+        assert facts[0].confidence_score == 1.0  # clamped from 1.5
+        assert facts[1].confidence_score == 0.0  # clamped from -0.3
+
+    async def test_m31b_confidence_score_absent_defaults_to_0_7(self, section) -> None:
+        """M31b Fix C — when LLM omits confidence, default to 0.7 (the
+        documented M27 default) instead of None. Rationale: Fix 3's
+        confidence-aware abstention rule in the answerer prompt needs
+        SOMETHING to hedge against; None means the rule never fires.
+
+        Supersedes the original M27 test that asserted None — the
+        "distinguish no-signal from low-confidence" framing turned out
+        to disable Fix 3 entirely on facts the LLM didn't tag.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "no-conf", "fact_type": "experience", "entities": []}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(provider, section, "text", bank_id="b1")
+        assert facts[0].confidence_score == 0.7
+
+    async def test_m31b_invalid_confidence_value_defaults_to_0_7(self, section) -> None:
+        """Malformed value (string, non-numeric, etc.) also defaults to 0.7."""
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "bad-conf", "fact_type": "experience", '
+                '"entities": [], "confidence": "not-a-number"}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(provider, section, "text", bank_id="b1")
+        assert facts[0].confidence_score == 0.7
+
+    async def test_m27_mentioned_at_populated_from_section(self, section) -> None:
+        """M27 #6 — every fact gets ``mentioned_at`` from the section's
+        session_date, distinct from any ``occurred_start`` the LLM emits.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "user did x", "fact_type": "experience",'
+                ' "speaker": "user", "occurred_start": "2023-05-01",'
+                ' "entities": []}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(provider, section, "text", bank_id="b1")
+        assert len(facts) == 1
+        # mentioned_at comes from section.session_date (May 8 per fixture)
+        assert facts[0].mentioned_at == section.session_date
+        # occurred_start is independent — when the event actually happened
+        from datetime import datetime
+        assert facts[0].occurred_start == datetime(2023, 5, 1)
+        # The two timestamps differ: event happened May 1, was discussed May 8
+        assert facts[0].mentioned_at != facts[0].occurred_start
+
+    async def test_legacy_assistant_statement_remapped(self, section) -> None:
+        """M25 legacy compat: an LLM that still emits the pre-M25
+        ``assistant_statement`` tag (e.g. a model trained on the old
+        prompt or a legacy ingest replay) has its row remapped to the
+        canonical (experience + speaker='assistant') shape instead of
+        being dropped on read.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "Assistant suggested switching to nasal spray.",'
+                ' "fact_type": "assistant_statement",'
+                # Note: no explicit "speaker" key — the remap path
+                # backfills it to 'assistant'.
+                ' "entities": ["nasal spray"]}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(
+            provider,
+            section,
+            "text",
+            bank_id="b1",
+        )
+        assert len(facts) == 1
+        assert facts[0].fact_type == "experience"
+        assert facts[0].speaker == "assistant"
+
     async def test_mixed_user_and_assistant_facts(self, section) -> None:
-        """Multi-output: one section yields rows of multiple fact_types
-        including assistant_statement — captures the realistic shape of
-        a back-and-forth dialogue turn.
+        """Multi-output: one section yields rows of multiple fact_types.
+        Post-M25 the assistant utterance is fact_type='experience' with
+        speaker='assistant', NOT a separate assistant_statement bucket.
         """
         provider = MagicMock()
         provider.complete = AsyncMock(
@@ -147,7 +278,7 @@ class TestExtractFactsForSection:
                 '{"text": "User prefers clinic A.", "fact_type": "preference",'
                 ' "speaker": "user", "entities": ["clinic A"]},'
                 '{"text": "Assistant suggested switching to nasal spray.",'
-                ' "fact_type": "assistant_statement", "speaker": "assistant",'
+                ' "fact_type": "experience", "speaker": "assistant",'
                 ' "entities": ["nasal spray"]}'
                 "]}",
                 model="gpt-4o-mini",
@@ -161,7 +292,11 @@ class TestExtractFactsForSection:
         )
         assert len(facts) == 3
         fact_types = {f.fact_type for f in facts}
-        assert fact_types == {"experience", "preference", "assistant_statement"}
+        # M25: fact_type collapses to {experience, preference}; speaker
+        # carries the user/assistant distinction.
+        assert fact_types == {"experience", "preference"}
+        speakers = {f.speaker for f in facts}
+        assert speakers == {"user", "assistant"}
 
     async def test_invalid_fact_type_dropped(self, section) -> None:
         provider = MagicMock()
@@ -271,6 +406,170 @@ class TestExtractFactsForSection:
             bank_id="b1",
         )
         assert facts == []
+
+    async def test_tolerant_parse_strips_markdown_fence(self, section) -> None:
+        """The LLM occasionally wraps its JSON in ```` ```json ``` ```` despite
+        ``response_format={"type": "json_object"}``. The tolerant parser
+        strips the fence and recovers the facts instead of dropping them.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text=(
+                    "```json\n"
+                    '{"facts": [{"text": "User did X.", "fact_type": "experience",'
+                    ' "entities": []}]}\n'
+                    "```"
+                ),
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(
+            provider, section, "text", bank_id="b1"
+        )
+        assert len(facts) == 1
+        assert facts[0].text == "User did X."
+        # No retry should have been issued — the fence parse succeeded.
+        assert provider.complete.call_count == 1
+
+    async def test_retry_on_malformed_then_valid(self, section) -> None:
+        """If the first response is unparseable AND not budget-truncated,
+        the extractor retries once with a stricter system reminder. A
+        valid retry response populates the result instead of falling
+        through to ``[]``.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            side_effect=[
+                # First: prose that doesn't contain any JSON braces — not
+                # truncated, but unparseable. Forces the retry path.
+                Completion(text="Sorry, I cannot do that.", model="gpt-4o-mini"),
+                Completion(
+                    text='{"facts": [{"text": "ok", "fact_type": "world", "entities": []}]}',
+                    model="gpt-4o-mini",
+                ),
+            ]
+        )
+        facts = await extract_facts_for_section(
+            provider, section, "text", bank_id="b1"
+        )
+        assert provider.complete.call_count == 2
+        assert len(facts) == 1
+        assert facts[0].text == "ok"
+
+    async def test_no_retry_when_truncated(self, section) -> None:
+        """If the first response looks budget-truncated, a retry under
+        the same cap can't help — the extractor must skip it to avoid a
+        wasted round-trip.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": [{"text": "User did',  # truncated mid-string
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(
+            provider, section, "text", bank_id="b1"
+        )
+        assert facts == []
+        assert provider.complete.call_count == 1
+
+    async def test_m29_pronoun_resolution_within_section(self, section) -> None:
+        """M29 — the extraction prompt instructs the LLM to resolve
+        pronouns ("she/he/they") to the most recently named entity
+        within the section. This is a contract test that verifies the
+        dataclass field-flow preserves the resolved name in fact.text
+        when the LLM emits it (i.e. the prompt's instruction round-trips
+        through the parser).
+
+        Real LLM compliance with the prompt is bench-verified, not unit-
+        verified — this guards against a future regression that strips
+        the resolved name (e.g. an over-eager pronoun normalizer).
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                # LLM resolved "she" → "Emily" in the fact text per the M29 rule.
+                '{"text": "Emily said Emily would be home late tonight.",'
+                ' "fact_type": "experience", "speaker": "user",'
+                ' "occurred_start": null, "occurred_end": null,'
+                ' "entities": ["Emily"]}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(
+            provider, section, "Emily said she would be home late tonight.", bank_id="b1"
+        )
+        assert len(facts) == 1
+        # Pronoun resolved to the named entity in fact text.
+        assert "Emily" in facts[0].text
+        assert " she " not in facts[0].text
+        # Entity array contains the resolved name, not the pronoun.
+        assert facts[0].entities == ["Emily"]
+
+    async def test_m29_alias_canonicalization(self, section) -> None:
+        """M29 — when both a generic reference ("my roommate") and a
+        name ("Emily") appear for the same referent, the entities array
+        uses the canonical ``"Name (descriptor)"`` form so cross-section
+        link expansion (M27) can stitch sessions that only use one form.
+
+        Verifies the dedup pass preserves the canonical parenthetical
+        form rather than collapsing it to a bare name.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "Emily, the user\'s roommate, mentioned she would be home late.",'
+                ' "fact_type": "experience", "speaker": "user",'
+                ' "occurred_start": null, "occurred_end": null,'
+                ' "entities": ["Emily (user\'s roommate)", "role:roommate"]}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(
+            provider,
+            section,
+            "My roommate Emily came home. Emily said she'd be late tomorrow too.",
+            bank_id="b1",
+        )
+        assert len(facts) == 1
+        # Canonical "Name (descriptor)" form survives the parser + dedup pass.
+        assert "Emily (user's roommate)" in facts[0].entities
+        # Role label also present so role-only references in other sections can link.
+        assert "role:roommate" in facts[0].entities
+
+    async def test_m29_role_label_for_generic_reference(self, section) -> None:
+        """M29 — when only the role appears (no name in this section),
+        the entities array must still include the ``role:<label>``
+        token so cross-section link expansion can join on it and
+        surface the named version from a different session.
+        """
+        provider = MagicMock()
+        provider.complete = AsyncMock(
+            return_value=Completion(
+                text='{"facts": ['
+                '{"text": "The doctor recommended an antihistamine for the user\'s allergies.",'
+                ' "fact_type": "experience", "speaker": "user",'
+                ' "occurred_start": null, "occurred_end": null,'
+                ' "entities": ["role:doctor", "antihistamine"]}'
+                "]}",
+                model="gpt-4o-mini",
+            )
+        )
+        facts = await extract_facts_for_section(
+            provider,
+            section,
+            "I saw the doctor today. She gave me an antihistamine for my allergies.",
+            bank_id="b1",
+        )
+        assert len(facts) == 1
+        # Role label present so future sections with "Dr. Patel" can link via role:doctor.
+        assert "role:doctor" in facts[0].entities
 
 
 class TestInMemoryFactStore:

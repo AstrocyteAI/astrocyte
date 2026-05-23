@@ -42,16 +42,28 @@ class _StubProvider:
     response_text: str
     raise_exc: Exception | None = None
     prompts_seen: list[str] = None
+    # When set, successive calls pop from this list (so we can simulate
+    # the retry path: malformed first, valid second).
+    response_sequence: list[str] | None = None
 
     def __post_init__(self) -> None:
         self.prompts_seen = []
+        self.call_count = 0
 
     async def complete(self, **kwargs: Any) -> _Completion:
         msgs = kwargs.get("messages") or []
-        if msgs and isinstance(msgs[0], Message):
-            self.prompts_seen.append(msgs[0].content)
+        # The retry path prepends a system message; the user prompt is
+        # the last message in both shapes. Record it.
+        for m in msgs:
+            if isinstance(m, Message) and m.role == "user":
+                self.prompts_seen.append(m.content)
+                break
+        self.call_count += 1
         if self.raise_exc is not None:
             raise self.raise_exc
+        if self.response_sequence is not None:
+            idx = min(self.call_count - 1, len(self.response_sequence) - 1)
+            return _Completion(text=self.response_sequence[idx])
         return _Completion(text=self.response_text)
 
 
@@ -198,6 +210,46 @@ class TestExtractEntitiesForSection:
             "...",
         )
         assert [e.entity_name for e in result] == ["Alice", "Charlie"]
+
+    async def test_tolerant_parse_strips_markdown_fence(self) -> None:
+        """gpt-4o-mini sometimes wraps the JSON in ```` ```json ``` ```` fences;
+        the tolerant parser strips them so the entities aren't lost."""
+        provider = _StubProvider(
+            response_text='```json\n{"entities": ["Alice", "Bob"]}\n```',
+        )
+        result = await extract_entities_for_section(
+            provider, "doc-1", _section(5), "Alice and Bob talked."
+        )
+        assert {e.entity_name for e in result} == {"Alice", "Bob"}
+        assert provider.call_count == 1  # no retry needed
+
+    async def test_retry_on_malformed_then_valid(self) -> None:
+        """Unparseable first response (not truncated) triggers exactly
+        one retry; a valid retry result populates the entities."""
+        provider = _StubProvider(
+            response_text="",
+            response_sequence=[
+                "I cannot do that.",  # not JSON-ish, not truncated
+                json.dumps({"entities": ["Alice"]}),
+            ],
+        )
+        result = await extract_entities_for_section(
+            provider, "doc-1", _section(5), "Alice talked."
+        )
+        assert provider.call_count == 2
+        assert [e.entity_name for e in result] == ["Alice"]
+
+    async def test_no_retry_when_truncated(self) -> None:
+        """Budget-truncated first response (last char is mid-string)
+        must NOT trigger a retry — the retry would hit the same cap."""
+        provider = _StubProvider(
+            response_text='{"entities": ["Alic',  # truncated
+        )
+        result = await extract_entities_for_section(
+            provider, "doc-1", _section(5), "Alice talked."
+        )
+        assert result == []
+        assert provider.call_count == 1
 
     async def test_truncates_long_section_text(self) -> None:
         # Defensive: section_text is capped at 6K chars before being

@@ -188,6 +188,52 @@ class TestRetainDedup:
         assert r1.stored is True
         assert r2.stored is True
 
+    @pytest.mark.asyncio
+    async def test_invalidate_dedup_cache_releases_specific_ids(self):
+        """After forget, re-retain of identical content must produce a fresh row.
+
+        Regression: the DedupDetector's in-memory cache kept the forgotten
+        memory's embedding, so a re-retain of the same content silently
+        returned ``stored=False, deduplicated=True``. Fix: Astrocyte.forget
+        now calls ``orchestrator.invalidate_dedup_cache`` after a successful
+        forget. This test exercises that hook directly on the orchestrator.
+        """
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        orch = PipelineOrchestrator(vs, llm)
+
+        r1 = await orch.retain(RetainRequest(content="The sky is blue", bank_id="b1"))
+        assert r1.stored is True
+        assert r1.memory_id, "first retain must return a memory_id"
+        memory_ids = [r1.memory_id]
+
+        # Simulate the forget callback — drop the cache entry.
+        orch.invalidate_dedup_cache("b1", memory_ids)
+
+        # Re-retain identical content. With the cache invalidated, this
+        # should succeed instead of returning deduplicated=True.
+        r2 = await orch.retain(RetainRequest(content="The sky is blue", bank_id="b1"))
+        assert r2.stored is True, (
+            "re-retain after invalidate_dedup_cache must produce a new memory; "
+            f"got stored={r2.stored}, deduplicated={r2.deduplicated}, error={r2.error}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_invalidate_dedup_cache_whole_bank(self):
+        """Calling invalidate_dedup_cache with memory_ids=None wipes the bank."""
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        orch = PipelineOrchestrator(vs, llm)
+
+        await orch.retain(RetainRequest(content="Memory one", bank_id="b1"))
+        await orch.retain(RetainRequest(content="Memory two", bank_id="b1"))
+
+        orch.invalidate_dedup_cache("b1", None)
+
+        # Both memories' embeddings are gone from the cache; re-retain succeeds.
+        r = await orch.retain(RetainRequest(content="Memory one", bank_id="b1"))
+        assert r.stored is True
+
 
 class TestReflectAutoPromptRouting:
     """Test query-plan prompt routing in isolation from retrieval quality.

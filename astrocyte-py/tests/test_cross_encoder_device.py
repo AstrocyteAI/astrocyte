@@ -100,3 +100,64 @@ class TestDeviceResolution:
         )
         assert e.model_name == "mixedbread-ai/mxbai-rerank-base-v2"
         assert e._model is None  # not loaded yet
+
+
+class TestEnvVarOverride:
+    """M33-1a — ``ASTROCYTE_CROSS_ENCODER_MODEL`` env var override."""
+
+    def test_env_unset_returns_default(self, monkeypatch) -> None:
+        from astrocyte.pipeline.cross_encoder_rerank import _resolve_default_model
+
+        monkeypatch.delenv("ASTROCYTE_CROSS_ENCODER_MODEL", raising=False)
+        assert _resolve_default_model() == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+    def test_env_empty_returns_default(self, monkeypatch) -> None:
+        from astrocyte.pipeline.cross_encoder_rerank import _resolve_default_model
+
+        monkeypatch.setenv("ASTROCYTE_CROSS_ENCODER_MODEL", "   ")
+        assert _resolve_default_model() == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+    def test_env_preset_alias_resolves(self, monkeypatch) -> None:
+        from astrocyte.pipeline.cross_encoder_rerank import _resolve_default_model
+
+        monkeypatch.setenv("ASTROCYTE_CROSS_ENCODER_MODEL", "bge-large")
+        assert _resolve_default_model() == "BAAI/bge-reranker-large"
+
+    def test_env_full_hf_path_passes_through(self, monkeypatch) -> None:
+        from astrocyte.pipeline.cross_encoder_rerank import _resolve_default_model
+
+        monkeypatch.setenv(
+            "ASTROCYTE_CROSS_ENCODER_MODEL",
+            "mixedbread-ai/mxbai-rerank-large-v2",
+        )
+        assert _resolve_default_model() == "mixedbread-ai/mxbai-rerank-large-v2"
+
+    def test_get_default_cross_encoder_picks_env_var(self, monkeypatch) -> None:
+        """``get_default_cross_encoder()`` with no args honors the env var."""
+        from astrocyte.pipeline.cross_encoder_rerank import (
+            get_default_cross_encoder,
+            reset_default_cross_encoder_cache,
+        )
+
+        reset_default_cross_encoder_cache()
+        monkeypatch.setenv("ASTROCYTE_CROSS_ENCODER_MODEL", "bge-large")
+        # We don't actually want to load the 1GB model in CI — assert the
+        # encoder was constructed with the resolved name but stays lazy.
+        enc = get_default_cross_encoder()
+        assert enc.model_name == "BAAI/bge-reranker-large"  # type: ignore[attr-defined]
+        reset_default_cross_encoder_cache()
+
+    def test_explicit_model_name_wins_over_env(self, monkeypatch) -> None:
+        """Explicit ``model_name=...`` arg overrides the env var."""
+        from astrocyte.pipeline.cross_encoder_rerank import (
+            get_default_cross_encoder,
+            reset_default_cross_encoder_cache,
+        )
+
+        reset_default_cross_encoder_cache()
+        monkeypatch.setenv("ASTROCYTE_CROSS_ENCODER_MODEL", "bge-large")
+        enc = get_default_cross_encoder(
+            model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        )
+        assert enc.model_name == "cross-encoder/ms-marco-MiniLM-L-6-v2"  # type: ignore[attr-defined]
+        reset_default_cross_encoder_cache()
