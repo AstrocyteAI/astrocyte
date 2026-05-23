@@ -19,7 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        # Use our own published image — it has pgvector + pgvectorscale
+        # baked in. `pgvector/pgvector:pg16` ships pgvector only, so the
+        # very first migration (001_extension.sql: CREATE EXTENSION
+        # vectorscale) failed with "extension not available". Pin to the
+        # last published release so a broken HEAD migration can't break
+        # its own test substrate. Bump the pin when the test set genuinely
+        # needs newer-image behaviour.
+        image: ghcr.io/astrocyteai/astrocyte/astrocyte-postgres:v0.13.1
         env:
           POSTGRES_USER: astrocyte
           POSTGRES_PASSWORD: astrocyte
