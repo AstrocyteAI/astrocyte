@@ -381,6 +381,24 @@ class PostgresStore:
                 # table is a composition-layer artifact owned by neither
                 # engine alone; provisioned via migrate.sh, not bootstrap.
                 #
+                # 032_mental_model_structured_doc.sql (M21) and
+                # 037_mental_model_source_timestamps.sql (M40) are
+                # intentionally NOT mirrored here — they extend the
+                # ``astrocyte_mental_models`` table owned by
+                # ``astrocyte_postgres.mental_model_store.PostgresMentalModelStore``,
+                # which has its own ``_ensure_schema`` bootstrap mirroring
+                # them (M14.6 pattern; see that module for the parallel
+                # ALTER ... ADD COLUMN IF NOT EXISTS calls).
+                #
+                # 033_pi_facts_confidence_score.sql (M27/M28-A),
+                # 034_pi_facts_mentioned_at.sql (M27/M28-A),
+                # 035_pi_sections_session_id.sql (M31), and
+                # 036_pi_facts_event_date.sql (M31 Fix 4) are intentionally
+                # NOT mirrored here — they extend PageIndex tables
+                # (``pi_facts`` / ``pi_sections``) owned by
+                # ``astrocyte_postgres.pageindex_store.PostgresPageIndexStore``,
+                # which mirrors them in its own bootstrap path.
+                #
                 # Mirrors 008_entities_temporal.sql (temporal_facts table only;
                 # the entity_* tables in 008 are owned by the entity-resolution
                 # adapter, not this store).
