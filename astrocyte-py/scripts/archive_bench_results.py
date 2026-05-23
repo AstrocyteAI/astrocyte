@@ -59,11 +59,29 @@ ARCHIVED_MARKER = "_ARCHIVED"
 # group to drive the README badges. See ``scripts/mark_shipped.py``.
 SHIP_LABEL_FILE = "_SHIP_LABEL.json"
 
-# Mem0-harness result schemas expose a ``metrics_by_cutoff`` block. We
-# pick top_20 as the canonical cutoff for the trajectory because M18b's
-# cycle-close ablation matrix uses it as the headline number. Operators
-# can override per-rescan via ``--mem0-cutoff``.
-DEFAULT_MEM0_CUTOFF = "top_20"
+# Mem0-harness result schemas expose a ``metrics_by_cutoff`` block.
+#
+# Cutoff history:
+# - Pre-M35 cycles (m18b/m19/m30c/m31/m32/m33/m34) used item-count
+#   cutoffs (``top_N``) — ``top_20`` was the canonical headline number
+#   for that era's bench-close ablations.
+# - M35 (v0.15.0) migrated the harness to token-budget cutoffs
+#   (``max_tokens_N``) — the legacy ``top_*`` keys disappear from new
+#   result JSONs.
+# - M44 (v0.15.0 close) anchored the ship-floor convention on
+#   ``max_tokens_8192`` — see ``docs/_design/v0.15.0-ship-decision.md``
+#   Appendix A.
+#
+# ``DEFAULT_MEM0_CUTOFF`` is the *first-choice* cutoff. If a result JSON
+# doesn't carry it, the lookup falls back through ``MEM0_CUTOFF_FALLBACKS``
+# so pre-M35 archives still parse cleanly (their summaries are needed for
+# trajectory continuity across the M35 boundary). Operators can override
+# the first-choice via ``--mem0-cutoff`` on rescan / archive commands.
+DEFAULT_MEM0_CUTOFF = "max_tokens_8192"
+MEM0_CUTOFF_FALLBACKS: tuple[str, ...] = (
+    "max_tokens_4096",  # next-densest token budget if 8192 missing
+    "top_20",           # pre-M35 legacy headline cutoff
+)
 
 # Smoke / micro runs (n < SMOKE_MIN_QUESTIONS, or stage containing ``smoke``)
 # distort the trajectory and badge color when they happen to be the most
@@ -184,13 +202,29 @@ def _summary_from_mem0(payload: dict[str, Any], cutoff: str = DEFAULT_MEM0_CUTOF
     """
     meta = payload.get("metadata") or {}
     cutoffs = payload.get("metrics_by_cutoff") or {}
-    section = (cutoffs.get(cutoff) or {}).get("overall") or {}
+    # Walk the cutoff priority list: caller-supplied first-choice, then
+    # the canonical fallback chain (next-densest token budget, legacy
+    # ``top_20``). Lets a single archive sweep handle both M35+ token-
+    # budget results and pre-M35 ``top_N`` legacy archives without the
+    # operator having to choose per-project — the script just picks
+    # whichever cutoff the JSON actually contains.
+    chosen_cutoff = cutoff
+    section = (cutoffs.get(chosen_cutoff) or {}).get("overall") or {}
+    if not section:
+        for fallback in MEM0_CUTOFF_FALLBACKS:
+            if fallback == chosen_cutoff:
+                continue
+            candidate = (cutoffs.get(fallback) or {}).get("overall") or {}
+            if candidate:
+                section = candidate
+                chosen_cutoff = fallback
+                break
     if not section:
         return None
     accuracy_pct = section.get("accuracy")
     if accuracy_pct is None:
         return None
-    cats_block = (cutoffs.get(cutoff) or {}).get("categories") or {}
+    cats_block = (cutoffs.get(chosen_cutoff) or {}).get("categories") or {}
     cats: dict[str, float] = {}
     for name, body in cats_block.items():
         if isinstance(body, dict) and "accuracy" in body:
@@ -205,7 +239,7 @@ def _summary_from_mem0(payload: dict[str, Any], cutoff: str = DEFAULT_MEM0_CUTOF
         "n_questions": section.get("total"),
         "judge": "llm" if meta.get("judge_model") else "stemmed-f1",
         "model": meta.get("answerer_model") or meta.get("model"),
-        "cutoff": cutoff,
+        "cutoff": chosen_cutoff,
         "project_name": meta.get("project_name"),
         "run_id": meta.get("run_id"),
     }

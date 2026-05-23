@@ -552,9 +552,11 @@ bench-archive-rebuild-trajectory:
 # `bench-archive STAGE=foo --files ...` flow for cycle-level archiving.
 #
 # Common variants:
-#   make bench-archive-rescan                  # default cutoff (top_20)
+#   make bench-archive-rescan                  # default cutoff = script default
+#                                              #   (currently max_tokens_8192
+#                                              #   with fallback to top_20)
 #   make bench-archive-rescan DRY=1            # preview without uploading
-#   make bench-archive-rescan MEM0_CUTOFF=top_50
+#   make bench-archive-rescan MEM0_CUTOFF=top_20  # pin a specific cutoff
 #   make bench-archive-rescan FORCE=1          # re-archive even with marker
 #   make bench-archive-rescan INCLUDE_SMOKE=1  # don't skip smoke / n<30 runs
 
@@ -657,7 +659,7 @@ bench-tag-shipped:
 bench-archive-rescan:
 	doppler run --config bench -- $(BENCH_UV_RUN) python -m scripts.archive_bench_results \
 		--rescan \
-		--mem0-cutoff $(or $(MEM0_CUTOFF),top_20) \
+		$(if $(MEM0_CUTOFF),--mem0-cutoff $(MEM0_CUTOFF),) \
 		$(if $(DRY),--dry-run,) \
 		$(if $(FORCE),--force,) \
 		$(if $(INCLUDE_SMOKE),--include-smoke,)
