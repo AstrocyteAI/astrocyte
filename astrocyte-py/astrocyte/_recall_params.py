@@ -23,3 +23,10 @@ class RecallParams:
     #: query.  Separate from ``as_of`` (which is a retained_at filter).
     #: See ``RecallRequest.query_reference_date`` for the rationale.
     query_reference_date: datetime | None = None
+    #: M31 Fix 2 — opaque session identifier. When set, the recall path
+    #: filters facts/sections to those whose anchoring section has a
+    #: matching ``session_id``. ``None`` (the default) preserves
+    #: cross-session retrieval behaviour. Real systems pass the
+    #: session_id from their conversation UI; benches pass the
+    #: ``question_session_id`` metadata from the dataset.
+    session_id: str | None = None

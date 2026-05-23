@@ -48,6 +48,7 @@ from astrocyte.types import (
     LegalHold,
     LifecycleRunResult,
     MemoryHit,
+    MentalModel,
     MultiBankStrategy,
     QualityDataPoint,
     RecallRequest,
@@ -273,6 +274,56 @@ class Astrocyte:
                 method).
         """
         self._compile_queue = queue
+
+    def use_pageindex_pipeline(
+        self,
+        store: Any,
+        embedding_provider: Any | None = None,
+        *,
+        document_resolver: Any | None = None,
+    ) -> None:
+        """M32 — install the PageIndex recall pipeline as the active
+        retrieval stack.
+
+        After this call, ``self.recall(query, ...)`` routes through
+        :class:`~astrocyte.pipeline.pageindex_pipeline.PageIndexPipeline`
+        (the same stack the bench harness validates) instead of the
+        legacy ``orchestrator.recall()`` / vector_store path.
+
+        This closes the bench-vs-API parity gap surfaced in the v0.15.0
+        ship audit (docs/_design/m32-stack-unification.md). All
+        M14-M31 cycle work (RRF fusion, fact↔chunk pairing,
+        per-Q-type prompts, M27 fields, M28-M29 coreference, M30
+        parallelization, M31 session_filter + event_date) now flows
+        through the public API.
+
+        Args:
+            store: A configured :class:`PageIndexStore` (Postgres or
+                in-memory).
+            embedding_provider: An :class:`LLMProvider` to embed query
+                strings. Defaults to the Astrocyte instance's configured
+                provider when ``None``.
+            document_resolver: Optional ``(bank_id) -> document_id``
+                callable for single-doc scoping. See
+                ``PageIndexPipeline.__init__`` for the contract.
+        """
+        from astrocyte.pipeline.pageindex_pipeline import (  # noqa: PLC0415
+            PageIndexPipeline,
+        )
+
+        if embedding_provider is None:
+            embedding_provider = getattr(self, "_provider", None)
+        if embedding_provider is None:
+            raise ValueError(
+                "use_pageindex_pipeline: no embedding_provider supplied and "
+                "no provider configured on Astrocyte instance",
+            )
+        self._dispatcher.pageindex_pipeline = PageIndexPipeline(
+            store=store,
+            embedding_provider=embedding_provider,
+            config=self._config,
+            document_resolver=document_resolver,
+        )
 
     def set_pipeline(self, pipeline: PipelineOrchestrator) -> None:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
@@ -692,6 +743,7 @@ class Astrocyte:
             external_context=ext,
             as_of=params.as_of,  # M9
             query_reference_date=params.query_reference_date,
+            session_id=params.session_id,  # M31 Fix 2
         )
 
     async def recall(
@@ -713,6 +765,7 @@ class Astrocyte:
         detail_level: str | None = None,
         as_of: datetime | None = None,
         query_reference_date: datetime | None = None,
+        session_id: str | None = None,
     ) -> RecallResult:
         """Retrieve relevant memories for a query.
 
@@ -760,6 +813,7 @@ class Astrocyte:
                 detail_level=detail_level,
                 as_of=as_of,  # M9
                 query_reference_date=query_reference_date,
+                session_id=session_id,  # M31 Fix 2
             )
 
             # Single bank — direct
@@ -964,6 +1018,418 @@ class Astrocyte:
                 result = self._output_scanner.scan_reflect(result)
             return result
 
+    # ── M21 — Mental model CRUD (Hindsight parity) ────────────────────
+
+    def _mental_model_service(self) -> Any:
+        """Return the configured MentalModelService or raise.
+
+        Mental-model CRUD requires a store to have been set via
+        :meth:`set_mental_model_store`; otherwise these methods raise
+        :class:`RuntimeError` with a hint. Cleanest place to fail —
+        attempts to call the methods without storage would otherwise
+        crash deeper inside the pipeline.
+        """
+        if self._mental_model_store is None:
+            raise RuntimeError(
+                "mental_model_store not configured — call "
+                "Astrocyte.set_mental_model_store(store) before using "
+                "mental-model CRUD."
+            )
+        from astrocyte.pipeline.mental_model import MentalModelService
+
+        return MentalModelService(self._mental_model_store)  # type: ignore[arg-type]
+
+    async def list_mental_models(
+        self,
+        bank_id: str | None = None,
+        *,
+        scope: str | None = None,
+        context: AstrocyteContext | None = None,
+    ) -> "list[MentalModel]":
+        """List mental models in a bank. Optionally filter by scope."""
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "read", context)
+        return await self._mental_model_service().list(bid, scope=scope)
+
+    async def get_mental_model(
+        self,
+        model_id: str,
+        bank_id: str | None = None,
+        *,
+        context: AstrocyteContext | None = None,
+    ) -> "MentalModel | None":
+        """Fetch one mental model by id. Returns None if not found / deleted."""
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "read", context)
+        return await self._mental_model_service().get(bank_id=bid, model_id=model_id)
+
+    async def create_mental_model(
+        self,
+        *,
+        model_id: str,
+        title: str,
+        content: str | None = None,
+        sections: list[dict] | None = None,
+        scope: str = "bank",
+        source_ids: list[str] | None = None,
+        bank_id: str | None = None,
+        context: AstrocyteContext | None = None,
+    ) -> "MentalModel":
+        """Create or refresh a mental model.
+
+        Two content shapes (mutually exclusive — provide one):
+
+        - ``content``: raw markdown string. Parsed on first refresh into
+          a structured doc; legacy-shape path.
+        - ``sections``: list of section dicts matching
+          :class:`astrocyte.pipeline.structured_doc.Section` JSON shape.
+          Modern path — the structured doc is populated immediately and
+          ``content`` is rendered from it.
+
+        Pass exactly one. If both are provided, ``sections`` wins.
+        """
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "write", context)
+        self._policy.check_rate_and_quota(bid, "retain")
+
+        service = self._mental_model_service()
+
+        if sections is not None:
+            from astrocyte.pipeline.structured_doc import (
+                StructuredDocument,
+                render_document,
+            )
+
+            doc = StructuredDocument.model_validate({"sections": sections})
+            rendered = render_document(doc)
+            return await service.create(
+                bank_id=bid,
+                model_id=model_id,
+                title=title,
+                content=rendered,
+                scope=scope,
+                source_ids=source_ids,
+                structured_doc=doc.model_dump(),
+            )
+
+        if content is None:
+            raise ValueError("create_mental_model requires either `content` or `sections`")
+
+        return await service.create(
+            bank_id=bid,
+            model_id=model_id,
+            title=title,
+            content=content,
+            scope=scope,
+            source_ids=source_ids,
+        )
+
+    async def update_mental_model(
+        self,
+        *,
+        model_id: str,
+        operations: list[dict],
+        bank_id: str | None = None,
+        context: AstrocyteContext | None = None,
+    ) -> "tuple[MentalModel, dict] | None":
+        """Apply structured delta operations to a mental model.
+
+        See :func:`astrocyte.pipeline.delta_ops.apply_operations` for
+        the operation schema. Conservative-failure contract — invalid
+        ops drop with a logged reason; the document never gets worse
+        than its input.
+
+        Returns ``(updated_model, summary)`` where summary is
+        ``{"applied": [...], "skipped": [...], "changed": bool}`` —
+        the audit trail of which ops landed. Returns ``None`` when
+        the model doesn't exist.
+        """
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "write", context)
+        self._policy.check_rate_and_quota(bid, "retain")
+        return await self._mental_model_service().update_via_ops(
+            bank_id=bid,
+            model_id=model_id,
+            operations=operations,
+        )
+
+    async def delete_mental_model(
+        self,
+        model_id: str,
+        bank_id: str | None = None,
+        *,
+        context: AstrocyteContext | None = None,
+    ) -> bool:
+        """Soft-delete a mental model. Returns True iff it existed."""
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "forget", context)
+        return await self._mental_model_service().delete(bank_id=bid, model_id=model_id)
+
+    async def refresh_mental_model(
+        self,
+        model_id: str,
+        new_source_ids: list[str],
+        bank_id: str | None = None,
+        *,
+        context: AstrocyteContext | None = None,
+    ) -> "MentalModel | None":
+        """M28 — re-derive a mental model from new/expanded source memories.
+
+        Hindsight parity for ``mental_model.refresh()``: after retain
+        adds memories that pertain to an existing model, this folds
+        them into the model's ``source_ids`` and bumps the revision.
+
+        The store-level implementation merges ``new_source_ids`` into
+        the existing set (order-preserving dedup); future enhancement
+        invokes the LLM compile pipeline against the merged source set
+        to also rewrite ``content`` and ``structured_doc`` — the SPI
+        surface is the same.
+
+        Returns the refreshed :class:`MentalModel` or ``None`` if the
+        model doesn't exist.
+        """
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "write", context)
+        self._policy.check_rate_and_quota(bid, "retain")
+        return await self._mental_model_service().refresh_from_sources(
+            bank_id=bid,
+            model_id=model_id,
+            new_source_ids=list(new_source_ids),
+        )
+
+    async def create_directive(
+        self,
+        *,
+        rule_text: str,
+        directive_id: str | None = None,
+        scope: str = "bank",
+        bank_id: str | None = None,
+        context: AstrocyteContext | None = None,
+    ) -> "MentalModel":
+        """Create a user-authored hard rule (M18b/M19 deferred item).
+
+        Directives are stored as :class:`MentalModel` rows with
+        ``kind="directive"``. They participate in the agentic reflect
+        loop's ``search_mental_models`` tool exactly like ``general``
+        / ``preference`` models, but the ``directive`` discriminator
+        signals to the answerer that the rule should be applied as a
+        hard preference override rather than as one input among many.
+
+        Mirrors Hindsight's ``mental_models.subtype="directive"``
+        rows. Architecturally replaces the M18a-2 ``directive_compile``
+        auto-extraction path that was deprecated in M19 (it replicated
+        a −30pp SSP regression because compressed auto-directives
+        overrode original preference nuance).
+        """
+        import uuid as _uuid
+
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "write", context)
+        self._policy.check_rate_and_quota(bid, "retain")
+
+        if not rule_text.strip():
+            raise ValueError("create_directive requires non-empty rule_text")
+
+        mid = directive_id or f"directive:{_uuid.uuid4().hex[:12]}"
+        service = self._mental_model_service()
+        # Author the directive with a single-paragraph structured doc so
+        # subsequent refreshes can use delta_ops cleanly.
+        from astrocyte.pipeline.structured_doc import (
+            ParagraphBlock,
+            Section,
+            StructuredDocument,
+            render_document,
+        )
+
+        doc = StructuredDocument(
+            sections=[
+                Section(
+                    id="rule",
+                    heading="Rule",
+                    level=2,
+                    blocks=[ParagraphBlock(text=rule_text.strip())],
+                ),
+            ],
+        )
+        rendered = render_document(doc)
+        return await service.create(
+            bank_id=bid,
+            model_id=mid,
+            title="Directive",
+            content=rendered,
+            scope=scope,
+            kind="directive",
+            structured_doc=doc.model_dump(),
+        )
+
+    # ── M21 — Observation CRUD (Hindsight parity) ────────────────────
+
+    async def list_observations(
+        self,
+        bank_id: str | None = None,
+        *,
+        scope: str | None = None,
+        trend: "str | None" = None,
+        limit: int = 100,
+        context: AstrocyteContext | None = None,
+    ) -> list[dict]:
+        """List observations in a bank.
+
+        Returns a list of dicts ``{id, text, trend, proof_count,
+        source_ids, confidence, updated_at}`` so callers (incl. the
+        MCP tool) get a JSON-shaped output without round-tripping
+        through ``VectorHit``.
+
+        Args:
+            scope: Filter by ``_obs_scope`` metadata (default ``"bank"``
+                if observations were created without a tag).
+            trend: Filter by computed trend (``"new"`` / ``"stable"`` /
+                ``"strengthening"`` / ``"weakening"`` / ``"stale"``).
+                Trend is computed at call time from each observation's
+                source-timestamp metadata; see
+                :func:`astrocyte.pipeline.observation.compute_observation_trend`.
+            limit: Max rows. Hard cap 1000.
+        """
+        from astrocyte.pipeline.observation import (
+            compute_observation_trend,
+            obs_bank_id,
+        )
+
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "read", context)
+
+        if self._pipeline is None or not hasattr(self._pipeline, "vector_store"):
+            raise RuntimeError("vector_store not configured on the pipeline")
+        store = self._pipeline.vector_store  # type: ignore[attr-defined]
+        if store is None:
+            raise RuntimeError("vector_store is not set")
+
+        obs_bank = obs_bank_id(bid)
+        cap = max(1, min(int(limit), 1000))
+        items = await store.list_vectors(
+            obs_bank,
+            offset=0,
+            limit=cap,
+        )
+        out: list[dict] = []
+        for item in items:
+            meta = item.metadata or {}
+            if scope is not None and str(meta.get("_obs_scope", "")) != scope:
+                continue
+            t = compute_observation_trend(dict(meta)).value
+            if trend is not None and t != trend:
+                continue
+            out.append(
+                {
+                    "id": item.id,
+                    "text": item.text,
+                    "trend": t,
+                    "proof_count": int(meta.get("_obs_proof_count", 1)),
+                    "source_ids": meta.get("_obs_source_ids", "[]"),
+                    "confidence": meta.get("_obs_confidence"),
+                    "updated_at": meta.get("_obs_updated_at"),
+                    "scope": meta.get("_obs_scope"),
+                }
+            )
+        return out
+
+    async def get_observation(
+        self,
+        observation_id: str,
+        bank_id: str | None = None,
+        *,
+        context: AstrocyteContext | None = None,
+    ) -> dict | None:
+        """Fetch one observation by id. Returns None if not found."""
+        rows = await self.list_observations(
+            bank_id=bank_id,
+            limit=1000,
+            context=context,
+        )
+        for r in rows:
+            if r["id"] == observation_id:
+                return r
+        return None
+
+    async def create_observation(
+        self,
+        *,
+        text: str,
+        source_ids: list[str] | None = None,
+        scope: str | None = None,
+        confidence: float = 0.9,
+        bank_id: str | None = None,
+        context: AstrocyteContext | None = None,
+    ) -> dict:
+        """User-authored observation.
+
+        Bypasses the autonomous consolidator — for cases where an
+        agent or user wants to assert a fact directly without going
+        through retain → consolidate. The observation is stored in
+        the dedicated ``::obs`` bank with proof_count=1 and the given
+        source_ids (may be empty for hand-authored entries).
+        """
+        from astrocyte.pipeline.observation import (
+            ObservationConsolidator,
+            observation_scope,
+        )
+
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "write", context)
+        self._policy.check_rate_and_quota(bid, "retain")
+
+        if self._pipeline is None or not hasattr(self._pipeline, "vector_store"):
+            raise RuntimeError("vector_store not configured on the pipeline")
+        store = self._pipeline.vector_store  # type: ignore[attr-defined]
+        llm = self._pipeline.llm_provider  # type: ignore[attr-defined]
+        if store is None or llm is None:
+            raise RuntimeError("vector_store / llm_provider not set")
+
+        consolidator = ObservationConsolidator()
+        obs_scope_value = scope or observation_scope(bid)
+        ok = await consolidator._apply_create(  # noqa: SLF001 — single-step CRUD
+            {"text": text.strip(), "confidence": confidence},
+            bid,
+            store,
+            llm,
+            source_ids=list(source_ids or []),
+            now_iso=datetime.now(timezone.utc).isoformat(),
+            scope=obs_scope_value,
+        )
+        if not ok:
+            raise ValueError("observation create rejected (empty text or confidence below threshold)")
+        # The freshly-created row is at the top of the obs bank — list and
+        # find it. (For multi-writer setups, callers can use the returned
+        # text + scope as the identity check.)
+        rows = await self.list_observations(bank_id=bid, scope=obs_scope_value, context=context)
+        for r in rows:
+            if r["text"] == text.strip():
+                return r
+        # Fall back: return a minimal dict so the caller doesn't get None
+        return {"text": text.strip(), "scope": obs_scope_value, "trend": "new"}
+
+    async def delete_observation(
+        self,
+        observation_id: str,
+        bank_id: str | None = None,
+        *,
+        context: AstrocyteContext | None = None,
+    ) -> bool:
+        """Delete one observation from the dedicated obs bank."""
+        from astrocyte.pipeline.observation import obs_bank_id
+
+        bid = self._policy.resolve_read_bank_ids(bank_id, None, context)[0]
+        self._policy.check_access(bid, "forget", context)
+
+        if self._pipeline is None or not hasattr(self._pipeline, "vector_store"):
+            raise RuntimeError("vector_store not configured on the pipeline")
+        store = self._pipeline.vector_store  # type: ignore[attr-defined]
+        if store is None:
+            return False
+        obs_bank = obs_bank_id(bid)
+        deleted = await store.delete([observation_id], obs_bank)
+        return deleted > 0
+
     async def clear_bank(
         self,
         bank_id: str,
@@ -1095,6 +1561,13 @@ class Astrocyte:
                 soft_fn = getattr(self._engine_provider, "soft_delete", None)
                 if soft_fn is not None:
                     deleted = await soft_fn(bank_id, memory_ids)
+
+                    # Same dedup-cache invalidation as the hard-delete path —
+                    # a soft-deleted memory is no longer reachable on recall,
+                    # so its embedding shouldn't keep blocking re-retains.
+                    if self._pipeline is not None and deleted > 0:
+                        self._pipeline.invalidate_dedup_cache(bank_id, memory_ids)
+
                     await self._hook_manager.fire(
                         "on_forget",
                         bank_id=bank_id,
@@ -1116,6 +1589,15 @@ class Astrocyte:
                 scope=scope,
             )
             result = await self._dispatcher.forget(request)
+
+            # Drop the forgotten memories from the in-memory dedup cache so
+            # a re-retain of similar content produces a fresh row instead of
+            # silently no-op'ing with "All chunks are near-duplicates". The
+            # DedupDetector lives on the pipeline; safe to skip when no
+            # pipeline is configured (provider-direct deployments).
+            if self._pipeline is not None and result.deleted_count > 0:
+                self._pipeline.invalidate_dedup_cache(bank_id, memory_ids)
+
             await self._hook_manager.fire(
                 "on_forget",
                 bank_id=bank_id,

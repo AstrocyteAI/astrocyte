@@ -70,6 +70,15 @@ class VectorFilters:
     time_range: tuple[datetime, datetime] | None = None
     metadata_filters: Metadata | None = None
     as_of: datetime | None = None  # Time-travel: only return items retained on or before this timestamp (M9)
+    #: M31 Fix 2 — opaque session identifier. When set, vector_store
+    #: adapters that support session scoping return only entries whose
+    #: ``metadata['session_id']`` matches. Adapters that don't yet
+    #: implement this filter MUST ignore it (best-effort semantics:
+    #: caller gets no scoping, not an error). Production wiring:
+    #: ``orchestrator.recall`` reads ``RecallRequest.session_id`` and
+    #: populates this field; per-adapter SQL/index filter is the
+    #: M32 cycle's adapter follow-up.
+    session_id: str | None = None
 
 
 @dataclass
@@ -342,6 +351,14 @@ class RecallRequest:
     #: single deployment serve both adversarial-resistant agents and
     #: trust-the-model assistants without forking the YAML config.
     dispositions: "Dispositions | None" = None
+    #: M31 Fix 2 — opaque session identifier. When the calling
+    #: application knows which conversation session a query targets,
+    #: this scopes the underlying SPI calls (``search_facts_*`` /
+    #: ``search_sections_*``) to facts and sections whose anchoring
+    #: section has matching ``session_id``. ``None`` (default) keeps
+    #: cross-session retrieval behaviour. Plumbed from
+    #: ``RecallParams.session_id`` via ``_make_recall_request``.
+    session_id: str | None = None
 
 
 @dataclass
@@ -1129,6 +1146,39 @@ class MentalModel:
     revision: int
     refreshed_at: datetime
     kind: str = "general"
+    #: M21 — structured representation of the document, stored as
+    #: JSON-shaped dict (the :meth:`pydantic.BaseModel.model_dump`
+    #: of :class:`astrocyte.pipeline.structured_doc.StructuredDocument`).
+    #: When ``None`` (legacy rows), callers may lazy-migrate by parsing
+    #: ``content`` via
+    #: :func:`astrocyte.pipeline.structured_doc.parse_markdown`. New
+    #: writes through :class:`~astrocyte.provider.MentalModelStore`
+    #: populate this field; the ``content`` column stays as the
+    #: rendered markdown for backwards-compatible reads. Stored on
+    #: Postgres as ``structured_doc JSONB`` (see migration 032).
+    #:
+    #: Type is plain ``dict | None`` for FFI safety (per the file-level
+    #: rule: no ``Any``, no callables, no generators); use
+    #: ``StructuredDocument.model_validate(model.structured_doc)`` to
+    #: get the typed object in-process.
+    structured_doc: dict | None = None
+    #: M40 — Per-source-id evidence timestamps, parallel to
+    #: :attr:`source_ids`. Captures *when* each contributing memory was
+    #: observed (in the conversation's reference timeline, not wall-
+    #: clock-now), so that :func:`astrocyte.pipeline.trend.compute_trend`
+    #: can classify the model as STABLE / STRENGTHENING / WEAKENING /
+    #: NEW / STALE relative to a query's reference date.
+    #:
+    #: Mirrors the ``_obs_source_timestamps`` pattern on observations
+    #: (see :mod:`astrocyte.pipeline.observation`). When ``None`` (legacy
+    #: rows pre-M40), trend computation falls back to ``refreshed_at`` as
+    #: a single-point timestamp — coarse but never garbage. New writes
+    #: populate this field at consolidation time.
+    #:
+    #: Stored on Postgres as ``source_timestamps TIMESTAMPTZ[]`` (see
+    #: migration 037). Length must equal ``len(source_ids)`` when set —
+    #: the lists are positionally aligned.
+    source_timestamps: list[datetime] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1302,6 +1352,14 @@ class PageIndexSection:
     # ``None`` when the LLM didn't surface a specific event.
     occurred_start: datetime | None = None
     occurred_end: datetime | None = None
+    # M31 Fix 2 — opaque session identifier propagated from the source
+    # conversation. Real systems pass session_id when the application
+    # knows which session a query is about; the recall path filters to
+    # facts/sections whose session_id matches. ``None`` for document-
+    # ingest paths (markdown docs have no session concept). Stored as
+    # TEXT column ``session_id`` on ``astrocyte_pi_sections`` via
+    # migration 035.
+    session_id: str | None = None
 
 
 @dataclass
@@ -1337,7 +1395,7 @@ class MemoryFact:
     id: str
     bank_id: str
     text: str
-    fact_type: str  # 'experience' | 'preference' | 'world' | 'plan' | 'opinion' | 'assistant_statement'
+    fact_type: str  # 'experience' | 'preference' | 'world' | 'plan' | 'opinion' (M25: assistant_statement deprecated → experience+speaker='assistant')
     document_id: str | None = None
     line_num: int | None = None
     speaker: str | None = None
@@ -1345,6 +1403,58 @@ class MemoryFact:
     occurred_end: datetime | None = None
     entities: list[str] | None = None
     embedding: list[float] | None = None
+    #: M27 — per-fact confidence (0.0-1.0) emitted by the extraction LLM.
+    #: ``None`` for legacy rows + facts where the LLM did not emit one.
+    #: Surfaced in the answerer context so the model can hedge / abstain
+    #: on low-confidence facts and trust high-confidence ones. Mirrors
+    #: Hindsight's ``memory_units.confidence_score`` (CHECK 0..1).
+    confidence_score: float | None = None
+    #: M27 — when the fact was MENTIONED in conversation, distinct from
+    #: ``occurred_start`` (when the event happened). For section-anchored
+    #: facts this is the section's ``session_date``. ``None`` for
+    #: top-level facts or legacy rows. Hindsight calls this
+    #: ``mentioned_at`` on memory_units; the prompt explicitly tells
+    #: the answerer to distinguish "when it happened" from "when it
+    #: was discussed".
+    mentioned_at: datetime | None = None
+    #: M31 Fix 4 — single resolved absolute date for the fact's most-
+    #: prominent event. Populated at retain time by
+    #: :func:`astrocyte.pipeline.temporal_resolution.resolve_event_date`
+    #: when the fact's text contains a relative phrase ("last Tuesday",
+    #: "3 days ago"), parsed against the section's ``session_date``.
+    #: Distinct from ``occurred_start`` / ``occurred_end`` (LLM-emitted
+    #: explicit event-time range) and ``mentioned_at`` (the discussion
+    #: date). ``None`` when no relative date phrase is detected, when
+    #: the section has no anchor, or for legacy rows. Surfaced in the
+    #: answerer context so gpt-4o-mini doesn't have to do date math
+    #: at query time — the 60-70% LME temporal-reasoning ceiling we
+    #: kept hitting.
+    event_date: datetime | None = None
+
+    @property
+    def chunk_id(self) -> str | None:
+        """Stable composite identity of the source chunk (Hindsight parity).
+
+        The Astrocyte equivalent of Hindsight's ``memory_units.chunk_id``
+        FK. Composed from ``(document_id, line_num)`` — the same
+        positional anchor that already links facts to their
+        :class:`PageIndexSection` source. Returns ``None`` for
+        top-level facts that have no document anchor.
+
+        The format ``"<document_id>:<line_num>"`` is stable across
+        runs as long as the document's section tree is unchanged.
+        Downstream consumers (notably the bench harness's
+        ``format_context_structured`` answerer prompt) use this id
+        to pair each fact with its source-chunk text inline,
+        mirroring Hindsight's ``_format_context_structured`` output.
+
+        See ``docs/_design/`` (M24 architectural fix) for why an
+        explicit identity surface matters even though the underlying
+        ``(document_id, line_num)`` pair is unchanged.
+        """
+        if self.document_id is None or self.line_num is None:
+            return None
+        return f"{self.document_id}:{self.line_num}"
 
 
 @dataclass
@@ -1365,6 +1475,30 @@ class MemoryFactHit:
     score: float
     document_id: str | None = None
     line_num: int | None = None
+    #: M27 — per-fact confidence (0.0-1.0) carried through from
+    #: :attr:`MemoryFact.confidence_score`. ``None`` for legacy rows.
+    confidence_score: float | None = None
+    #: M27 — when the fact was mentioned in conversation (session date),
+    #: distinct from ``occurred_start`` (when the event happened).
+    mentioned_at: datetime | None = None
+    #: M31 Fix 4 — resolved absolute date for the fact's most-prominent
+    #: event, carried through from :attr:`MemoryFact.event_date`. See
+    #: the MemoryFact docstring for the retain-time resolution
+    #: contract. ``None`` for legacy rows or facts whose text had no
+    #: parseable relative phrase.
+    event_date: datetime | None = None
+
+    @property
+    def chunk_id(self) -> str | None:
+        """Stable composite identity of the source chunk (Hindsight parity).
+
+        Mirrors :attr:`MemoryFact.chunk_id`. The bench harness uses
+        this to look up the section text and inject it inline with
+        the fact in the answerer's structured context.
+        """
+        if self.document_id is None or self.line_num is None:
+            return None
+        return f"{self.document_id}:{self.line_num}"
 
 
 # ─── Backward-compat aliases (M18b post-ship rename, 2026-05-17) ───

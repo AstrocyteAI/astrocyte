@@ -70,6 +70,17 @@ class ConversationIngestor:
 
         for chunk in chunks:
             try:
+                # M31 Fix 2 — propagate session_id from the chunk's turns.
+                # The chunker (``astrocyte.conversations.chunking``) groups
+                # turns by ``metadata['session_id']`` so all turns within a
+                # chunk share the same session boundary. Pluck the first
+                # turn's value as the chunk-level identifier; ``None`` is
+                # the back-compat shape when turns were added without
+                # session metadata (pre-M31 callers).
+                chunk_session_id: str | None = None
+                if chunk.turns:
+                    first_meta = chunk.turns[0].metadata or {}
+                    chunk_session_id = first_meta.get("session_id")
                 await self._retain(
                     bank_id=bank_id,
                     content=chunk.rendered_text,
@@ -87,6 +98,10 @@ class ConversationIngestor:
                             chunk.earliest_timestamp.isoformat() if chunk.earliest_timestamp else None
                         ),
                         "latest_timestamp": (chunk.latest_timestamp.isoformat() if chunk.latest_timestamp else None),
+                        # M31 Fix 2 — session boundary identifier; pass-through
+                        # to the retain SPI so adapters can persist it onto
+                        # section/fact rows for query-time ``session_filter``.
+                        "session_id": chunk_session_id,
                     },
                 )
                 emitted += 1

@@ -97,3 +97,26 @@ class DedupDetector:
     def clear_bank(self, bank_id: str) -> None:
         """Clear cache for a bank."""
         self._cache.pop(bank_id, None)
+
+    def remove(self, bank_id: str, memory_id: str) -> bool:
+        """Drop a single ``(memory_id, embedding)`` entry from the cache.
+
+        Called from the forget pipeline so a re-retain of similar content
+        after forget produces a fresh row instead of silently dedup'ing
+        against the cached embedding of the now-deleted memory.
+
+        Returns ``True`` if an entry was removed, ``False`` otherwise.
+        Idempotent — multiple forgets of the same id are safe.
+        """
+        entries = self._cache.get(bank_id)
+        if not entries:
+            return False
+
+        before = len(entries)
+        self._cache[bank_id] = [(mid, emb) for (mid, emb) in entries if mid != memory_id]
+
+        # Reclaim the bank slot entirely if it became empty.
+        if not self._cache[bank_id]:
+            del self._cache[bank_id]
+
+        return len(self._cache.get(bank_id, [])) < before

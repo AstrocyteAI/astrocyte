@@ -188,8 +188,24 @@ def create_mcp_server(
         strategy: str | None = None,
         max_results: int = 10,
         tags: list[str] | None = None,
+        session_id: str | None = None,
     ) -> str:
-        """Retrieve relevant memories for a query.
+        """Retrieve relevant memories for a query — RAW retrieval, no synthesis.
+
+        Returns a ranked list of memory ``hits``. The caller is expected to
+        compose its own answer from these hits (this is the "retrieval
+        primitive" — you, the calling agent, are the answerer).
+
+        **Use `memory_recall` when**: you want to read the underlying
+        memories and synthesize them yourself, OR you need to show citations
+        / quotes verbatim, OR you need fine control over which memories
+        end up in your final response.
+
+        **Use `memory_reflect` instead when**: you want a finished answer
+        you can pass straight through to the user. Reflect does its own
+        synthesis via an agentic loop (multi-step retrieval + reasoning)
+        and returns one composed answer with cited sources. Cheaper for
+        you than calling `memory_recall` + a follow-up LLM round-trip.
 
         Args:
             query: Natural language query.
@@ -198,6 +214,11 @@ def create_mcp_server(
             strategy: Multi-bank strategy: "cascade", "parallel", or "first_match".
             max_results: Maximum number of results.
             tags: Optional tag filter.
+            session_id: M31 Fix 2 — opaque session identifier. When the
+                calling application knows which conversation session the
+                query targets, pass it to scope retrieval to that
+                session's facts/sections. ``None`` (default) preserves
+                cross-session retrieval.
         """
         try:
             max_results = max(1, min(max_results, mcp_cfg.max_results_limit))
@@ -211,6 +232,7 @@ def create_mcp_server(
                     max_results=max_results,
                     tags=tags,
                     context=_resolve_context(),
+                    session_id=session_id,  # M31 Fix 2
                 )
             else:
                 bid = _resolve_bank(bank_id)
@@ -220,6 +242,7 @@ def create_mcp_server(
                     max_results=max_results,
                     tags=tags,
                     context=_resolve_context(),
+                    session_id=session_id,  # M31 Fix 2
                 )
 
             hits = [
@@ -256,7 +279,34 @@ def create_mcp_server(
             max_tokens: int | None = None,
             include_sources: bool = True,
         ) -> str:
-            """Synthesize an answer from memory.
+            """Get a finished, cited answer to a question from memory.
+
+            Returns ``{"answer": <synthesized text>, "sources": [...]}``.
+            The ``answer`` IS the response — Astrocyte's internal agentic
+            loop ran multi-step retrieval + reasoning and composed it.
+
+            **How to use the `answer` field:**
+            - Quote it verbatim, OR paraphrase it into your own voice, OR
+              return it directly to the user.
+            - **Do NOT pass it back through another LLM for re-synthesis.**
+              That double-synthesis pattern loses citation fidelity, doubles
+              cost, and produces strictly worse answers than either pure
+              path. If you want raw memories to compose yourself, use
+              `memory_recall` instead.
+            - `sources` carries the cited memory chunks for traceability /
+              UI rendering — show them as citations next to the answer,
+              don't re-feed them into a synth prompt.
+
+            **Use `memory_reflect` when**: the user asked a question and you
+            want a complete, citation-grounded answer back. Especially good
+            for multi-hop questions ("how did X relate to Y?"), synthesis
+            questions ("summarize what we discussed about Z"), and any
+            question where the answer requires reasoning across several
+            memories.
+
+            **Use `memory_recall` instead when**: you want raw memories
+            (e.g. to show as a search result list) or you want to do your
+            own synthesis with strong opinions on prompt / format.
 
             Args:
                 query: The question to answer from memory.
@@ -264,7 +314,8 @@ def create_mcp_server(
                 banks: Multiple banks (overrides bank_id).
                 strategy: Multi-bank strategy: "cascade", "parallel", or "first_match".
                 max_tokens: Maximum tokens for the synthesized answer.
-                include_sources: Whether to include source memories.
+                include_sources: Whether to include source memories
+                    (default True — needed for showing citations).
             """
             try:
                 if banks:
@@ -688,6 +739,351 @@ def create_mcp_server(
         if default_bank and default_bank not in bank_ids:
             bank_ids.insert(0, default_bank)
         return json.dumps({"banks": bank_ids, "default": default_bank})
+
+    # ── M21 — Mental-model CRUD ─────────────────────────────────────
+    #
+    # Hindsight parity: the 4 mental-model tools mirror Hindsight's
+    # ``_register_create_mental_model`` / ``_update_mental_model`` /
+    # ``_delete_mental_model`` MCP surface, with our addition of
+    # ``memory_list_mental_models`` for inspection. Requires
+    # :meth:`Astrocyte.set_mental_model_store` to have been called
+    # (gateway hosts wire this from the configured Postgres store).
+
+    @mcp.tool()
+    async def memory_list_mental_models(
+        bank_id: str | None = None,
+        scope: str | None = None,
+    ) -> str:
+        """List mental models in a bank.
+
+        Mental models are curated, refreshable summaries — e.g. "user
+        prefers async updates", "Project X status: blocked on review".
+        Use this to discover what authoritative summaries exist before
+        composing an answer.
+
+        Args:
+            bank_id: Bank to list. Uses default if omitted.
+            scope: Optional scope filter (e.g. ``"person:alice"``).
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            models = await brain.list_mental_models(
+                bank_id=bid,
+                scope=scope,
+                context=_resolve_context(),
+            )
+            out = [
+                {
+                    "model_id": m.model_id,
+                    "title": m.title,
+                    "scope": m.scope,
+                    "kind": m.kind,
+                    "revision": m.revision,
+                    "refreshed_at": m.refreshed_at.isoformat() if m.refreshed_at else None,
+                    "source_count": len(m.source_ids),
+                }
+                for m in models
+            ]
+            return json.dumps({"models": out})
+        except Exception as exc:
+            logger.exception("memory_list_mental_models failed")
+            return json.dumps({"models": [], "error": type(exc).__name__})
+
+    @mcp.tool()
+    async def memory_create_mental_model(
+        model_id: str,
+        title: str,
+        content: str | None = None,
+        sections: list[dict] | None = None,
+        scope: str = "bank",
+        bank_id: str | None = None,
+    ) -> str:
+        """Author a new mental model.
+
+        Provide ONE of:
+
+        - ``content`` — raw markdown string; the structured doc is
+          parsed lazily on first refresh (legacy path).
+        - ``sections`` — list of section dicts matching the
+          ``StructuredDocument`` JSON shape; the structured doc is
+          populated immediately so future ``memory_update_mental_model``
+          calls can target sections by id (recommended path).
+
+        Use ``memory_create_directive`` instead for hard-rule
+        directives (those are mental models with ``kind="directive"``).
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            model = await brain.create_mental_model(
+                model_id=model_id,
+                title=title,
+                content=content,
+                sections=sections,
+                scope=scope,
+                bank_id=bid,
+                context=_resolve_context(),
+            )
+            return json.dumps(
+                {
+                    "model_id": model.model_id,
+                    "revision": model.revision,
+                    "kind": model.kind,
+                    "title": model.title,
+                }
+            )
+        except Exception as exc:
+            logger.exception("memory_create_mental_model failed")
+            return json.dumps({"model_id": None, "error": type(exc).__name__})
+
+    @mcp.tool()
+    async def memory_update_mental_model(
+        model_id: str,
+        operations: list[dict],
+        bank_id: str | None = None,
+    ) -> str:
+        """Apply structured delta operations to an existing mental model.
+
+        Operations let you modify a document without re-emitting
+        unchanged content — invaluable for refresh flows where the
+        LLM would otherwise drift on sections it didn't intend to
+        touch. Each operation is a dict with an ``op`` key; see
+        :mod:`astrocyte.pipeline.delta_ops` for the full schema:
+
+        - ``append_block`` / ``insert_block`` / ``replace_block`` /
+          ``remove_block`` — block-level edits within a section.
+        - ``add_section`` / ``remove_section`` / ``replace_section_blocks``
+          / ``rename_section`` — section-level edits.
+
+        Conservative-failure contract: invalid ops (unknown section
+        ids, out-of-range indices, malformed payloads) drop with a
+        logged reason in the response's ``skipped`` list; the document
+        never gets worse than its input.
+
+        Returns ``{"changed": bool, "revision": int, "applied": [...],
+        "skipped": [...]}`` so the caller can audit which ops landed.
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            result = await brain.update_mental_model(
+                model_id=model_id,
+                operations=operations,
+                bank_id=bid,
+                context=_resolve_context(),
+            )
+            if result is None:
+                return json.dumps({"changed": False, "error": "model not found"})
+            model, summary = result
+            return json.dumps(
+                {
+                    "changed": summary.get("changed", False),
+                    "revision": model.revision,
+                    "applied": summary.get("applied", []),
+                    "skipped": summary.get("skipped", []),
+                }
+            )
+        except Exception as exc:
+            logger.exception("memory_update_mental_model failed")
+            return json.dumps({"changed": False, "error": type(exc).__name__})
+
+    @mcp.tool()
+    async def memory_delete_mental_model(
+        model_id: str,
+        bank_id: str | None = None,
+    ) -> str:
+        """Soft-delete a mental model. Returns whether it existed."""
+        try:
+            bid = _resolve_bank(bank_id)
+            ok = await brain.delete_mental_model(
+                model_id,
+                bank_id=bid,
+                context=_resolve_context(),
+            )
+            return json.dumps({"deleted": ok})
+        except Exception as exc:
+            logger.exception("memory_delete_mental_model failed")
+            return json.dumps({"deleted": False, "error": type(exc).__name__})
+
+    @mcp.tool()
+    async def memory_refresh_mental_model(
+        model_id: str,
+        new_source_ids: list[str],
+        bank_id: str | None = None,
+    ) -> str:
+        """Re-derive a mental model from its sources after new memories have been retained.
+
+        Hindsight parity for ``mental_model.refresh()``. When new
+        memories that pertain to an existing model land via retain,
+        call this to fold them into the model's ``source_ids`` and
+        bump the revision. Use ``memory_update_mental_model`` for
+        targeted edits via delta ops; use this when the model should
+        be re-derived from an expanded provenance set.
+
+        Returns ``{"model_id", "revision", "source_count"}`` on
+        success or ``{"error": "model not found"}`` if the model
+        doesn't exist.
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            model = await brain.refresh_mental_model(
+                model_id,
+                new_source_ids,
+                bank_id=bid,
+                context=_resolve_context(),
+            )
+            if model is None:
+                return json.dumps({"model_id": model_id, "error": "model not found"})
+            return json.dumps(
+                {
+                    "model_id": model.model_id,
+                    "revision": model.revision,
+                    "source_count": len(model.source_ids),
+                }
+            )
+        except Exception as exc:
+            logger.exception("memory_refresh_mental_model failed")
+            return json.dumps({"model_id": model_id, "error": type(exc).__name__})
+
+    @mcp.tool()
+    async def memory_create_directive(
+        rule_text: str,
+        directive_id: str | None = None,
+        scope: str = "bank",
+        bank_id: str | None = None,
+    ) -> str:
+        """Author a user-curated hard-rule directive.
+
+        Directives are mental models with ``kind="directive"``. They
+        participate in the same ``search_mental_models`` retrieval as
+        general / preference models, but the discriminator signals to
+        the answerer that the rule should be applied as a preference
+        override rather than as one input among many.
+
+        Architecturally replaces the M18a-2 ``directive_compile``
+        auto-extraction path that was deprecated in M19 (auto-compressed
+        directives replicated a −30pp SSP regression because they
+        overrode original preference nuance). User-authored directives
+        avoid that failure mode by definition — the user gets exactly
+        the rule they intended.
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            model = await brain.create_directive(
+                rule_text=rule_text,
+                directive_id=directive_id,
+                scope=scope,
+                bank_id=bid,
+                context=_resolve_context(),
+            )
+            return json.dumps(
+                {
+                    "model_id": model.model_id,
+                    "kind": model.kind,
+                    "revision": model.revision,
+                }
+            )
+        except Exception as exc:
+            logger.exception("memory_create_directive failed")
+            return json.dumps({"model_id": None, "error": type(exc).__name__})
+
+    # ── M21 — Observation CRUD ─────────────────────────────────────
+
+    @mcp.tool()
+    async def memory_list_observations(
+        bank_id: str | None = None,
+        scope: str | None = None,
+        trend: str | None = None,
+        limit: int = 100,
+    ) -> str:
+        """List observations in a bank, optionally filtered by trend.
+
+        Observations are auto-consolidated distillations of raw
+        memories (e.g. "user prefers iced coffee in summer"). Each
+        carries a computed ``trend`` — one of ``new`` /
+        ``strengthening`` / ``stable`` / ``weakening`` / ``stale``
+        derived from the evidence timestamps. Use ``trend`` to filter
+        for fresh insights (``new``, ``strengthening``) or to audit
+        stale patterns that may no longer apply.
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            rows = await brain.list_observations(
+                bank_id=bid,
+                scope=scope,
+                trend=trend,
+                limit=limit,
+                context=_resolve_context(),
+            )
+            return json.dumps({"observations": rows})
+        except Exception as exc:
+            logger.exception("memory_list_observations failed")
+            return json.dumps({"observations": [], "error": type(exc).__name__})
+
+    @mcp.tool()
+    async def memory_get_observation(
+        observation_id: str,
+        bank_id: str | None = None,
+    ) -> str:
+        """Fetch one observation by id. Returns null if not found."""
+        try:
+            bid = _resolve_bank(bank_id)
+            row = await brain.get_observation(
+                observation_id,
+                bank_id=bid,
+                context=_resolve_context(),
+            )
+            return json.dumps({"observation": row})
+        except Exception as exc:
+            logger.exception("memory_get_observation failed")
+            return json.dumps({"observation": None, "error": type(exc).__name__})
+
+    @mcp.tool()
+    async def memory_create_observation(
+        text: str,
+        source_ids: list[str] | None = None,
+        scope: str | None = None,
+        confidence: float = 0.9,
+        bank_id: str | None = None,
+    ) -> str:
+        """Hand-author an observation (bypasses the autonomous consolidator).
+
+        Use this when an agent or user wants to assert a fact directly
+        without going through retain → consolidate. The observation
+        becomes immediately visible to the recall pipeline's
+        ``observation`` strategy and to ``search_observations`` in
+        the agentic reflect loop.
+        """
+        try:
+            bid = _resolve_bank(bank_id)
+            row = await brain.create_observation(
+                text=text,
+                source_ids=source_ids,
+                scope=scope,
+                confidence=confidence,
+                bank_id=bid,
+                context=_resolve_context(),
+            )
+            return json.dumps({"observation": row})
+        except Exception as exc:
+            logger.exception("memory_create_observation failed")
+            return json.dumps({"observation": None, "error": type(exc).__name__})
+
+    @mcp.tool()
+    async def memory_delete_observation(
+        observation_id: str,
+        bank_id: str | None = None,
+    ) -> str:
+        """Delete one observation from the dedicated observations bank."""
+        try:
+            bid = _resolve_bank(bank_id)
+            ok = await brain.delete_observation(
+                observation_id,
+                bank_id=bid,
+                context=_resolve_context(),
+            )
+            return json.dumps({"deleted": ok})
+        except Exception as exc:
+            logger.exception("memory_delete_observation failed")
+            return json.dumps({"deleted": False, "error": type(exc).__name__})
 
     # ── memory_health ──────────────────────────────────────────────
 

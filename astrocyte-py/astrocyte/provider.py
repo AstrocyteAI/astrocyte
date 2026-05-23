@@ -581,10 +581,16 @@ class PageIndexStore(Protocol):
         query_embedding: list[float],
         *,
         top_k: int = 20,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         """PR2 commit B / semantic strategy: cosine-similarity over
         ``summary_embedding``. Returns ``(document_id, line_num, score)``
-        tuples, ordered by similarity desc. Score is in [0, 1] (1 - distance)."""
+        tuples, ordered by similarity desc. Score is in [0, 1] (1 - distance).
+
+        M31 Fix 2: ``session_filter`` (opaque str) scopes results to
+        sections whose ``session_id`` matches. ``None`` (default)
+        retrieves cross-session.
+        """
 
     async def search_sections_keyword(
         self,
@@ -594,6 +600,7 @@ class PageIndexStore(Protocol):
         top_k: int = 20,
         speaker: str | None = None,
         document_id: str | None = None,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         """PR2 commit B / keyword strategy: full-text search (``tsvector``)
         over section titles + summaries. Returns ``(document_id,
@@ -602,7 +609,10 @@ class PageIndexStore(Protocol):
         The optional ``document_id`` filter (PR2.6) scopes the search
         to a single document — used by ``temporal_arithmetic.find_event_date``
         to avoid bank-wide top-K starvation when 50+ documents share a
-        bank and the matching one isn't in the unfiltered top-5."""
+        bank and the matching one isn't in the unfiltered top-5.
+
+        M31 Fix 2: ``session_filter`` (opaque str) scopes to sections
+        whose ``session_id`` matches."""
 
     async def search_sections_by_entities(
         self,
@@ -610,10 +620,14 @@ class PageIndexStore(Protocol):
         entity_names: list[str],
         *,
         top_k: int = 20,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         """PR2 commit B / entity strategy: Hindsight's CTE pattern.
         Returns ``(document_id, line_num, score)`` where score is the
-        count of distinct matching entity_names per section."""
+        count of distinct matching entity_names per section.
+
+        M31 Fix 2: ``session_filter`` joins to sections to scope by
+        ``session_id``."""
 
     async def search_sections_temporal(
         self,
@@ -621,11 +635,15 @@ class PageIndexStore(Protocol):
         date_range: tuple[datetime, datetime],
         *,
         top_k: int = 20,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         """PR2 commit B / temporal strategy: date-range filter on
         ``session_date`` (uses the partial btree index from migration
         015). Score is uniform (1.0) — temporal is a filter, not a
-        ranker; ranking happens in fusion."""
+        ranker; ranking happens in fusion.
+
+        M31 Fix 2: ``session_filter`` scopes to sections whose
+        ``session_id`` matches."""
 
     async def expand_section_links(
         self,
@@ -697,8 +715,15 @@ class PageIndexStore(Protocol):
         top_k: int = 20,
         document_id: str | None = None,
         fact_type: str | None = None,
+        session_filter: str | None = None,
     ) -> list["PageIndexFactHit"]:
-        """M12.1: cosine-similarity search over fact embeddings."""
+        """M12.1: cosine-similarity search over fact embeddings.
+
+        M31 Fix 2: ``session_filter`` scopes results to facts whose
+        anchoring section has matching ``session_id`` (EXISTS subquery
+        in the Postgres adapter, _matches_session helper in the
+        in-memory adapter). Top-level facts (no anchor) are excluded
+        when ``session_filter`` is set."""
 
     async def search_facts_by_entity(
         self,
@@ -707,11 +732,22 @@ class PageIndexStore(Protocol):
         *,
         top_k: int = 50,
         document_id: str | None = None,
+        fact_type: str | None = None,
+        session_filter: str | None = None,
     ) -> list["PageIndexFactHit"]:
         """M12.1: list facts whose ``entities`` array contains
         ``entity_name`` (or a case-insensitive variant). Used by the
         agent's counting tool — e.g. for "how many doctors" the agent
-        queries ``entity_name="role:doctor"`` and counts the rows."""
+        queries ``entity_name="role:doctor"`` and counts the rows.
+
+        M31 Fix 2: ``session_filter`` mirrors the semantic search
+        contract. For cross-session link-expansion usage (M27),
+        ``session_filter`` should be ``None`` (the default) so the
+        whole point of cross-session traversal is preserved.
+
+        M34-3: ``fact_type`` filters to a single fact_type (e.g.
+        ``'preference'``) so per-fact-type segmented retrieval can
+        produce independent candidate pools per type."""
 
     async def search_facts_temporal(
         self,
@@ -720,10 +756,59 @@ class PageIndexStore(Protocol):
         *,
         top_k: int = 50,
         document_id: str | None = None,
+        fact_type: str | None = None,
+        session_filter: str | None = None,
     ) -> list["PageIndexFactHit"]:
         """M12.1: list facts whose ``occurred_start`` falls in the
         date range. Powers temporal-arithmetic queries that previously
-        had to resort to keyword search over section summaries."""
+        had to resort to keyword search over section summaries.
+
+        M31 Fix 2: ``session_filter`` scopes to one session's
+        temporal facts.
+
+        M34-3: ``fact_type`` filters to a single fact_type so the
+        temporal channel's per-type segment doesn't leak across types."""
+
+    async def search_facts_keyword(
+        self,
+        bank_id: str,
+        query: str,
+        *,
+        top_k: int = 20,
+        document_id: str | None = None,
+        fact_type: str | None = None,
+        session_filter: str | None = None,
+    ) -> list["PageIndexFactHit"]:
+        """M31c — Hindsight-parity BM25/full-text search over fact
+        text. Complements ``search_facts_semantic`` (vector cosine):
+        BM25 catches specific noun/number matches (e.g. "500 Mbps",
+        "Philips LED", "University of Melbourne") that semantic
+        embeddings tend to under-weight relative to thematically
+        similar but topically off content.
+
+        Implementations:
+
+        - Postgres adapter: ``plainto_tsquery`` + ``ts_rank_cd`` over
+          ``to_tsvector('english', fact_text)`` (computed on-the-fly;
+          no schema migration needed). Mirrors the
+          ``search_sections_keyword`` pattern that's been validated
+          since M9.
+        - InMemory adapter: token-overlap scoring (count of distinct
+          query tokens appearing in fact text), case-insensitive.
+
+        Returns ``(document_id, line_num, score)``-bearing
+        ``PageIndexFactHit`` records, ordered by score desc. Score is
+        rank-rather-than-similarity (BM25 magnitudes are not directly
+        comparable to vector cosine — RRF fusion in ``fact_recall``
+        handles the scale difference).
+
+        Diagnostic that motivated this: SSU bench failures showed the
+        cross-encoder rerank can rank a specific factoid statement
+        ("User upgraded to 500 Mbps internet plan") deep in the
+        candidate pool while surfacing thematically-related but
+        irrelevant content ("commute", "road trip") at the top.
+        BM25 catches the literal-keyword match that semantic alone
+        misses."""
 
     async def count_facts_matching(
         self,
@@ -974,6 +1059,76 @@ class MentalModelStore(Protocol):
         it didn't exist or was already deleted. Implementations may keep
         the row for audit (deleted_at timestamp) or hard-delete; either
         is acceptable as long as ``get`` returns ``None`` afterward.
+        """
+        pass
+
+    async def update_via_ops(
+        self,
+        model_id: str,
+        bank_id: str,
+        operations_json: list[dict],
+    ) -> "tuple[int, dict] | None":
+        """M21 — apply structured delta operations to a mental model.
+
+        Loads the current model, applies the operations against its
+        ``structured_doc`` via
+        :func:`astrocyte.pipeline.delta_ops.apply_operations`,
+        re-renders ``content`` from the new doc, and upserts the
+        result. Lazy-migrates legacy rows whose ``structured_doc`` is
+        ``None`` by parsing the raw ``content`` markdown on first
+        refresh.
+
+        Args:
+            model_id: The model to modify.
+            bank_id: Tenant-scoped bank identifier.
+            operations_json: List of JSON-shaped op dicts (each
+                matching one of the :class:`Operation` variants in
+                :mod:`astrocyte.pipeline.delta_ops`). Schema-invalid
+                ops are dropped by the operation parser; per-op
+                validation drops ops that reference unknown sections.
+
+        Returns:
+            ``(new_revision, applied_delta_summary)`` on success.
+            ``None`` when the model doesn't exist.
+            The summary is the audit log from
+            :class:`~astrocyte.pipeline.delta_ops.AppliedDelta` —
+            ``{"applied": [...], "skipped": [...], "changed": bool}``
+            — useful for telemetry / debugging the LLM's output.
+
+        Conservative-failure contract: invalid ops drop with a logged
+        reason; the document never gets worse than its input.
+        """
+        pass
+
+    async def refresh(
+        self,
+        model_id: str,
+        bank_id: str,
+        new_source_ids: list[str],
+    ) -> "MentalModel | None":
+        """M28 — re-derive a mental model from an expanded source set.
+
+        Hindsight parity: after retain adds new memories that pertain to
+        an existing mental model, ``refresh`` re-runs the compile against
+        the extended ``source_ids`` and bumps the revision. The new
+        sources are merged into the existing ``source_ids`` (deduped,
+        order-preserving for existing entries).
+
+        Args:
+            model_id: The model to refresh.
+            bank_id: Tenant-scoped bank identifier.
+            new_source_ids: Source-memory ids to fold into the model's
+                provenance. Duplicates of existing ids are deduped.
+
+        Returns:
+            The refreshed :class:`MentalModel` (post-upsert) with the
+            new revision number and merged source ids. ``None`` if the
+            model doesn't exist.
+
+        Future enhancement: the production implementation will invoke
+        the LLM compile pipeline against the merged source set; the
+        current SPI provides the surface so callers (gateway, MCP)
+        can wire the refresh flow today.
         """
         pass
 

@@ -22,6 +22,7 @@ from astrocyte.types import (
 if TYPE_CHECKING:
     from astrocyte.config import AstrocyteConfig
     from astrocyte.pipeline.orchestrator import PipelineOrchestrator
+    from astrocyte.pipeline.pageindex_pipeline import PageIndexPipeline
     from astrocyte.pipeline.tiered_retrieval import TieredRetriever
     from astrocyte.provider import EngineProvider
     from astrocyte.types import EngineCapabilities
@@ -39,12 +40,18 @@ class ProviderDispatcher:
         pipeline: PipelineOrchestrator | None = None,
         capabilities: EngineCapabilities | None = None,
         tiered_retriever: TieredRetriever | None = None,
+        pageindex_pipeline: PageIndexPipeline | None = None,
     ) -> None:
         self._config = config
         self.engine_provider = engine_provider
         self.pipeline = pipeline
         self.capabilities = capabilities
         self.tiered_retriever = tiered_retriever
+        # M32 — when set, ``recall()`` routes here in preference to the
+        # legacy ``engine_provider`` / ``pipeline``. This is the PageIndex
+        # stack — the same one the bench has validated since M14. See
+        # docs/_design/m32-stack-unification.md for the rationale.
+        self.pageindex_pipeline = pageindex_pipeline
 
     @property
     def provider_name(self) -> str:
@@ -70,6 +77,18 @@ class ProviderDispatcher:
         return result
 
     async def recall(self, request: RecallRequest) -> RecallResult:
+        # M32 — PageIndex stack takes precedence when configured. This
+        # is the same pipeline the bench harness has validated since
+        # M14; routing public API calls through it closes the long-
+        # standing bench-vs-API parity gap. ``external_context`` RRF
+        # merge still applies on top of the result.
+        if self.pageindex_pipeline is not None:
+            result = await self.pageindex_pipeline.recall(request)
+            if request.external_context:
+                return merge_external_into_recall_result(
+                    result, request.external_context, request.max_results,
+                )
+            return result
         if self.engine_provider:
             if self.tiered_retriever is not None and self._config.tiered_retrieval.full_recall == "hybrid":
                 return await self.tiered_retriever.retrieve(request)
