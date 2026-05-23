@@ -17,11 +17,28 @@ import pytest
 
 from astrocyte.pipeline.temporal_resolution import resolve_event_date
 
+
+def _have_dateparser() -> bool:
+    """Mirror of the guard in test_temporal_dateparser.py — these
+    tests exercise the real dateparser library via ``resolve_event_date``
+    and silently return None when the optional dep is missing (the
+    production graceful-degradation contract). Skip them in test envs
+    that don't install dateparser (e.g. CI's bench-deps-excluded run)
+    so the absence-of-library doesn't masquerade as a logic regression.
+    """
+    try:
+        import dateparser  # noqa: F401, PLC0415
+        return True
+    except ImportError:
+        return False
+
+
 # ────────────────────────────────────────────────────────────────────────
 # 1. Pure-function contract
 # ────────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.skipif(not _have_dateparser(), reason="dateparser not installed")
 class TestResolver:
     def test_returns_none_for_empty_text(self) -> None:
         assert resolve_event_date("", datetime(2024, 5, 8)) is None
@@ -78,6 +95,7 @@ class TestResolver:
 # ────────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.skipif(not _have_dateparser(), reason="dateparser not installed")
 class TestRetainPipeline:
     @staticmethod
     def _make_provider(text: str):
