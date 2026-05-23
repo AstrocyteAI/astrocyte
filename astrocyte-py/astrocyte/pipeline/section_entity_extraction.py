@@ -36,7 +36,6 @@ See:
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -44,6 +43,7 @@ if TYPE_CHECKING:
     from astrocyte.provider import LLMProvider
     from astrocyte.types import PageIndexSection
 
+from astrocyte.pipeline._json_tolerant import looks_truncated, tolerant_json_loads
 from astrocyte.types import Message, PageIndexSectionEntity
 
 logger = logging.getLogger("astrocyte.pipeline.section_entity_extraction")
@@ -146,21 +146,52 @@ async def extract_entities_for_section(
     completion = await provider.complete(
         messages=[Message(role="user", content=msg)],
         model=model,
-        max_tokens=500,
+        max_tokens=750,
         temperature=0.0,
         response_format={"type": "json_object"},
     )
 
-    try:
-        parsed = json.loads(completion.text)
-        raw = parsed.get("entities") or []
-    except json.JSONDecodeError:
+    # Tolerant parse handles markdown-fence wrapping / leading-prose noise
+    # before we give up. On parse failure, retry once with a stricter
+    # system reminder unless the response looks budget-truncated (a retry
+    # under the same cap won't help).
+    parsed = tolerant_json_loads(completion.text)
+    if parsed is None and not looks_truncated(completion.text):
+        try:
+            retry = await provider.complete(
+                messages=[
+                    Message(
+                        role="system",
+                        content=(
+                            "Return ONLY a valid JSON object. "
+                            "No markdown fences. No prose."
+                        ),
+                    ),
+                    Message(role="user", content=msg),
+                ],
+                model=model,
+                max_tokens=750,
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "section_entity_extraction: retry LLM call failed doc=%s line=%d: %s",
+                document_id,
+                section.line_num,
+                exc,
+            )
+            retry = None
+        if retry is not None:
+            parsed = tolerant_json_loads(retry.text)
+    if not isinstance(parsed, dict):
         logger.warning(
             "section_entity_extraction: JSON parse failed for doc=%s line=%d",
             document_id,
             section.line_num,
         )
         return []
+    raw = parsed.get("entities") or []
 
     # Dedupe case-insensitively, preserve first-seen casing, cap.
     seen: set[str] = set()

@@ -64,12 +64,28 @@ class MentalModelService:
         content: str,
         scope: str = "bank",
         source_ids: list[str] | None = None,
+        kind: str = "general",
+        structured_doc: dict | None = None,
+        source_timestamps: list[datetime] | None = None,
     ) -> MentalModel:
         """Create or refresh a mental model.
 
         Upsert semantics — calling create with an existing ``model_id``
         bumps the revision and archives the prior version. Use
         :meth:`refresh` when you specifically want to fail on missing.
+
+        ``kind`` and ``structured_doc`` (M21) let callers populate the
+        sub-type discriminator and the typed-document representation
+        in the single initial upsert — avoids a double-bump when
+        creating ``directive``-kind models or sections-shaped docs.
+
+        ``source_timestamps`` (M40) is an optional list of per-source
+        evidence timestamps, positionally aligned with ``source_ids``.
+        When omitted, the store persists ``NULL`` and trend computation
+        downstream falls back to ``refreshed_at`` as a single-point
+        anchor. When provided, must equal ``len(source_ids)`` in length
+        (the store drops mismatched arrays rather than persist a
+        wrong-alignment record).
         """
         # ``revision`` and ``refreshed_at`` are placeholders the store
         # overwrites — pass anything valid here.
@@ -82,6 +98,9 @@ class MentalModelService:
             source_ids=list(source_ids or []),
             revision=0,
             refreshed_at=datetime.now(UTC),
+            kind=kind,
+            structured_doc=structured_doc,
+            source_timestamps=source_timestamps,
         )
         await self._store.upsert(draft, bank_id)
         stored = await self._store.get(model_id, bank_id)
@@ -131,3 +150,60 @@ class MentalModelService:
 
     async def delete(self, bank_id: str, model_id: str) -> bool:
         return await self._store.delete(model_id, bank_id)
+
+    async def update_via_ops(
+        self,
+        *,
+        bank_id: str,
+        model_id: str,
+        operations: list[dict],
+    ) -> "tuple[MentalModel, dict] | None":
+        """M21 — apply structured delta operations to a mental model.
+
+        Thin wrapper around
+        :meth:`astrocyte.provider.MentalModelStore.update_via_ops`
+        that re-fetches the post-update model for the caller. Returns
+        ``None`` when the model doesn't exist; otherwise
+        ``(updated_model, applied_delta_summary)``.
+
+        ``applied_delta_summary`` is the audit trail from
+        :class:`~astrocyte.pipeline.delta_ops.AppliedDelta` —
+        ``{"applied": [...], "skipped": [...], "changed": bool}``
+        — exposed so callers (incl. the MCP tool) can surface which
+        ops landed and which the validator dropped.
+        """
+        result = await self._store.update_via_ops(model_id, bank_id, operations)
+        if result is None:
+            return None
+        _new_revision, summary = result
+        updated = await self._store.get(model_id, bank_id)
+        if updated is None:
+            return None
+        return (updated, summary)
+
+    async def refresh_from_sources(
+        self,
+        *,
+        bank_id: str,
+        model_id: str,
+        new_source_ids: list[str],
+    ) -> MentalModel | None:
+        """M28 — re-derive a model from an extended source set.
+
+        Thin wrapper around
+        :meth:`astrocyte.provider.MentalModelStore.refresh` that first
+        verifies the model exists (so the caller can distinguish
+        "missing model" from "store refresh returned None"). Returns
+        the refreshed :class:`MentalModel` or ``None`` if the model
+        doesn't exist.
+
+        Hindsight parity: this is the per-model analogue of the
+        ``mental_model_compile`` pipeline — after retain adds new
+        memories that pertain to an existing model, this re-runs the
+        compile against the extended ``source_ids`` and bumps the
+        revision.
+        """
+        existing = await self._store.get(model_id, bank_id)
+        if existing is None:
+            return None
+        return await self._store.refresh(model_id, bank_id, list(new_source_ids))

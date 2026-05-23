@@ -173,6 +173,7 @@ async def section_recall(
     enable_spreading_activation: bool = False,
     spreading_seed_count: int = 10,
     spreading_top_k: int = 10,
+    session_filter: str | None = None,
 ) -> SectionRecallResult:
     """Run all selected strategies in parallel, RRF-fuse, return.
 
@@ -218,6 +219,7 @@ async def section_recall(
                 bank_id,
                 qvec,
                 top_k=semantic_seed_count,
+                session_filter=session_filter,  # M31 Fix 2
             )
             return StrategyResult(
                 strategy="semantic",
@@ -241,6 +243,7 @@ async def section_recall(
                 question,
                 top_k=per_strategy_top_k,
                 speaker=speaker,
+                session_filter=session_filter,  # M31 Fix 2
             )
             return StrategyResult(
                 strategy="keyword",
@@ -264,6 +267,7 @@ async def section_recall(
                 bank_id,
                 question_entities,
                 top_k=per_strategy_top_k,
+                session_filter=session_filter,  # M31 Fix 2
             )
             return StrategyResult(
                 strategy="entity",
@@ -287,6 +291,7 @@ async def section_recall(
                 bank_id,
                 date_range,
                 top_k=per_strategy_top_k,
+                session_filter=session_filter,  # M31 Fix 2
             )
             return StrategyResult(
                 strategy="temporal",

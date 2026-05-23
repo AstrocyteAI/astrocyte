@@ -470,6 +470,12 @@ class PipelineOrchestrator:
         # LLM call per recall.  Enable for multi-hop / paraphrase-heavy workloads.
         self.enable_hyde = enable_hyde
         self._dedup = DedupDetector(similarity_threshold=0.95)
+        # Forget-cache invalidation: ``Astrocyte.forget`` calls this hook so
+        # the in-memory dedup cache doesn't keep matching against memories
+        # that are gone from the vector store. Without this, re-retain after
+        # forget silently returns ``stored=False, error="All chunks are
+        # near-duplicates"`` for similar content (see invalidate_dedup_cache
+        # below).
         #: Per-stage retain timing aggregator. No-op unless
         #: ``ASTROCYTE_RETAIN_PROFILE=1`` is set in the environment;
         #: when enabled, retain_many wraps suspect call sites and the
@@ -634,6 +640,34 @@ class PipelineOrchestrator:
     def reset_token_counter(self) -> int:
         """Return accumulated token count and reset to zero."""
         return self._tracker.reset_tokens()
+
+    def invalidate_dedup_cache(
+        self,
+        bank_id: str,
+        memory_ids: list[str] | None = None,
+    ) -> None:
+        """Drop forgotten memories from the in-memory dedup cache.
+
+        Called by ``Astrocyte.forget`` after the underlying store has
+        accepted the forget. Without this, a re-retain of similar content
+        after forget hits the in-memory ``DedupDetector`` cache (still
+        holding the forgotten memory's embedding) and the pipeline
+        short-circuits with ``RetainResult(stored=False, deduplicated=True,
+        error="All chunks are near-duplicates")`` — a silent no-op from
+        the caller's perspective.
+
+        Args:
+            bank_id: The bank the forget targeted.
+            memory_ids: Specific memories to drop from the cache. ``None``
+                (the whole-bank or tag-filtered forget path) clears the
+                entire bank's cache — coarser but always-correct.
+        """
+        if memory_ids is None:
+            self._dedup.clear_bank(bank_id)
+            return
+
+        for mid in memory_ids:
+            self._dedup.remove(bank_id, mid)
 
     async def _attach_entity_name_embeddings(self, entities: list[Entity]) -> None:
         """Embed each entity's name and attach the vector to ``entity.embedding``.
@@ -1987,6 +2021,7 @@ class PipelineOrchestrator:
             fact_types=request.fact_types,
             time_range=request.time_range,
             as_of=request.as_of,  # M9: time-travel filter
+            session_id=request.session_id,  # M31 Fix 2
         )
 
         # 2a. Query-level temporal constraint extraction. The analyzer
@@ -2034,6 +2069,7 @@ class PipelineOrchestrator:
                             c.end_date or far_future,
                         ),
                         as_of=filters.as_of,
+                        session_id=filters.session_id,  # M31 Fix 2 — preserve
                     )
                     _logger.info(
                         "query_analyzer extracted temporal range %s",

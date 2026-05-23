@@ -194,6 +194,17 @@ async def compile_mental_models_for_document(
     now = datetime.now(tz=timezone.utc)
     scope = f"document:{document_id}"
     upserted: list[str] = []
+    # M40 — Anchor the MM's evidence timestamp in conversation time, not
+    # wall-clock-now. Each compiled MM summarizes the whole document, so
+    # the earliest section date is the right "when did this evidence
+    # start existing" anchor. Single-point (matches the synthetic single
+    # source_id ``"{document_id}:doc"``); compute_trend will classify
+    # NEW (recent doc relative to reference_date) or STALE (old doc).
+    _section_dates = [
+        s.session_date for s in sections
+        if getattr(s, "session_date", None) is not None
+    ]
+    _evidence_anchor: datetime | None = min(_section_dates) if _section_dates else None
     for entry in raw_models:
         if not isinstance(entry, dict):
             continue
@@ -211,6 +222,7 @@ async def compile_mental_models_for_document(
             source_ids=[f"{document_id}:doc"],
             revision=1,  # upsert assigns the real revision number
             refreshed_at=now,
+            source_timestamps=[_evidence_anchor] if _evidence_anchor is not None else None,
         )
         try:
             await mental_model_store.upsert(mm, bank_id)

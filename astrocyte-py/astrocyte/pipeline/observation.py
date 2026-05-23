@@ -43,12 +43,13 @@ cap (default 10) limits context window growth.
 
 Metadata schema on observation VectorItems
 ------------------------------------------
-``_obs_proof_count``  int (stored as int)   — # supporting memories
-``_obs_source_ids``   str (JSON list)       — raw memory IDs that contributed
-``_obs_confidence``   str (float, 0–1)      — LLM-assigned confidence
-``_obs_updated_at``   str (ISO datetime)    — last mutation timestamp
-``_obs_scope``        str                   — scope key ("bank" or caller tag)
-``_obs_freshness``    str                   — "fresh" | "stale"
+``_obs_proof_count``        int (stored as int)   — # supporting memories
+``_obs_source_ids``         str (JSON list)       — raw memory IDs that contributed
+``_obs_source_timestamps``  str (JSON list)       — ISO timestamps parallel to source_ids; feeds :func:`astrocyte.pipeline.trend.compute_trend` (M21)
+``_obs_confidence``         str (float, 0–1)      — LLM-assigned confidence
+``_obs_updated_at``         str (ISO datetime)    — last mutation timestamp
+``_obs_scope``              str                   — scope key ("bank" or caller tag)
+``_obs_freshness``          str                   — "fresh" | "stale"
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from astrocyte.pipeline.trend import Trend
     from astrocyte.provider import LLMProvider, VectorStore
     from astrocyte.types import VectorHit
 
@@ -111,6 +113,57 @@ class ObservationConsolidationResult:
     deleted: int = 0
     skipped: int = 0
     errors: list[str] = field(default_factory=list)
+
+
+def compute_observation_trend(
+    metadata: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> "Trend":
+    """Compute :class:`~astrocyte.pipeline.trend.Trend` for a stored observation.
+
+    Reads ``_obs_source_timestamps`` (the per-source ISO-timestamp list
+    populated by :meth:`ObservationConsolidator._apply_create` /
+    :meth:`_apply_update`) and feeds it to
+    :func:`astrocyte.pipeline.trend.compute_trend`.
+
+    Fallback path when ``_obs_source_timestamps`` is absent (legacy
+    observations created before M21 / external writers): use
+    ``_obs_updated_at`` as a single-point timestamp. This is coarser
+    than per-source tracking but never returns garbage —
+    :func:`compute_trend` will classify it as NEW / STALE based on the
+    one timestamp's age.
+    """
+    from astrocyte.pipeline.trend import Trend, compute_trend
+
+    meta = metadata or {}
+    raw = meta.get("_obs_source_timestamps")
+    timestamps: list[datetime] = []
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                for ts in parsed:
+                    if isinstance(ts, str) and ts:
+                        try:
+                            timestamps.append(datetime.fromisoformat(ts.replace("Z", "+00:00")))
+                        except ValueError:
+                            continue
+        except json.JSONDecodeError:
+            pass
+
+    if not timestamps:
+        # Legacy fallback: use the updated_at as a single-point timestamp.
+        fallback = meta.get("_obs_updated_at") or meta.get("_created_at")
+        if isinstance(fallback, str) and fallback:
+            try:
+                timestamps.append(datetime.fromisoformat(fallback.replace("Z", "+00:00")))
+            except ValueError:
+                pass
+
+    if not timestamps:
+        return Trend.STALE
+    return compute_trend(timestamps, now=now)
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +513,11 @@ class ObservationConsolidator:
 
         from astrocyte.types import VectorItem
 
+        # M21: per-source timestamps feed compute_trend. At create time,
+        # each source contributes its retain timestamp (≈ now); the list
+        # grows monotonically across future updates via _apply_update.
+        source_timestamps = [now_iso] * len(source_ids)
+
         item = VectorItem(
             id=obs_id,
             bank_id=target_bank,
@@ -469,6 +527,7 @@ class ObservationConsolidator:
             metadata={
                 "_obs_proof_count": 1,
                 "_obs_source_ids": json.dumps(source_ids),
+                "_obs_source_timestamps": json.dumps(source_timestamps),
                 "_obs_confidence": str(round(confidence, 3)),
                 "_obs_updated_at": now_iso,
                 "_obs_scope": scope,
@@ -504,6 +563,7 @@ class ObservationConsolidator:
         # Merge proof count and source IDs from the existing observation
         old_proof = 1
         old_sources: list[str] = []
+        old_source_timestamps: list[str] = []
         old_created_at = now_iso
         old_scope = scope
         if existing is not None:
@@ -515,12 +575,36 @@ class ObservationConsolidator:
                 old_sources = json.loads(str(meta.get("_obs_source_ids", "[]")))
             except (json.JSONDecodeError, TypeError):
                 old_sources = []
+            try:
+                _raw_ts = meta.get("_obs_source_timestamps", "[]")
+                _parsed_ts = json.loads(str(_raw_ts))
+                if isinstance(_parsed_ts, list):
+                    old_source_timestamps = [str(t) for t in _parsed_ts if t]
+            except (json.JSONDecodeError, TypeError):
+                old_source_timestamps = []
             # Delete the stale observation from the obs bank
             target_bank = obs_bank_id(bank_id)
             await vector_store.delete([obs_id], target_bank)
 
         target_bank = obs_bank_id(bank_id)
-        merged_sources = list({*old_sources, *new_source_ids})
+        # Merge source IDs, deduped; merge timestamps by appending new-source
+        # entries (one per new_source_id, all at now). Old timestamps for
+        # legacy observations missing the field are backfilled to old_created_at
+        # so the resulting list is parallel to merged_sources (best-effort).
+        merged_sources_set: set[str] = set()
+        merged_sources: list[str] = []
+        merged_timestamps: list[str] = []
+        # Preserve ordering: old first, then new (only ones not already present).
+        for sid, ts in zip(old_sources, old_source_timestamps or [old_created_at] * len(old_sources)):
+            if sid not in merged_sources_set:
+                merged_sources_set.add(sid)
+                merged_sources.append(sid)
+                merged_timestamps.append(ts)
+        for sid in new_source_ids:
+            if sid not in merged_sources_set:
+                merged_sources_set.add(sid)
+                merged_sources.append(sid)
+                merged_timestamps.append(now_iso)
         new_proof = old_proof + 1
 
         vecs = await llm_provider.embed([text])
@@ -537,6 +621,7 @@ class ObservationConsolidator:
             metadata={
                 "_obs_proof_count": new_proof,
                 "_obs_source_ids": json.dumps(merged_sources),
+                "_obs_source_timestamps": json.dumps(merged_timestamps),
                 "_obs_confidence": str(round(confidence, 3)),
                 "_obs_updated_at": now_iso,
                 "_obs_scope": old_scope,

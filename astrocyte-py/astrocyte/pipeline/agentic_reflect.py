@@ -358,6 +358,17 @@ Core rules:
 3. Refine your query with specific names / dates / sub-topics when initial \
 recall doesn't surface the answer.
 
+TOOL-RESULT FORMAT — each hit is a JSON entry with these fields:
+- ``id`` — the memory_id (use for citations)
+- ``text`` — the atomic fact (the searchable summary)
+- ``source_chunk`` (when present) — the raw conversation excerpt the fact was \
+extracted from. **This is your primary source for verbatim wording, implicit \
+cues, and details the extracted fact may have lost.** When a question asks \
+for the user's exact phrasing or the assistant's specific recommendation, \
+prefer the source_chunk's wording over the fact's summary text.
+- ``resolved_temporal`` (when present) — pre-resolved absolute dates for \
+relative phrases (see rule 9 below).
+
 EXTRACTION DISCIPLINE — read this carefully before saying "insufficient evidence":
 
 4. When tool results CONTAIN the answer (verbatim or near-verbatim, even \
@@ -409,6 +420,100 @@ recompute "yesterday" against any other reference date.
 absent. If both an absolute date in the text AND a `resolved_temporal` \
 entry exist, prefer the absolute date — `resolved_temporal` is for \
 relative phrases only.
+
+STOP-EARLY DISCIPLINE — `done` is your default, not your last resort:
+
+The loop has a fixed iteration budget. Empirically, agents that run out \
+the clock produce WORSE answers than agents that commit early on \
+sufficient evidence. After EVERY tool result, ask yourself:
+
+  "Do I have ≥2 retrieved memories that DIRECTLY contain the answer \
+  (or its components)?"
+
+If YES → call `done` IMMEDIATELY. Do not issue more `recall`/`expand`/etc. \
+calls "just to be safe" — additional tool calls dilute your synthesis \
+focus and rarely add new information once you have the answer in hand.
+
+If NO → issue ONE more refining tool call (different query terms, \
+different tool tier, or `expand` on a partial hit). Then re-check the \
+stop condition.
+
+The ONLY reasons to take more than 2 tool calls:
+- Multi-hop questions where you have evidence for half the bridge but \
+  not the other half (e.g. you found "user works at X" but need "X was \
+  acquired by Y" to answer "who is the user's parent company now").
+- Counting / aggregation questions where `list_entities` returned \
+  ambiguous patterns and you need to disambiguate.
+- Knowledge-update questions where you found a value but not its date, \
+  and need one more recall to confirm "is this the latest?"
+
+In all OTHER cases, 2 successful tool calls is enough — commit. The \
+`done` tool is your DEFAULT exit, not a fallback. Aim to call `done` \
+within iterations 2-3 of typical questions.
+
+QUESTION-TYPE ROUTING — read this BEFORE calling `done`:
+
+Classify the question into ONE of the four shapes below and apply that \
+block's rules when composing your final answer. (Ported from M19a's \
+per-Q-type answerer prompt — the same routing that shipped +12q on \
+multi-hop and +2.25pp overall in the recall+answerer pipeline. See \
+``docs/_design/m19-prompt-routing.md`` and \
+``scripts/mem0_harness/_hindsight_prompt.py``.)
+
+**For Recommendation / Preference Questions** ("can you recommend...", \
+"any tips...", "what would the user prefer..."):
+- DO NOT invent specific recommendations (no made-up product names, course \
+  titles, paper titles, channel names).
+- DO mention specific brands / products / providers the user ALREADY uses \
+  from the recalled evidence — by name, in the recommendations themselves.
+- Describe WHAT KIND of recommendation the user would prefer, referencing \
+  their existing tools / brands EXPLICITLY in the answer structure.
+- First scan ALL recalled evidence for user's existing tools, brands, \
+  stated preferences. Structure the answer around those, not around \
+  generic categories. If a mental model or wiki page contains a stated \
+  preference ("user prefers X brand"), the answer MUST center on that \
+  preference — not mention it as an aside.
+- Keep answers concise. Focus on key preferences (brand, quality, specific \
+  interests), not exhaustive category lists.
+
+**For Multi-hop / Synthesis Questions** (requires combining evidence from \
+multiple sessions / facts; "how did X relate to Y", "what happened after Z \
+that led to W"):
+- Synthesize across MULTIPLE retrieved facts — do not over-index on any \
+  single hit.
+- BEFORE calling `done`, verify you have evidence from ≥2 distinct \
+  sources / sessions. If not, issue another `recall` with a refined query \
+  that targets the missing link. (Multi-hop questions are the strongest \
+  case for spending iterations on additional retrieval.)
+- Do NOT structure the answer around a single brand or preference (that's \
+  for recommendation questions only).
+- List the supporting facts inline (1, 2, 3...) to make the synthesis \
+  traceable. Each cited `memory_id` should correspond to one of the \
+  numbered supporting facts.
+- If facts conflict, prefer the more recent / more specific one and note \
+  the conflict explicitly in the answer.
+
+**For Temporal-Reasoning Questions** ("how long ago", "before/after", \
+"when did X", date arithmetic):
+- Find the ORIGINAL mention date for each event — older facts are often \
+  the right ones (NOT the most recent). The agentic loop's iterative \
+  recall is built for this: when the first recall returns recent hits, \
+  issue another with date-narrowing terms ("first time", "originally", \
+  the specific year if you can infer it).
+- Convert relative dates to absolute first; do the arithmetic explicitly; \
+  show your work in the answer.
+- Use the `resolved_temporal` field on hits when present (see rule 9).
+- Do NOT apply preference framing to date-arithmetic answers.
+
+**For Knowledge-Update Questions** (the user's current state / latest \
+value of a changing field; "what does the user do now", "where do they \
+live"):
+- Use the MOST RECENT fact for any field that can change over time (job, \
+  location, status, relationship). Earlier facts about the same field are \
+  HISTORICAL, not current.
+- If recall returns multiple facts about the same field, pick the one with \
+  the latest `occurred_start` or session date. Mention the prior value(s) \
+  only if the question explicitly asks about change history.
 """
 
 
@@ -546,6 +651,15 @@ def _format_hits_for_tool_response(hits: list[MemoryHit]) -> str:
     carries pre-computed temporal facts.  This lets the agent quote the
     canonical resolved date instead of doing its own off-by-one arithmetic
     from raw "yesterday" / "last week" text.
+
+    M26 Phase 3 — when the hit's metadata carries ``source_chunk``
+    (populated by the bench harness's ``_to_hit`` bridge from the
+    fact-grain candidate's M24 inline pairing), surface it as a
+    ``source_chunk`` field on the JSON entry. This gives the reflect
+    agent the same fact↔chunk visual cross-reference Hindsight's
+    bench answerer relies on — without it the sub-recall path's facts
+    look the same as M22's flat-bullet shape and we lose the M24 SSP
+    recovery inside the reflect loop.
     """
     payload = []
     for h in hits:
@@ -560,6 +674,17 @@ def _format_hits_for_tool_response(hits: list[MemoryHit]) -> str:
         resolved = _resolved_temporal_for_hit(h.metadata)
         if resolved is not None:
             entry["resolved_temporal"] = resolved
+        meta = h.metadata or {}
+        src = meta.get("source_chunk") if isinstance(meta, dict) else None
+        if src:
+            src_text = str(src).strip()
+            # Bound chunk length — agent context budget is tight, and
+            # the bench's _slice_section_around_line already caps at
+            # 1200 chars. Mirror that here so we never exceed the cap
+            # if some other caller passes raw chunks.
+            if len(src_text) > 1200:
+                src_text = src_text[:1197] + "..."
+            entry["source_chunk"] = src_text
         payload.append(entry)
     return json.dumps(payload, ensure_ascii=False)
 

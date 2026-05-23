@@ -245,6 +245,20 @@ async def compile_directives_for_document(
     saved: list[str] = []
     seen_ids: set[str] = set()
 
+    # M40 — index source facts so MM construction can attach per-source
+    # evidence timestamps in conversation time (mirrors preference_compile).
+    _fact_by_id = {getattr(f, "fact_id", None): f for f in pref_facts}
+
+    def _ts_for_fact_id(fid: str) -> datetime:
+        f = _fact_by_id.get(fid)
+        if f is None:
+            return now
+        return (
+            getattr(f, "mentioned_at", None)
+            or getattr(f, "occurred_start", None)
+            or now
+        )
+
     for raw in items[:max_directives]:
         if not isinstance(raw, dict):
             continue
@@ -262,6 +276,8 @@ async def compile_directives_for_document(
             continue
         seen_ids.add(model_id)
 
+        source_timestamps = [_ts_for_fact_id(sid) for sid in source_fact_ids]
+
         mm = MentalModel(
             model_id=model_id,
             bank_id=bank_id,
@@ -272,6 +288,7 @@ async def compile_directives_for_document(
             revision=1,
             refreshed_at=now,
             kind="directive",
+            source_timestamps=source_timestamps,
         )
         try:
             await mental_model_store.upsert(mm, bank_id)

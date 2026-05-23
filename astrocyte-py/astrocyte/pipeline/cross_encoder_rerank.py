@@ -30,6 +30,7 @@ fallback automatically based on config.
 from __future__ import annotations
 
 import logging
+import os
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
@@ -209,24 +210,59 @@ APACHE2_MODEL_PRESETS = {
 _model_cache: dict[tuple[str, bool], CrossEncoderProtocol] = {}
 _cache_lock = Lock()
 
+#: Built-in default cross-encoder. Matches the historical Hindsight default.
+#: Override at runtime via the ``ASTROCYTE_CROSS_ENCODER_MODEL`` env var
+#: (accepts a full HuggingFace path or a preset alias from
+#: :data:`APACHE2_MODEL_PRESETS`). M33-1a (v0.15.0): scaffolding for A/B-ing
+#: bge-reranker-large vs mxbai-rerank-large-v2.
+_DEFAULT_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+_ENV_VAR: str = "ASTROCYTE_CROSS_ENCODER_MODEL"
+
+
+def _resolve_default_model() -> str:
+    """Pick the active default cross-encoder model.
+
+    Resolution order:
+
+    1. ``ASTROCYTE_CROSS_ENCODER_MODEL`` env var, if set and non-empty.
+       Value may be a full HuggingFace path (``BAAI/bge-reranker-large``)
+       or a preset alias (``bge-large``); aliases resolve via
+       :data:`APACHE2_MODEL_PRESETS`.
+    2. :data:`_DEFAULT_MODEL` (MiniLM-L-6-v2) otherwise.
+
+    This is the seam used for bench A/B without code changes.
+    """
+    raw = os.environ.get(_ENV_VAR, "").strip()
+    if not raw:
+        return _DEFAULT_MODEL
+    return APACHE2_MODEL_PRESETS.get(raw, raw)
+
 
 def get_default_cross_encoder(
-    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    model_name: str | None = None,
     *,
     force_cpu: bool = False,
 ) -> CrossEncoderProtocol:
     """Return a cached :class:`SentenceTransformersCrossEncoder`.
 
+    Args:
+        model_name: Explicit model HF path. When ``None`` (default),
+            resolves via :func:`_resolve_default_model` so the
+            ``ASTROCYTE_CROSS_ENCODER_MODEL`` env var can override
+            without touching code.
+        force_cpu: Pin to CPU even when MPS/CUDA is available.
+
     Threadsafe — concurrent first-load calls block on a lock so the
     model is only loaded once. Subsequent calls return the cached
     instance immediately.
     """
-    key = (model_name, force_cpu)
+    resolved = model_name if model_name is not None else _resolve_default_model()
+    key = (resolved, force_cpu)
     with _cache_lock:
         cached = _model_cache.get(key)
         if cached is None:
             cached = SentenceTransformersCrossEncoder(
-                model_name,
+                resolved,
                 force_cpu=force_cpu,
             )
             _model_cache[key] = cached

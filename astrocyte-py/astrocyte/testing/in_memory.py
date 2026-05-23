@@ -105,6 +105,20 @@ class InMemoryVectorStore:
                     start, end = filters.time_range
                     if item.occurred_at < start or item.occurred_at > end:
                         continue
+                # M31 Fix 2 — session_id filter. ``metadata['session_id']``
+                # is the canonical location (preserves the same shape
+                # production callers use when calling retain()). When the
+                # filter is set but the item has no session_id metadata,
+                # the item is excluded (consistent with the
+                # PageIndexStore behaviour where top-level facts without
+                # an anchoring section are excluded from session-filtered
+                # results).
+                if filters.session_id is not None:
+                    item_session = None
+                    if item.metadata:
+                        item_session = item.metadata.get("session_id") if isinstance(item.metadata, dict) else None
+                    if item_session != filters.session_id:
+                        continue
             sim = _cosine_sim(query_vector, item.vector)
             results.append((sim, item))
 
@@ -991,12 +1005,25 @@ class InMemoryPageIndexStore:
     def _docs_in_bank(self, bank_id: str) -> set[str]:
         return {d.id for (b, _src), d in self._documents.items() if b == bank_id}
 
+    def _section_passes_session(self, doc_id: str, line_num: int, session_filter: str | None) -> bool:
+        """M31 Fix 2 — section-level helper (analogue of _matches_session
+        for facts). Returns True when ``session_filter`` is None OR
+        the section at (doc_id, line_num) has matching session_id.
+        """
+        if session_filter is None:
+            return True
+        for s in self._sections.get(doc_id, []):
+            if s.line_num == line_num:
+                return s.session_id == session_filter
+        return False
+
     async def search_sections_semantic(
         self,
         bank_id: str,
         query_embedding: list[float],
         *,
         top_k: int = 20,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         if not query_embedding:
             return []
@@ -1005,6 +1032,8 @@ class InMemoryPageIndexStore:
         for doc_id in doc_ids:
             for s in self._sections.get(doc_id, []):
                 if not s.summary_embedding:
+                    continue
+                if session_filter is not None and s.session_id != session_filter:
                     continue
                 # Cosine similarity (Postgres adapter uses 1 - distance).
                 score = _cosine_sim(query_embedding, s.summary_embedding)
@@ -1020,6 +1049,7 @@ class InMemoryPageIndexStore:
         top_k: int = 20,
         speaker: str | None = None,
         document_id: str | None = None,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         if not query.strip():
             return []
@@ -1041,6 +1071,8 @@ class InMemoryPageIndexStore:
             for s in self._sections.get(doc_id, []):
                 if speaker is not None and s.speaker != speaker:
                     continue
+                if session_filter is not None and s.session_id != session_filter:
+                    continue
                 haystack = (s.title or "").lower() + " " + (s.summary or "").lower()
                 hits = sum(1 for t in terms if t in haystack)
                 if hits > 0:
@@ -1054,6 +1086,7 @@ class InMemoryPageIndexStore:
         entity_names: list[str],
         *,
         top_k: int = 20,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         if not entity_names:
             return []
@@ -1068,6 +1101,8 @@ class InMemoryPageIndexStore:
             for e in self._section_entities.get(doc_id, []):
                 low = e.entity_name.lower()
                 if low in wanted:
+                    if not self._section_passes_session(doc_id, e.line_num, session_filter):
+                        continue
                     per_section.setdefault((doc_id, e.line_num), set()).add(low)
         scored = [(doc_id, line_num, float(len(matches))) for (doc_id, line_num), matches in per_section.items()]
         scored.sort(key=lambda x: x[2], reverse=True)
@@ -1079,12 +1114,15 @@ class InMemoryPageIndexStore:
         date_range,
         *,
         top_k: int = 20,
+        session_filter: str | None = None,
     ) -> list[tuple[str, int, float]]:
         start, end = date_range
         doc_ids = self._docs_in_bank(bank_id)
         scored: list[tuple[str, int, float]] = []
         for doc_id in doc_ids:
             for s in self._sections.get(doc_id, []):
+                if session_filter is not None and s.session_id != session_filter:
+                    continue
                 sd = s.session_date
                 if sd is not None and start <= sd <= end:
                     scored.append((doc_id, s.line_num, 1.0))
@@ -1211,6 +1249,23 @@ class InMemoryPageIndexStore:
                     updated += 1
         return updated
 
+    def _matches_session(self, fact: "PageIndexFact", session_filter: str | None) -> bool:
+        """M31 Fix 2 — InMemory analogue of the Postgres EXISTS clause.
+
+        Returns True when the fact's anchoring section's session_id matches
+        ``session_filter``. Top-level facts (no anchor) and facts whose
+        section has no session_id both fail the filter — intentional, since
+        ``session_filter`` semantics is "limit to this session's content".
+        """
+        if session_filter is None:
+            return True
+        if fact.document_id is None or fact.line_num is None:
+            return False
+        for s in self._sections.get(fact.document_id, []):
+            if s.line_num == fact.line_num:
+                return s.session_id == session_filter
+        return False
+
     async def search_facts_semantic(
         self,
         bank_id: str,
@@ -1219,6 +1274,7 @@ class InMemoryPageIndexStore:
         top_k: int = 20,
         document_id: str | None = None,
         fact_type: str | None = None,
+        session_filter: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
 
@@ -1244,6 +1300,8 @@ class InMemoryPageIndexStore:
                 continue
             if not f.embedding:
                 continue
+            if not self._matches_session(f, session_filter):  # M31 Fix 2
+                continue
             scored.append((_cos(query_embedding, f.embedding), f))
         scored.sort(key=lambda kv: kv[0], reverse=True)
         return [
@@ -1257,6 +1315,9 @@ class InMemoryPageIndexStore:
                 occurred_start=f.occurred_start,
                 occurred_end=f.occurred_end,
                 entities=list(f.entities or []),
+                confidence_score=getattr(f, "confidence_score", None),  # M27 / M28-A
+                mentioned_at=getattr(f, "mentioned_at", None),  # M27
+                event_date=getattr(f, "event_date", None),  # M31 Fix 4
                 score=float(s),
             )
             for s, f in scored[: max(1, top_k)]
@@ -1269,6 +1330,8 @@ class InMemoryPageIndexStore:
         *,
         top_k: int = 50,
         document_id: str | None = None,
+        fact_type: str | None = None,  # M34-3 — per-fact-type segmentation
+        session_filter: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
 
@@ -1280,7 +1343,11 @@ class InMemoryPageIndexStore:
         for f in scope:
             if f.bank_id != bank_id:
                 continue
+            if fact_type is not None and f.fact_type != fact_type:
+                continue
             if not any(needle in (e or "").casefold() for e in (f.entities or [])):
+                continue
+            if not self._matches_session(f, session_filter):  # M31 Fix 2
                 continue
             hits.append(
                 PageIndexFactHit(
@@ -1293,12 +1360,79 @@ class InMemoryPageIndexStore:
                     occurred_start=f.occurred_start,
                     occurred_end=f.occurred_end,
                     entities=list(f.entities or []),
+                    confidence_score=getattr(f, "confidence_score", None),
+                    mentioned_at=getattr(f, "mentioned_at", None),
+                    event_date=getattr(f, "event_date", None),  # M31 Fix 4
                     score=1.0,
                 )
             )
             if len(hits) >= top_k:
                 break
         return hits
+
+    async def search_facts_keyword(
+        self,
+        bank_id: str,
+        query: str,
+        *,
+        top_k: int = 20,
+        document_id: str | None = None,
+        fact_type: str | None = None,  # M34-3 — per-fact-type segmentation
+        session_filter: str | None = None,
+    ):
+        """M31c — token-overlap analogue of Postgres BM25 over fact_text.
+
+        Mirrors the spirit of ``search_sections_keyword``: lower-cases
+        both query and fact text, splits on whitespace, counts how
+        many distinct query tokens appear as substrings of the fact
+        text, and ranks by that count desc. Not BM25 proper but the
+        same family of "literal-keyword-match wins over generic
+        thematic match" behaviour that fixes the SSU bench failures.
+        """
+        from astrocyte.types import PageIndexFactHit
+
+        if not query or not query.strip():
+            return []
+        terms = [t for t in query.lower().split() if t and len(t) > 1]
+        if not terms:
+            return []
+        terms = list(dict.fromkeys(terms))  # dedupe, preserve order
+        scope = (
+            self._facts.get(document_id, [])
+            if document_id
+            else [f for bucket in self._facts.values() for f in bucket]
+        )
+        scored: list[tuple[float, "PageIndexFact"]] = []
+        for f in scope:
+            if f.bank_id != bank_id:
+                continue
+            if fact_type is not None and f.fact_type != fact_type:
+                continue
+            if not self._matches_session(f, session_filter):  # M31 Fix 2
+                continue
+            haystack = (f.text or "").lower()
+            hits = sum(1 for t in terms if t in haystack)
+            if hits > 0:
+                scored.append((float(hits), f))
+        scored.sort(key=lambda kv: kv[0], reverse=True)
+        return [
+            PageIndexFactHit(
+                fact_id=f.id,
+                document_id=f.document_id,
+                line_num=f.line_num,
+                text=f.text,
+                fact_type=f.fact_type,
+                speaker=f.speaker,
+                occurred_start=f.occurred_start,
+                occurred_end=f.occurred_end,
+                entities=list(f.entities or []),
+                confidence_score=getattr(f, "confidence_score", None),
+                mentioned_at=getattr(f, "mentioned_at", None),
+                event_date=getattr(f, "event_date", None),
+                score=float(s),
+            )
+            for s, f in scored[: max(1, top_k)]
+        ]
 
     async def search_facts_temporal(
         self,
@@ -1307,6 +1441,8 @@ class InMemoryPageIndexStore:
         *,
         top_k: int = 50,
         document_id: str | None = None,
+        fact_type: str | None = None,  # M34-3 — per-fact-type segmentation
+        session_filter: str | None = None,
     ):
         from astrocyte.types import PageIndexFactHit
 
@@ -1314,12 +1450,41 @@ class InMemoryPageIndexStore:
         scope = (
             self._facts.get(document_id, []) if document_id else [f for bucket in self._facts.values() for f in bucket]
         )
+
+        # M33-3b — Hindsight-parity 4-way OR (mirrors the Postgres SQL):
+        # a fact qualifies if ANY of {spanning occurred range overlap,
+        # mentioned_at in range, occurred_start in range, occurred_end
+        # in range}. Sort DESC by freshest available date so the top_k
+        # cap retains newest candidates (Hindsight: ORDER BY
+        # COALESCE(occurred_start, mentioned_at, occurred_end) DESC).
+        def _in_range(d):
+            return d is not None and start <= d <= end
+
+        def _qualifies(f) -> bool:
+            os_ = f.occurred_start
+            oe_ = f.occurred_end
+            ma_ = getattr(f, "mentioned_at", None)
+            if os_ is not None and oe_ is not None and os_ <= end and oe_ >= start:
+                return True
+            return _in_range(ma_) or _in_range(os_) or _in_range(oe_)
+
+        def _sort_key(f):
+            # COALESCE(occurred_start, mentioned_at, occurred_end).
+            # Push None to the bottom by pairing with a falsy flag.
+            d = f.occurred_start or getattr(f, "mentioned_at", None) or f.occurred_end
+            return (d is None, d)
+
+        matched = [
+            f
+            for f in scope
+            if f.bank_id == bank_id
+            and (fact_type is None or f.fact_type == fact_type)  # M34-3
+            and _qualifies(f)
+            and self._matches_session(f, session_filter)  # M31 Fix 2
+        ]
+        matched.sort(key=_sort_key, reverse=True)
         hits: list["PageIndexFactHit"] = []
-        for f in scope:
-            if f.bank_id != bank_id or f.occurred_start is None:
-                continue
-            if not (start <= f.occurred_start <= end):
-                continue
+        for f in matched[:top_k]:
             hits.append(
                 PageIndexFactHit(
                     fact_id=f.id,
@@ -1331,11 +1496,12 @@ class InMemoryPageIndexStore:
                     occurred_start=f.occurred_start,
                     occurred_end=f.occurred_end,
                     entities=list(f.entities or []),
+                    confidence_score=getattr(f, "confidence_score", None),
+                    mentioned_at=getattr(f, "mentioned_at", None),
+                    event_date=getattr(f, "event_date", None),  # M31 Fix 4
                     score=1.0,
                 )
             )
-            if len(hits) >= top_k:
-                break
         return hits
 
     async def count_facts_matching(
@@ -1551,12 +1717,18 @@ class InMemoryMentalModelStore:
             self._history[bank_id].setdefault(model.model_id, []).append(existing)
 
         # Store always assigns revision + refreshed_at (callers don't need
-        # to fill these in).
+        # to fill these in). M40 — validate source_timestamps alignment;
+        # drop on mismatch rather than persist a wrong-alignment array
+        # that would silently corrupt trend computation downstream.
+        src_ts = model.source_timestamps
+        if src_ts is not None and len(src_ts) != len(model.source_ids):
+            src_ts = None
         stamped = _replace(
             model,
             bank_id=bank_id,
             revision=new_revision,
             refreshed_at=datetime.now(UTC),
+            source_timestamps=src_ts,
         )
         self._models[bank_id][model.model_id] = stamped
         return new_revision
@@ -1586,6 +1758,107 @@ class InMemoryMentalModelStore:
         # Keep history for audit; tests can call ``revision_history()`` to
         # observe past revisions even after delete.
         return True
+
+    async def update_via_ops(
+        self,
+        model_id: str,
+        bank_id: str,
+        operations_json: list[dict],
+    ) -> "tuple[int, dict] | None":
+        """M21 — apply structured delta operations and re-upsert.
+
+        Lazy-migrates legacy rows by parsing ``content`` on first
+        refresh. Re-renders ``content`` from the new structured doc so
+        markdown readers see the updated text without a separate
+        migration pass.
+        """
+        from dataclasses import replace as _replace
+
+        from astrocyte.pipeline.delta_ops import (
+            DeltaOperationList,
+            apply_operations,
+        )
+        from astrocyte.pipeline.structured_doc import (
+            StructuredDocument,
+            parse_markdown,
+            render_document,
+        )
+
+        current = self._models.get(bank_id, {}).get(model_id)
+        if current is None:
+            return None
+
+        # Resolve the current structured doc — lazy-migrate from
+        # raw markdown when the field is None (legacy rows).
+        if current.structured_doc is None:
+            doc = parse_markdown(current.content or "")
+        else:
+            doc = StructuredDocument.model_validate(current.structured_doc)
+
+        # Parse the LLM/caller's op list via the Pydantic schema.
+        # Schema-invalid op shapes (unknown ``op`` discriminator,
+        # missing required fields) raise ValidationError; per the
+        # conservative-failure contract, we catch and return a
+        # zero-ops apply (doc stays as-is, no revision bump).
+        try:
+            ops_container = DeltaOperationList.model_validate({"operations": operations_json})
+        except Exception:
+            # Schema-level failure: nothing applied. Return current revision.
+            return (current.revision, {"applied": [], "skipped": [], "changed": False})
+
+        applied = apply_operations(doc, ops_container.operations)
+        if not applied.changed:
+            return (
+                current.revision,
+                {"applied": applied.applied, "skipped": applied.skipped, "changed": False},
+            )
+
+        new_doc_dict = applied.document.model_dump()
+        new_content = render_document(applied.document)
+        new_model = _replace(
+            current,
+            content=new_content,
+            structured_doc=new_doc_dict,
+        )
+        new_revision = await self.upsert(new_model, bank_id)
+        return (
+            new_revision,
+            {"applied": applied.applied, "skipped": applied.skipped, "changed": True},
+        )
+
+    async def refresh(
+        self,
+        model_id: str,
+        bank_id: str,
+        new_source_ids: list[str],
+    ) -> "MentalModel | None":
+        """M28 — merge new source_ids into existing model and bump revision.
+
+        In-memory semantics: the production store will re-run an LLM
+        compile against the merged source set; the test store simply
+        acknowledges the new sources (deduped, preserving existing
+        order then appending novel ids) and bumps the revision via
+        :meth:`upsert`. That keeps tests focused on the wiring and
+        contract surface without coupling them to LLM behaviour.
+        """
+        from dataclasses import replace as _replace
+
+        current = self._models.get(bank_id, {}).get(model_id)
+        if current is None:
+            return None
+
+        # Order-preserving dedup: keep existing source_ids in original
+        # order, then append novel ids in input order.
+        seen: set[str] = set(current.source_ids)
+        merged = list(current.source_ids)
+        for sid in new_source_ids:
+            if sid not in seen:
+                seen.add(sid)
+                merged.append(sid)
+
+        refreshed = _replace(current, source_ids=merged)
+        await self.upsert(refreshed, bank_id)
+        return self._models.get(bank_id, {}).get(model_id)
 
     async def health(self) -> HealthStatus:
         return HealthStatus(healthy=True, message="in-memory mental model store")
