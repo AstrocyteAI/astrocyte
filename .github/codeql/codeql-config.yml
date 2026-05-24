@@ -35,3 +35,17 @@ query-filters:
   # ~56 workflow files don't drown out higher-signal findings.
   - exclude:
       id: actions/unpinned-tag
+
+  # py/import-of-mutable-attribute fires on every ``from X import Y`` where
+  # Y is a module-level binding — including functions and classes, which
+  # is 99% of normal Python imports. The query is technically correct that
+  # reassigning the source attribute wouldn't be observed by the importer,
+  # but that's the standard Python import contract and is almost never the
+  # bug it claims to be. The query is genuinely useful for mutable globals
+  # (dicts, counters, feature flags); for function/class imports it's pure
+  # noise. We accept the rare-miss risk on actual mutable-global imports
+  # in exchange for not rewriting every ``from utils import some_function``
+  # call site to qualified module access. If a future case warrants the
+  # query, narrow this exclusion with a ``paths:`` clause.
+  - exclude:
+      id: py/import-of-mutable-attribute
