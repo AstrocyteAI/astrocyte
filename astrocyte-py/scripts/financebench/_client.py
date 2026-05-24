@@ -48,7 +48,9 @@ try:
     # imports successfully even when markitdown is missing (the underlying
     # import happens inside convert()). Without this probe, the pymupdf
     # fallback in _extract_markdown never fires.
-    import markitdown as _markitdown_probe  # noqa: F401
+    import markitdown as _markitdown_probe
+
+    del _markitdown_probe  # probe only — release the binding (quiets CodeQL py/unused-import)
 
     from astrocyte.documents.parsers.markitdown import (
         MarkitdownParser as _MarkitdownParser,
@@ -203,12 +205,41 @@ class FinanceBenchClient:
         self._provider = OpenAIProvider(api_key=os.environ["OPENAI_API_KEY"])
 
         # Astrocyte memory engine — for vector retain/recall path.
-        # Reads DATABASE_URL + OPENAI_API_KEY from environment.
+        #
+        # The init dance has three steps (NOT just `Astrocyte(config)`):
+        #   1. Astrocyte(config) — stores config, but leaves _pipeline=None
+        #   2. build_tier1_pipeline(config) — discovers providers via entry
+        #      points, instantiates vector store + LLM provider, assembles
+        #      the PipelineOrchestrator
+        #   3. brain.set_pipeline(pipeline) — attaches it; only now does
+        #      retain() actually do anything
+        #
+        # Skipping steps 2-3 makes retain() raise ConfigError("No provider
+        # or pipeline configured") on every call. Our DocumentIngestor
+        # catches that as a per-node failure — but with 250 nodes/PDF the
+        # warnings drown in log noise and the bench silently produces 0%
+        # accuracy because nothing was ever embedded.
+        #
+        # `build_tier1_pipeline` is in astrocyte_gateway.wiring; same helper
+        # the gateway uses to wire its Astrocyte instance from yaml config.
+        from astrocyte_gateway.wiring import build_tier1_pipeline  # noqa: PLC0415
+
         from astrocyte import Astrocyte  # noqa: PLC0415
         from astrocyte.config import AstrocyteConfig  # noqa: PLC0415
 
-        cfg = AstrocyteConfig()
-        self._astrocyte = Astrocyte(config=cfg)
+        cfg = AstrocyteConfig(
+            provider_tier="storage",
+            vector_store="postgres",
+            vector_store_config={
+                "embedding_dimensions": 1536,
+                "bootstrap_schema": False,  # migrations already applied by bench-finance-db-start
+            },
+            llm_provider="openai",
+            llm_provider_config={"api_key": os.environ["OPENAI_API_KEY"]},
+        )
+        brain = Astrocyte(cfg)
+        brain.set_pipeline(build_tier1_pipeline(cfg))
+        self._astrocyte = brain
 
     async def close(self) -> None:
         for attr in ("_provider", "_doc_store", "_astrocyte"):
