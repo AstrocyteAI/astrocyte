@@ -786,6 +786,9 @@ class AstrocyteClient:
 
                 session_id = current_session_id()
             except ImportError:
+                # _hindsight_answerer is optional (bench-time patch);
+                # absent in production. Leave session_id None and let
+                # downstream callers fall back to bank-wide search.
                 pass
 
         floor = max(top_k, self.search_top_k_floor)
@@ -1331,7 +1334,68 @@ class AstrocyteClient:
             )
             from astrocyte.pipeline.reranking import ScoredItem  # noqa: PLC0415
 
-            items = [ScoredItem(id=c["id"], text=c["text"], score=0.0) for c in candidates]
+            # M49 — Date prefix on cross-encoder inputs (Hindsight parity,
+            # reranking.py:197-208). When a candidate has a resolved date
+            # (event_date or occurred_start for facts; refreshed_at for
+            # MMs is too coarse to bother with here), prepend
+            # ``[Date: <human> (<iso>)] `` to its text BEFORE handing to
+            # the cross-encoder. The reranker can then break vector-
+            # similarity ties on temporal proximity / specificity, which
+            # the M44 audit identified as missing infrastructure. Gated
+            # by ASTROCYTE_M49_DATE_PREFIX_RERANK (default ON — port
+            # of a Hindsight default behavior, not an opt-in feature).
+            #
+            # The prefix is applied ONLY to the text shown to the
+            # cross-encoder; the candidate's own text in the returned
+            # entry stays unchanged (so the answerer sees the original
+            # fact text, not the prefix).
+            _m49_on = _os.environ.get("ASTROCYTE_M49_DATE_PREFIX_RERANK", "1").lower() in (
+                "1", "true", "yes",
+            )
+
+            def _fact_date_for_rerank(c: dict[str, Any]) -> str | None:
+                """Return YYYY-MM-DD if the candidate has a usable date.
+
+                Priority for facts: event_date > occurred_start > mentioned_at.
+                Skips mental_model / section / wiki grains (their dates are
+                refreshed-at / session-date; less semantically the "when
+                the event happened" the reranker can exploit).
+                """
+                if c.get("grain") != "fact":
+                    return None
+                fh = c.get("fact")
+                if fh is None:
+                    return None
+                for attr in ("event_date", "occurred_start", "mentioned_at"):
+                    dt = getattr(fh, attr, None)
+                    if dt is not None:
+                        try:
+                            return dt.strftime("%Y-%m-%d")
+                        except (AttributeError, ValueError):
+                            continue
+                return None
+
+            def _humanize_iso(iso: str) -> str:
+                try:
+                    from datetime import datetime as _dt  # noqa: PLC0415
+
+                    d = _dt.fromisoformat(iso)
+                    return d.strftime("%B %-d, %Y")
+                except (ValueError, AttributeError):
+                    return iso
+
+            if _m49_on:
+                items = []
+                for c in candidates:
+                    text = c["text"]
+                    iso_date = _fact_date_for_rerank(c)
+                    if iso_date:
+                        prefix = f"[Date: {_humanize_iso(iso_date)} ({iso_date})] "
+                        text = prefix + text
+                    items.append(ScoredItem(id=c["id"], text=text, score=0.0))
+            else:
+                items = [ScoredItem(id=c["id"], text=c["text"], score=0.0) for c in candidates]
+
             # M38 — the cross-encoder scores text similarity between
             # query and candidate. retrieval_query (rewritten) is the
             # search-intent expression; using it here keeps the ranker

@@ -53,7 +53,10 @@ _logger = logging.getLogger("astrocyte.pipeline.query_rewrite")
 
 class _LLMProvider(Protocol):
     async def complete(self, *, messages: list, model: str | None = None, **kwargs: Any) -> Any:
-        ...
+        """Send ``messages`` to the LLM and return the completion. The
+        rewriter only needs the response text — adapters may return
+        their richer ``Completion`` shape; this Protocol is intentionally
+        permissive on the return type (``Any``)."""
 
 
 _REWRITE_SYSTEM_PROMPT = """\

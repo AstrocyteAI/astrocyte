@@ -150,6 +150,9 @@ def compute_observation_trend(
                         except ValueError:
                             continue
         except json.JSONDecodeError:
+            # Malformed metadata blob — fall through to the legacy
+            # single-timestamp path below. The trend computation
+            # degrades to STALE if nothing else parses either.
             pass
 
     if not timestamps:
@@ -159,6 +162,8 @@ def compute_observation_trend(
             try:
                 timestamps.append(datetime.fromisoformat(fallback.replace("Z", "+00:00")))
             except ValueError:
+                # Malformed fallback timestamp — leave ``timestamps``
+                # empty so the next check returns Trend.STALE.
                 pass
 
     if not timestamps:

@@ -108,7 +108,9 @@ from scripts.mem0_harness._token_cutoffs_patch import (  # noqa: E402
     maybe_install_token_cutoffs_patch,
 )
 
-_TOKEN_CUTOFFS = maybe_install_token_cutoffs_patch("lme")
+# Side-effect import: the patch installs itself on the upstream module.
+# Return value is intentionally discarded.
+maybe_install_token_cutoffs_patch("lme")
 
 
 # M36 — per-question hybrid reflect routing for LME. When
@@ -273,6 +275,25 @@ def _maybe_install_lme_reflect_process_question() -> None:
 
 
 _maybe_install_lme_reflect_process_question()
+
+
+# M46 (arithmetic-as-tool) — patch file kept as banked infrastructure
+# (``scripts/mem0_harness/_temporal_tool_patch.py``) but installer is
+# NOT wired here. The cycle benched at N=2 M46-ON measurements vs N=3
+# M44-ON baseline (2026-05-24, see v0.15.0-ship-decision.md Appendix C
+# §M46+M47 variance experiment). Verdict:
+#   - LME TR (target metric): +1.2q above baseline mean (barely above
+#     the ±1q per-category noise floor at n=15)
+#   - LME overall: -4.9q below baseline mean (above the ±4q noise floor)
+#   - Combined: mechanism is sound (function-calling for arithmetic),
+#     bench signal does NOT defensibly support shipping default-ON.
+#
+# To re-enable for ablation / future revisit, add:
+#   from scripts.mem0_harness._temporal_tool_patch import (
+#       maybe_install_temporal_tool_patch_lme,
+#   )
+#   maybe_install_temporal_tool_patch_lme()
+# and set ASTROCYTE_M46_TEMPORAL_TOOL=1.
 
 
 if __name__ == "__main__":

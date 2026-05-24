@@ -44,8 +44,14 @@ logger = logging.getLogger(__name__)
 # Optional Phase A import — MarkitdownParser (not yet built)
 # ---------------------------------------------------------------------------
 try:
+    # Probe the actual library, not just our wrapper class — the wrapper
+    # imports successfully even when markitdown is missing (the underlying
+    # import happens inside convert()). Without this probe, the pymupdf
+    # fallback in _extract_markdown never fires.
+    import markitdown as _markitdown_probe  # noqa: F401
+
     from astrocyte.documents.parsers.markitdown import (
-        MarkitdownParser as _MarkitdownParser,  # type: ignore[import-not-found]
+        MarkitdownParser as _MarkitdownParser,
     )
     _MARKITDOWN_AVAILABLE = True
 except ImportError:
@@ -79,7 +85,9 @@ def _extract_markdown_pymupdf(pdf_path: Path) -> str:
     doc = pymupdf.open(str(pdf_path))
     pages: list[str] = []
     for i, page in enumerate(doc, start=1):
-        text = page.get_text().strip()
+        # Strip NUL bytes — Postgres text columns reject them and SEC
+        # filings occasionally embed \x00 in extracted text.
+        text = page.get_text().replace("\x00", "").strip()
         if text:
             pages.append(f"## Page {i}\n\n{text}")
     doc.close()
@@ -287,11 +295,14 @@ class FinanceBenchClient:
             return await self._retrieve_tree_search(question, doc_id)
 
     async def _retrieve_vector(self, question: str, *, top_k: int = 5) -> str:
-        hits = await self._astrocyte.recall(
+        # Astrocyte.recall returns RecallResult; the hits live on .hits.
+        # The kwarg is max_results, not limit.
+        result = await self._astrocyte.recall(
             query=question,
             bank_id=self.bank_id,
-            limit=top_k,
+            max_results=top_k,
         )
+        hits = result.hits
         if not hits:
             return ""
         parts: list[str] = []

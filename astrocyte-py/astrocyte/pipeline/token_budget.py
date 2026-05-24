@@ -40,12 +40,8 @@ References:
 
 from __future__ import annotations
 
-import logging
 from threading import Lock
 from typing import Iterable, TypeVar
-
-_logger = logging.getLogger("astrocyte.pipeline.token_budget")
-
 
 #: Default encoding shared by all current OpenAI models we care about.
 #: Override per-call if a non-OpenAI model is being targeted.

@@ -111,7 +111,9 @@ from scripts.mem0_harness._token_cutoffs_patch import (  # noqa: E402
     maybe_install_token_cutoffs_patch,
 )
 
-_TOKEN_CUTOFFS = maybe_install_token_cutoffs_patch("locomo")
+# Side-effect import: the patch installs itself on the upstream module.
+# Return value is intentionally discarded.
+maybe_install_token_cutoffs_patch("locomo")
 
 
 # ── M20 Day 3 (rewrite) — Hindsight-parity integrated reflect mode ─────

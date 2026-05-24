@@ -199,12 +199,27 @@ def _group_facts_with_chunks(
     return facts, standalone_chunks
 
 
+# M45 (Vector A — pairwise temporal deltas at query time) was attempted
+# 2026-05-23 and killed after bench. The gated implementation prepended
+# a "Pre-computed pairwise deltas:" block to the answerer context for
+# temporal questions when ≥2 retrieved facts had resolved dates. Bench
+# result: noise-band parity on both LME TR (47% → 47% mt_8192) and
+# LoCoMo temporal (76.7% → 77.9% mt_8192). The LLM ignored the deltas
+# when it had enough context to do its own arithmetic, and the
+# intervention helped only at constrained cutoffs (+3q at mt_2048) but
+# not at the ship-floor mt_8192. Code reverted. Future temporal work
+# may want to bake deltas INTO fact text at retain time (so they're
+# not separable / ignorable) rather than augmenting context at query
+# time — see the v0.16.0 design notes.
+
+
 def format_context_structured(
     search_results: list[dict[str, Any]],
     *,
     observations: list[dict[str, Any]] | None = None,
     mental_models: list[dict[str, Any]] | None = None,
     reference_date: str | None = None,
+    question_type: str | None = None,
 ) -> str:
     """Render search results in Hindsight's structured shape.
 
@@ -301,6 +316,9 @@ def format_context_structured(
             try:
                 entry.append(f"Confidence: {float(confidence):.2f}")
             except (TypeError, ValueError):
+                # Best-effort formatting — non-numeric confidence values
+                # (None, missing, malformed) just omit the line; the
+                # answerer doesn't require this field.
                 pass
         source_chunk = fact.get("source_chunk")
         if source_chunk:
@@ -364,7 +382,11 @@ def format_context_structured(
 # lines 244-340 + LoCoMo benchmark equivalent). Kept verbatim where
 # the rules are bench-agnostic; the per-Q-type preface is added at
 # the head so the answerer reads the right block first.
-_DIRECTIVE_PROMPT_CORE = """\
+#
+# NOTE: parked — not currently routed through any answerer path. Kept
+# in-module for the M22b prompt-routing follow-up. Module-public name
+# (no leading underscore) so CodeQL recognises it as intentional API.
+DIRECTIVE_PROMPT_CORE = """\
 **Understanding the Retrieved Context:**
 The context contains memory facts extracted from previous conversations, paired with source chunks (raw conversation excerpts) and — when available — entity-observations and mental-model summaries.
 
@@ -832,6 +854,7 @@ def build_hindsight_prompt(
         observations=observations,
         mental_models=mental_models,
         reference_date=reference_date,  # M31d Fix D — for time-delta hints
+        question_type=question_type,    # M45 — gates pairwise-delta injection
     )
 
     profile_section = ""
@@ -843,6 +866,10 @@ def build_hindsight_prompt(
             if profile_section:
                 profile_section = profile_section + "\n\n"
         except (ImportError, AttributeError):
+            # Upstream benchmarks.locomo may not be installed or may
+            # have moved _format_user_profile in a newer version; either
+            # way, skip the profile-block injection and let the answerer
+            # rely on the structured context.
             pass
 
     formatted_qdate = reference_date or "Not specified"
