@@ -399,6 +399,18 @@ class PostgresStore:
                 # ``astrocyte_postgres.pageindex_store.PostgresPageIndexStore``,
                 # which mirrors them in its own bootstrap path.
                 #
+                # 038_tenant_storage_snapshots.sql is intentionally NOT
+                # mirrored here — it creates the cross-tenant
+                # ``public.astrocyte_tenant_storage_snapshots`` table read
+                # by the gateway's storage-billing endpoint and written by
+                # the snapshot worker. The table lives in ``public`` by
+                # design (it lists every tenant the worker has seen) and
+                # has no per-tenant DDL. Bootstrap from PostgresStore would
+                # run under the active tenant's search_path, which is the
+                # wrong scope. Deploys create it via ``scripts/migrate.sh``
+                # like every other ops table. See
+                # ``docs/_design/storage-billing-endpoint.md`` §4.1.
+                #
                 # Mirrors 008_entities_temporal.sql (temporal_facts table only;
                 # the entity_* tables in 008 are owned by the entity-resolution
                 # adapter, not this store).

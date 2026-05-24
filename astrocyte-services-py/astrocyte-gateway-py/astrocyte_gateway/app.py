@@ -8,7 +8,7 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -1055,5 +1055,147 @@ def create_app(
         banks = brain.config.banks or {}
         return {"banks": list(banks.keys())}
 
+    # ── admin: per-tenant storage billing ────────────────────────────────
+    #
+    # Cerebro's StoragePollWorker polls this endpoint hourly for every
+    # tenant's ``bytes_used`` figure and feeds the result into Stripe
+    # metered billing. See ``docs/_design/storage-billing-endpoint.md`` for
+    # the full contract; this endpoint is the canonical handshake (§10.3).
+    #
+    # The endpoint reads from ``public.astrocyte_tenant_storage_snapshots``,
+    # which is populated by the snapshot worker (see
+    # ``astrocyte_gateway.storage_snapshot``). Endpoint latency is decoupled
+    # from measurement cost: the read is a single PK lookup against a small
+    # cross-tenant table, regardless of how much data the tenant has.
+
+    @app.get("/v1/admin/tenants/{tenant_id}/storage")
+    async def admin_tenant_storage(
+        tenant_id: str,
+        _admin: Annotated[None, Depends(require_admin_if_configured)],
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> Response:
+        """Per-tenant storage figure for billing (design contract §10.3).
+
+        Reads the most recent snapshot row from
+        ``public.astrocyte_tenant_storage_snapshots`` and returns the
+        ``bytes_used`` figure plus a freshness indicator
+        (``snapshot_age_seconds``) so callers can reason about staleness
+        without HTTP cache headers.
+
+        Path params:
+            tenant_id: Opaque external tenant identifier (Cerebro tenant id).
+                Echoed back in the response so callers can detect mis-routed
+                replies.
+
+        Responses:
+            200: full design-§10.3 body.
+            401: ``X-Admin-Token`` missing or wrong (when configured).
+            404: no snapshot row for ``tenant_id``. Treat as a brand-new
+                Free tenant that hasn't written anything yet — Cerebro
+                caches ``bytes_used = 0`` for this case.
+
+        Database access: opens a one-shot psycopg connection per request
+        using ``DATABASE_URL``. The read is a single PK lookup so the
+        per-request cost is dominated by connection establishment. A
+        future slice introduces a pool if endpoint RPS warrants it
+        (design §6.2 capacity model — at 10k tenants we switch Cerebro
+        to the bulk endpoint and per-tenant RPS drops to ad-hoc).
+        """
+        _ = ctx
+        from astrocyte_gateway.storage_snapshot import fetch_snapshot
+
+        dsn = os.environ.get("DATABASE_URL", "").strip()
+        if not dsn:
+            # No DATABASE_URL configured — the snapshot table cannot be
+            # read at all. This is structurally distinct from "no row for
+            # this tenant" (which is 404), so surface it as 503.
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "storage_snapshot_unavailable",
+                    "message": "DATABASE_URL not configured on this gateway",
+                },
+            )
+
+        import psycopg
+
+        async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
+            snapshot = await fetch_snapshot(conn, tenant_id)
+
+        if snapshot is None:
+            # No row yet — either a brand-new tenant that has never been
+            # measured, or one whose schema doesn't exist. Both map to 404
+            # per design §3.5; Cerebro treats this as bytes_used=0 and
+            # does not alarm.
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "tenant_not_found",
+                    "message": "no snapshot row yet for tenant_id",
+                },
+            )
+
+        # Compute snapshot_age_seconds at response time so callers see the
+        # freshness as of NOW, not as of when the worker last ran. The
+        # measured_at column is timezone-aware (TIMESTAMPTZ); compare in UTC.
+        now = datetime.now(timezone.utc)
+        measured_at_dt = snapshot.measured_at  # type: ignore[assignment]
+        snapshot_age = max(0, int((now - measured_at_dt).total_seconds()))  # type: ignore[operator]
+
+        # last_write_at and memory_count are optional in the contract
+        # (§3.1). Serialise to None when the worker hasn't populated them
+        # yet — Cerebro must tolerate either presence (§10.6 says the JSON
+        # shape is open).
+        last_write_at = snapshot.last_write_at
+        breakdown: dict[str, Any] = {
+            "heap_bytes": snapshot.heap_bytes,
+            "index_bytes": snapshot.index_bytes,
+            "table_count": snapshot.table_count,
+            "memory_count": snapshot.memory_count,
+            "last_write_at": _iso8601_z(last_write_at) if last_write_at is not None else None,
+        }
+        if snapshot.measure_error is not None:
+            # Surface the failure to Cerebro as an optional warning. The
+            # row's bytes_used is the LAST-KNOWN-good value (the worker
+            # writes it as 0 on failure), so the caller still gets a 200
+            # — they can choose to log the warning but not block billing.
+            breakdown["warnings"] = [snapshot.measure_error]
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "tenant_id": snapshot.tenant_id,
+                "schema": snapshot.schema_name,
+                "bytes_used": snapshot.bytes_used,
+                "measured_at": _iso8601_z(measured_at_dt),
+                "snapshot_age_seconds": snapshot_age,
+                "breakdown": breakdown,
+            },
+        )
+
     maybe_instrument_otel(app)
     return app
+
+
+def _iso8601_z(value: Any) -> str:
+    """Format a tz-aware datetime as ISO 8601 in UTC with a trailing ``Z``.
+
+    The design contract (§10.6) pins the wire format so downstream
+    consumers don't have to handle ``+00:00`` vs ``Z`` vs offset variants.
+    Naive datetimes are treated as UTC — this should never happen since
+    the snapshot table column is ``TIMESTAMPTZ``, but we defend against
+    it explicitly so a future migration that drops the tz suffix does not
+    silently break the wire format.
+    """
+    from datetime import timezone as _tz
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=_tz.utc)
+    else:
+        value = value.astimezone(_tz.utc)
+    # ``isoformat()`` for a UTC datetime ends in ``+00:00``; swap to ``Z``
+    # so the wire shape matches the contract verbatim.
+    iso = value.isoformat()
+    if iso.endswith("+00:00"):
+        iso = iso[:-6] + "Z"
+    return iso
