@@ -26,8 +26,8 @@ importers:
         specifier: ^11.15.0
         version: 11.15.0
       starlight-sidebar-topics:
-        specifier: ^0.7.1
-        version: 0.7.1(@astrojs/starlight@0.39.2(astro@6.3.2(@types/node@24.12.4)(rollup@4.60.3)))
+        specifier: ^0.7.2
+        version: 0.7.2(@astrojs/starlight@0.39.2(astro@6.3.2(@types/node@24.12.4)(rollup@4.60.3)))
 
 packages:
 
@@ -1914,8 +1914,8 @@ packages:
   space-separated-tokens@2.0.2:
     resolution: {integrity: sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==}
 
-  starlight-sidebar-topics@0.7.1:
-    resolution: {integrity: sha512-2PBR05ZUvnKNoJtbL2u6GoE1qmQD0tFcd5+inYEJHJkx3LE2P+vlNslofTGHLtzch2XzyNbHUBQQu35bouA6NQ==}
+  starlight-sidebar-topics@0.7.2:
+    resolution: {integrity: sha512-eKNQqA6EdNJTnAReVFZciPzuoBBwXs7ynNZRAukYSsh6pGfPtS9l0F+knIUbEP+eFQT4Vcbr9SxxiXEZtjowHw==}
     engines: {node: '>=22.12.0'}
     peerDependencies:
       '@astrojs/starlight': '>=0.38.0'
@@ -4696,7 +4696,7 @@ snapshots:
 
   space-separated-tokens@2.0.2: {}
 
-  starlight-sidebar-topics@0.7.1(@astrojs/starlight@0.39.2(astro@6.3.2(@types/node@24.12.4)(rollup@4.60.3))):
+  starlight-sidebar-topics@0.7.2(@astrojs/starlight@0.39.2(astro@6.3.2(@types/node@24.12.4)(rollup@4.60.3))):
     dependencies:
       '@astrojs/starlight': 0.39.2(astro@6.3.2(@types/node@24.12.4)(rollup@4.60.3))
       picomatch: 4.0.4
