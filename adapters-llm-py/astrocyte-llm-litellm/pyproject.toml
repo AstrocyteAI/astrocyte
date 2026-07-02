@@ -26,7 +26,7 @@ dependencies = [
     # range <= 3.13.3 — see #16-#21), so 3.13.4 is acceptable. Widened to
     # <1.84 to absorb the 1.83.10 security floor; bumps within 1.83.x are
     # mechanical patch releases.
-    "litellm>=1.83.10,<1.84",
+    "litellm>=1.83.10,<1.91",
     # Security floor for aiohttp — litellm pulls it transitively. The floor
     # tracks the highest fixed-in version across known aiohttp advisories so it
     # moves with the adapter rather than silently with the transitive.
