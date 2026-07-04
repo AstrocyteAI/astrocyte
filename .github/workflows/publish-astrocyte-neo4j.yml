@@ -29,7 +29,7 @@ jobs:
       ASTROCYTE_NEO4J_USER: neo4j
       ASTROCYTE_NEO4J_PASSWORD: testpass
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v8.2.0
         with:
@@ -61,7 +61,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

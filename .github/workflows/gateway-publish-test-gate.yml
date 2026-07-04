@@ -19,7 +19,7 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v8.2.0
         with:
@@ -46,7 +46,7 @@ jobs:
           - mip-education
           - webhook-ingest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v8.2.0
         with:
@@ -72,7 +72,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://astrocyte:astrocyte@localhost:5432/astrocyte
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
