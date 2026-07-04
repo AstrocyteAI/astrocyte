@@ -57,7 +57,11 @@ mcp = [
     "fastmcp>=3.0",
 ]
 eval = [
-    "deepeval>=2.0",
+    # deepeval was dropped 2026-07: declared since the v0.x eval harness
+    # but never imported anywhere after that harness was deleted. Its
+    # unconstrained setuptools requirement also blocked torch from
+    # floating past 2.10 (torch 2.11+ pins setuptools<82).
+    #
     # Porter stemmer used by the canonical LoCoMo judge
     # (astrocyte.eval.judges.locomo_judge). ~100 KB, pure-Python core
     # with optional C acceleration, stable API. Scoped to the `eval`
@@ -153,8 +157,11 @@ dev = [
     "ruff>=0.4",
     "pre-commit>=4.0",
     # Built-in feature extras that ``tests/test_mcp.py``,
-    # ``tests/test_eval_judges.py`` etc. import directly.
-    "astrocyte[mcp,eval,gateway,worker]",
+    # ``tests/test_eval_judges.py`` etc. import directly. ``openai`` is
+    # listed explicitly because ``tests/test_openai_tool_calls.py``
+    # instantiates OpenAIProvider — before 2026-07 it arrived hidden via
+    # deepeval's transitive deps, which masked the missing extra.
+    "astrocyte[mcp,eval,gateway,worker,openai]",
 ]
 
 # ``bench`` adds everything the ``make bench-*`` and weekly bench CI need:
