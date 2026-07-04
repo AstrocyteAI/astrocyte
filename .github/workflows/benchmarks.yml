@@ -13,9 +13,14 @@ on:
         required: false
         default: "longmemeval,locomo"
         type: string
-  schedule:
-    # Weekly Monday 6am UTC — always full run
-    - cron: "0 6 * * 1"
+  # Weekly cron disabled 2026-07-04: the DOPPLER_BENCHMARK_TOKEN repo
+  # secret was never provisioned, so every scheduled run failed at the
+  # Doppler step (~$0 wasted, but noisy). Re-enable once the service
+  # token exists (see refresh-badges.yml for the same dependency):
+  #   doppler configs tokens create ci-benchmarks --config bench --access read --plain
+  #   gh secret set DOPPLER_BENCHMARK_TOKEN
+  # schedule:
+  #   - cron: "0 6 * * 1"   # Weekly Monday 6am UTC — always full run
 
 permissions:
   contents: read
