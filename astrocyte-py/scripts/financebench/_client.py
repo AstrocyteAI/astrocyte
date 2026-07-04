@@ -43,20 +43,22 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Optional Phase A import — MarkitdownParser (not yet built)
 # ---------------------------------------------------------------------------
-try:
-    # Probe the actual library, not just our wrapper class — the wrapper
-    # imports successfully even when markitdown is missing (the underlying
-    # import happens inside convert()). Without this probe, the pymupdf
-    # fallback in _extract_markdown never fires.
-    import markitdown as _markitdown_probe
+import importlib.util as _importlib_util  # noqa: E402
 
-    del _markitdown_probe  # probe only — release the binding (quiets CodeQL py/unused-import)
-
-    from astrocyte.documents.parsers.markitdown import (
-        MarkitdownParser as _MarkitdownParser,
-    )
-    _MARKITDOWN_AVAILABLE = True
-except ImportError:
+# Probe the actual library, not just our wrapper class — the wrapper
+# imports successfully even when markitdown is missing (the underlying
+# import happens inside convert()). Without this probe, the pymupdf
+# fallback in _extract_markdown never fires. ``find_spec`` returns None
+# when the package can't be located, with no side-effect import.
+if _importlib_util.find_spec("markitdown") is not None:
+    try:
+        from astrocyte.documents.parsers.markitdown import (
+            MarkitdownParser as _MarkitdownParser,
+        )
+        _MARKITDOWN_AVAILABLE = True
+    except ImportError:
+        _MARKITDOWN_AVAILABLE = False
+else:
     _MARKITDOWN_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
