@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "astrocyte-stack"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Convenience meta-package: pulls Astrocyte's default production stack (astrocyte + astrocyte-postgres)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -42,6 +42,14 @@ Homepage = "https://github.com/AstrocyteAI/astrocyte"
 Documentation = "https://AstrocyteAI.github.io/astrocyte/"
 Source = "https://github.com/AstrocyteAI/astrocyte"
 Issues = "https://github.com/AstrocyteAI/astrocyte/issues"
+
+# Version from repo-root git tags via Hatch VCS — same mechanism as every
+# other package in the monorepo. Was a static 0.1.0 until v0.15.1: the
+# publish job silently failed on every release after the first because
+# PyPI already had astrocyte_stack-0.1.0 (file-name reuse is forbidden).
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }  # Git root is two levels up
 
 # Source layout: empty src/ tree. Hatchling needs *something* to package;
 # an empty Python module ``astrocyte_stack/__init__.py`` satisfies that.
