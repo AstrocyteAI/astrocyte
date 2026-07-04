@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-07-04 — security hotfix (dependency sweep, no behavior change)
+
+Dependency-only release. Bench parity carries over from v0.15.0 (cycle `v015w`) unchanged — no pipeline, retrieval, or answerer code was touched.
+
+### Security
+
+- **~112 Dependabot alerts cleared** across every Python lockfile and the docs pnpm lockfile. Highlights:
+  - `litellm` >=1.84.0 (critical: authentication bypass via Host Header injection); adapter pin widened to `<2`
+  - `aiohttp` 3.14.1, `pypdf` 6.14.2, `cryptography` 49.0.0, `starlette` 1.3.1, `pyjwt` 2.13.0, `python-multipart` 0.0.32, `pydantic-settings` 2.14.2, `idna` 3.16
+  - docs: `dompurify` 3.4.11, `astro` 6.4.8, `vite` 7.3.6, `esbuild` 0.28.1, `js-yaml` 4.2.0 (capped `<4.3.0` — 4.3.0 dropped its ESM default export and broke the astro build), `mermaid` 11.16.0
+- **`deepeval` removed** from the `eval` extra: never imported since the v0.x eval harness was deleted, and its unconstrained setuptools requirement was holding `torch` at 2.10.0 inside a flagged range (alert #76). torch now floats to 2.12.1. Side-effect fix: the `dev` extra lists `openai` explicitly (previously arrived hidden via deepeval's transitives).
+- **7 Dependabot PRs merged**: actions/checkout 6→7, docker/login-action 3→4, docker/setup-qemu-action 3→4, astral-sh/setup-uv 8.2.0, @astrojs/starlight 0.39.3, starlight-sidebar-topics 0.8.0, astro-mermaid 2.1.0.
+- **CodeQL**: `py/import-of-mutable-attribute` excluded (fires on every standard function import); ~20 code-quality findings fixed at source.
+
 ### M21-M32 (v0.15.0) — SHIPPED: live-memory architecture + M27 infrastructure end-to-end + retain-time coreference + retrieval parallelization + LME quality fixes (session_filter, confidence-aware abstention, temporal-resolution-at-retain) + retrieval stack unification (2026-05-20)
 
 **Consolidated ship spanning six cycles since v0.14.0:** M21 (live-memory architecture surface), M22-M27 (8-cycle answerer + memory-quality experiment arc — validated local optimum + banked capability infrastructure), M28-M29 (activate M27 infrastructure end-to-end + retain-time coreference; **first bench-positive measurement since M24**), M30 (retrieval parallelization — **top_50 arc peak at 193/230**), M31 (LME-quality cycle: confidence-aware abstention + session_filter + temporal-resolution-at-retain), M32 (stack unification: `Astrocyte.recall()` routes through PageIndex stack, closing bench-vs-API parity gap).
