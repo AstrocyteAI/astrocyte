@@ -1,0 +1,74 @@
+name: Refresh bench badges
+
+# Regenerates the public R2 badge + trajectory artifacts so the README
+# badges reflect the latest BENCH_PARITY.yaml release rows.
+#
+# Runs automatically after every successful Release (the release ritual
+# appends BENCH_PARITY rows, so the badge label — e.g. "astrocyte
+# v0.15.1" — must be re-derived). Also manually dispatchable for
+# ad-hoc refreshes (e.g. after bench-mark-shipped between releases).
+#
+# Uses the same Doppler service token as benchmarks.yml for the R2
+# credentials (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY /
+# R2_BUCKET / R2_BUCKET_PUBLIC / R2_PUBLIC_URL).
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    # For workflow_run triggers, only refresh after a successful release.
+    # workflow_dispatch has no workflow_run context, so it always runs.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: astrocyte-py
+        # bench extra carries aiobotocore for the R2 client.
+        run: uv sync --extra bench
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      - name: Refresh labels, trajectory, and badges
+        working-directory: astrocyte-py
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_BENCHMARK_TOKEN }}
+        # Service tokens are pre-scoped to a config — no --config flag
+        # (unlike the local Makefile flow, which selects `--config bench`
+        # from a personal login).
+        run: |
+          doppler run -- uv run python -m scripts.archive_bench_results --refresh-labels
+
+      - name: Verify public badge endpoints
+        run: |
+          for bench in locomo longmemeval; do
+            echo "--- badges/$bench.json ---"
+            curl -sf "https://pub-fd2a5bf01e5b443085a14aedb49c4206.r2.dev/badges/$bench.json" | tee /dev/stderr | python3 -c "
+          import json, sys
+          badge = json.load(sys.stdin)
+          assert badge.get('schemaVersion') == 1, 'bad schema'
+          assert badge.get('message', '').endswith('%'), 'bad message'
+          print()
+          print('OK:', badge['label'], badge['message'])
+          "
+          done
