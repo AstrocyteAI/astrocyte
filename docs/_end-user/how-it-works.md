@@ -4,6 +4,23 @@ A mid-level overview of Astrocyte's architecture — what happens when you call 
 
 ---
 
+## Glossary — read this first
+
+Astrocyte uses a small set of terms consistently. Skim these before the rest of the page:
+
+| Term | Meaning |
+|---|---|
+| **Bank** | An isolated namespace for memories — like a folder. Each has its own access control, rate limits, and PII policies. Common patterns: one bank per user, one per team, one per agent. |
+| **retain / recall / reflect / forget** | The four core memory operations. Retain writes; recall reads; reflect synthesizes a natural-language answer with citations; forget soft-deletes. |
+| **MIP** (Memory Intent Protocol) | Declarative YAML rules that route incoming `retain()` calls to the right bank based on content, tags, or principal. Lets you compose per-user + per-team + per-agent memory without agent code changes. |
+| **Principal** | The opaque identity Astrocyte receives from your app's auth layer. Used for per-bank authorization, audit, and MIP routing decisions. |
+| **Engine** | Ingest pipeline for a content shape. Document Engine handles PDFs / markdown; Conversation Engine handles chat transcripts; Memory Engine stores the extracted facts. |
+| **Provider / adapter** | Pluggable storage backends (pgvector, Neo4j, Qdrant, …) and pluggable ingest pipelines. Astrocyte negotiates behavior while enforcing policy regardless of backend. |
+
+Full definitions in [FAQ](faq/) and the deep-dive design docs.
+
+---
+
 ## The core operations
 
 Most interactions with Astrocyte use the memory operations below. `retain`, `recall`, `reflect`, and `forget` are the basic loop; `history`, `audit`, `compile`, and the M21 live-memory surface (`create_directive`, mental model CRUD, observation CRUD) extend it.

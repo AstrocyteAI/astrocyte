@@ -26,9 +26,9 @@ from pydantic_ai import Agent
 agent = Agent(model="claude-sonnet-4-20250514", tools=tools)
 
 # The agent can now call during execution:
-#   memory_retain("Calvin prefers dark mode", tags=["preference"])
-#   memory_recall("What are Calvin's preferences?")
-#   memory_reflect("Summarize what we know about Calvin")
+#   memory_retain("Alice prefers dark mode", tags=["preference"])
+#   memory_recall("What are Alice's preferences?")
+#   memory_reflect("Summarize what we know about Alice")
 ```
 
 ## End-to-end example
@@ -46,7 +46,7 @@ brain = Astrocyte.from_config("astrocyte.yaml")
 # Create agent with memory tools
 support_agent = Agent(
     model="claude-sonnet-4-20250514",
-    tools=astrocyte_tools(brain, bank_id="user-calvin", include_forget=True),
+    tools=astrocyte_tools(brain, bank_id="user-alice", include_forget=True),
     system_prompt=(
         "You are a support assistant with persistent memory. "
         "Use memory_retain to save important user preferences and facts. "
@@ -79,7 +79,7 @@ Use different banks for different memory scopes:
 
 ```python
 # Per-user preferences
-user_tools = astrocyte_tools(brain, bank_id="user-calvin")
+user_tools = astrocyte_tools(brain, bank_id="user-alice")
 
 # Shared team knowledge
 team_tools = astrocyte_tools(brain, bank_id="team-engineering")

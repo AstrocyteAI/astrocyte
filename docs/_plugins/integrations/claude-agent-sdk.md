@@ -44,7 +44,7 @@ from astrocyte.integrations.claude_agent_sdk import astrocyte_claude_agent_tools
 tools = astrocyte_claude_agent_tools(brain, bank_id="user-123")
 
 # Each tool returns SDK format: {"content": [{"type": "text", "text": "..."}]}
-result = await tools[0]["handler"]({"content": "Calvin prefers dark mode"})
+result = await tools[0]["handler"]({"content": "Alice prefers dark mode"})
 ```
 
 ## Integration pattern

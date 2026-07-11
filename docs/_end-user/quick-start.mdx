@@ -14,6 +14,12 @@ import LibraryQuickStart from "../../../components/LibraryQuickStart.mdx";
 
 Get **Astrocyte** running — pick the deployment model that fits your stack and follow the commands.
 
+## Prerequisites
+
+- **Python 3.11+** (library and standalone gateway)
+- **Docker** and **Docker Compose** (recommended for standalone gateway)
+- **Kong**, **APISIX**, or **Azure APIM** (gateway plugin mode only)
+
 ## Choose your deployment model
 
 <Tabs syncKey="deploy-mode">
@@ -77,7 +83,7 @@ Add long-term memory to LLM calls routed through an **existing API gateway** —
 
 **Best for:** organizations already routing LLM traffic through Kong, APISIX, or Azure APIM.
 
-**Requires:** a running [standalone gateway](#) (see the Standalone Gateway tab) that the plugin calls via HTTP.
+**Requires:** a running Astrocyte gateway service — see the **Standalone Gateway** tab in [Choose your deployment model](#choose-your-deployment-model) above.
 
 <Tabs syncKey="gateway-plugin">
 <TabItem label="Kong">
@@ -162,12 +168,6 @@ See [`gateway-plugins/azure-apim/README.md`](https://github.com/AstrocyteAI/astr
 </TabItem>
 </Tabs>
 
-## Prerequisites
-
-- **Python 3.11+** (library and standalone gateway)
-- **Docker** and **Docker Compose** (recommended for standalone gateway)
-- **Kong**, **APISIX**, or **Azure APIM** (gateway plugin mode only)
-
 ## Wire an AI agent
 
 Astrocyte does **not** run the agent loop (tools, checkpoints, multi-step graphs). Your framework does. Integrations map each framework's memory hooks to `retain` / `recall` / `reflect` through the same policy layer — see **[agent framework middleware](/plugins/agent-framework-middleware/)** for the full matrix.
@@ -184,7 +184,7 @@ memory = AstrocyteMemory(brain, bank_id="user-123")
 
 await memory.save_context(
     inputs={"question": "Theme preference?"},
-    outputs={"answer": "Calvin prefers dark mode."},
+    outputs={"answer": "Alice prefers dark mode."},
     thread_id="thread-abc",
 )
 vars_for_prompt = await memory.load_memory_variables({})

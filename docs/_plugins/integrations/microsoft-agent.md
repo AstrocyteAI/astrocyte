@@ -25,7 +25,7 @@ from microsoft.agent_framework import Agent
 agent = Agent(tools=tools)
 
 # Dispatch tool calls
-result = await handlers["memory_retain"](content="Calvin prefers dark mode")
+result = await handlers["memory_retain"](content="Alice prefers dark mode")
 result = await handlers["memory_recall"](query="preferences")
 ```
 

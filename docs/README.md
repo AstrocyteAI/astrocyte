@@ -1,6 +1,12 @@
 # Introduction
 
-For sixty years, enterprise knowledge management has oscillated between two failing options. **Option 1:** hand-encode structure — taxonomies, ontologies, knowledge graphs built by experts. Expensive to build, impossible to maintain as reality changes. **Option 2:** skip structure entirely — wikis, file shares, and now RAG. Searchable, but unintelligent. You can ask "what do we know about the deployment pipeline?" but the system cannot tell you what it *doesn't* know, cannot resolve that "Calvin" and "the CTO" are the same person across documents, and cannot answer "what did we believe about this on March 1st?"
+**Astrocyte is an open-source memory framework for AI systems** — a production-shaped memory layer with retrieval, governance, observability, and pluggable storage backends, sitting between your agents and their data. Same contract in Python and Rust, so you can pick a runtime without redesigning memory semantics.
+
+---
+
+## Why memory needs its own layer
+
+For sixty years, enterprise knowledge management has oscillated between two failing options. **Option 1:** hand-encode structure — taxonomies, ontologies, knowledge graphs built by experts. Expensive to build, impossible to maintain as reality changes. **Option 2:** skip structure entirely — wikis, file shares, and now RAG. Searchable, but unintelligent. You can ask "what do we know about the deployment pipeline?" but the system cannot tell you what it *doesn't* know, cannot resolve that "Alex" and "the CTO" are the same person across documents, and cannot answer "what did we believe about this on March 1st?"
 
 **Astrocyte is the third option.** LLMs extract structure automatically — entities, relationships, facts — and a deterministic harness verifies, governs, and queries that structure. Structure emerges from content; it is not hand-encoded. The system gets smarter as more is retained, without any manual curation.
 
@@ -9,7 +15,7 @@ Four diagnostic tests separate systems that pass the third-option bar from syste
 | Test | The question | What it proves |
 |------|-------------|----------------|
 | **Gap analysis** | "What don't we know about X?" | Reasons about *absence* — not just retrieval of what's present |
-| **Entity resolution** | "Is 'Calvin' the same person as 'the CTO'?" | Structured evidence chains, not cosine similarity |
+| **Entity resolution** | "Is 'Alex' the same person as 'the CTO'?" | Structured evidence chains, not cosine similarity |
 | **Time travel** | "What did we believe about X on March 1st?" | Immutable history with as-of queries |
 | **Sovereignty** | "Can this run fully on our own infrastructure?" | Self-hosted, no data leaving the org |
 

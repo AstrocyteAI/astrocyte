@@ -22,9 +22,9 @@ brain = Astrocyte.from_config("astrocyte.yaml")
 memory = AstrocyteLlamaMemory(brain, bank_id="user-123", max_results=10)
 
 # Store and retrieve
-await memory.put("Calvin prefers dark mode", tags=["preference"])
+await memory.put("Alice prefers dark mode", tags=["preference"])
 context = await memory.get("UI preferences")
-# → "- Calvin prefers dark mode"
+# → "- Alice prefers dark mode"
 
 # Get all memories in the bank
 all_mems = await memory.get_all()

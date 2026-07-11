@@ -33,7 +33,7 @@ results = await memory.search("dark mode", max_results=5)
 
 # Load formatted memories for prompt injection
 variables = await memory.load_memory_variables({"topic": "UI preferences"})
-# → {"memory": "- Calvin prefers dark mode\n- ..."}
+# → {"memory": "- Alice prefers dark mode\n- ..."}
 ```
 
 ## Thread-to-bank mapping

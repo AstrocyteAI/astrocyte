@@ -25,7 +25,7 @@ from beeai import BeeAgent
 agent = BeeAgent(llm=llm, tools=tools)
 
 # Or call tools directly:
-result = await tools[0].run({"content": "Calvin likes Python"})
+result = await tools[0].run({"content": "Alice likes Python"})
 ```
 
 ## Integration pattern

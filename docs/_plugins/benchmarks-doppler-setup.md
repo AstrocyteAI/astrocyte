@@ -81,7 +81,7 @@ cp benchmark-results/results-$(date -u +%Y%m%dT%H%M%SZ | cut -c1-15)*.json \
 git add benchmarks/snapshots/locomo-v3-real-openai.json
 ```
 
-See [`benchmarks/snapshots/README.md`](../../astrocyte-py/benchmarks/snapshots/README.md)
+See [`benchmarks/snapshots/README.md`](../astrocyte-py/benchmarks/snapshots/README.md)
 for the naming convention.
 
 ## R2 bucket setup

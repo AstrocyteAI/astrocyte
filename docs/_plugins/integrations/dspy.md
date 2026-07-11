@@ -27,7 +27,7 @@ dspy.configure(rm=retriever)
 
 # Sync call (DSPy RM protocol)
 passages = retriever("What is dark mode?", k=5)
-# → ["Calvin prefers dark mode", "Dark mode reduces eye strain"]
+# → ["Alice prefers dark mode", "Dark mode reduces eye strain"]
 
 # Async methods for programmatic use
 passages = await retriever.aretrieve("dark mode")

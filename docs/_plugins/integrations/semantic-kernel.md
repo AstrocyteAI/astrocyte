@@ -27,9 +27,9 @@ kernel = Kernel()
 kernel.add_plugin(plugin, plugin_name="memory")
 
 # Call functions directly
-result = await plugin.retain("Calvin prefers dark mode", tags="preference,ui")
+result = await plugin.retain("Alice prefers dark mode", tags="preference,ui")
 result = await plugin.recall("UI preferences")
-answer = await plugin.reflect("What are Calvin's preferences?")
+answer = await plugin.reflect("What are Alice's preferences?")
 ```
 
 ## Integration pattern
