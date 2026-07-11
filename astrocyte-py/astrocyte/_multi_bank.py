@@ -7,6 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
+from astrocyte._log_safety import safe as _safe_log
 from astrocyte._recall_params import RecallParams
 from astrocyte.errors import ConfigError
 from astrocyte.policy.homeostasis import enforce_token_budget
@@ -127,7 +128,10 @@ class MultiBankOrchestrator:
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
-            logger.error("Multi-bank parallel recall timed out after 30s for banks: %s", bank_ids)
+            logger.error(
+                "Multi-bank parallel recall timed out after 30s for banks: %s",
+                _safe_log(",".join(bank_ids)),
+            )
             self._metrics.inc_counter(
                 "astrocyte_multi_bank_recall_timeout_total",
                 {"bank_ids": ",".join(bank_ids)},
@@ -141,7 +145,11 @@ class MultiBankOrchestrator:
                 all_hits.extend(_tag_hits_with_bank(result.hits, bid))
                 total_available += result.total_available
             elif isinstance(result, BaseException):
-                logger.warning("Multi-bank recall failed for bank '%s': %s", bid, result)
+                logger.warning(
+                    "Multi-bank recall failed for bank '%s': %s",
+                    _safe_log(bid),
+                    _safe_log(result),
+                )
                 self._cb_record_failure()
                 self._metrics.inc_counter(
                     "astrocyte_recall_total",

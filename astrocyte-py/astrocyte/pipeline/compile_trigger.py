@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from astrocyte._log_safety import safe as _safe_log
+
 if TYPE_CHECKING:
     from astrocyte.pipeline.compile import CompileEngine
 
@@ -151,13 +153,13 @@ class CompileQueue:
         try:
             self._queue.put_nowait(bank_id)
             self._pending.add(bank_id)
-            _logger.debug("Compile job enqueued for bank %r", bank_id)
+            _logger.debug("Compile job enqueued for bank %r", _safe_log(bank_id))
         except asyncio.QueueFull:
             _logger.warning(
                 "Compile queue full (%d slots); skipping bank %r. "
                 "Consider increasing max_queue_size or lowering thresholds.",
                 self._queue.maxsize,
-                bank_id,
+                _safe_log(bank_id),
             )
 
     async def start(self) -> None:
