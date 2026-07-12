@@ -335,7 +335,7 @@ timeline = await brain.history("eng-team", start=datetime(2026, 3, 1), end=datet
 
 Implementation:
 1. Run scoped recall against `bank_id` for `scope` topic
-2. Pass recall results to a configurable LLM judge with prompt: "Given these memories about {scope}, what topics are missing, thin, or contradictory?"
+2. Pass recall results to a configurable LLM judge with prompt: "Given these memories about \{scope\}, what topics are missing, thin, or contradictory?"
 3. Parse structured output into `AuditResult`
 
 ```python

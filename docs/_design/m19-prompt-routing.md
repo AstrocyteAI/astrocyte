@@ -64,7 +64,7 @@ combined = CE_normalized × recency_boost × temporal_boost × proof_count_boost
 
 **Implementation paths (ranked by cost):**
 
-1. **Classifier-then-prompt-template-selection** (~1 week) — small classifier (regex or LLM-judge) tags each question as one of {recommendation, multi-hop, single-hop, temporal, other}. Routing table selects the right system-prompt block per tag. Reuses the M16 question-type router design (see [`m16-question-type-router.md`](m16-question-type-router.md)).
+1. **Classifier-then-prompt-template-selection** (~1 week) — small classifier (regex or LLM-judge) tags each question as one of \{recommendation, multi-hop, single-hop, temporal, other\}. Routing table selects the right system-prompt block per tag. Reuses the M16 question-type router design (see [`m16-question-type-router.md`](m16-question-type-router.md)).
 
 2. **Universal prompt with conditional blocks** (~2-3 days) — single system prompt with `IF this question is about preferences THEN ...` style sections. Cheaper but more brittle.
 

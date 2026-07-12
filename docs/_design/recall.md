@@ -42,7 +42,7 @@ Each layer can answer alone; recall precedence + RRF fusion picks the best signa
 | Tree skeleton + per-node summaries | PageIndex | Picker has navigable map; mode-specific reasoning loop |
 | Mode classifier + mode-specific picker/synth prompts | PageIndex (M9 Phase A) | Categories need different reasoning shapes |
 | `<reference_date>` block in synth | PageIndex (M9 Phase A) | Resolves relative time phrases (LME temporal-reasoning) |
-| `section_entities` table + `(entity_name)` btree | Hindsight | Entity-bridging multi-hop in <100ms via SQL CTE |
+| `section_entities` table + `(entity_name)` btree | Hindsight | Entity-bridging multi-hop in < 100ms via SQL CTE |
 | `section_links` (semantic_knn / causal / supersedes) | Hindsight | Pre-computed graph; no query-time chains |
 | RRF fusion (k=60) | Hindsight | Robust signal combination across incomparable rankings |
 | Cross-encoder reranker | Hindsight (already in `cross_encoder_rerank` config) | Bridges retrieval and reasoning |

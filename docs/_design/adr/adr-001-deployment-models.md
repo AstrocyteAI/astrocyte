@@ -26,7 +26,7 @@ The agent application installs `astrocyte` as a Python dependency and calls `bra
 
 **When to use**:
 - Python-native agent applications
-- Single-agent or small-scale deployments (<10 agents)
+- Single-agent or small-scale deployments (< 10 agents)
 - Prototyping and development
 - When sub-millisecond memory access latency matters
 - When operational simplicity is the top priority
@@ -139,7 +139,7 @@ An Astrocyte plugin for existing API gateways (Kong, APISIX, Azure APIM) that in
 - **Risk**: Standalone gateway becomes a maintenance burden, diverging from library behavior
   - **Mitigation**: Standalone gateway imports and delegates to the same `Astrocyte` class. The HTTP layer is a thin adapter. Single core, multiple transports.
 - **Risk**: Performance regression from network hop in standalone mode
-  - **Mitigation**: Benchmark continuously. Target: <30ms overhead (excluding LLM/embedding API calls). Connection pooling + keep-alive minimize TCP overhead.
+  - **Mitigation**: Benchmark continuously. Target: < 30ms overhead (excluding LLM/embedding API calls). Connection pooling + keep-alive minimize TCP overhead.
 - **Risk**: Gateway plugin delay frustrates users with existing Kong/APISIX setups
   - **Mitigation**: Document standalone gateway as the recommended path. Provide migration guide for when plugin ships.
 
@@ -175,14 +175,14 @@ An Astrocyte plugin for existing API gateways (Kong, APISIX, Azure APIM) that in
 ### gRPC Instead of REST for Standalone Gateway
 - **Pro**: Lower serialization overhead (~30% smaller payloads), streaming support, code-generated clients
 - **Con**: Harder to debug (not curl-friendly), browser support requires gRPC-Web proxy, smaller ecosystem for agent framework integrations
-- **Decision**: REST with JSON. Memory operations are low-QPS (compared to e.g. ad serving) and the payloads are small (<10KB typical). REST's debuggability and ecosystem compatibility outweigh gRPC's performance advantages. Can add gRPC transport later if benchmarks justify it.
+- **Decision**: REST with JSON. Memory operations are low-QPS (compared to e.g. ad serving) and the payloads are small (< 10KB typical). REST's debuggability and ecosystem compatibility outweigh gRPC's performance advantages. Can add gRPC transport later if benchmarks justify it.
 
 ### WebSocket Instead of REST for Standalone Gateway
 - **Pro**: Persistent connection, lower connection overhead for chatty agents
 - **Con**: Stateful connections complicate load balancing (sticky sessions needed), more complex error handling, not all HTTP infrastructure (CDN, WAF) supports WebSocket
-- **Decision**: REST. Memory operations are request/response, not streaming. WebSocket's connection persistence is unnecessary overhead for <500 QPS.
+- **Decision**: REST. Memory operations are request/response, not streaming. WebSocket's connection persistence is unnecessary overhead for < 500 QPS.
 
 ### Sidecar (Service Mesh) Deployment
 - **Pro**: Per-pod isolation, automatic service discovery, consistent with Kubernetes-native patterns
-- **Con**: Requires Kubernetes, high memory overhead per sidecar (~256 MB), overkill for <100 agents
+- **Con**: Requires Kubernetes, high memory overhead per sidecar (~256 MB), overkill for < 100 agents
 - **Decision**: Not pursuing. Standalone gateway as a shared service is more resource-efficient. Sidecar can be reconsidered if tenant isolation requirements tighten.

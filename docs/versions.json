@@ -1,0 +1,4 @@
+{
+  "_comment": "Registry of versioned API-reference snapshots (docs/_reference-archive/). Cut one at release time: make docs-version VERSION=x.y.z. Newest first.",
+  "versions": []
+}

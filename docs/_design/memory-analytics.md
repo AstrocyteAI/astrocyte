@@ -17,13 +17,13 @@ Each bank gets a health score derived from usage patterns.
 | `recall_hit_rate` | % of recalls that return >=1 result | 60-95% |
 | `avg_recall_score` | Average relevance score of top hit | 0.5-0.9 |
 | `retain_rate` | Retains per hour | Depends on use case |
-| `dedup_rate` | % of retains that are near-duplicates | <20% |
+| `dedup_rate` | % of retains that are near-duplicates | < 20% |
 | `avg_content_length` | Average retained content length (chars) | >50 |
 | `recall_to_retain_ratio` | How often memory is read vs written | >0.5 |
 | `reflect_success_rate` | % of reflects that produce a non-empty answer | >80% |
 | `memory_count` | Total memories in bank | Depends on use case |
 | `entity_count` | Unique entities tracked | Growing over time |
-| `staleness` | % of memories never recalled in last 30 days | <70% |
+| `staleness` | % of memories never recalled in last 30 days | < 70% |
 
 ### 1.2 Health score calculation
 
@@ -68,8 +68,8 @@ Agents in loops or with misconfigured auto-retain can flood memory with low-valu
 |---|---|---|
 | Retain rate spike | >5x rolling 1-hour average | Agent is in a loop |
 | Dedup rate spike | >80% of retains are duplicates | Agent is re-storing the same content |
-| Content length drop | Average <20 chars over 100 retains | Agent is storing junk |
-| Recall hit rate drop | <20% over 100 recalls | Memories are not relevant to queries |
+| Content length drop | Average < 20 chars over 100 retains | Agent is storing junk |
+| Recall hit rate drop | < 20% over 100 recalls | Memories are not relevant to queries |
 
 ### 2.2 Actions
 

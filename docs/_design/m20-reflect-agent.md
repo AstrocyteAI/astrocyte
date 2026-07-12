@@ -83,7 +83,7 @@ Budget: ~$6 (3 runs × ~$2), ~75 min total.
 | **≥+5q (+2.2pp)** | SHIP as default-on | Flip `ASTROCYTE_USE_REFLECT` default to ON in bench; tag v0.15.0 with bench label `m20` |
 | **+2q to +5q** | SHIP as opt-in | Public API + MCP tool ship; default OFF; documented as "use for hard questions" |
 | **−2q to +2q** | NULL — surface ship only | Public API + MCP tool ship (agents can call); document as no-bench-lift; defer Trend / delta_ops to M21 |
-| **<−2q** | INVESTIGATE | Reflect actively hurting bench accuracy; check for prompt-routing interaction (M19a was tuned for direct recall, may conflict with reflect) |
+| **< −2q** | INVESTIGATE | Reflect actively hurting bench accuracy; check for prompt-routing interaction (M19a was tuned for direct recall, may conflict with reflect) |
 
 **Latency budget check:** reflect can issue up to `max_iterations` (default 10) LLM calls per question. Bench latency may go from ~25s/q to 60-120s/q. Acceptable for accuracy lift; documented if shipping default-on.
 
@@ -150,7 +150,7 @@ The code was ported from Hindsight pattern but never exercised at scale.
 
 **R0 LME baseline (reflect OFF, n=30): 21/30 = 70.0%**, identical to both M19a runs. R0 combined 21+173 = **194/230 (84.35%)** — within +2q of M19a's 2-run mean (192/230), parity confirmed; Day 3 harness changes (Hindsight integrated-mode rewrite) are non-regressing.
 
-R1/R1b/R1c/R1d were LoCoMo-only since the regression signal was unambiguous on LoCoMo alone and the combined-bench ship gate only triggers when LoCoMo wins. R1d projected combined (assuming LME parity with R0): 21+167 = 188/230 = 81.7%, −6q below R0 — squarely in M20 §5 ship-gate's **"<−2q INVESTIGATE"** territory.
+R1/R1b/R1c/R1d were LoCoMo-only since the regression signal was unambiguous on LoCoMo alone and the combined-bench ship gate only triggers when LoCoMo wins. R1d projected combined (assuming LME parity with R0): 21+167 = 188/230 = 81.7%, −6q below R0 — squarely in M20 §5 ship-gate's **"< −2q INVESTIGATE"** territory.
 
 ### 8.2 Three falsified hypotheses + one confirmed pathology
 

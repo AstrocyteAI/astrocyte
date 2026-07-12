@@ -199,7 +199,7 @@ Total: ~525 LoC across 9 files (most existing).
 
 **Risk: intent classifier misfires on bench queries** → fallback to UNKNOWN preserves current behaviour. Already enforced in `weighted_rrf_fusion`.
 
-**Risk: per-fact-type segmentation slower** → adds `n_fact_types - 1 = 2` extra SQL queries per channel. Indexes on `(bank_id, fact_type)` already exist. <15% latency hit expected.
+**Risk: per-fact-type segmentation slower** → adds `n_fact_types - 1 = 2` extra SQL queries per channel. Indexes on `(bank_id, fact_type)` already exist. < 15% latency hit expected.
 
 **Risk: BM25 5th channel re-regresses** → intent gating means it only fires with weight > 0; most queries get bm25 weight 1.0 (FACTUAL gets 1.5). Pre-M34 it was a hard 5th sibling regardless of intent — that's the failure mode M34 sidesteps.
 

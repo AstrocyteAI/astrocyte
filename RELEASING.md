@@ -69,6 +69,24 @@ If the bench cycle was already closed (e.g. you're re-releasing an unchanged cyc
 
 At the repo root. PyPI description for `astrocyte` reads `astrocyte-py/README.md`; GitHub Release notes can mirror the changelog entry.
 
+### Step 2b — Cut the versioned API-reference docs snapshot
+
+On the release commit, before tagging:
+
+```bash
+make docs-version VERSION=X.Y.Z
+git add docs/_reference-archive/vX.Y.Z docs/versions.json \
+        docs/_end-user/reference-archive.md docs/_end-user/python-api-index.md
+```
+
+This snapshots the Memory API reference + Python public API index into
+`docs/_reference-archive/vX.Y.Z/` and registers the version on the site's
+[reference archive](docs/_end-user/reference-archive.md) page. Because it runs
+on the same tree the tag is cut from, the archived reference is byte-derived
+from the exact code that builds the PyPI wheels, the GHCR image, and the
+gateway's `openapi.json` — the archive's OpenAPI link points at the tag-pinned
+blob of that file.
+
 ### Step 3 — Record release ↔ bench-cycle parity
 
 Lockstep across the three user-facing ship surfaces (`astrocyte`, `astrocyte-postgres`, `astrocyte-gateway-py`):

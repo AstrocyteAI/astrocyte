@@ -24,6 +24,9 @@ const SOURCE_TO_PUBLIC = {
   _plugins: "plugins",
   "_end-user": "end-user",
   _tutorials: "tutorials",
+  // Versioned API-reference snapshots cut at release time
+  // (docs/scripts/cut-reference-version.py). One subdirectory per release.
+  "_reference-archive": "reference-archive",
 };
 
 const DOC_SOURCE_DIRS = new Set(Object.keys(SOURCE_TO_PUBLIC));
@@ -42,9 +45,11 @@ function stripFirstH1(md) {
 
 function repoLinksToGitHub(content) {
   return content.replace(/\]\((\.\.\/[^)]+)\)/g, (full, rel) => {
-    const clean = rel.replace(/^\.\.\//, "");
-    // Don't convert links that target doc source directories — those are
-    // cross-section references handled by docsMarkdownLinksToRoutes.
+    // Strip ALL leading ../ segments: pages nested more than one level deep
+    // (e.g. _reference-archive/vX.Y.Z/) reference doc source dirs with
+    // multiple ups, and those are cross-section references handled by
+    // docsMarkdownLinksToRoutes, not repo-file links.
+    const clean = rel.replace(/^(\.\.\/)+/, "");
     const firstSegment = clean.split("/")[0];
     if (DOC_SOURCE_DIRS.has(firstSegment)) return full;
     return `](${FILE_BASE}/${clean})`;
@@ -139,6 +144,14 @@ function ensureFrontmatter(raw, titleFallback, sourceFileAbs, topicId, destFileA
   const title = m ? m[1].trim() : titleFallback;
   const bodyMd = m ? stripFirstH1(raw) : raw;
   const body = transformBody(bodyMd, sourceFileAbs, destFileAbs);
+  if (topicId === "reference-archive") {
+    // Versioned snapshots: not part of any sidebar topic (excluded in
+    // astro.config.mjs) and given an explicit slug so version directories
+    // keep their dots (Starlight would otherwise slugify v0.16.0 -> v0160).
+    const rel = path.relative(contentDocs, destFileAbs).replace(/\\/g, "/").replace(/\.mdx?$/, "");
+    const fm = `---\ntitle: "${escapeTitle(title)}"\ndraft: false\nslug: "${rel}"\n---\n\n`;
+    return fm + body;
+  }
   const fm = `---\ntitle: "${escapeTitle(title)}"\ndraft: false\ntopic: ${topicId}\n---\n\n`;
   return fm + body;
 }
@@ -153,7 +166,7 @@ function rmGeneratedDirs() {
   const legacySpec = path.join(contentDocs, "spec");
   if (fs.existsSync(legacySpec)) fs.rmSync(legacySpec, { recursive: true, force: true });
 
-  for (const d of ["design", "plugins", "end-user", "tutorials"]) {
+  for (const d of ["design", "plugins", "end-user", "tutorials", "reference-archive"]) {
     const p = path.join(contentDocs, d);
     if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true });
   }
@@ -190,7 +203,7 @@ function copyAllMdFromSourceSection(sourceDirName, subDir = "") {
 
 rmGeneratedDirs();
 
-for (const src of ["_design", "_plugins", "_end-user", "_tutorials"]) {
+for (const src of ["_design", "_plugins", "_end-user", "_tutorials", "_reference-archive"]) {
   copyAllMdFromSourceSection(src);
 }
 

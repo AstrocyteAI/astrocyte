@@ -297,6 +297,39 @@ curl -X POST https://gateway.example.com/v1/recall \
   }'
 ```
 
+### POST /v1/debug/recall — retrieval introspection
+
+Runs the exact same recall (same body, same auth and access checks) but returns
+only the pipeline **trace** and the **result count** — no memory contents:
+
+```bash
+curl -X POST https://gateway.example.com/v1/debug/recall \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{"query": "What UI theme does the customer prefer?", "bank_id": "user-prefs"}'
+```
+
+```json
+{
+  "trace": {
+    "strategies_used": ["semantic", "keyword"],
+    "strategy_timings_ms": {"semantic": 12.4, "keyword": 3.1},
+    "fusion_method": "rrf",
+    "tier_used": 1,
+    "cache_hit": false,
+    "latency_ms": 18.2
+  },
+  "result_count": 5
+}
+```
+
+Use it to diagnose retrieval behaviour — which strategies fired, per-strategy
+timings, cache/tier usage — without pulling potentially sensitive memory text
+into logs, dashboards, or support tickets. It executes the full recall
+pipeline, so it costs the same compute as a real recall; only the response
+payload is smaller. (The same `trace` object is included in normal `/v1/recall`
+responses.)
+
 ---
 
 ## history() -- Recall a point-in-time snapshot
@@ -1079,6 +1112,57 @@ curl -X POST https://gateway.example.com/v1/import \
   -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
   -d '{"bank_id": "user-prefs", "path": "/backups/user-prefs.ama.jsonl", "on_conflict": "skip"}'
 ```
+
+---
+
+## Admin & governance endpoints
+
+Operational endpoints guarded by the admin token (`X-Admin-Token`; see
+[Authentication setup](authentication-setup/)). On a non-loopback deployment
+they are disabled entirely until `ASTROCYTE_ADMIN_TOKEN` is set.
+
+### GET /v1/admin/banks/\{bank_id\}/health — single-bank health
+
+Health score and detected issues for one bank (Python:
+`Astrocyte.bank_health`). The all-banks variant is
+`GET /v1/admin/banks/health` (Python: `Astrocyte.all_bank_health`).
+
+```bash
+curl https://gateway.example.com/v1/admin/banks/user-prefs/health \
+  -H "X-Admin-Token: $ASTROCYTE_ADMIN_TOKEN"
+```
+
+### DELETE /v1/admin/banks/\{bank_id\}/hold/\{hold_id\} — release a legal hold
+
+Releases a specific legal hold; `forget()` becomes possible again once the
+bank's last hold is released. Returns whether the hold existed. Pairs with
+`POST /v1/admin/banks/{bank_id}/hold` (place a hold) and
+`GET /v1/admin/banks/{bank_id}/hold` (check hold status).
+
+```bash
+curl -X DELETE https://gateway.example.com/v1/admin/banks/user-prefs/hold/case-1234 \
+  -H "X-Admin-Token: $ASTROCYTE_ADMIN_TOKEN"
+```
+
+```json
+{"bank_id": "user-prefs", "hold_id": "case-1234", "released": true}
+```
+
+### GET /v1/admin/tenants/\{tenant_id\}/storage — tenant storage snapshot
+
+Point lookup of the storage snapshot for one tenant (schema-per-tenant
+deployments), for billing and capacity dashboards. Requires `DATABASE_URL` on
+the gateway; returns **503** with `storage_snapshot_unavailable` when it is
+not configured.
+
+```bash
+curl https://gateway.example.com/v1/admin/tenants/acme/storage \
+  -H "X-Admin-Token: $ASTROCYTE_ADMIN_TOKEN"
+```
+
+Related admin endpoints documented elsewhere: `POST /v1/admin/lifecycle` (TTL
+sweep), `GET /v1/admin/banks` and `GET /v1/admin/sources` (inventory — see
+[Monitoring & observability](monitoring-and-observability/)).
 
 ---
 

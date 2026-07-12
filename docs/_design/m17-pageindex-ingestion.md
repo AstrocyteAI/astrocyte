@@ -228,7 +228,7 @@ Locked 2026-05-16. Decisions 1-2 confirmed against PageIndex's actual implementa
    - Per-node threshold: `summary_token_threshold=200` (configurable).
    - If `node.text` is < 200 tokens: **raw text IS the summary** — no LLM call, no cost.
    - If `node.text` ≥ 200 tokens: gpt-4o-mini generates a description with the prompt:
-     > "You are given a part of a document, your task is to generate a description of the partial document about what are main points covered in the partial document. Partial Document Text: {node.text}. Directly return the description, do not include any other text."
+     > "You are given a part of a document, your task is to generate a description of the partial document about what are main points covered in the partial document. Partial Document Text: \{node.text\}. Directly return the description, do not include any other text."
    - No max-tokens cap on LLM response (lets the model size the summary to content).
    - Distinct fields: `summary` for leaf nodes, `prefix_summary` for internal nodes.
    - Net cost impact: significantly lower than uniform summarization — most LME/LoCoMo session blocks are < 200 tokens so they skip the LLM entirely.

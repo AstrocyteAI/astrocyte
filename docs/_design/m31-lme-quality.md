@@ -49,7 +49,7 @@ Closing the remaining 24-point gap to Hindsight's 94.6% will likely require borr
 Strengthened the existing confidence handling rule with explicit operational guidance:
 - HIGH (≥0.85): quote directly
 - MEDIUM (0.5–0.85): soften to natural attribution, avoid superlatives
-- LOW (<0.5): explicitly flag uncertainty
+- LOW (< 0.5): explicitly flag uncertainty
 - Conflicting facts: surface both with `mentioned:` dates
 
 **Projected: +1–2q on LME single-session-preference, +1q on multi-session** (avoids confident-wrong answers being judged FAIL).

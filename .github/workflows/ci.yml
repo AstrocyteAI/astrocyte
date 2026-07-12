@@ -157,6 +157,10 @@ jobs:
           uv sync
           uv run --with import-linter lint-imports
 
+      - name: Docs coverage (endpoints + public names)
+        working-directory: astrocyte-py
+        run: uv run python ../tooling/check_docs_coverage.py
+
       - name: API breakage vs last release (griffe)
         run: |
           BASE=$(git describe --tags --abbrev=0 --match 'v*')

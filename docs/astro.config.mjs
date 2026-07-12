@@ -31,7 +31,9 @@ const topicItems = {
       label: "Reference",
       items: [
         { label: "Memory API reference", link: "/end-user/memory-api-reference/" },
+        { label: "Python public API index", link: "/end-user/python-api-index/" },
         { label: "Configuration reference", link: "/end-user/configuration-reference/" },
+        { label: "Reference archive (by version)", link: "/end-user/reference-archive/" },
       ],
     },
     // ── Setup Guides ──
@@ -288,6 +290,9 @@ export default defineConfig({
             topics: {
               "end-user": ["/", "/index"],
             },
+            // Versioned reference snapshots are standalone pages (reachable
+            // from the reference-archive index), not part of any topic.
+            exclude: ["/reference-archive/**"],
           },
         ),
       ],

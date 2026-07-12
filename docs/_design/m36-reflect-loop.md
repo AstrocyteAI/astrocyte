@@ -142,7 +142,7 @@ Total: **~1 day code + 1 bench cycle**.
 | LLM defers on every question (over-deferring) | Cap iterations at 2; first answer is forced if both pass produce no answer |
 | Refined query is worse than original | Track per-bench: if refined queries underperform original, disable refinement and just append more candidates |
 | Cost / latency blow-up | Strict 2-pass cap, no agentic loop |
-| Defer-then-answer same as direct-answer (no actual lift) | Defer rate becomes the signal — if <10% defer, the architecture is fine for the workload |
+| Defer-then-answer same as direct-answer (no actual lift) | Defer rate becomes the signal — if < 10% defer, the architecture is fine for the workload |
 
 ## What this leaves on the table (v0.16.0)
 

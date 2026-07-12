@@ -176,7 +176,7 @@ At this scale, a single pgvector instance with async connection pooling handles 
 
 #### 3.3 Trade-off Analysis
 
-**Library vs Standalone Gateway**: The library model adds 0ms latency and zero operational overhead -- but limits you to Python and single-process scope. The standalone gateway adds ~10-30ms per operation (one network hop) but enables polyglot agents, centralized policy, and all 5 data flow patterns. At <50 QPS peak, the gateway's network overhead is negligible. **Trade**: latency + simplicity for language flexibility + centralized control.
+**Library vs Standalone Gateway**: The library model adds 0ms latency and zero operational overhead -- but limits you to Python and single-process scope. The standalone gateway adds ~10-30ms per operation (one network hop) but enables polyglot agents, centralized policy, and all 5 data flow patterns. At < 50 QPS peak, the gateway's network overhead is negligible. **Trade**: latency + simplicity for language flexibility + centralized control.
 
 **Gateway Plugin vs Standalone Gateway**: The plugin model reuses existing API gateway infrastructure (no new process to manage) but constrains you to pre/post request hooks -- no reflect, no background ingestion, no long-running stream consumers. The standalone gateway requires a new process but provides full pipeline capability. **Trade**: infrastructure reuse for pipeline completeness.
 
@@ -260,7 +260,7 @@ flowchart LR
 | Connection pool (asyncpg) | Yes | DB connection reuse | Connection overhead at >10 QPS |
 | Background thread pool | Optional | Webhook/poll support when not standalone | Inbound data without blocking agent |
 
-**No message queue needed**: At library scale (<50 QPS), direct async calls suffice. Adding a queue would add ~5ms latency and operational complexity for zero throughput benefit.
+**No message queue needed**: At library scale (< 50 QPS), direct async calls suffice. Adding a queue would add ~5ms latency and operational complexity for zero throughput benefit.
 
 #### 5.2 Standalone Gateway
 
@@ -287,7 +287,7 @@ flowchart LR
 | Embedding API (accessible from plugin) | Yes | Query embedding for recall |
 | Plugin SDK (Lua/Python/WASM) | Yes | Plugin runtime |
 
-**Constraint**: Plugin cannot run long-lived background tasks. All memory operations must complete within the request lifecycle (pre-hook: recall + inject; post-hook: retain from response). Typical budget: <200ms total for both hooks combined.
+**Constraint**: Plugin cannot run long-lived background tasks. All memory operations must complete within the request lifecycle (pre-hook: recall + inject; post-hook: retain from response). Typical budget: < 200ms total for both hooks combined.
 
 ### 6. Scalability Considerations
 
@@ -321,7 +321,7 @@ AstrocyteContext:
 
 **Isolation model**: Tenant isolation at the bank level. Each tenant's memories live in dedicated banks. Permission intersection: `effective_permissions = agent_grants INTERSECT user_grants`. An agent can only access what both the agent AND the user are permitted to access.
 
-**Why bank-level, not database-level isolation**: At <1000 tenants, bank-level isolation in a shared pgvector instance is simpler and cheaper. Database-per-tenant adds ~100MB overhead per tenant (PostgreSQL catalog + pgvector index) and complicates connection pooling. Move to schema-per-tenant or database-per-tenant when: (a) regulatory requirement (data residency), (b) >10M vectors per tenant, or (c) noisy-neighbor DB load issues.
+**Why bank-level, not database-level isolation**: At < 1000 tenants, bank-level isolation in a shared pgvector instance is simpler and cheaper. Database-per-tenant adds ~100MB overhead per tenant (PostgreSQL catalog + pgvector index) and complicates connection pooling. Move to schema-per-tenant or database-per-tenant when: (a) regulatory requirement (data residency), (b) >10M vectors per tenant, or (c) noisy-neighbor DB load issues.
 
 #### 6.3 Connection Pooling
 
@@ -347,7 +347,7 @@ Astrocyte uses **eventual consistency** for memory operations:
 - **reflect()**: Reads from recall results, then synthesizes via LLM. Consistency is the same as recall.
 - **forget()**: Hard delete from vector store. Synchronous confirmation. Must propagate to graph store and document store as well (saga-like compensating actions if graph delete fails).
 
-**Why not strong consistency**: Memory is not a financial ledger. Agents do not depend on read-your-own-write semantics for correctness. The eventual consistency window (typically <1s within a single pgvector instance) is invisible to end users interacting through an AI agent. Adding strong consistency (synchronous replication, distributed transactions) would add ~50-100ms per operation for zero user-visible benefit.
+**Why not strong consistency**: Memory is not a financial ledger. Agents do not depend on read-your-own-write semantics for correctness. The eventual consistency window (typically < 1s within a single pgvector instance) is invisible to end users interacting through an AI agent. Adding strong consistency (synchronous replication, distributed transactions) would add ~50-100ms per operation for zero user-visible benefit.
 
 ### 7. Identity and Authorization Architecture
 

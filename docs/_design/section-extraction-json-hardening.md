@@ -20,7 +20,7 @@ Two contributing causes for the failures:
 2. **Markdown-fence wrapping.** Despite
    `response_format={"type": "json_object"}` being set on every call,
    gpt-4o-mini occasionally returns ```` ```json ... ``` ```` (or just
-   leading prose like "Sure, here you go: { ... }") instead of a bare
+   leading prose like "Sure, here you go: \{ ... \}") instead of a bare
    JSON object. `json.loads` rejects the wrapped form.
 
 ## Fix
