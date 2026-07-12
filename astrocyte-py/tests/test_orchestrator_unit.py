@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from astrocyte.pipeline import orchestrator as orchestrator_mod
+from astrocyte.pipeline import recall_stage as recall_mod
+from astrocyte.pipeline import reflect_stage as reflect_mod
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator, _TrackingLLMProvider
 from astrocyte.testing.in_memory import InMemoryVectorStore, MockLLMProvider
 from astrocyte.types import (
@@ -267,7 +268,7 @@ class TestReflectAutoPromptRouting:
             captured["prompt"] = kwargs["mip_reflect"].prompt if kwargs.get("mip_reflect") else None
             return ReflectResult(answer="Likely yes.", sources=kwargs["hits"])
 
-        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
+        monkeypatch.setattr(reflect_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
 
         await orch.reflect(ReflectRequest(query="Would Caroline likely pursue counseling?", bank_id="b1"))
 
@@ -294,7 +295,7 @@ class TestReflectAutoPromptRouting:
             captured["prompt"] = kwargs["mip_reflect"].prompt if kwargs.get("mip_reflect") else None
             return ReflectResult(answer="The week before.", sources=kwargs["hits"])
 
-        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
+        monkeypatch.setattr(reflect_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
 
         await orch.reflect(ReflectRequest(query="When did Melanie run a charity race?", bank_id="b1"))
 
@@ -322,7 +323,7 @@ class TestReflectAutoPromptRouting:
             captured["prompt"] = kwargs["mip_reflect"].prompt if kwargs.get("mip_reflect") else None
             return ReflectResult(answer="I'm not sure.", sources=kwargs["hits"])
 
-        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
+        monkeypatch.setattr(reflect_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
 
         # Use an inference-shaped query so query_plan would normally choose evidence_inference;
         # the gate must override it to evidence_strict.
@@ -465,7 +466,7 @@ class TestReflectTagScoping:
                     captured_hit_ids.append(hit.memory_id)
             return ReflectResult(answer="ok", sources=kwargs.get("hits"))
 
-        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
+        monkeypatch.setattr(reflect_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
 
         await orch.reflect(
             ReflectRequest(
@@ -521,7 +522,7 @@ class TestReflectTagScoping:
                     captured_hit_ids.append(hit.memory_id)
             return ReflectResult(answer="ok", sources=kwargs.get("hits"))
 
-        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
+        monkeypatch.setattr(reflect_mod, "synthesize", AsyncMock(side_effect=fake_synthesize))
 
         await orch.reflect(
             ReflectRequest(
@@ -638,7 +639,7 @@ class TestAdversarialAbstention:
             synth_called["count"] += 1
             return ReflectResult(answer="should not be called", sources=None)
 
-        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synth))
+        monkeypatch.setattr(reflect_mod, "synthesize", AsyncMock(side_effect=fake_synth))
 
         result = await orch.reflect(ReflectRequest(query="adversarial?", bank_id="b1"))
 
@@ -673,7 +674,7 @@ class TestAdversarialAbstention:
         async def fake_synth(**kwargs):
             return ReflectResult(answer="real synthesized answer", sources=kwargs.get("hits"))
 
-        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synth))
+        monkeypatch.setattr(reflect_mod, "synthesize", AsyncMock(side_effect=fake_synth))
 
         result = await orch.reflect(ReflectRequest(query="real question?", bank_id="b1"))
 
@@ -710,7 +711,7 @@ class TestAdversarialAbstention:
             synth_called["count"] += 1
             return ReflectResult(answer="legacy behavior — LLM invoked", sources=None)
 
-        monkeypatch.setattr(orchestrator_mod, "synthesize", AsyncMock(side_effect=fake_synth))
+        monkeypatch.setattr(reflect_mod, "synthesize", AsyncMock(side_effect=fake_synth))
 
         await orch.reflect(ReflectRequest(query="q?", bank_id="b1"))
 
@@ -739,7 +740,7 @@ class TestQueryAnalyzerWiring:
             return {"semantic": []}
 
         monkeypatch.setattr(
-            orchestrator_mod,
+            recall_mod,
             "parallel_retrieve",
             AsyncMock(side_effect=fake_parallel_retrieve),
         )
@@ -776,7 +777,7 @@ class TestQueryAnalyzerWiring:
             return {"semantic": []}
 
         monkeypatch.setattr(
-            orchestrator_mod,
+            recall_mod,
             "parallel_retrieve",
             AsyncMock(side_effect=fake_parallel_retrieve),
         )
@@ -815,7 +816,7 @@ class TestQueryAnalyzerWiring:
             return {"semantic": []}
 
         monkeypatch.setattr(
-            orchestrator_mod,
+            recall_mod,
             "parallel_retrieve",
             AsyncMock(side_effect=fake_parallel_retrieve),
         )

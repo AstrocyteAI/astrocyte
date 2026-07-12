@@ -244,7 +244,7 @@ class TestOrchestratorOverride:
 
         orch = _build_orch_with_rule(half_life_override=90.0)
         monkeypatch.setattr(
-            "astrocyte.pipeline.orchestrator.parallel_retrieve",
+            "astrocyte.pipeline.recall_stage.parallel_retrieve",
             fake_parallel_retrieve,
         )
         await orch.recall(RecallRequest(query="q", bank_id="b", max_results=5))
@@ -261,7 +261,7 @@ class TestOrchestratorOverride:
 
         orch = _build_orch_with_rule(half_life_override=None)
         monkeypatch.setattr(
-            "astrocyte.pipeline.orchestrator.parallel_retrieve",
+            "astrocyte.pipeline.recall_stage.parallel_retrieve",
             fake_parallel_retrieve,
         )
         await orch.recall(RecallRequest(query="q", bank_id="b", max_results=5))
@@ -284,7 +284,7 @@ class TestOrchestratorOverride:
         )
         # Deliberately no router: orch.mip_router stays None.
         monkeypatch.setattr(
-            "astrocyte.pipeline.orchestrator.parallel_retrieve",
+            "astrocyte.pipeline.recall_stage.parallel_retrieve",
             fake_parallel_retrieve,
         )
         await orch.recall(RecallRequest(query="q", bank_id="b", max_results=5))
