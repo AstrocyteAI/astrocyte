@@ -25,6 +25,8 @@ dev = [
     "astrocyte-postgres",
     # astrocyte-age removed in M9; see ADR-008
     "psycopg[binary]>=3.1",
+    # Property-based API conformance fuzzing (tests/test_openapi_conformance.py)
+    "schemathesis>=4.1",
 ]
 postgres = ["astrocyte-postgres"]
 # `age` extra removed in M9 (see ADR-008)

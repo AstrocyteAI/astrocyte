@@ -136,28 +136,31 @@ access_control: { enabled: false }
 # ── M1 DoS: result-limit clamps + default-on body/rate ──────────────────────
 
 
-def test_bounded_int_clamps_into_range(monkeypatch: pytest.MonkeyPatch) -> None:
-    from astrocyte_gateway.app import _bounded_int
+def test_clamp_bounds_into_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The M1 DoS clamp now lives on the request models (models._clamp)."""
+    from astrocyte_gateway.models import _clamp
 
+    monkeypatch.delenv("ASTROCYTE_MAX_RESULT_LIMIT", raising=False)
+    kw = {"minimum": 1, "env_var": "ASTROCYTE_MAX_RESULT_LIMIT", "default_ceiling": 1000}
     # In range → passthrough.
-    assert _bounded_int(50, default=10, ceiling=1000, field="x") == 50
+    assert _clamp(50, **kw) == 50
     # Over ceiling → clamped down (the DoS case).
-    assert _bounded_int(1_000_000_000, default=10, ceiling=1000, field="x") == 1000
+    assert _clamp(1_000_000_000, **kw) == 1000
     # Below minimum → clamped up.
-    assert _bounded_int(-5, default=10, ceiling=1000, field="x") == 1
-    assert _bounded_int(0, default=10, ceiling=1000, field="x", minimum=0) == 0
-    # None → default (itself clamped).
-    assert _bounded_int(None, default=10, ceiling=1000, field="x") == 10
+    assert _clamp(-5, **kw) == 1
+    # Env ceiling wins over the default.
+    monkeypatch.setenv("ASTROCYTE_MAX_RESULT_LIMIT", "20")
+    assert _clamp(50, **kw) == 20
 
 
-def test_bounded_int_rejects_non_integer() -> None:
-    from fastapi import HTTPException
+def test_recall_model_rejects_non_integer_max_results() -> None:
+    """Non-integer max_results is a validation error (HTTP layer maps it to 400)."""
+    import pydantic
 
-    from astrocyte_gateway.app import _bounded_int
+    from astrocyte_gateway.models import RecallBody
 
-    with pytest.raises(HTTPException) as exc:
-        _bounded_int("not-an-int", default=10, ceiling=1000, field="max_results")
-    assert exc.value.status_code == 400
+    with pytest.raises(pydantic.ValidationError, match="max_results"):
+        RecallBody(query="q", bank_id="b", max_results="not-an-int")
 
 
 def test_recall_clamps_oversized_max_results_instead_of_rejecting(

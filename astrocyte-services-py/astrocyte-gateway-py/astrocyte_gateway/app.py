@@ -31,12 +31,32 @@ from astrocyte.pipeline.mental_model import MentalModelService
 from astrocyte.tenancy import TenantExtension
 from astrocyte.types import AstrocyteContext
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from astrocyte_gateway.auth import get_astrocyte_context, validate_auth_startup_config
 from astrocyte_gateway.brain import build_astrocyte
+from astrocyte_gateway.models import (
+    AdminLifecycleBody,
+    AdminSetHoldBody,
+    AuditBody,
+    CompileBody,
+    DsarForgetPrincipalBody,
+    ExportBody,
+    ForgetBody,
+    GraphNeighborsBody,
+    GraphSearchBody,
+    HistoryBody,
+    ImportBody,
+    MentalModelCreateBody,
+    MentalModelRefreshBody,
+    ObservationsInvalidateBody,
+    RecallBody,
+    ReflectBody,
+    RetainBody,
+)
 from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
 from astrocyte_gateway.rate_limit import SlidingWindowRateLimitMiddleware, rate_limit_max_from_env
 from astrocyte_gateway.serialization import to_jsonable
@@ -47,15 +67,9 @@ from astrocyte_gateway.tenancy import default_tenant_extension, install_tenant_m
 _HEALTH_TIMEOUT_S = 8.0
 _logger = logging.getLogger("astrocyte.gateway")
 
-# Default server-side cap on client-supplied result/traversal counts. An
-# unbounded ``max_results``/``limit``/``max_memories`` is a cheap DoS: one
-# request forces the pipeline to fetch, score, and serialize an arbitrarily
-# large set. We clamp into ``[minimum, ceiling]`` rather than reject, so honest
-# oversized asks still succeed (capped) while ``max_results: 1_000_000_000``
-# cannot exhaust memory. Operators with heavier workloads raise the ceiling via
-# ``ASTROCYTE_MAX_RESULT_LIMIT`` / ``ASTROCYTE_GRAPH_MAX_DEPTH``.
-_DEFAULT_RESULT_LIMIT_CEILING = 1000
-_DEFAULT_GRAPH_DEPTH_CEILING = 6
+# Result/traversal-count clamping (the M1 DoS guard) lives on the request
+# models — see astrocyte_gateway.models (``_clamp`` and the per-field
+# validators reading ASTROCYTE_MAX_RESULT_LIMIT / ASTROCYTE_GRAPH_MAX_DEPTH).
 # Default body-size cap (bytes) applied even when the operator sets nothing —
 # bounds per-request memory. Override with ASTROCYTE_MAX_REQUEST_BODY_BYTES
 # (``0`` disables the cap entirely).
@@ -64,46 +78,6 @@ _DEFAULT_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB
 # is bound to a non-loopback interface and the operator has not set the env.
 # Loopback (local dev, tests, in-process benchmarks) stays unlimited.
 _DEFAULT_PUBLIC_RATE_LIMIT_PER_SECOND = 100
-
-
-def _env_positive_int(env_var: str, default: int) -> int:
-    """Return a positive int from ``env_var``, falling back to ``default``."""
-    raw = os.environ.get(env_var, "").strip()
-    if raw:
-        try:
-            n = int(raw)
-        except ValueError:
-            return default
-        if n > 0:
-            return n
-    return default
-
-
-def _bounded_int(
-    raw: Any,
-    *,
-    default: int,
-    ceiling: int,
-    field: str,
-    minimum: int = 1,
-) -> int:
-    """Parse a client-supplied integer and clamp it into ``[minimum, ceiling]``.
-
-    Non-integer input is a 400 (preserving the prior validation contract);
-    in-range values pass through; out-of-range values are silently clamped.
-    """
-    if raw is None:
-        value = default
-    else:
-        try:
-            value = int(raw)
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail=f"{field} must be an integer")
-    if value < minimum:
-        value = minimum
-    elif value > ceiling:
-        value = ceiling
-    return value
 
 
 class _MaxBodySizeMiddleware(BaseHTTPMiddleware):
@@ -318,6 +292,19 @@ def create_app(
     # ContextVar lifecycle.
     install_tenant_middleware(app, tenant_extension)
 
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error_to_400(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        # Contract: request validation failures are 400 with a readable detail
+        # string naming the offending field(s) — the status code and the
+        # field-name-in-detail behaviour predate the Pydantic request models
+        # (clients and tests match on the field name), so we translate
+        # FastAPI's native 422 into the established shape.
+        parts = []
+        for err in exc.errors()[:5]:
+            loc = ".".join(str(p) for p in err.get("loc", ()) if p != "body")
+            parts.append(f"{loc}: {err.get('msg', 'invalid')}" if loc else err.get("msg", "invalid"))
+        return JSONResponse(status_code=400, content={"detail": "; ".join(parts) or "invalid request body"})
+
     @app.exception_handler(AccessDenied)
     async def _access_denied(_request: Request, exc: AccessDenied) -> JSONResponse:
         return JSONResponse(status_code=403, content={"detail": str(exc)})
@@ -391,67 +378,37 @@ def create_app(
 
     @app.post("/v1/retain")
     async def retain(
-        body: dict[str, Any],
+        body: RetainBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        content = body.get("content")
-        bank_id = body.get("bank_id")
-        if not isinstance(content, str) or not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="content and bank_id (str) are required")
-        metadata = body.get("metadata")
-        tags = body.get("tags")
         result = await brain.retain(
-            content,
-            bank_id,
-            metadata=metadata if isinstance(metadata, dict) else None,
-            tags=tags if isinstance(tags, list) else None,
+            body.content,
+            body.bank_id,
+            metadata=body.metadata,
+            tags=body.tags,
             context=ctx,
         )
         return to_jsonable(result)
 
     @app.post("/v1/recall")
     async def recall(
-        body: dict[str, Any],
+        body: RecallBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        query = body.get("query")
-        bank_id = body.get("bank_id")
-        banks = body.get("banks")
-        if not isinstance(query, str):
-            raise HTTPException(status_code=400, detail="query (str) is required")
-        max_results = _bounded_int(
-            body.get("max_results"),
-            default=10,
-            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
-            field="max_results",
-        )
-        max_tokens = body.get("max_tokens")
-        if max_tokens is not None:
-            try:
-                max_tokens = int(max_tokens)
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail="max_tokens must be an integer")
-        tags = body.get("tags")
-        if bank_id is not None and not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="bank_id must be a string")
-        if banks is not None and not isinstance(banks, list):
-            raise HTTPException(status_code=400, detail="banks must be a list of strings")
-        if bank_id is None and banks is None:
-            raise HTTPException(status_code=400, detail="bank_id or banks is required")
         result = await brain.recall(
-            query,
-            bank_id=bank_id if isinstance(bank_id, str) else None,
-            banks=[str(x) for x in banks] if isinstance(banks, list) else None,
-            max_results=max_results,
-            max_tokens=max_tokens,
-            tags=[str(x) for x in tags] if isinstance(tags, list) else None,
+            body.query,
+            bank_id=body.bank_id,
+            banks=body.banks,
+            max_results=body.max_results,
+            max_tokens=body.max_tokens,
+            tags=body.tags,
             context=ctx,
         )
         return to_jsonable(result)
 
     @app.post("/v1/debug/recall")
     async def debug_recall(
-        body: dict[str, Any],
+        body: RecallBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         """Debug-only recall endpoint exposing low-level trace and result counts."""
@@ -465,25 +422,14 @@ def create_app(
 
     @app.post("/v1/reflect")
     async def reflect(
-        body: dict[str, Any],
+        body: ReflectBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        query = body.get("query")
-        bank_id = body.get("bank_id")
-        if not isinstance(query, str) or not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="query and bank_id (str) are required")
-        max_tokens = body.get("max_tokens")
-        if max_tokens is not None:
-            try:
-                max_tokens = int(max_tokens)
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail="max_tokens must be an integer")
-        include_sources = body.get("include_sources", True)
         result = await brain.reflect(
-            query,
-            bank_id,
-            max_tokens=max_tokens,
-            include_sources=bool(include_sources),
+            body.query,
+            body.bank_id,
+            max_tokens=body.max_tokens,
+            include_sources=body.include_sources,
             context=ctx,
         )
         return to_jsonable(result)
@@ -514,23 +460,17 @@ def create_app(
 
     @app.post("/v1/mental-models")
     async def create_mental_model(
-        body: dict[str, Any],
+        body: MentalModelCreateBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        bank_id = body.get("bank_id")
-        model_id = body.get("model_id")
-        title = body.get("title")
-        content = body.get("content")
-        if not all(isinstance(value, str) for value in (bank_id, model_id, title, content)):
-            raise HTTPException(status_code=400, detail="bank_id, model_id, title, and content are required strings")
-        brain.check_access(bank_id, "write", ctx)
+        brain.check_access(body.bank_id, "write", ctx)
         model = await _mental_models().create(
-            bank_id=bank_id,
-            model_id=model_id,
-            title=title,
-            content=content,
-            scope=str(body.get("scope") or "bank"),
-            source_ids=[str(x) for x in body.get("source_ids", [])] if isinstance(body.get("source_ids"), list) else [],
+            bank_id=body.bank_id,
+            model_id=body.model_id,
+            title=body.title,
+            content=body.content,
+            scope=body.scope,
+            source_ids=body.source_ids,
         )
         return to_jsonable(model)
 
@@ -558,19 +498,15 @@ def create_app(
     @app.post("/v1/mental-models/{model_id}/refresh")
     async def refresh_mental_model(
         model_id: str,
-        body: dict[str, Any],
+        body: MentalModelRefreshBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        bank_id = body.get("bank_id")
-        content = body.get("content")
-        if not isinstance(bank_id, str) or not isinstance(content, str):
-            raise HTTPException(status_code=400, detail="bank_id and content are required strings")
-        brain.check_access(bank_id, "write", ctx)
+        brain.check_access(body.bank_id, "write", ctx)
         model = await _mental_models().refresh(
-            bank_id=bank_id,
+            bank_id=body.bank_id,
             model_id=model_id,
-            content=content,
-            source_ids=[str(x) for x in body.get("source_ids", [])] if isinstance(body.get("source_ids"), list) else None,
+            content=body.content,
+            source_ids=body.source_ids,
         )
         if model is None:
             raise HTTPException(status_code=404, detail="mental model not found")
@@ -590,50 +526,38 @@ def create_app(
 
     @app.post("/v1/observations/invalidate")
     async def invalidate_observations(
-        body: dict[str, Any],
+        body: ObservationsInvalidateBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        bank_id = body.get("bank_id")
-        source_ids = body.get("source_ids")
-        if not isinstance(bank_id, str) or not isinstance(source_ids, list):
-            raise HTTPException(status_code=400, detail="bank_id and source_ids are required")
         # Invalidating observations cascades into deleting derived rows —
         # same destructive shape as /v1/forget, so guard with ``forget``
         # permission rather than ``write``.
-        brain.check_access(bank_id, "forget", ctx)
+        brain.check_access(body.bank_id, "forget", ctx)
         pipeline = getattr(brain, "_pipeline", None)
         consolidator = getattr(pipeline, "_observation_consolidator", None)
         vector_store = getattr(pipeline, "vector_store", None)
         if consolidator is None or vector_store is None:
             raise HTTPException(status_code=501, detail="observations require a configured pipeline consolidator")
-        deleted = await consolidator.invalidate_sources([str(x) for x in source_ids], bank_id, vector_store)
+        deleted = await consolidator.invalidate_sources(body.source_ids, body.bank_id, vector_store)
         return {"deleted": deleted}
 
     @app.post("/v1/forget")
     async def forget(
-        body: dict[str, Any],
+        body: ForgetBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        bank_id = body.get("bank_id")
-        if not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="bank_id (str) is required")
-        memory_ids = body.get("memory_ids")
-        tags = body.get("tags")
-        scope = body.get("scope")
-        if scope is not None and scope != "all":
-            raise HTTPException(status_code=400, detail='scope must be "all" or omitted')
         result = await brain.forget(
-            bank_id,
-            memory_ids=[str(x) for x in memory_ids] if isinstance(memory_ids, list) else None,
-            tags=[str(x) for x in tags] if isinstance(tags, list) else None,
-            scope=scope,
+            body.bank_id,
+            memory_ids=body.memory_ids,
+            tags=body.tags,
+            scope=body.scope,
             context=ctx,
         )
         return to_jsonable(result)
 
     @app.post("/v1/dsar/forget_principal")
     async def dsar_forget_principal(
-        body: dict[str, Any],
+        body: DsarForgetPrincipalBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         """DSAR right-to-erasure for a single principal across a tenant's banks.
@@ -672,13 +596,8 @@ def create_app(
         bypassed (right-to-erasure overrides retention obligations) AND the
         actor is recorded in the audit log for proof-of-deletion.
         """
-        tenant_id = body.get("tenant_id")
-        principal = body.get("principal")
-
-        if not isinstance(tenant_id, str) or not tenant_id:
-            raise HTTPException(status_code=400, detail="tenant_id (str) is required")
-        if not isinstance(principal, str) or not principal:
-            raise HTTPException(status_code=400, detail="principal (str) is required")
+        tenant_id = body.tenant_id
+        principal = body.principal
 
         configured_banks = brain.config.banks or {}
         tenant_banks = sorted(
@@ -726,7 +645,7 @@ def create_app(
 
     @app.post("/v1/compile")
     async def compile(
-        body: dict[str, Any],
+        body: CompileBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         """Compile raw memories into wiki pages for a bank (M8).
@@ -740,14 +659,8 @@ def create_app(
                                    Omit for full scope discovery (tag grouping +
                                    embedding cluster labelling).
         """
-        bank_id = body.get("bank_id")
-        if not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="bank_id (str) is required")
-        scope = body.get("scope")
-        if scope is not None and not isinstance(scope, str):
-            raise HTTPException(status_code=400, detail="scope must be a string")
         try:
-            result = await brain.compile(bank_id, scope=scope, context=ctx)
+            result = await brain.compile(body.bank_id, scope=body.scope, context=ctx)
         except Exception as exc:
             # Translate ConfigError (no WikiStore / no pipeline) to 422
             if "ConfigError" in type(exc).__name__ or "ProviderUnavailable" in type(exc).__name__:
@@ -757,7 +670,7 @@ def create_app(
 
     @app.post("/v1/graph/search")
     async def graph_search(
-        body: dict[str, Any],
+        body: GraphSearchBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         """Search the knowledge graph for entities matching a name query.
@@ -770,18 +683,8 @@ def create_app(
             bank_id (str, required): Bank whose graph to search.
             limit (int, optional): Max entities to return (default 10).
         """
-        query = body.get("query")
-        bank_id = body.get("bank_id")
-        if not isinstance(query, str) or not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="query and bank_id (str) are required")
-        limit = _bounded_int(
-            body.get("limit"),
-            default=10,
-            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
-            field="limit",
-        )
         try:
-            entities = await brain.graph_search(query, bank_id, limit=limit, context=ctx)
+            entities = await brain.graph_search(body.query, body.bank_id, limit=body.limit, context=ctx)
         except Exception as exc:
             if "ConfigError" in type(exc).__name__:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -790,7 +693,7 @@ def create_app(
 
     @app.post("/v1/graph/neighbors")
     async def graph_neighbors(
-        body: dict[str, Any],
+        body: GraphNeighborsBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         """Traverse the knowledge graph from seed entity IDs.
@@ -804,26 +707,9 @@ def create_app(
             max_depth (int, optional): Traversal depth (default 2).
             limit (int, optional): Max memory hits to return (default 20).
         """
-        entity_ids = body.get("entity_ids")
-        bank_id = body.get("bank_id")
-        if not isinstance(entity_ids, list) or not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="entity_ids (list) and bank_id (str) are required")
-        max_depth = _bounded_int(
-            body.get("max_depth"),
-            default=2,
-            ceiling=_env_positive_int("ASTROCYTE_GRAPH_MAX_DEPTH", _DEFAULT_GRAPH_DEPTH_CEILING),
-            field="max_depth",
-            minimum=0,
-        )
-        limit = _bounded_int(
-            body.get("limit"),
-            default=20,
-            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
-            field="limit",
-        )
         try:
             hits = await brain.graph_neighbors(
-                [str(e) for e in entity_ids], bank_id, max_depth=max_depth, limit=limit, context=ctx
+                body.entity_ids, body.bank_id, max_depth=body.max_depth, limit=body.limit, context=ctx
             )
         except Exception as exc:
             if "ConfigError" in type(exc).__name__:
@@ -835,7 +721,7 @@ def create_app(
 
     @app.post("/v1/history")
     async def history(
-        body: dict[str, Any],
+        body: HistoryBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         """Reconstruct what the agent knew at a past point in time (M9).
@@ -849,37 +735,13 @@ def create_app(
             max_tokens (int, optional): Token budget for result set.
             tags (list[str], optional): Tag filter.
         """
-        query = body.get("query")
-        bank_id = body.get("bank_id")
-        as_of_raw = body.get("as_of")
-        if not isinstance(query, str) or not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="query and bank_id (str) are required")
-        if not isinstance(as_of_raw, str):
-            raise HTTPException(status_code=400, detail="as_of (ISO 8601 string) is required")
-        try:
-            as_of = datetime.fromisoformat(as_of_raw)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="as_of must be a valid ISO 8601 datetime string")
-        max_results = _bounded_int(
-            body.get("max_results"),
-            default=10,
-            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
-            field="max_results",
-        )
-        max_tokens = body.get("max_tokens")
-        if max_tokens is not None:
-            try:
-                max_tokens = int(max_tokens)
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail="max_tokens must be an integer")
-        tags = body.get("tags")
         result = await brain.history(
-            query,
-            bank_id,
-            as_of,
-            max_results=max_results,
-            max_tokens=max_tokens,
-            tags=[str(t) for t in tags] if isinstance(tags, list) else None,
+            body.query,
+            body.bank_id,
+            body.as_of,
+            max_results=body.max_results,
+            max_tokens=body.max_tokens,
+            tags=body.tags,
             context=ctx,
         )
         return to_jsonable(result)
@@ -888,7 +750,7 @@ def create_app(
 
     @app.post("/v1/audit")
     async def audit(
-        body: dict[str, Any],
+        body: AuditBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
         """Identify knowledge gaps for a topic in a bank (M10).
@@ -900,30 +762,13 @@ def create_app(
             max_tokens (int, optional): Token budget for retrieved memories.
             tags (list[str], optional): Tag filter.
         """
-        scope = body.get("scope")
-        bank_id = body.get("bank_id")
-        if not isinstance(scope, str) or not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="scope and bank_id (str) are required")
-        max_memories = _bounded_int(
-            body.get("max_memories"),
-            default=50,
-            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
-            field="max_memories",
-        )
-        max_tokens = body.get("max_tokens")
-        if max_tokens is not None:
-            try:
-                max_tokens = int(max_tokens)
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail="max_tokens must be an integer")
-        tags = body.get("tags")
         try:
             result = await brain.audit(
-                scope,
-                bank_id,
-                max_memories=max_memories,
-                max_tokens=max_tokens,
-                tags=[str(t) for t in tags] if isinstance(tags, list) else None,
+                body.scope,
+                body.bank_id,
+                max_memories=body.max_memories,
+                max_tokens=body.max_tokens,
+                tags=body.tags,
                 context=ctx,
             )
         except Exception as exc:
@@ -936,7 +781,7 @@ def create_app(
 
     @app.post("/v1/export")
     async def export_bank(
-        body: dict[str, Any],
+        body: ExportBody,
         _admin: Annotated[None, Depends(require_admin_if_configured)],
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
@@ -948,18 +793,13 @@ def create_app(
             include_embeddings (bool, optional): Default false.
             include_entities (bool, optional): Default true.
         """
-        bank_id = body.get("bank_id")
-        path = body.get("path")
-        if not isinstance(bank_id, str) or not isinstance(path, str):
-            raise HTTPException(status_code=400, detail="bank_id and path (str) are required")
-        include_embeddings = bool(body.get("include_embeddings", False))
-        include_entities = bool(body.get("include_entities", True))
+        bank_id, path = body.bank_id, body.path
         try:
             count = await brain.export_bank(
                 bank_id,
                 path,
-                include_embeddings=include_embeddings,
-                include_entities=include_entities,
+                include_embeddings=body.include_embeddings,
+                include_entities=body.include_entities,
                 context=ctx,
             )
         except ValueError as exc:
@@ -975,7 +815,7 @@ def create_app(
 
     @app.post("/v1/import")
     async def import_bank(
-        body: dict[str, Any],
+        body: ImportBody,
         _admin: Annotated[None, Depends(require_admin_if_configured)],
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
@@ -986,18 +826,11 @@ def create_app(
             path (str, required): Absolute server-side path to the JSONL file.
             on_conflict (str, optional): "skip" (default) or "overwrite".
         """
-        bank_id = body.get("bank_id")
-        path = body.get("path")
-        if not isinstance(bank_id, str) or not isinstance(path, str):
-            raise HTTPException(status_code=400, detail="bank_id and path (str) are required")
-        on_conflict = str(body.get("on_conflict", "skip"))
-        if on_conflict not in ("skip", "overwrite"):
-            raise HTTPException(status_code=400, detail='on_conflict must be "skip" or "overwrite"')
         try:
             result = await brain.import_bank(
-                bank_id,
-                path,
-                on_conflict=on_conflict,
+                body.bank_id,
+                body.path,
+                on_conflict=body.on_conflict,
                 context=ctx,
             )
         except ValueError as exc:
@@ -1066,7 +899,7 @@ def create_app(
 
     @app.post("/v1/admin/lifecycle")
     async def admin_lifecycle(
-        body: dict[str, Any],
+        body: AdminLifecycleBody,
         _admin: Annotated[None, Depends(require_admin_if_configured)],
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
@@ -1076,10 +909,7 @@ def create_app(
             bank_id (str, required): Bank to sweep.
         """
         _ = ctx
-        bank_id = body.get("bank_id")
-        if not isinstance(bank_id, str):
-            raise HTTPException(status_code=400, detail="bank_id (str) is required")
-        result = await brain.run_lifecycle(bank_id)
+        result = await brain.run_lifecycle(body.bank_id)
         return to_jsonable(result)
 
     # ── admin: bank health ────────────────────────────────────────────────
@@ -1110,7 +940,7 @@ def create_app(
     @app.post("/v1/admin/banks/{bank_id}/hold")
     async def admin_set_hold(
         bank_id: str,
-        body: dict[str, Any],
+        body: AdminSetHoldBody,
         _admin: Annotated[None, Depends(require_admin_if_configured)],
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
@@ -1122,12 +952,7 @@ def create_app(
             set_by (str, optional): Actor label, default "user:api".
         """
         _ = ctx
-        hold_id = body.get("hold_id")
-        reason = body.get("reason")
-        if not isinstance(hold_id, str) or not isinstance(reason, str):
-            raise HTTPException(status_code=400, detail="hold_id and reason (str) are required")
-        set_by = str(body.get("set_by", "user:api"))
-        hold = brain.set_legal_hold(bank_id, hold_id, reason, set_by=set_by)
+        hold = brain.set_legal_hold(bank_id, body.hold_id, body.reason, set_by=body.set_by)
         return to_jsonable(hold)
 
     @app.delete("/v1/admin/banks/{bank_id}/hold/{hold_id}")

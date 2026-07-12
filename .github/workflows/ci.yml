@@ -163,6 +163,30 @@ jobs:
           echo "Checking astrocyte public API against ${BASE}"
           uvx --from griffe griffe check astrocyte --search astrocyte-py --against "${BASE}"
 
+      # Gateway HTTP contract: the checked-in openapi.json snapshot is kept in
+      # sync with the code by tests/test_openapi_contract.py (gateway test
+      # gate); here we classify the snapshot's diff vs the base branch and
+      # fail on breaking changes (removed routes/fields, narrowed types).
+      - name: Extract base OpenAPI snapshot
+        id: oas-base
+        run: |
+          BASE_REF="${{ github.base_ref || 'main' }}"
+          if git show "origin/${BASE_REF}:astrocyte-services-py/astrocyte-gateway-py/openapi.json" > /tmp/openapi-base.json 2>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            # Bootstrap: base branch predates the snapshot — nothing to diff.
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Gateway OpenAPI breaking changes (oasdiff)
+        if: steps.oas-base.outputs.exists == 'true'
+        # SHA-pinned third-party action (same policy as trivy-action)
+        uses: oasdiff/oasdiff-action/breaking@024f6c399f9a21ada1addb0f9a36ce1bfac995f1 # v0.1.6
+        with:
+          base: /tmp/openapi-base.json
+          revision: astrocyte-services-py/astrocyte-gateway-py/openapi.json
+          fail-on: ERR
+
   adapters-integration-tavus:
     name: astrocyte-integration-tavus
     permissions:

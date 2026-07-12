@@ -50,3 +50,35 @@ def test_openapi_served_at_docs_and_json() -> None:
         assert r.status_code == 200
         body = r.json()
         assert "/v1/recall" in body.get("paths", {})
+
+
+def test_openapi_matches_checked_in_snapshot() -> None:
+    """The live schema must equal openapi.json (the HTTP contract artifact).
+
+    Any route, method, request-model, or response change shows up as a diff
+    here. If the change is INTENTIONAL, regenerate and commit the snapshot:
+
+        uv run python scripts/generate_openapi.py
+
+    CI's oasdiff job then classifies the snapshot diff as breaking or
+    non-breaking against the base branch.
+    """
+    import json
+    import pathlib
+
+    from astrocyte_gateway.app import create_app
+
+    snapshot_path = pathlib.Path(__file__).resolve().parent.parent / "openapi.json"
+    assert snapshot_path.exists(), "openapi.json snapshot missing — run scripts/generate_openapi.py"
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    live = json.loads(json.dumps(create_app().openapi(), sort_keys=True))
+
+    if live != snapshot:
+        live_paths, snap_paths = set(live.get("paths", {})), set(snapshot.get("paths", {}))
+        hint = ""
+        if live_paths != snap_paths:
+            hint = f" Added paths: {sorted(live_paths - snap_paths)}; removed: {sorted(snap_paths - live_paths)}."
+        raise AssertionError(
+            "Live OpenAPI schema differs from the checked-in openapi.json snapshot."
+            f"{hint} If intentional, run scripts/generate_openapi.py and commit the result."
+        )
