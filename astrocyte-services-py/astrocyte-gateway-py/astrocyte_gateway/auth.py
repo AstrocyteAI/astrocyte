@@ -77,6 +77,15 @@ def _warn_missing_jwt_audience() -> None:
     )
 
 
+@lru_cache(maxsize=1)
+def _warn_missing_jwt_issuer() -> None:
+    """Log a one-time warning when JWT issuer validation is skipped."""
+    _logger.warning(
+        "ASTROCYTE_JWT_ISSUER is not set — HS256 tokens will be accepted without issuer validation. "
+        "Set this variable to prevent replay of tokens minted by another service sharing the secret."
+    )
+
+
 def _auth_mode() -> str:
     return os.environ.get("ASTROCYTE_AUTH_MODE", "dev").strip().lower()
 
@@ -181,11 +190,20 @@ def resolve_astrocyte_identity(
         if not secret:
             raise HTTPException(status_code=500, detail="ASTROCYTE_JWT_SECRET is not set")
         aud = os.environ.get("ASTROCYTE_JWT_AUDIENCE")
+        iss = os.environ.get("ASTROCYTE_JWT_ISSUER", "").strip()
         decode_kwargs: dict = {"algorithms": ["HS256"]}
         if aud:
             decode_kwargs["audience"] = aud
         else:
             _warn_missing_jwt_audience()
+        if iss:
+            # Bind to the trusted issuer so a token minted for another service
+            # sharing the same HS256 secret cannot be replayed here. PyJWT both
+            # requires the ``iss`` claim to be present and enforces the match.
+            decode_kwargs["issuer"] = iss
+            decode_kwargs["options"] = {"require": ["iss"]}
+        else:
+            _warn_missing_jwt_issuer()
         try:
             payload = jwt.decode(token, secret, **decode_kwargs)
         except PyJWTError as e:

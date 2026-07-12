@@ -73,3 +73,49 @@ def test_jwt_principal_from_sub(monkeypatch: pytest.MonkeyPatch):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
+
+
+def _hs256_client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, str]:
+    secret = "unit-test-secret-at-least-32-bytes-long"
+    monkeypatch.setenv("ASTROCYTE_AUTH_MODE", "jwt_hs256")
+    monkeypatch.setenv("ASTROCYTE_JWT_SECRET", secret)
+    monkeypatch.setenv("ASTROCYTE_JWT_ISSUER", "https://issuer.example.com")
+    from astrocyte_gateway.app import create_app
+
+    return TestClient(create_app()), secret
+
+
+def _post_retain(client: TestClient, token: str):
+    return client.post(
+        "/v1/retain",
+        json={"content": "x", "bank_id": "b1"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_jwt_hs256_accepts_matching_issuer(monkeypatch: pytest.MonkeyPatch):
+    client, secret = _hs256_client(monkeypatch)
+    token = jwt.encode(
+        {"sub": "agent:iss-user", "iss": "https://issuer.example.com"},
+        secret,
+        algorithm="HS256",
+    )
+    assert _post_retain(client, token).status_code == 200
+
+
+def test_jwt_hs256_rejects_wrong_issuer(monkeypatch: pytest.MonkeyPatch):
+    client, secret = _hs256_client(monkeypatch)
+    token = jwt.encode(
+        {"sub": "agent:iss-user", "iss": "https://evil.example.com"},
+        secret,
+        algorithm="HS256",
+    )
+    assert _post_retain(client, token).status_code == 401
+
+
+def test_jwt_hs256_rejects_missing_issuer_when_required(monkeypatch: pytest.MonkeyPatch):
+    # A token minted by another service that shares the secret but omits `iss`
+    # must be rejected once ASTROCYTE_JWT_ISSUER is configured.
+    client, secret = _hs256_client(monkeypatch)
+    token = jwt.encode({"sub": "agent:no-iss"}, secret, algorithm="HS256")
+    assert _post_retain(client, token).status_code == 401

@@ -47,6 +47,64 @@ from astrocyte_gateway.tenancy import default_tenant_extension, install_tenant_m
 _HEALTH_TIMEOUT_S = 8.0
 _logger = logging.getLogger("astrocyte.gateway")
 
+# Default server-side cap on client-supplied result/traversal counts. An
+# unbounded ``max_results``/``limit``/``max_memories`` is a cheap DoS: one
+# request forces the pipeline to fetch, score, and serialize an arbitrarily
+# large set. We clamp into ``[minimum, ceiling]`` rather than reject, so honest
+# oversized asks still succeed (capped) while ``max_results: 1_000_000_000``
+# cannot exhaust memory. Operators with heavier workloads raise the ceiling via
+# ``ASTROCYTE_MAX_RESULT_LIMIT`` / ``ASTROCYTE_GRAPH_MAX_DEPTH``.
+_DEFAULT_RESULT_LIMIT_CEILING = 1000
+_DEFAULT_GRAPH_DEPTH_CEILING = 6
+# Default body-size cap (bytes) applied even when the operator sets nothing —
+# bounds per-request memory. Override with ASTROCYTE_MAX_REQUEST_BODY_BYTES
+# (``0`` disables the cap entirely).
+_DEFAULT_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB
+# Default per-client rate limit (requests/second) applied ONLY when the gateway
+# is bound to a non-loopback interface and the operator has not set the env.
+# Loopback (local dev, tests, in-process benchmarks) stays unlimited.
+_DEFAULT_PUBLIC_RATE_LIMIT_PER_SECOND = 100
+
+
+def _env_positive_int(env_var: str, default: int) -> int:
+    """Return a positive int from ``env_var``, falling back to ``default``."""
+    raw = os.environ.get(env_var, "").strip()
+    if raw:
+        try:
+            n = int(raw)
+        except ValueError:
+            return default
+        if n > 0:
+            return n
+    return default
+
+
+def _bounded_int(
+    raw: Any,
+    *,
+    default: int,
+    ceiling: int,
+    field: str,
+    minimum: int = 1,
+) -> int:
+    """Parse a client-supplied integer and clamp it into ``[minimum, ceiling]``.
+
+    Non-integer input is a 400 (preserving the prior validation contract);
+    in-range values pass through; out-of-range values are silently clamped.
+    """
+    if raw is None:
+        value = default
+    else:
+        try:
+            value = int(raw)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail=f"{field} must be an integer")
+    if value < minimum:
+        value = minimum
+    elif value > ceiling:
+        value = ceiling
+    return value
+
 
 class _MaxBodySizeMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: Any, max_bytes: int) -> None:
@@ -72,15 +130,18 @@ class _MaxBodySizeMiddleware(BaseHTTPMiddleware):
 
 
 def _configure_gateway_middleware(app: FastAPI) -> None:
+    # Body-size cap: default-on. Operator value wins; ``0`` disables entirely;
+    # invalid/unset falls back to the default cap.
     max_raw = os.environ.get("ASTROCYTE_MAX_REQUEST_BODY_BYTES", "").strip()
     if max_raw:
         try:
             mb = int(max_raw)
-            if mb > 0:
-                app.add_middleware(_MaxBodySizeMiddleware, max_bytes=mb)
         except ValueError:
-            # Invalid env: ignore and leave the default (no explicit body-size cap here).
-            pass
+            mb = _DEFAULT_MAX_REQUEST_BODY_BYTES
+    else:
+        mb = _DEFAULT_MAX_REQUEST_BODY_BYTES
+    if mb > 0:
+        app.add_middleware(_MaxBodySizeMiddleware, max_bytes=mb)
 
     cors = os.environ.get("ASTROCYTE_CORS_ORIGINS", "").strip()
     if cors:
@@ -97,10 +158,24 @@ def _configure_gateway_middleware(app: FastAPI) -> None:
     # Outermost: request ID + structured access log (see observability.py).
     app.add_middleware(AccessContextMiddleware)
 
-    # Last registered = outermost on the stack — rate limit before other layers (optional).
-    rl = rate_limit_max_from_env()
+    # Last registered = outermost on the stack — rate limit before other layers.
+    # Explicit env always wins (including ``0``/invalid → disabled). When unset,
+    # default-on ONLY for a public (non-loopback) bind — loopback dev, the test
+    # suite, and in-process benchmarks stay unlimited.
+    rl = _resolve_rate_limit()
     if rl is not None:
         app.add_middleware(SlidingWindowRateLimitMiddleware, max_per_window=rl)
+
+
+def _resolve_rate_limit() -> int | None:
+    """Effective per-second rate limit, or ``None`` to disable the middleware."""
+    if os.environ.get("ASTROCYTE_RATE_LIMIT_PER_SECOND", "").strip():
+        # Operator spoke — honor it verbatim (0/invalid → disabled).
+        return rate_limit_max_from_env()
+    host = os.environ.get("ASTROCYTE_HOST", "127.0.0.1").strip()
+    if host in _ADMIN_LOOPBACK_HOSTS:
+        return None
+    return _DEFAULT_PUBLIC_RATE_LIMIT_PER_SECOND
 
 
 _ADMIN_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -344,10 +419,12 @@ def create_app(
         banks = body.get("banks")
         if not isinstance(query, str):
             raise HTTPException(status_code=400, detail="query (str) is required")
-        try:
-            max_results = int(body["max_results"]) if body.get("max_results") is not None else 10
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="max_results must be an integer")
+        max_results = _bounded_int(
+            body.get("max_results"),
+            default=10,
+            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
+            field="max_results",
+        )
         max_tokens = body.get("max_tokens")
         if max_tokens is not None:
             try:
@@ -697,10 +774,12 @@ def create_app(
         bank_id = body.get("bank_id")
         if not isinstance(query, str) or not isinstance(bank_id, str):
             raise HTTPException(status_code=400, detail="query and bank_id (str) are required")
-        try:
-            limit = int(body.get("limit", 10))
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="limit must be an integer")
+        limit = _bounded_int(
+            body.get("limit"),
+            default=10,
+            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
+            field="limit",
+        )
         try:
             entities = await brain.graph_search(query, bank_id, limit=limit, context=ctx)
         except Exception as exc:
@@ -729,11 +808,19 @@ def create_app(
         bank_id = body.get("bank_id")
         if not isinstance(entity_ids, list) or not isinstance(bank_id, str):
             raise HTTPException(status_code=400, detail="entity_ids (list) and bank_id (str) are required")
-        try:
-            max_depth = int(body.get("max_depth", 2))
-            limit = int(body.get("limit", 20))
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="max_depth and limit must be integers")
+        max_depth = _bounded_int(
+            body.get("max_depth"),
+            default=2,
+            ceiling=_env_positive_int("ASTROCYTE_GRAPH_MAX_DEPTH", _DEFAULT_GRAPH_DEPTH_CEILING),
+            field="max_depth",
+            minimum=0,
+        )
+        limit = _bounded_int(
+            body.get("limit"),
+            default=20,
+            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
+            field="limit",
+        )
         try:
             hits = await brain.graph_neighbors(
                 [str(e) for e in entity_ids], bank_id, max_depth=max_depth, limit=limit, context=ctx
@@ -773,10 +860,12 @@ def create_app(
             as_of = datetime.fromisoformat(as_of_raw)
         except ValueError:
             raise HTTPException(status_code=400, detail="as_of must be a valid ISO 8601 datetime string")
-        try:
-            max_results = int(body["max_results"]) if body.get("max_results") is not None else 10
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="max_results must be an integer")
+        max_results = _bounded_int(
+            body.get("max_results"),
+            default=10,
+            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
+            field="max_results",
+        )
         max_tokens = body.get("max_tokens")
         if max_tokens is not None:
             try:
@@ -815,10 +904,12 @@ def create_app(
         bank_id = body.get("bank_id")
         if not isinstance(scope, str) or not isinstance(bank_id, str):
             raise HTTPException(status_code=400, detail="scope and bank_id (str) are required")
-        try:
-            max_memories = int(body["max_memories"]) if body.get("max_memories") is not None else 50
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="max_memories must be an integer")
+        max_memories = _bounded_int(
+            body.get("max_memories"),
+            default=50,
+            ceiling=_env_positive_int("ASTROCYTE_MAX_RESULT_LIMIT", _DEFAULT_RESULT_LIMIT_CEILING),
+            field="max_memories",
+        )
         max_tokens = body.get("max_tokens")
         if max_tokens is not None:
             try:
