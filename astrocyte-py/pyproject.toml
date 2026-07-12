@@ -258,6 +258,10 @@ ignore = ["E501"]
 # Tests legitimately reach into private state (e.g. brain._policy in authz
 # regression tests, orchestrator internals in unit tests).
 "tests/**" = ["SLF001"]
+# Bench scripts share private helpers across sibling scripts (the LME runner
+# borrows tree-build internals from the LoCoMo runner) — dev tooling, not
+# public API surface.
+"scripts/**" = ["SLF001"]
 
 [tool.ruff.format]
 quote-style = "double"

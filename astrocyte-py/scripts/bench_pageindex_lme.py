@@ -65,6 +65,7 @@ _spec.loader.exec_module(_BENCH)
 from astrocyte.eval.judges.longmemeval_judge import LongMemEvalJudge  # noqa: E402
 from astrocyte.providers.openai import OpenAIProvider  # noqa: E402
 from astrocyte.testing.in_memory import InMemoryPageIndexStore  # noqa: E402
+from scripts._bench_usage import MeteredProvider, UsageMeter  # noqa: E402
 
 # ── Markdown renderer (LME-specific) ─────────────────────────────────────
 
@@ -384,10 +385,11 @@ async def main() -> None:
     lme_data = _stratified_sample_lme(lme_data, args.max_samples)
     print(f"  [pi-lme] Scoring {len(lme_data)} samples (stratified across question_type)")
 
-    provider = OpenAIProvider(api_key=api_key, model=args.model)
+    usage_meter = UsageMeter()
+    provider = MeteredProvider(OpenAIProvider(api_key=api_key, model=args.model), usage_meter)
     # PR2.6 1b: optional stronger model for the agentic-reflect loop only.
     reflect_provider = (
-        OpenAIProvider(api_key=api_key, model=args.reflect_model)
+        MeteredProvider(OpenAIProvider(api_key=api_key, model=args.reflect_model), usage_meter)
         if args.reflect_model and args.reflect_model != args.model
         else None
     )
@@ -422,6 +424,7 @@ async def main() -> None:
             trees[sample_id] = None  # mark for skip in scoring loop
     build_elapsed = time.monotonic() - t_build
     print(f"  [pi-lme] All trees ready in {build_elapsed:.1f}s")
+    usage_meter.mark_phase("ingest")
 
     # ── Step 2: score ──
     results: list[dict] = []
@@ -511,11 +514,19 @@ async def main() -> None:
         print(f"    {cat:<26} {c}/{n}  ({c / max(n, 1):.4f})")
 
     # ── Step 4: dump results JSON for failure analysis ──
+    usage_meter.mark_phase("query_and_judge")
+    usage = usage_meter.report()
+    print(
+        f"  [pi-lme] Token usage: {usage['total_input_tokens']:,} in / "
+        f"{usage['total_output_tokens']:,} out over {usage['total_calls']} calls "
+        f"— est. cost ${usage['cost_usd']:.2f}"
+    )
     out_path = workspace / f"results-{datetime.now(tz=UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
     out_path.write_text(
         json.dumps(
             {
                 "overall_accuracy": overall,
+                "usage": usage,
                 "evaluated_questions": len(lme_data),
                 "correct": correct,
                 "category_accuracy": {

@@ -66,7 +66,11 @@ jobs:
         working-directory: astrocyte-py
         # ``bench`` extra adds the Postgres + ingestion + OpenAI + aiobotocore
         # stack the benchmark run needs on top of the slim ``dev`` extra.
-        run: uv sync --extra bench
+        # ``rerank`` (sentence-transformers/torch) is required too: the bench
+        # config enables cross_encoder_rerank, and without the package the
+        # runner silently falls back to semantic order — depressing scores
+        # vs the archived trajectory (observed -4pts on a local smoke).
+        run: uv sync --extra bench --extra rerank
 
       - name: Run ${{ matrix.benchmark }} benchmark
         working-directory: astrocyte-py

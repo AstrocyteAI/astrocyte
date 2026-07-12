@@ -88,6 +88,7 @@ from astrocyte.types import (  # noqa: E402
     PageIndexDocument,
     PageIndexSection,
 )
+from scripts._bench_usage import MeteredProvider, UsageMeter  # noqa: E402
 
 # Astrocyte's category ID → name (kept local so this script doesn't
 # import the LoCoMo bench harness — the harness imports a lot of
@@ -2686,13 +2687,14 @@ async def main() -> None:
     # tree-build entity+embedding pass (PR2 commit A), per-question
     # picker / synth, and the judge. Same model, same auth path, single
     # connection pool.
-    provider = OpenAIProvider(api_key=api_key, model=args.model)
+    usage_meter = UsageMeter()
+    provider = MeteredProvider(OpenAIProvider(api_key=api_key, model=args.model), usage_meter)
     # PR2.6 1b: optional stronger model for the agentic-reflect loop only.
     # Construct a sibling provider so reflect uses (e.g.) gpt-4o while
     # the rest of the bench (picker, synth, entity extraction, judge)
     # stays on the cheaper default. None means "same as default".
     reflect_provider = (
-        OpenAIProvider(api_key=api_key, model=args.reflect_model)
+        MeteredProvider(OpenAIProvider(api_key=api_key, model=args.reflect_model), usage_meter)
         if args.reflect_model and args.reflect_model != args.model
         else None
     )
@@ -2726,6 +2728,7 @@ async def main() -> None:
         )
     build_elapsed = time.monotonic() - t_build
     print(f"  [pageindex] All trees ready in {build_elapsed:.1f}s")
+    usage_meter.mark_phase("ingest")
 
     # ── Step 2: stratified question slice.
     questions = stratified_questions(locomo_data, args.max_questions_per_conversation)
@@ -2829,11 +2832,19 @@ async def main() -> None:
 
     # Persist a compact result file so future iteration can compare
     # against this run without re-running the whole bench.
+    usage_meter.mark_phase("query_and_judge")
+    usage = usage_meter.report()
+    print(
+        f"  [pageindex] Token usage: {usage['total_input_tokens']:,} in / "
+        f"{usage['total_output_tokens']:,} out over {usage['total_calls']} calls "
+        f"— est. cost ${usage['cost_usd']:.2f}"
+    )
     out_path = workspace / f"results-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
     out_path.write_text(
         json.dumps(
             {
                 "overall_accuracy": overall,
+                "usage": usage,
                 "evaluated_questions": len(questions),
                 "correct": correct,
                 "category_accuracy": {
