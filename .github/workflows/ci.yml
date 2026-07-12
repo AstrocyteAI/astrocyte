@@ -170,11 +170,19 @@ jobs:
       - name: Extract base OpenAPI snapshot
         id: oas-base
         run: |
-          BASE_REF="${{ github.base_ref || 'main' }}"
-          if git show "origin/${BASE_REF}:astrocyte-services-py/astrocyte-gateway-py/openapi.json" > /tmp/openapi-base.json 2>/dev/null; then
+          # PRs diff against the base branch; pushes against the parent commit.
+          # The base spec must live INSIDE the workspace — the oasdiff action is
+          # a Docker container action and only mounts the workspace, not /tmp.
+          if [ -n "${{ github.base_ref }}" ]; then
+            BASE_COMMITISH="origin/${{ github.base_ref }}"
+          else
+            BASE_COMMITISH="HEAD^"
+          fi
+          echo "Diffing gateway OpenAPI against ${BASE_COMMITISH}"
+          if git show "${BASE_COMMITISH}:astrocyte-services-py/astrocyte-gateway-py/openapi.json" > openapi-base.json 2>/dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            # Bootstrap: base branch predates the snapshot — nothing to diff.
+            # Bootstrap: base predates the snapshot — nothing to diff.
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -183,7 +191,7 @@ jobs:
         # SHA-pinned third-party action (same policy as trivy-action)
         uses: oasdiff/oasdiff-action/breaking@024f6c399f9a21ada1addb0f9a36ce1bfac995f1 # v0.1.6
         with:
-          base: /tmp/openapi-base.json
+          base: openapi-base.json
           revision: astrocyte-services-py/astrocyte-gateway-py/openapi.json
           fail-on: ERR
 
