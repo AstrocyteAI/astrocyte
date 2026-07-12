@@ -263,7 +263,13 @@ bench-db-reset-2: bench-db-stop-2 bench-db-start-2
 #   LOCOMO_MAX_Q=N            questions per LoCoMo conversation (default 20 → 200 total)
 #   LME_MAX_SAMPLES=N         LME samples (default 200, full set = 500)
 #
-# All targets self-bootstrap Doppler (`doppler run -- env DATABASE_URL=... uv ...`).
+# All targets self-bootstrap Doppler (`$(BENCH_SECRETS_WRAPPER) env DATABASE_URL=... uv ...`).
+#
+# BENCH_SECRETS_WRAPPER: how bench commands obtain secrets (OPENAI_API_KEY...).
+# Local default wraps in Doppler; CI passes BENCH_SECRETS_WRAPPER= (empty)
+# because the Doppler->GitHub sync already materializes the secrets into the
+# workflow environment (see .github/workflows/benchmarks.yml).
+BENCH_SECRETS_WRAPPER ?= doppler run --
 # DBs are auto-started via bench-db-start / bench-db-start-2 deps.
 # Resume semantics: PageIndex bank persistence IS resume — re-running with
 # the same --bank-id skips re-extraction of any docs already in the bank.
@@ -300,7 +306,7 @@ bench-runner-deps:
 
 bench-locomo: fetch-locomo $(_BENCH_DB) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/locomo
-	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
+	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	  uv run python scripts/bench_pageindex_locomo.py \
 	    --backend postgres \
 	    --max-questions-per-conversation $(LOCOMO_MAX_Q) \
@@ -308,7 +314,7 @@ bench-locomo: fetch-locomo $(_BENCH_DB) bench-runner-deps
 
 bench-longmemeval: fetch-longmemeval $(_BENCH_DB) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/lme
-	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
+	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	  uv run python scripts/bench_pageindex_lme.py \
 	    --backend postgres \
 	    --max-samples $(LME_MAX_SAMPLES) \
@@ -316,7 +322,7 @@ bench-longmemeval: fetch-longmemeval $(_BENCH_DB) bench-runner-deps
 
 bench-longmemeval-on-2: fetch-longmemeval $(_BENCH_DB_2) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/pageindex/lme
-	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
+	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	  uv run python scripts/bench_pageindex_lme.py \
 	    --backend postgres \
 	    --max-samples $(LME_MAX_SAMPLES) \
@@ -336,12 +342,12 @@ bench-parallel: fetch-datasets $(_BENCH_DB) $(_BENCH_DB_2) bench-runner-deps
 	@echo "  [parallel] LoCoMo on :5433 + LME on :5434"
 	@echo "  [parallel] Logs: $(RESULTS_DIR)/parallel/{locomo,lme}.log"
 	@echo "  [parallel] Watch live: tail -f $(RESULTS_DIR)/parallel/locomo.log"
-	@( doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
+	@( $(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	     uv run python scripts/bench_pageindex_locomo.py --backend postgres \
 	       --max-questions-per-conversation $(LOCOMO_MAX_Q) --bank-id $(LOCOMO_BANK_ID) \
 	     > $(RESULTS_DIR)/parallel/locomo.log 2>&1 ; \
 	     echo "  [parallel] locomo exited ($$?)" ) & \
-	 ( doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
+	 ( $(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	     uv run python scripts/bench_pageindex_lme.py --backend postgres \
 	       --max-samples $(LME_MAX_SAMPLES) --bank-id $(LME_BANK_ID) \
 	     > $(RESULTS_DIR)/parallel/lme.log 2>&1 ; \
@@ -416,7 +422,7 @@ _MEM0_HARNESS_LME_PER_TYPE_FLAG := $(if $(MEM0_HARNESS_LME_PER_TYPE),--per-type 
 
 bench-mem0-harness-locomo: $(_BENCH_DB) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/locomo
-	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
+	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	  uv run python scripts/mem0_harness/run_locomo.py \
 	    --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
 	    --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
@@ -429,7 +435,7 @@ bench-mem0-harness-locomo: $(_BENCH_DB) bench-runner-deps
 
 bench-mem0-harness-lme: $(_BENCH_DB_2) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/lme
-	doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
+	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	  uv run python scripts/mem0_harness/run_lme.py \
 	    --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
 	    --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
@@ -447,7 +453,7 @@ bench-mem0-harness-parallel: $(_BENCH_DB) $(_BENCH_DB_2) bench-runner-deps
 	@echo "  [mem0-parallel] LoCoMo on :5433 + LME on :5434 (project=$(MEM0_HARNESS_PROJECT))"
 	@echo "  [mem0-parallel] judge=$(MEM0_HARNESS_JUDGE_MODEL)  answerer=$(MEM0_HARNESS_ANSWERER_MODEL)"
 	@echo "  [mem0-parallel] Logs: $(RESULTS_DIR)/parallel/mem0_{locomo,lme}.log"
-	@( doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
+	@( $(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	     uv run python scripts/mem0_harness/run_locomo.py \
 	       --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
 	       --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
@@ -459,7 +465,7 @@ bench-mem0-harness-parallel: $(_BENCH_DB) $(_BENCH_DB_2) bench-runner-deps
 	       --output-dir $(RESULTS_DIR)/mem0_harness/locomo/$(MEM0_HARNESS_PROJECT) \
 	     > $(RESULTS_DIR)/parallel/mem0_locomo.log 2>&1 ; \
 	     echo "  [mem0-parallel] locomo exited ($$?)" ) & \
-	 ( doppler run -- env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
+	 ( $(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	     uv run python scripts/mem0_harness/run_lme.py \
 	       --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
 	       --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
@@ -802,7 +808,7 @@ bench-finance-db-reset: bench-finance-db-stop bench-finance-db-start
 
 bench-financebench: fetch-financebench bench-finance-db-start bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/financebench/$(FINANCE_PROJECT)
-	doppler run -- env DATABASE_URL='$(BENCH_FINANCE_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_FINANCE_DATABASE_URL)' \
+	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_FINANCE_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_FINANCE_DATABASE_URL)' \
 	$(BENCH_UV_RUN) python scripts/financebench/run_financebench.py \
 		--dataset-dir $(FINANCE_DIR) \
 		--strategy $(FINANCE_STRATEGY) \

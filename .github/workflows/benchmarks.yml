@@ -13,14 +13,11 @@ on:
         required: false
         default: "longmemeval,locomo"
         type: string
-  # Weekly cron disabled 2026-07-04: the DOPPLER_BENCHMARK_TOKEN repo
-  # secret was never provisioned, so every scheduled run failed at the
-  # Doppler step (~$0 wasted, but noisy). Re-enable once the service
-  # token exists (see refresh-badges.yml for the same dependency):
-  #   doppler configs tokens create ci-benchmarks --config bench --access read --plain
-  #   gh secret set DOPPLER_BENCHMARK_TOKEN
-  # schedule:
-  #   - cron: "0 6 * * 1"   # Weekly Monday 6am UTC — always full run
+  # Secrets arrive via the Doppler -> GitHub Actions sync (Doppler project
+  # `astrocyte`, config `bench`) — no service token, no Doppler CLI at
+  # runtime. Rotations in Doppler re-sync automatically.
+  schedule:
+    - cron: "0 6 * * 1"   # Weekly Monday 6am UTC — always full run
 
 permissions:
   contents: read
@@ -71,17 +68,14 @@ jobs:
         # stack the benchmark run needs on top of the slim ``dev`` extra.
         run: uv sync --extra bench
 
-      - name: Install Doppler CLI
-        # Doppler is the source of truth for secrets (see astrocyte prd
-        # environment). The Astrocyte pattern is to run commands via
-        # ``doppler run --`` locally and in CI — keeps secrets out of
-        # workflow env blocks and under a single rotation story.
-        uses: dopplerhq/cli-action@v4
-
       - name: Run ${{ matrix.benchmark }} benchmark
         working-directory: astrocyte-py
+        # Doppler stays the source of truth; its GitHub sync materializes the
+        # secrets here. BENCH_SECRETS_WRAPPER= (empty) skips the local-dev
+        # `doppler run --` wrapper in the Makefile bench targets.
         env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_BENCHMARK_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          BENCH_SECRETS_WRAPPER: ""
         run: |
           # Scheduled runs are always full; manual runs respect the quick input.
           # The Makefile exposes question-count knobs (LOCOMO_MAX_Q,

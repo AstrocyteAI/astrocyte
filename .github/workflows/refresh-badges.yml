@@ -46,18 +46,20 @@ jobs:
         # bench extra carries aiobotocore for the R2 client.
         run: uv sync --extra bench
 
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v4
-
       - name: Refresh labels, trajectory, and badges
         working-directory: astrocyte-py
+        # R2 credentials arrive via the Doppler -> GitHub Actions sync
+        # (project `astrocyte`, config `bench`) — no service token, no
+        # Doppler CLI at runtime; rotations re-sync automatically.
         env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_BENCHMARK_TOKEN }}
-        # Service tokens are pre-scoped to a config — no --config flag
-        # (unlike the local Makefile flow, which selects `--config bench`
-        # from a personal login).
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_BUCKET_PUBLIC: ${{ secrets.R2_BUCKET_PUBLIC }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
-          doppler run -- uv run python -m scripts.archive_bench_results --refresh-labels
+          uv run python -m scripts.archive_bench_results --refresh-labels
 
       - name: Verify public badge endpoints
         run: |
