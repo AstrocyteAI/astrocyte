@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # DEVELOPMENT image. Builds the gateway + adapters from the local working tree
 # on a python:3.11-slim runtime (has a shell/package manager for debugging,
 # runs as root). Use this for local iteration against uncommitted changes.
@@ -19,14 +20,16 @@ COPY adapters-storage-py/astrocyte-postgres /build/astrocyte-postgres
 # astrocyte-age removed in M9 (ADR-008)
 COPY astrocyte-services-py/astrocyte-gateway-py /build/astrocyte-gateway-py
 
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # hatch-vcs / setuptools-scm: copied trees are not git checkouts — pin versions for image builds.
 ARG SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 
-RUN python -m venv /venv \
+# BuildKit pip cache mount: downloaded wheels persist across builds, so editing
+# source no longer re-fetches unchanged third-party deps on every rebuild.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m venv /venv \
     && /venv/bin/pip install --upgrade pip \
     && /venv/bin/pip install /build/astrocyte-py \
     && /venv/bin/pip install /build/astrocyte-postgres \
