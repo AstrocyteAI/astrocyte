@@ -464,32 +464,13 @@ class WikiStore(Protocol):
 
 
 @runtime_checkable
-class PageIndexStore(Protocol):
-    """SPI for the section recall store (M9). Optional.
+class PageIndexDocumentStore(Protocol):
+    """Document + section-skeleton persistence (save/load).
 
-    Backs the three-layer recall stack defined in
-    ``docs/_design/recall.md``. Holds:
-
-    - ``PageIndexDocument`` — one row per conversation/document, with the
-      canonical markdown that the picker slices for synth excerpts.
-    - ``PageIndexSection`` — tree nodes (the M9 recall primitive).
-    - ``PageIndexSectionEntity`` — Hindsight's unit_entities pattern at
-      section grain (PR2 commit A populates).
-    - ``PageIndexSectionLink`` — Hindsight's memory_links pattern at
-      section grain (PR2 commit D populates).
-
-    PR1 (this milestone) only exercises ``save_document`` /
-    ``save_sections`` / ``load_skeleton`` / ``load_document`` — the
-    minimum needed to port the Phase A POC picker to a Postgres-backed
-    cache. Entity / link methods land empty in PR1 and are populated in
-    PR2.
-
-    See ``astrocyte.testing.in_memory.InMemoryPageIndexStore`` for the
-    reference fixture; ``astrocyte_postgres.PostgresPageIndexStore`` for
-    the production backend.
+    A narrow role slice of the section-recall SPI. Consumers should depend on
+    the narrowest role they use; :class:`PageIndexStore` is the union of all
+    roles, retained for implementers and existing annotations.
     """
-
-    SPI_VERSION: ClassVar[int] = 1
 
     async def save_document(self, doc: PageIndexDocument) -> str:
         """Upsert a document. Returns the document id (UUID string).
@@ -522,6 +503,27 @@ class PageIndexStore(Protocol):
         is only used by the semantic strategy in PR2; the picker doesn't
         need it). Implementations may project it out for cheaper reads.
         """
+
+    async def load_sections_with_embeddings(
+        self,
+        bank_id: str,
+        document_id: str,
+    ) -> list["PageIndexSection"]:
+        """M10.1: load sections including ``summary_embedding`` (which
+        :meth:`load_skeleton` deliberately drops as a cost optimisation).
+
+        Used by :func:`section_compile.compile_sections_for_document` to
+        cluster sections via DBSCAN. Returns sections in arbitrary order;
+        caller sorts as needed."""
+
+
+class PageIndexSectionWriter(Protocol):
+    """Section enrichment writes (embeddings, entities, links, event dates).
+
+    A narrow role slice of the section-recall SPI. Consumers should depend on
+    the narrowest role they use; :class:`PageIndexStore` is the union of all
+    roles, retained for implementers and existing annotations.
+    """
 
     async def save_section_embeddings(
         self,
@@ -564,6 +566,28 @@ class PageIndexStore(Protocol):
         Why this exists: D.7's LLM-based link extraction over-emits on
         LoCoMo and severely under-emits on LME (5 vs 100 links/doc).
         kNN restores dense topical bridging for graph_expand."""
+
+    async def save_section_event_dates(
+        self,
+        document_id: str,
+        event_dates: list[tuple[int, datetime, datetime | None]],
+    ) -> int:
+        """M11.1: update ``occurred_start`` / ``occurred_end`` on
+        existing section rows.
+
+        ``event_dates`` is a list of ``(line_num, start, end_or_None)``
+        tuples. Rows not in the list are left untouched. Returns the
+        number of rows updated. Used by the bench retain pipeline
+        after section_event_extraction runs."""
+
+
+class PageIndexSectionSearch(Protocol):
+    """Section-grain retrieval: parallel search + graph-expand strategies.
+
+    A narrow role slice of the section-recall SPI. Consumers should depend on
+    the narrowest role they use; :class:`PageIndexStore` is the union of all
+    roles, retained for implementers and existing annotations.
+    """
 
     # ── PR2 commit B: query methods for the 5 parallel strategies ──
     #
@@ -684,6 +708,15 @@ class PageIndexStore(Protocol):
         already-populated ``astrocyte_pi_section_entities`` table
         directly, which gives a denser bridge with the same SQL cost.
         """
+
+
+class PageIndexFactStore(Protocol):
+    """M12.1 atomic fact-grain layer (persist + search facts).
+
+    A narrow role slice of the section-recall SPI. Consumers should depend on
+    the narrowest role they use; :class:`PageIndexStore` is the union of all
+    roles, retained for implementers and existing annotations.
+    """
 
     # ── M12.1: fact-grain layer (atomic facts alongside sections) ───────
 
@@ -826,30 +859,14 @@ class PageIndexStore(Protocol):
         ``entity_pattern="role:doctor"`` and gets back the exact
         count."""
 
-    async def save_section_event_dates(
-        self,
-        document_id: str,
-        event_dates: list[tuple[int, datetime, datetime | None]],
-    ) -> int:
-        """M11.1: update ``occurred_start`` / ``occurred_end`` on
-        existing section rows.
 
-        ``event_dates`` is a list of ``(line_num, start, end_or_None)``
-        tuples. Rows not in the list are left untouched. Returns the
-        number of rows updated. Used by the bench retain pipeline
-        after section_event_extraction runs."""
+class PageIndexWikiStore(Protocol):
+    """Compiled wiki-page persistence and lookup.
 
-    async def load_sections_with_embeddings(
-        self,
-        bank_id: str,
-        document_id: str,
-    ) -> list["PageIndexSection"]:
-        """M10.1: load sections including ``summary_embedding`` (which
-        :meth:`load_skeleton` deliberately drops as a cost optimisation).
-
-        Used by :func:`section_compile.compile_sections_for_document` to
-        cluster sections via DBSCAN. Returns sections in arbitrary order;
-        caller sorts as needed."""
+    A narrow role slice of the section-recall SPI. Consumers should depend on
+    the narrowest role they use; :class:`PageIndexStore` is the union of all
+    roles, retained for implementers and existing annotations.
+    """
 
     async def save_wiki_page(
         self,
@@ -979,6 +996,17 @@ class PageIndexStore(Protocol):
         couldn't reliably aggregate entity mentions from raw section
         text."""
 
+
+class PageIndexLifecycle(Protocol):
+    """SPI versioning + health.
+
+    A narrow role slice of the section-recall SPI. Consumers should depend on
+    the narrowest role they use; :class:`PageIndexStore` is the union of all
+    roles, retained for implementers and existing annotations.
+    """
+
+    SPI_VERSION: ClassVar[int] = 1
+
     async def health(self) -> HealthStatus:
         """Check storage connectivity."""
 
@@ -989,6 +1017,42 @@ class PageIndexStore(Protocol):
 
 
 @runtime_checkable
+
+
+class PageIndexStore(
+    PageIndexDocumentStore,
+    PageIndexSectionWriter,
+    PageIndexSectionSearch,
+    PageIndexFactStore,
+    PageIndexWikiStore,
+    PageIndexLifecycle,
+    Protocol,
+):
+    """SPI for the section recall store (M9). Optional.
+
+    Backs the three-layer recall stack defined in
+    ``docs/_design/recall.md``. Holds:
+
+    - ``PageIndexDocument`` — one row per conversation/document, with the
+      canonical markdown that the picker slices for synth excerpts.
+    - ``PageIndexSection`` — tree nodes (the M9 recall primitive).
+    - ``PageIndexSectionEntity`` — Hindsight's unit_entities pattern at
+      section grain (PR2 commit A populates).
+    - ``PageIndexSectionLink`` — Hindsight's memory_links pattern at
+      section grain (PR2 commit D populates).
+
+    PR1 (this milestone) only exercises ``save_document`` /
+    ``save_sections`` / ``load_skeleton`` / ``load_document`` — the
+    minimum needed to port the Phase A POC picker to a Postgres-backed
+    cache. Entity / link methods land empty in PR1 and are populated in
+    PR2.
+
+    See ``astrocyte.testing.in_memory.InMemoryPageIndexStore`` for the
+    reference fixture; ``astrocyte_postgres.PostgresPageIndexStore`` for
+    the production backend.
+    """
+
+
 class MentalModelStore(Protocol):
     """SPI for first-class mental-model storage.
 
