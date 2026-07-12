@@ -93,3 +93,31 @@ async def test_unpriced_model_flagged() -> None:
     r = meter.report()
     assert r["unpriced_models"] == ["mystery-model"]
     assert r["cost_usd"] == 0.0
+
+
+def test_latency_meter_percentiles_and_categories() -> None:
+    from scripts._bench_usage import LatencyMeter
+
+    m = LatencyMeter()
+    for i in range(1, 11):  # 1..10 seconds
+        m.record(float(i), category="single-hop" if i <= 5 else "multi-hop")
+    r = m.report()
+    assert r["answer"]["n"] == 10
+    # Nearest-rank with round-half-even: round(0.5 * 9) = 4 -> sorted[4] = 5.0
+    assert r["answer"]["p50_s"] == 5.0
+    assert r["answer"]["max_s"] == 10.0
+    assert r["answer"]["mean_s"] == 5.5
+    cats = r["answer_by_category"]
+    assert cats["single-hop"]["n"] == 5 and cats["single-hop"]["max_s"] == 5.0
+    assert cats["multi-hop"]["p50_s"] == 8.0
+
+
+def test_latency_meter_empty_and_uncategorized() -> None:
+    from scripts._bench_usage import LatencyMeter
+
+    m = LatencyMeter()
+    assert m.report()["answer"]["n"] == 0
+    m.record(1.5)  # no category
+    r = m.report()
+    assert r["answer"]["n"] == 1
+    assert "answer_by_category" not in r

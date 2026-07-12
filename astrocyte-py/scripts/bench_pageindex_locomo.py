@@ -88,7 +88,7 @@ from astrocyte.types import (  # noqa: E402
     PageIndexDocument,
     PageIndexSection,
 )
-from scripts._bench_usage import MeteredProvider, UsageMeter  # noqa: E402
+from scripts._bench_usage import LatencyMeter, MeteredProvider, UsageMeter  # noqa: E402
 
 # Astrocyte's category ID → name (kept local so this script doesn't
 # import the LoCoMo bench harness — the harness imports a lot of
@@ -2688,6 +2688,7 @@ async def main() -> None:
     # picker / synth, and the judge. Same model, same auth path, single
     # connection pool.
     usage_meter = UsageMeter()
+    latency_meter = LatencyMeter()
     provider = MeteredProvider(OpenAIProvider(api_key=api_key, model=args.model), usage_meter)
     # PR2.6 1b: optional stronger model for the agentic-reflect loop only.
     # Construct a sibling provider so reflect uses (e.g.) gpt-4o while
@@ -2750,6 +2751,7 @@ async def main() -> None:
         # uses it directly instead of the regex heuristic.
         cat_int = q.get("category")
         cat_label = _CATEGORY_MAP.get(cat_int) if cat_int is not None else None
+        t_q = time.monotonic()
         try:
             answer, line_nums = await answer_question(
                 provider,
@@ -2766,6 +2768,7 @@ async def main() -> None:
         except Exception as exc:  # noqa: BLE001 — single-Q failure mustn't tank the run
             print(f"  [pageindex] Q{i} failed: {exc}")
             answer, line_nums = "(error)", []
+        latency_meter.record(time.monotonic() - t_q, category=cat_label)
 
         # LoCoMo's category-5 (adversarial) questions have no
         # ``answer`` field — the dataset uses ``adversarial_answer`` to
@@ -2834,6 +2837,15 @@ async def main() -> None:
     # against this run without re-running the whole bench.
     usage_meter.mark_phase("query_and_judge")
     usage = usage_meter.report()
+    latency = {
+        **latency_meter.report(),
+        "ingest_wall_seconds": round(build_elapsed, 1),
+        "query_wall_seconds": round(time.monotonic() - t_score, 1),
+    }
+    ans = latency["answer"]
+    print(
+        f"  [pageindex] Answer latency: p50 {ans['p50_s']}s / p95 {ans['p95_s']}s / max {ans['max_s']}s"
+    )
     print(
         f"  [pageindex] Token usage: {usage['total_input_tokens']:,} in / "
         f"{usage['total_output_tokens']:,} out over {usage['total_calls']} calls "
@@ -2845,6 +2857,7 @@ async def main() -> None:
             {
                 "overall_accuracy": overall,
                 "usage": usage,
+                "latency": latency,
                 "evaluated_questions": len(questions),
                 "correct": correct,
                 "category_accuracy": {

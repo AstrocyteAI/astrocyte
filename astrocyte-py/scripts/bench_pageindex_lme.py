@@ -65,7 +65,7 @@ _spec.loader.exec_module(_BENCH)
 from astrocyte.eval.judges.longmemeval_judge import LongMemEvalJudge  # noqa: E402
 from astrocyte.providers.openai import OpenAIProvider  # noqa: E402
 from astrocyte.testing.in_memory import InMemoryPageIndexStore  # noqa: E402
-from scripts._bench_usage import MeteredProvider, UsageMeter  # noqa: E402
+from scripts._bench_usage import LatencyMeter, MeteredProvider, UsageMeter  # noqa: E402
 
 # ── Markdown renderer (LME-specific) ─────────────────────────────────────
 
@@ -386,6 +386,7 @@ async def main() -> None:
     print(f"  [pi-lme] Scoring {len(lme_data)} samples (stratified across question_type)")
 
     usage_meter = UsageMeter()
+    latency_meter = LatencyMeter()
     provider = MeteredProvider(OpenAIProvider(api_key=api_key, model=args.model), usage_meter)
     # PR2.6 1b: optional stronger model for the agentic-reflect loop only.
     reflect_provider = (
@@ -439,6 +440,7 @@ async def main() -> None:
         expected = sample.get("answer", "")
 
         conv_tree = trees.get(sample_id)
+        t_q = time.monotonic()
         if conv_tree is None:
             answer, line_nums = "(tree-build error)", []
         else:
@@ -463,6 +465,8 @@ async def main() -> None:
             except Exception as exc:  # noqa: BLE001 — single-Q failure mustn't tank the run
                 print(f"  [pi-lme] Q{i} ({sample_id}) failed: {exc}")
                 answer, line_nums = "(error)", []
+        if conv_tree is not None:
+            latency_meter.record(time.monotonic() - t_q, category=question_type)
 
         is_correct: float = 0.0
         if judge is not None and answer not in {"(error)", "(tree-build error)"}:
@@ -516,6 +520,15 @@ async def main() -> None:
     # ── Step 4: dump results JSON for failure analysis ──
     usage_meter.mark_phase("query_and_judge")
     usage = usage_meter.report()
+    latency = {
+        **latency_meter.report(),
+        "ingest_wall_seconds": round(build_elapsed, 1),
+        "query_wall_seconds": round(time.monotonic() - t_score, 1),
+    }
+    ans = latency["answer"]
+    print(
+        f"  [pi-lme] Answer latency: p50 {ans['p50_s']}s / p95 {ans['p95_s']}s / max {ans['max_s']}s"
+    )
     print(
         f"  [pi-lme] Token usage: {usage['total_input_tokens']:,} in / "
         f"{usage['total_output_tokens']:,} out over {usage['total_calls']} calls "
@@ -527,6 +540,7 @@ async def main() -> None:
             {
                 "overall_accuracy": overall,
                 "usage": usage,
+                "latency": latency,
                 "evaluated_questions": len(lme_data),
                 "correct": correct,
                 "category_accuracy": {

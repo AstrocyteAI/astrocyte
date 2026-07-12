@@ -226,7 +226,9 @@ pip install astrocyte-gateway-py[otel]
 # or: uv sync --extra otel
 
 export ASTROCYTE_OTEL_ENABLED=1
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+# OTLP **HTTP** (port 4318) — the gateway uses the http/protobuf exporter,
+# NOT gRPC (4317). Pointing at a gRPC port fails silently (spans dropped).
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 export OTEL_SERVICE_NAME=astrocyte-gateway
 export OTEL_RESOURCE_ATTRIBUTES=environment=prod,version=0.8.0
 ```
@@ -237,16 +239,48 @@ export OTEL_RESOURCE_ATTRIBUTES=environment=prod,version=0.8.0
 - Request/response details, latency, exceptions
 - Core policy operations via `span()` context manager (PII scanning, recall, retain, etc.)
 
-### Collector setup
+### Collector setup — five-minute local example
+
+The repo ships a ready-made overlay that runs Grafana's all-in-one
+`otel-lgtm` image (OTLP collector + Tempo traces + Grafana UI) next to the
+gateway:
+
+```bash
+cd astrocyte-services-py
+docker compose -f docker-compose.yml -f docker-compose.otel.yml up
+```
+
+Then generate some traffic and open Grafana:
+
+```bash
+curl -X POST http://localhost:8080/v1/recall \
+  -H "Content-Type: application/json" \
+  -d '{"query": "hello", "bank_id": "b1"}'
+open http://localhost:3000   # Explore -> Tempo -> service astrocyte-gateway-py
+```
+
+Each request appears as a trace: the FastAPI route span on top, with the
+core pipeline spans (`astrocyte.recall`, retrieval strategies, store calls)
+nested beneath — so "why was this request slow" decomposes into which stage
+spent the time. The overlay is two env vars on the gateway
+(`ASTROCYTE_OTEL_ENABLED=1`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318`);
+production wiring is the same two vars pointed at your real collector.
+
+For Kubernetes, set the same env vars in the Helm chart
+(`helm/astrocyte-gateway-py`'s `env:` list in `values.yaml`), typically
+targeting an OTel Collector deployed as a sidecar or DaemonSet.
+
+### Collector endpoints
 
 Traces are exported via OTLP HTTP to any compatible collector:
 
-| Collector | Endpoint example |
+| Collector | OTLP **HTTP** endpoint example |
 |-----------|-----------------|
-| **Jaeger** | `http://jaeger:4317` |
-| **Grafana Tempo** | `http://tempo:4317` |
-| **Datadog** | `http://datadog-agent:4317` |
-| **AWS X-Ray** (via ADOT) | `http://adot-collector:4317` |
+| **Grafana LGTM (all-in-one)** | `http://otel-lgtm:4318` |
+| **Jaeger** (v1.35+) | `http://jaeger:4318` |
+| **Grafana Tempo** | `http://tempo:4318` |
+| **Datadog** | `http://datadog-agent:4318` |
+| **AWS X-Ray** (via ADOT) | `http://adot-collector:4318` |
 
 If OpenTelemetry is not installed or not enabled, all tracing is a no-op — zero overhead.
 
@@ -255,7 +289,7 @@ If OpenTelemetry is not installed or not enabled, all tracing is a no-op — zer
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ASTROCYTE_OTEL_ENABLED` | unset | Set to `1`, `true`, or `yes` to enable |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP collector endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP collector endpoint (**HTTP**, not gRPC) |
 | `OTEL_SERVICE_NAME` | `astrocyte-gateway-py` | Service name in traces |
 | `OTEL_RESOURCE_ATTRIBUTES` | unset | Comma-separated `key=value` pairs (e.g. `environment=prod`) |
 
@@ -361,7 +395,7 @@ Uses token bucket algorithm per bank per operation. Returns 429 with `retry_afte
 | `ASTROCYTE_LOG_FORMAT` | unset | `json` for structured JSON logging |
 | `ASTROCYTE_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
 | `ASTROCYTE_OTEL_ENABLED` | unset | `1` to enable OpenTelemetry |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP collector endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP collector endpoint (**HTTP**, not gRPC) |
 | `OTEL_SERVICE_NAME` | `astrocyte-gateway-py` | Service name in traces |
 | `OTEL_RESOURCE_ATTRIBUTES` | unset | Resource attributes (`key=value,...`) |
 | `ASTROCYTE_RATE_LIMIT_PER_SECOND` | unset | Per-client HTTP rate limit |

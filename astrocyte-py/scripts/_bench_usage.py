@@ -164,3 +164,50 @@ class MeteredProvider:
         model = kwargs.get("model") or getattr(self._inner, "_embedding_model", "text-embedding-3-small")
         self._meter.add(model, sum(_estimate_tokens(t) for t in texts), 0, estimated=True)
         return await self._inner.embed(texts, *args, **kwargs)
+
+
+def _percentile(sorted_vals: list[float], q: float) -> float:
+    """Nearest-rank percentile on a pre-sorted list."""
+    if not sorted_vals:
+        return 0.0
+    idx = min(len(sorted_vals) - 1, max(0, round(q * (len(sorted_vals) - 1))))
+    return sorted_vals[idx]
+
+
+@dataclass
+class LatencyMeter:
+    """Per-question wall-clock latency with per-category percentiles.
+
+    Records the end-to-end answer latency (retrieval + synthesis; judge time
+    excluded — that's harness overhead, not system performance) and reports
+    p50/p95/max overall and per category. Complements :class:`UsageMeter`:
+    together the results JSON carries the full accuracy x cost x latency
+    receipt for a run.
+    """
+
+    samples: list[tuple[str | None, float]] = field(default_factory=list)
+
+    def record(self, seconds: float, category: str | None = None) -> None:
+        self.samples.append((category, seconds))
+
+    @staticmethod
+    def _stats(vals: list[float]) -> dict[str, Any]:
+        s = sorted(vals)
+        return {
+            "n": len(s),
+            "p50_s": round(_percentile(s, 0.50), 3),
+            "p95_s": round(_percentile(s, 0.95), 3),
+            "max_s": round(max(s), 3) if s else 0.0,
+            "mean_s": round(sum(s) / len(s), 3) if s else 0.0,
+        }
+
+    def report(self) -> dict[str, Any]:
+        overall = self._stats([sec for _, sec in self.samples])
+        by_cat: dict[str, list[float]] = {}
+        for cat, sec in self.samples:
+            if cat is not None:
+                by_cat.setdefault(cat, []).append(sec)
+        return {
+            "answer": overall,
+            **({"answer_by_category": {c: self._stats(v) for c, v in sorted(by_cat.items())}} if by_cat else {}),
+        }

@@ -1,0 +1,31 @@
+# OpenTelemetry collector overlay — a five-minute local tracing stack.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.otel.yml up
+#
+# Runs Grafana's all-in-one "otel-lgtm" image (OTLP collector + Tempo traces +
+# Loki logs + Mimir metrics + Grafana UI) and points the gateway at it:
+#
+#   Grafana UI:     http://localhost:3000   (anonymous access enabled)
+#   OTLP HTTP in:   collector:4318          (what the gateway exports to)
+#
+# The gateway image must include the otel extra (astrocyte-gateway-py[otel]);
+# the dev image built from this repo does. In production, swap the service
+# below for your real collector (Tempo/Jaeger/Datadog/ADOT) and set the same
+# two env vars — the gateway speaks standard OTLP HTTP.
+services:
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.11.10
+    ports:
+      - "3000:3000"   # Grafana UI
+      - "4318:4318"   # OTLP HTTP (host-side, for host-run gateways)
+    restart: unless-stopped
+
+  astrocyte-gateway-py:
+    environment:
+      ASTROCYTE_OTEL_ENABLED: "1"
+      # OTLP **HTTP** (4318) — the gateway uses the http/protobuf exporter,
+      # not gRPC (4317).
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_SERVICE_NAME: astrocyte-gateway-py
+    depends_on:
+      - otel-lgtm
