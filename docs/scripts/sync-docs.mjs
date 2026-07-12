@@ -203,6 +203,13 @@ function copyAllMdFromSourceSection(sourceDirName, subDir = "") {
 
 rmGeneratedDirs();
 
+// Publish the gateway's OpenAPI snapshot for the API explorer
+// (public/api-explorer/index.html renders it via Scalar).
+const openapiSrc = path.resolve(docsDir, "../astrocyte-services-py/astrocyte-gateway-py/openapi.json");
+if (fs.existsSync(openapiSrc)) {
+  fs.copyFileSync(openapiSrc, path.join(docsDir, "public/openapi.json"));
+}
+
 for (const src of ["_design", "_plugins", "_end-user", "_tutorials", "_reference-archive"]) {
   copyAllMdFromSourceSection(src);
 }

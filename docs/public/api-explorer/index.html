@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Astrocyte Gateway — API Explorer</title>
+    <link rel="icon" href="../favicon.svg" />
+  </head>
+  <body>
+    <!-- Renders the gateway's checked-in OpenAPI snapshot (copied to
+         ../openapi.json by docs/scripts/sync-docs.mjs at build time, from
+         astrocyte-services-py/astrocyte-gateway-py/openapi.json — the same
+         artifact the oasdiff breaking-change gate diffs).
+         CDN pinned to an exact version per the repo's supply-chain policy. -->
+    <script id="api-reference" data-url="../openapi.json"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.5/dist/browser/standalone.min.js"></script>
+  </body>
+</html>

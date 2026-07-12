@@ -34,6 +34,7 @@ const topicItems = {
         { label: "Python public API index", link: "/end-user/python-api-index/" },
         { label: "Configuration reference", link: "/end-user/configuration-reference/" },
         { label: "Reference archive (by version)", link: "/end-user/reference-archive/" },
+        { label: "API explorer (OpenAPI)", link: "/api-explorer/" },
       ],
     },
     // ── Setup Guides ──
