@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from astrocyte_gateway import response_models as rm
 from astrocyte_gateway.auth import get_astrocyte_context, validate_auth_startup_config
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.models import (
@@ -345,13 +346,13 @@ def create_app(
     # dependency-checking liveness probe turns a DB outage into a restart loop.
     # Dependency readiness lives at ``/health``; ingest-subsystem health at
     # ``/health/ingest``.
-    @app.get("/live")
-    @app.get("/health/live")
+    @app.get("/live", responses={200: {"model": rm.LiveResponse}, **rm.VALIDATION_ERROR})
+    @app.get("/health/live", responses={200: {"model": rm.LiveResponse}, **rm.VALIDATION_ERROR})
     async def live() -> dict[str, str]:
         """Process is up; does not check PostgreSQL or other dependencies."""
         return {"status": "ok"}
 
-    @app.get("/health")
+    @app.get("/health", responses={200: {"model": rm.HealthStatus}, **rm.VALIDATION_ERROR})
     async def health() -> dict[str, Any]:
         try:
             status = await asyncio.wait_for(brain.health(), timeout=_HEALTH_TIMEOUT_S)
@@ -383,7 +384,7 @@ def create_app(
             "sources": rows,
         }
 
-    @app.post("/v1/retain")
+    @app.post("/v1/retain", responses={200: {"model": rm.RetainResult}, **rm.VALIDATION_ERROR})
     async def retain(
         body: RetainBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -397,7 +398,7 @@ def create_app(
         )
         return to_jsonable(result)
 
-    @app.post("/v1/recall")
+    @app.post("/v1/recall", responses={200: {"model": rm.RecallResult}, **rm.VALIDATION_ERROR})
     async def recall(
         body: RecallBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -413,7 +414,7 @@ def create_app(
         )
         return to_jsonable(result)
 
-    @app.post("/v1/debug/recall")
+    @app.post("/v1/debug/recall", responses={200: {"model": rm.DebugRecallResponse}, **rm.VALIDATION_ERROR})
     async def debug_recall(
         body: RecallBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -427,7 +428,7 @@ def create_app(
             "result_count": len(results) if isinstance(results, list) else None,
         }
 
-    @app.post("/v1/reflect")
+    @app.post("/v1/reflect", responses={200: {"model": rm.ReflectResult}, **rm.VALIDATION_ERROR})
     async def reflect(
         body: ReflectBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -465,7 +466,7 @@ def create_app(
     # When operators turn access control on, these endpoints enforce the same
     # bank-level RBAC as the rest of the API instead of silently bypassing it.
 
-    @app.post("/v1/mental-models")
+    @app.post("/v1/mental-models", responses={200: {"model": rm.MentalModel}, **rm.VALIDATION_ERROR})
     async def create_mental_model(
         body: MentalModelCreateBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -481,7 +482,7 @@ def create_app(
         )
         return to_jsonable(model)
 
-    @app.get("/v1/mental-models")
+    @app.get("/v1/mental-models", responses={200: {"model": rm.MentalModelListResponse}, **rm.VALIDATION_ERROR})
     async def list_mental_models(
         bank_id: str,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -490,7 +491,7 @@ def create_app(
         brain.check_access(bank_id, "read", ctx)
         return {"models": to_jsonable(await _mental_models().list(bank_id, scope=scope))}
 
-    @app.get("/v1/mental-models/{model_id}")
+    @app.get("/v1/mental-models/{model_id}", responses={200: {"model": rm.MentalModel}, **rm.VALIDATION_ERROR})
     async def get_mental_model(
         model_id: str,
         bank_id: str,
@@ -502,7 +503,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="mental model not found")
         return to_jsonable(model)
 
-    @app.post("/v1/mental-models/{model_id}/refresh")
+    @app.post("/v1/mental-models/{model_id}/refresh", responses={200: {"model": rm.MentalModel}, **rm.VALIDATION_ERROR})
     async def refresh_mental_model(
         model_id: str,
         body: MentalModelRefreshBody,
@@ -519,7 +520,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="mental model not found")
         return to_jsonable(model)
 
-    @app.delete("/v1/mental-models/{model_id}")
+    @app.delete("/v1/mental-models/{model_id}", responses={200: {"model": rm.DeletedResponse}, **rm.VALIDATION_ERROR})
     async def delete_mental_model(
         model_id: str,
         bank_id: str,
@@ -531,7 +532,7 @@ def create_app(
         brain.check_access(bank_id, "forget", ctx)
         return {"deleted": await _mental_models().delete(bank_id, model_id)}
 
-    @app.post("/v1/observations/invalidate")
+    @app.post("/v1/observations/invalidate", responses={200: {"model": rm.InvalidatedResponse}, **rm.VALIDATION_ERROR})
     async def invalidate_observations(
         body: ObservationsInvalidateBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -548,7 +549,7 @@ def create_app(
         deleted = await consolidator.invalidate_sources(body.source_ids, body.bank_id, vector_store)
         return {"deleted": deleted}
 
-    @app.post("/v1/forget")
+    @app.post("/v1/forget", responses={200: {"model": rm.ForgetResult}, **rm.VALIDATION_ERROR})
     async def forget(
         body: ForgetBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -562,7 +563,7 @@ def create_app(
         )
         return to_jsonable(result)
 
-    @app.post("/v1/dsar/forget_principal")
+    @app.post("/v1/dsar/forget_principal", responses={200: {"model": rm.DsarForgetPrincipalResponse}, **rm.VALIDATION_ERROR})
     async def dsar_forget_principal(
         body: DsarForgetPrincipalBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -650,7 +651,7 @@ def create_app(
             "details": details,
         }
 
-    @app.post("/v1/compile")
+    @app.post("/v1/compile", responses={200: {"model": rm.CompileResult}, **rm.VALIDATION_ERROR})
     async def compile(
         body: CompileBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -675,7 +676,7 @@ def create_app(
             raise
         return to_jsonable(result)
 
-    @app.post("/v1/graph/search")
+    @app.post("/v1/graph/search", responses={200: {"model": rm.GraphSearchResponse}, **rm.VALIDATION_ERROR})
     async def graph_search(
         body: GraphSearchBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -698,7 +699,7 @@ def create_app(
             raise
         return {"entities": to_jsonable(entities)}
 
-    @app.post("/v1/graph/neighbors")
+    @app.post("/v1/graph/neighbors", responses={200: {"model": rm.GraphNeighborsResponse}, **rm.VALIDATION_ERROR})
     async def graph_neighbors(
         body: GraphNeighborsBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -726,7 +727,7 @@ def create_app(
 
     # ── history (M9 time travel) ───────────────────────────────────────────
 
-    @app.post("/v1/history")
+    @app.post("/v1/history", responses={200: {"model": rm.HistoryResult}, **rm.VALIDATION_ERROR})
     async def history(
         body: HistoryBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -755,7 +756,7 @@ def create_app(
 
     # ── audit (M10 gap analysis) ───────────────────────────────────────────
 
-    @app.post("/v1/audit")
+    @app.post("/v1/audit", responses={200: {"model": rm.AuditResult}, **rm.VALIDATION_ERROR})
     async def audit(
         body: AuditBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -786,7 +787,7 @@ def create_app(
 
     # ── export / import (ops portability) ─────────────────────────────────
 
-    @app.post("/v1/export")
+    @app.post("/v1/export", responses={200: {"model": rm.ExportResponse}, **rm.VALIDATION_ERROR})
     async def export_bank(
         body: ExportBody,
         _admin: Annotated[None, Depends(require_admin_if_configured)],
@@ -820,7 +821,7 @@ def create_app(
             raise
         return {"bank_id": bank_id, "path": path, "exported_count": count}
 
-    @app.post("/v1/import")
+    @app.post("/v1/import", responses={200: {"model": rm.ImportResult}, **rm.VALIDATION_ERROR})
     async def import_bank(
         body: ImportBody,
         _admin: Annotated[None, Depends(require_admin_if_configured)],
@@ -904,7 +905,7 @@ def create_app(
 
     # ── admin: lifecycle ──────────────────────────────────────────────────
 
-    @app.post("/v1/admin/lifecycle")
+    @app.post("/v1/admin/lifecycle", responses={200: {"model": rm.LifecycleRunResult}, **rm.VALIDATION_ERROR})
     async def admin_lifecycle(
         body: AdminLifecycleBody,
         _admin: Annotated[None, Depends(require_admin_if_configured)],
@@ -921,7 +922,7 @@ def create_app(
 
     # ── admin: bank health ────────────────────────────────────────────────
 
-    @app.get("/v1/admin/banks/health")
+    @app.get("/v1/admin/banks/health", responses={200: {"model": rm.AllBankHealthResponse}, **rm.VALIDATION_ERROR})
     async def admin_all_bank_health(
         _admin: Annotated[None, Depends(require_admin_if_configured)],
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
@@ -931,7 +932,7 @@ def create_app(
         results = await brain.all_bank_health()
         return {"banks": to_jsonable(results)}
 
-    @app.get("/v1/admin/banks/{bank_id}/health")
+    @app.get("/v1/admin/banks/{bank_id}/health", responses={200: {"model": rm.BankHealth}, **rm.VALIDATION_ERROR})
     async def admin_bank_health(
         bank_id: str,
         _admin: Annotated[None, Depends(require_admin_if_configured)],
@@ -944,7 +945,7 @@ def create_app(
 
     # ── admin: legal hold ─────────────────────────────────────────────────
 
-    @app.post("/v1/admin/banks/{bank_id}/hold")
+    @app.post("/v1/admin/banks/{bank_id}/hold", responses={200: {"model": rm.LegalHold}, **rm.VALIDATION_ERROR})
     async def admin_set_hold(
         bank_id: str,
         body: AdminSetHoldBody,
@@ -962,7 +963,7 @@ def create_app(
         hold = brain.set_legal_hold(bank_id, body.hold_id, body.reason, set_by=body.set_by)
         return to_jsonable(hold)
 
-    @app.delete("/v1/admin/banks/{bank_id}/hold/{hold_id}")
+    @app.delete("/v1/admin/banks/{bank_id}/hold/{hold_id}", responses={200: {"model": rm.HoldReleasedResponse}, **rm.VALIDATION_ERROR})
     async def admin_release_hold(
         bank_id: str,
         hold_id: str,
@@ -974,7 +975,7 @@ def create_app(
         released = brain.release_legal_hold(bank_id, hold_id)
         return {"bank_id": bank_id, "hold_id": hold_id, "released": released}
 
-    @app.get("/v1/admin/banks/{bank_id}/hold")
+    @app.get("/v1/admin/banks/{bank_id}/hold", responses={200: {"model": rm.HoldStatusResponse}, **rm.VALIDATION_ERROR})
     async def admin_check_hold(
         bank_id: str,
         _admin: Annotated[None, Depends(require_admin_if_configured)],

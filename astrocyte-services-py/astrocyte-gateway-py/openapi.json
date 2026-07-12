@@ -37,6 +37,22 @@
         "title": "AdminSetHoldBody",
         "type": "object"
       },
+      "AllBankHealthResponse": {
+        "properties": {
+          "banks": {
+            "items": {
+              "$ref": "#/components/schemas/BankHealth"
+            },
+            "title": "Banks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "banks"
+        ],
+        "title": "AllBankHealthResponse",
+        "type": "object"
+      },
       "AuditBody": {
         "properties": {
           "bank_id": {
@@ -85,6 +101,102 @@
         "title": "AuditBody",
         "type": "object"
       },
+      "AuditResult": {
+        "properties": {
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "coverage_score": {
+            "title": "Coverage Score",
+            "type": "number"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/GapItem"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "memories_scanned": {
+            "title": "Memories Scanned",
+            "type": "integer"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecallTrace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "scope",
+          "bank_id",
+          "gaps",
+          "coverage_score",
+          "memories_scanned"
+        ],
+        "title": "AuditResult",
+        "type": "object"
+      },
+      "BankHealth": {
+        "properties": {
+          "assessed_at": {
+            "format": "date-time",
+            "title": "Assessed At",
+            "type": "string"
+          },
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/HealthIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Metrics",
+            "type": "object"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "status": {
+            "enum": [
+              "healthy",
+              "warning",
+              "unhealthy"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bank_id",
+          "score",
+          "status",
+          "issues",
+          "metrics",
+          "assessed_at"
+        ],
+        "title": "BankHealth",
+        "type": "object"
+      },
       "CompileBody": {
         "properties": {
           "bank_id": {
@@ -109,6 +221,132 @@
         "title": "CompileBody",
         "type": "object"
       },
+      "CompileResult": {
+        "properties": {
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "title": "Elapsed Ms",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "noise_memories": {
+            "title": "Noise Memories",
+            "type": "integer"
+          },
+          "pages_created": {
+            "title": "Pages Created",
+            "type": "integer"
+          },
+          "pages_updated": {
+            "title": "Pages Updated",
+            "type": "integer"
+          },
+          "scopes_compiled": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes Compiled",
+            "type": "array"
+          },
+          "tokens_used": {
+            "title": "Tokens Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bank_id",
+          "scopes_compiled",
+          "pages_created",
+          "pages_updated",
+          "noise_memories",
+          "tokens_used",
+          "elapsed_ms"
+        ],
+        "title": "CompileResult",
+        "type": "object"
+      },
+      "DebugRecallResponse": {
+        "properties": {
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecallTrace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "DebugRecallResponse",
+        "type": "object"
+      },
+      "DeletedResponse": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "DeletedResponse",
+        "type": "object"
+      },
+      "DsarBankDetail": {
+        "properties": {
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "required": [
+          "bank_id",
+          "deleted"
+        ],
+        "title": "DsarBankDetail",
+        "type": "object"
+      },
       "DsarForgetPrincipalBody": {
         "properties": {
           "principal": {
@@ -127,6 +365,147 @@
           "principal"
         ],
         "title": "DsarForgetPrincipalBody",
+        "type": "object"
+      },
+      "DsarForgetPrincipalResponse": {
+        "properties": {
+          "banks_processed": {
+            "title": "Banks Processed",
+            "type": "integer"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/DsarBankDetail"
+            },
+            "title": "Details",
+            "type": "array"
+          },
+          "memories_deleted": {
+            "title": "Memories Deleted",
+            "type": "integer"
+          },
+          "principal": {
+            "title": "Principal",
+            "type": "string"
+          },
+          "tag_convention": {
+            "title": "Tag Convention",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "principal",
+          "tag_convention",
+          "banks_processed",
+          "memories_deleted",
+          "details"
+        ],
+        "title": "DsarForgetPrincipalResponse",
+        "type": "object"
+      },
+      "Entity": {
+        "properties": {
+          "aliases": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aliases"
+          },
+          "embedding": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mention_count": {
+            "default": 1,
+            "title": "Mention Count",
+            "type": "integer"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "entity_type"
+        ],
+        "title": "Entity",
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "description": "Error envelope used by validation (400) and guard (401/403) responses.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorDetail",
         "type": "object"
       },
       "ExportBody": {
@@ -155,6 +534,29 @@
           "path"
         ],
         "title": "ExportBody",
+        "type": "object"
+      },
+      "ExportResponse": {
+        "properties": {
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "exported_count": {
+            "title": "Exported Count",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bank_id",
+          "path",
+          "exported_count"
+        ],
+        "title": "ExportResponse",
         "type": "object"
       },
       "ForgetBody": {
@@ -210,6 +612,52 @@
         "title": "ForgetBody",
         "type": "object"
       },
+      "ForgetResult": {
+        "properties": {
+          "archived_count": {
+            "default": 0,
+            "title": "Archived Count",
+            "type": "integer"
+          },
+          "deleted_count": {
+            "title": "Deleted Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted_count"
+        ],
+        "title": "ForgetResult",
+        "type": "object"
+      },
+      "GapItem": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "severity",
+          "reason"
+        ],
+        "title": "GapItem",
+        "type": "object"
+      },
       "GraphNeighborsBody": {
         "properties": {
           "bank_id": {
@@ -241,6 +689,22 @@
         "title": "GraphNeighborsBody",
         "type": "object"
       },
+      "GraphNeighborsResponse": {
+        "properties": {
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryHit"
+            },
+            "title": "Hits",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hits"
+        ],
+        "title": "GraphNeighborsResponse",
+        "type": "object"
+      },
       "GraphSearchBody": {
         "properties": {
           "bank_id": {
@@ -264,6 +728,22 @@
         "title": "GraphSearchBody",
         "type": "object"
       },
+      "GraphSearchResponse": {
+        "properties": {
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/Entity"
+            },
+            "title": "Entities",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entities"
+        ],
+        "title": "GraphSearchResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -275,6 +755,86 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthIssue": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "recommendation": {
+            "title": "Recommendation",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "critical"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "code",
+          "message",
+          "recommendation"
+        ],
+        "title": "HealthIssue",
+        "type": "object"
+      },
+      "HealthStatus": {
+        "properties": {
+          "healthy": {
+            "title": "Healthy",
+            "type": "boolean"
+          },
+          "last_check_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Check At"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "required": [
+          "healthy"
+        ],
+        "title": "HealthStatus",
         "type": "object"
       },
       "HistoryBody": {
@@ -331,6 +891,94 @@
         "title": "HistoryBody",
         "type": "object"
       },
+      "HistoryResult": {
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryHit"
+            },
+            "title": "Hits",
+            "type": "array"
+          },
+          "total_available": {
+            "title": "Total Available",
+            "type": "integer"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecallTrace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hits",
+          "total_available",
+          "truncated",
+          "as_of",
+          "bank_id"
+        ],
+        "title": "HistoryResult",
+        "type": "object"
+      },
+      "HoldReleasedResponse": {
+        "properties": {
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "hold_id": {
+            "title": "Hold Id",
+            "type": "string"
+          },
+          "released": {
+            "title": "Released",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "bank_id",
+          "hold_id",
+          "released"
+        ],
+        "title": "HoldReleasedResponse",
+        "type": "object"
+      },
+      "HoldStatusResponse": {
+        "properties": {
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "under_hold": {
+            "title": "Under Hold",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "bank_id",
+          "under_hold"
+        ],
+        "title": "HoldStatusResponse",
+        "type": "object"
+      },
       "ImportBody": {
         "properties": {
           "bank_id": {
@@ -356,6 +1004,390 @@
           "path"
         ],
         "title": "ImportBody",
+        "type": "object"
+      },
+      "ImportResult": {
+        "properties": {
+          "errors": {
+            "title": "Errors",
+            "type": "integer"
+          },
+          "imported": {
+            "title": "Imported",
+            "type": "integer"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "imported",
+          "skipped",
+          "errors"
+        ],
+        "title": "ImportResult",
+        "type": "object"
+      },
+      "InvalidatedResponse": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "InvalidatedResponse",
+        "type": "object"
+      },
+      "LegalHold": {
+        "properties": {
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "hold_id": {
+            "title": "Hold Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "set_at": {
+            "format": "date-time",
+            "title": "Set At",
+            "type": "string"
+          },
+          "set_by": {
+            "title": "Set By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hold_id",
+          "bank_id",
+          "reason",
+          "set_at",
+          "set_by"
+        ],
+        "title": "LegalHold",
+        "type": "object"
+      },
+      "LifecycleAction": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "memory_id": {
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "memory_id",
+          "action",
+          "reason"
+        ],
+        "title": "LifecycleAction",
+        "type": "object"
+      },
+      "LifecycleRunResult": {
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/LifecycleAction"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "archived_count": {
+            "title": "Archived Count",
+            "type": "integer"
+          },
+          "deleted_count": {
+            "title": "Deleted Count",
+            "type": "integer"
+          },
+          "skipped_count": {
+            "title": "Skipped Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "archived_count",
+          "deleted_count",
+          "skipped_count",
+          "actions"
+        ],
+        "title": "LifecycleRunResult",
+        "type": "object"
+      },
+      "LiveResponse": {
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "LiveResponse",
+        "type": "object"
+      },
+      "MemoryHit": {
+        "properties": {
+          "bank_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Id"
+          },
+          "chunk_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
+          },
+          "fact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Type"
+          },
+          "memory_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Id"
+          },
+          "memory_layer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Layer"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "retained_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retained At"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "utility_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utility Score"
+          }
+        },
+        "required": [
+          "text",
+          "score"
+        ],
+        "title": "MemoryHit",
+        "type": "object"
+      },
+      "MentalModel": {
+        "properties": {
+          "bank_id": {
+            "title": "Bank Id",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "kind": {
+            "default": "general",
+            "title": "Kind",
+            "type": "string"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "refreshed_at": {
+            "format": "date-time",
+            "title": "Refreshed At",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "source_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Ids",
+            "type": "array"
+          },
+          "source_timestamps": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Timestamps"
+          },
+          "structured_doc": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structured Doc"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_id",
+          "bank_id",
+          "title",
+          "content",
+          "scope",
+          "source_ids",
+          "revision",
+          "refreshed_at"
+        ],
+        "title": "MentalModel",
         "type": "object"
       },
       "MentalModelCreateBody": {
@@ -396,6 +1428,22 @@
           "content"
         ],
         "title": "MentalModelCreateBody",
+        "type": "object"
+      },
+      "MentalModelListResponse": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/MentalModel"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "models"
+        ],
+        "title": "MentalModelListResponse",
         "type": "object"
       },
       "MentalModelRefreshBody": {
@@ -519,6 +1567,186 @@
         "title": "RecallBody",
         "type": "object"
       },
+      "RecallResult": {
+        "properties": {
+          "authority_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authority Context"
+          },
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryHit"
+            },
+            "title": "Hits",
+            "type": "array"
+          },
+          "top_semantic_score": {
+            "default": 0.0,
+            "title": "Top Semantic Score",
+            "type": "number"
+          },
+          "total_available": {
+            "title": "Total Available",
+            "type": "integer"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecallTrace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hits",
+          "total_available",
+          "truncated"
+        ],
+        "title": "RecallResult",
+        "type": "object"
+      },
+      "RecallTrace": {
+        "properties": {
+          "cache_hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Hit"
+          },
+          "fusion_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fusion Method"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "layer_distribution": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layer Distribution"
+          },
+          "strategies_used": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategies Used"
+          },
+          "strategy_candidate_counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Candidate Counts"
+          },
+          "strategy_timings_ms": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Timings Ms"
+          },
+          "tier_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier Used"
+          },
+          "total_candidates": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Candidates"
+          },
+          "wiki_tier_used": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wiki Tier Used"
+          }
+        },
+        "title": "RecallTrace",
+        "type": "object"
+      },
       "ReflectBody": {
         "properties": {
           "bank_id": {
@@ -551,6 +1779,69 @@
           "bank_id"
         ],
         "title": "ReflectBody",
+        "type": "object"
+      },
+      "ReflectResult": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "authority_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authority Context"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "observations": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observations"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MemoryHit"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "title": "ReflectResult",
         "type": "object"
       },
       "RetainBody": {
@@ -595,6 +1886,73 @@
           "bank_id"
         ],
         "title": "RetainBody",
+        "type": "object"
+      },
+      "RetainResult": {
+        "properties": {
+          "curated": {
+            "default": false,
+            "title": "Curated",
+            "type": "boolean"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "memory_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Id"
+          },
+          "memory_layer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Layer"
+          },
+          "retention_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Action"
+          },
+          "stored": {
+            "title": "Stored",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stored"
+        ],
+        "title": "RetainResult",
         "type": "object"
       },
       "ValidationError": {
@@ -654,6 +2012,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/HealthStatus",
                   "additionalProperties": true,
                   "title": "Response Health Health Get",
                   "type": "object"
@@ -661,6 +2020,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Health"
@@ -696,6 +2075,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/LiveResponse",
                   "additionalProperties": {
                     "type": "string"
                   },
@@ -705,6 +2085,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Live"
@@ -719,6 +2119,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/LiveResponse",
                   "additionalProperties": {
                     "type": "string"
                   },
@@ -728,6 +2129,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Live"
@@ -873,6 +2294,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/AllBankHealthResponse",
                   "additionalProperties": true,
                   "title": "Response Admin All Bank Health V1 Admin Banks Health Get",
                   "type": "object"
@@ -881,15 +2303,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Admin All Bank Health"
@@ -963,6 +2395,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/BankHealth",
                   "additionalProperties": true,
                   "title": "Response Admin Bank Health V1 Admin Banks  Bank Id  Health Get",
                   "type": "object"
@@ -971,15 +2404,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Admin Bank Health"
@@ -1053,6 +2496,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/HoldStatusResponse",
                   "additionalProperties": true,
                   "title": "Response Admin Check Hold V1 Admin Banks  Bank Id  Hold Get",
                   "type": "object"
@@ -1061,15 +2505,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Admin Check Hold"
@@ -1151,6 +2605,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/LegalHold",
                   "additionalProperties": true,
                   "title": "Response Admin Set Hold V1 Admin Banks  Bank Id  Hold Post",
                   "type": "object"
@@ -1159,15 +2614,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Admin Set Hold"
@@ -1250,6 +2715,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/HoldReleasedResponse",
                   "additionalProperties": true,
                   "title": "Response Admin Release Hold V1 Admin Banks  Bank Id  Hold  Hold Id  Delete",
                   "type": "object"
@@ -1258,15 +2724,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Admin Release Hold"
@@ -1341,6 +2817,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/LifecycleRunResult",
                   "additionalProperties": true,
                   "title": "Response Admin Lifecycle V1 Admin Lifecycle Post",
                   "type": "object"
@@ -1349,15 +2826,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Admin Lifecycle"
@@ -1599,6 +3086,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/AuditResult",
                   "additionalProperties": true,
                   "title": "Response Audit V1 Audit Post",
                   "type": "object"
@@ -1607,15 +3095,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Audit"
@@ -1690,6 +3188,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/CompileResult",
                   "additionalProperties": true,
                   "title": "Response Compile V1 Compile Post",
                   "type": "object"
@@ -1698,15 +3197,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Compile"
@@ -1781,6 +3290,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/DebugRecallResponse",
                   "additionalProperties": true,
                   "title": "Response Debug Recall V1 Debug Recall Post",
                   "type": "object"
@@ -1789,15 +3299,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Debug Recall"
@@ -1872,6 +3392,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/DsarForgetPrincipalResponse",
                   "additionalProperties": true,
                   "title": "Response Dsar Forget Principal V1 Dsar Forget Principal Post",
                   "type": "object"
@@ -1880,15 +3401,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Dsar Forget Principal"
@@ -1963,6 +3494,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/ExportResponse",
                   "additionalProperties": true,
                   "title": "Response Export Bank V1 Export Post",
                   "type": "object"
@@ -1971,15 +3503,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Export Bank"
@@ -2053,6 +3595,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/ForgetResult",
                   "additionalProperties": true,
                   "title": "Response Forget V1 Forget Post",
                   "type": "object"
@@ -2061,15 +3604,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Forget"
@@ -2144,6 +3697,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/GraphNeighborsResponse",
                   "additionalProperties": true,
                   "title": "Response Graph Neighbors V1 Graph Neighbors Post",
                   "type": "object"
@@ -2152,15 +3706,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Graph Neighbors"
@@ -2235,6 +3799,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/GraphSearchResponse",
                   "additionalProperties": true,
                   "title": "Response Graph Search V1 Graph Search Post",
                   "type": "object"
@@ -2243,15 +3808,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Graph Search"
@@ -2326,6 +3901,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/HistoryResult",
                   "additionalProperties": true,
                   "title": "Response History V1 History Post",
                   "type": "object"
@@ -2334,15 +3910,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "History"
@@ -2417,6 +4003,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/ImportResult",
                   "additionalProperties": true,
                   "title": "Response Import Bank V1 Import Post",
                   "type": "object"
@@ -2425,15 +4012,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Import Bank"
@@ -2608,6 +4205,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/MentalModelListResponse",
                   "additionalProperties": true,
                   "title": "Response List Mental Models V1 Mental Models Get",
                   "type": "object"
@@ -2616,15 +4214,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "List Mental Models"
@@ -2696,6 +4304,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/MentalModel",
                   "additionalProperties": true,
                   "title": "Response Create Mental Model V1 Mental Models Post",
                   "type": "object"
@@ -2704,15 +4313,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Create Mental Model"
@@ -2794,6 +4413,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/DeletedResponse",
                   "additionalProperties": true,
                   "title": "Response Delete Mental Model V1 Mental Models  Model Id  Delete",
                   "type": "object"
@@ -2802,15 +4422,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Delete Mental Model"
@@ -2890,6 +4520,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/MentalModel",
                   "additionalProperties": true,
                   "title": "Response Get Mental Model V1 Mental Models  Model Id  Get",
                   "type": "object"
@@ -2898,15 +4529,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Get Mental Model"
@@ -2989,6 +4630,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/MentalModel",
                   "additionalProperties": true,
                   "title": "Response Refresh Mental Model V1 Mental Models  Model Id  Refresh Post",
                   "type": "object"
@@ -2997,15 +4639,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Refresh Mental Model"
@@ -3079,6 +4731,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/InvalidatedResponse",
                   "additionalProperties": true,
                   "title": "Response Invalidate Observations V1 Observations Invalidate Post",
                   "type": "object"
@@ -3087,15 +4740,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Invalidate Observations"
@@ -3169,6 +4832,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/RecallResult",
                   "additionalProperties": true,
                   "title": "Response Recall V1 Recall Post",
                   "type": "object"
@@ -3177,15 +4841,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Recall"
@@ -3259,6 +4933,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/ReflectResult",
                   "additionalProperties": true,
                   "title": "Response Reflect V1 Reflect Post",
                   "type": "object"
@@ -3267,15 +4942,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Reflect"
@@ -3349,6 +5034,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/RetainResult",
                   "additionalProperties": true,
                   "title": "Response Retain V1 Retain Post",
                   "type": "object"
@@ -3357,15 +5043,25 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable (e.g. feature not configured)"
           }
         },
         "summary": "Retain"

@@ -42,7 +42,14 @@ _DELIBERATE_UNAVAILABLE = {501, 503}
 @schema.parametrize()
 @settings(max_examples=5, deadline=None, suppress_health_check=list(HealthCheck))
 def test_api_never_500s_on_schema_valid_input(case) -> None:
-    response = case.call()
+    # response_schema_conformance validates real 200 payloads against the
+    # documented response models (astrocyte_gateway.response_models) — drift
+    # between declared and actual response shapes fails here. checks=[...]
+    # REPLACES the default check set, so status-code conformance (our 400s
+    # and unavailability envelopes are deliberate) is not enforced.
+    from schemathesis.specs.openapi.checks import response_schema_conformance
+
+    response = case.call_and_validate(checks=[response_schema_conformance])
     assert response.status_code < 500 or response.status_code in _DELIBERATE_UNAVAILABLE, (
         f"{case.method} {case.path} returned {response.status_code} "
         f"for schema-valid input: {response.text[:300]}"
