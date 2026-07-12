@@ -203,41 +203,27 @@ same `R2_*` secrets.
 
 ### One-time setup in Doppler
 
-Create a service token scoped to read-only for the `bench` config:
+CI consumes secrets via the **Doppler → GitHub Actions sync** (2026-07-12;
+previously a `DOPPLER_BENCHMARK_TOKEN` service token — replaced because the
+sync removes the runtime Doppler dependency and the config-wide master token):
 
-```bash
-doppler configs tokens create benchmark-ci --config bench --plain
-# Copy the token output
-```
+### One-time setup
 
-### One-time setup in GitHub
+In the Doppler dashboard: project `astrocyte` → config `bench` →
+Integrations → **GitHub Actions** → authorize the Doppler GitHub App and map
+the config to the `AstrocyteAI/astrocyte` repository's Actions secrets.
 
-Add the token as a repository secret:
-
-1. GitHub → Settings → Secrets and variables → Actions → New repository secret
-2. Name: `DOPPLER_BENCHMARK_TOKEN`
-3. Value: the token from the Doppler command above
-
-The workflow already reads `secrets.DOPPLER_BENCHMARK_TOKEN` — no
-other per-provider secrets are needed. The Doppler CLI step injects
-`OPENAI_API_KEY`, the four `R2_*` secrets, and any other `bench`
-secrets into the benchmark process's environment.
+Doppler then materializes `OPENAI_API_KEY`, the `R2_*` secrets, and the rest
+of the `bench` config as native repository secrets, and **re-syncs on every
+change**. The workflows read them from explicit `env:` blocks
+(`.github/workflows/benchmarks.yml`, `refresh-badges.yml`) — no Doppler CLI
+in CI. Locally, `make bench-*` still wraps in `doppler run --`; CI sets
+`BENCH_SECRETS_WRAPPER=` (empty) to skip the wrapper.
 
 ### Rotation
 
-Rotate via Doppler:
-
-```bash
-# Revoke compromised token
-doppler configs tokens revoke <token-slug>
-
-# Issue replacement
-doppler configs tokens create benchmark-ci --config bench --plain
-```
-
-Update the `DOPPLER_BENCHMARK_TOKEN` secret in GitHub and the next
-workflow run picks it up. No direct handling of `OPENAI_API_KEY` in CI
-logs or workflow files.
+Rotate the secret in Doppler; the sync pushes the new value to GitHub
+automatically. Nothing to update in the repo.
 
 ## Budget hygiene
 
@@ -276,8 +262,9 @@ gives:
 (`brew install dopplerhq/cli/doppler` on macOS) and run `doppler login`.
 
 **`Error: no token provided`** — Local: run `doppler setup` to bind the
-project/config. CI: confirm `DOPPLER_BENCHMARK_TOKEN` is set as a
-repository secret and its slug matches the workflow env block.
+project/config. CI: confirm the Doppler → GitHub sync is active (repo
+secrets should show `R2_*` and `OPENAI_API_KEY` with a recent update
+timestamp in `gh secret list`).
 
 **Benchmark runs but LLM calls fail** — Confirm the secret name is
 exactly `OPENAI_API_KEY` in the `bench` config (the benchmark config's
