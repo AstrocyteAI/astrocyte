@@ -9,16 +9,43 @@ service:
   type: ClusterIP
   port: 8080
 
-resources: {}
+# Default resource envelope. Tune to your workload; the gateway is largely
+# I/O-bound (DB + LLM calls) so these are conservative starting points.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# Restricted-PSS-compatible pod/container hardening. Pairs with a distroless
+# nonroot runtime image (UID 65532). If you run the slim (root) dev image,
+# override this to {} or the pod will fail to start.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
 
 # Pod env (non-secret). For DATABASE_URL use extraEnvFrom or secrets below.
+# PRODUCTION: set ASTROCYTE_AUTH_MODE (jwt_oidc / api_key) and an
+# ASTROCYTE_ADMIN_TOKEN — the gateway refuses to start in dev auth mode on a
+# public interface (it binds 0.0.0.0 here) unless ASTROCYTE_ALLOW_DEV_AUTH=1.
 env: []
 #  - name: ASTROCYTE_CONFIG_PATH
 #    value: /config/astrocyte.yaml
+#  - name: ASTROCYTE_AUTH_MODE
+#    value: jwt_oidc
 
 extraEnvFrom: []
 #  - secretRef:
-#      name: astrocyte-gateway-py-secrets
+#      name: astrocyte-gateway-py-secrets   # DATABASE_URL, ASTROCYTE_ADMIN_TOKEN, JWT/OIDC config
 
 # Optional: mount a ConfigMap with astrocyte.yaml
 configMapName: ""

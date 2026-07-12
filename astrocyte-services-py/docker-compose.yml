@@ -52,6 +52,22 @@ services:
       DATABASE_URL: ${ASTROCYTE_GATEWAY_DATABASE_URL:-${ASTROCYTE_REST_DATABASE_URL:-postgresql://${POSTGRES_USER:-astrocyte}:${POSTGRES_PASSWORD:-astrocyte}@postgres:5432/${POSTGRES_DB:-astrocyte}}}
       ASTROCYTE_HOST: ${ASTROCYTE_HOST:-0.0.0.0}
       ASTROCYTE_PORT: ${ASTROCYTE_PORT:-8080}
+      # This is the local quick-start stack: dev auth mode (no authentication)
+      # on 0.0.0.0 inside the Compose network. The gateway now refuses that
+      # combination on a public interface unless this opt-in is set. Fine for
+      # local development; NEVER carry this into production — set
+      # ASTROCYTE_AUTH_MODE=jwt_oidc (or api_key) and an ASTROCYTE_ADMIN_TOKEN
+      # instead. See docker-compose.runbook.yml for the production-shaped path.
+      ASTROCYTE_ALLOW_DEV_AUTH: ${ASTROCYTE_ALLOW_DEV_AUTH:-1}
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      # Distroless-safe: invoke Python directly (no curl/wget in the image).
+      # /health checks DB + vector-store reachability; /live is process-only.
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

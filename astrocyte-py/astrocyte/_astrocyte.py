@@ -1689,6 +1689,8 @@ class Astrocyte:
         self,
         bank_id: str,
         scope: str | None = None,
+        *,
+        context: AstrocyteContext | None = None,
     ) -> CompileResult:
         """Compile raw memories into WikiPages for ``bank_id`` (M8).
 
@@ -1728,6 +1730,9 @@ class Astrocyte:
             print(result.pages_created, result.pages_updated, result.tokens_used)
         """
         validate_bank_id(bank_id)
+        # Authorization parity with recall/reflect: compiling a bank reads
+        # and rewrites its memories, so a caller needs at least read access.
+        self._policy.check_access(bank_id, "read", context)
 
         if self._wiki_store is None:
             raise ConfigError(
@@ -1780,6 +1785,8 @@ class Astrocyte:
         query: str,
         bank_id: str,
         limit: int = 10,
+        *,
+        context: AstrocyteContext | None = None,
     ) -> list[Entity]:
         """Search the knowledge graph for entities matching *query*.
 
@@ -1802,6 +1809,8 @@ class Astrocyte:
         from astrocyte.errors import ConfigError
 
         validate_bank_id(bank_id)
+        # Reading a bank's knowledge graph is a read over that bank's memories.
+        self._policy.check_access(bank_id, "read", context)
         graph_store = getattr(self._pipeline, "graph_store", None) if self._pipeline else None
         if graph_store is None:
             raise ConfigError(
@@ -1815,6 +1824,8 @@ class Astrocyte:
         bank_id: str,
         max_depth: int = 2,
         limit: int = 20,
+        *,
+        context: AstrocyteContext | None = None,
     ) -> list[GraphHit]:
         """Traverse the knowledge graph from *entity_ids* and return connected memories.
 
@@ -1838,6 +1849,8 @@ class Astrocyte:
         from astrocyte.errors import ConfigError
 
         validate_bank_id(bank_id)
+        # Traversing a bank's graph returns that bank's memories — read access.
+        self._policy.check_access(bank_id, "read", context)
         if not entity_ids:
             return []
         graph_store = getattr(self._pipeline, "graph_store", None) if self._pipeline else None
@@ -1856,6 +1869,7 @@ class Astrocyte:
         max_results: int = 10,
         max_tokens: int | None = None,
         tags: list[str] | None = None,
+        context: AstrocyteContext | None = None,
     ) -> HistoryResult:
         """Reconstruct what the agent knew at a past point in time (M9 time travel).
 
@@ -1897,6 +1911,7 @@ class Astrocyte:
             max_tokens=max_tokens,
             tags=tags,
             as_of=as_of,
+            context=context,
         )
         return HistoryResult(
             hits=recall_result.hits,
@@ -1915,6 +1930,7 @@ class Astrocyte:
         max_memories: int = 50,
         max_tokens: int | None = None,
         tags: list[str] | None = None,
+        context: AstrocyteContext | None = None,
     ) -> AuditResult:
         """Identify knowledge gaps for a topic in a memory bank (M10 gap analysis).
 
@@ -1960,6 +1976,7 @@ class Astrocyte:
             max_results=max_memories,
             max_tokens=max_tokens,
             tags=tags,
+            context=context,
         )
 
         pipeline = self._pipeline

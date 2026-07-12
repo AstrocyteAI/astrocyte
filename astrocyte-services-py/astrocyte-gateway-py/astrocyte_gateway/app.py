@@ -35,7 +35,7 @@ from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.pipeline.mental_model import MentalModelService
 from astrocyte.types import AstrocyteContext
 from astrocyte.tenancy import TenantExtension
-from astrocyte_gateway.auth import get_astrocyte_context
+from astrocyte_gateway.auth import get_astrocyte_context, validate_auth_startup_config
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
 from astrocyte_gateway.rate_limit import SlidingWindowRateLimitMiddleware, rate_limit_max_from_env
@@ -103,11 +103,36 @@ def _configure_gateway_middleware(app: FastAPI) -> None:
         app.add_middleware(SlidingWindowRateLimitMiddleware, max_per_window=rl)
 
 
+_ADMIN_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
 def require_admin_if_configured(request: Request) -> None:
-    """When ``ASTROCYTE_ADMIN_TOKEN`` is set, require matching ``X-Admin-Token`` header."""
+    """Guard admin/governance endpoints with ``X-Admin-Token``.
+
+    When ``ASTROCYTE_ADMIN_TOKEN`` is set, require a matching ``X-Admin-Token``
+    header. When it is NOT set, fail closed on a public deployment: admin
+    endpoints (lifecycle, legal-hold, cross-tenant storage/billing) must never
+    be reachable unauthenticated on a non-loopback interface. Only loopback
+    (local dev) keeps the open behaviour.
+
+    Note this is deliberately STRICTER than the data-plane dev-auth guard:
+    ``ASTROCYTE_ALLOW_DEV_AUTH`` opts a deployment into unauthenticated
+    *data* access, but does NOT open the governance/admin surface — to enable
+    admin endpoints on a public host you must set an ``ASTROCYTE_ADMIN_TOKEN``.
+    """
     expected = os.environ.get("ASTROCYTE_ADMIN_TOKEN", "").strip()
     if not expected:
-        return
+        host = os.environ.get("ASTROCYTE_HOST", "127.0.0.1").strip()
+        if host in _ADMIN_LOOPBACK_HOSTS:
+            return
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Admin endpoints are disabled: ASTROCYTE_ADMIN_TOKEN is not set "
+                "and the gateway is bound to a non-loopback address. Set an admin "
+                "token to enable these endpoints."
+            ),
+        )
     got = (request.headers.get("x-admin-token") or "").strip()
     if not got or len(got) != len(expected) or not secrets.compare_digest(got, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token")
@@ -172,6 +197,10 @@ def create_app(
             and serves a single tenant. Custom extensions can map an inbound
             request to any schema via headers / JWT / API-key lookup.
     """
+    # Fail closed before wiring anything: refuse an unauthenticated gateway on
+    # a public interface (see auth.validate_auth_startup_config for the rules).
+    validate_auth_startup_config()
+
     if brain is None:
         brain = build_astrocyte()
     if tenant_extension is None:
@@ -641,7 +670,7 @@ def create_app(
         if scope is not None and not isinstance(scope, str):
             raise HTTPException(status_code=400, detail="scope must be a string")
         try:
-            result = await brain.compile(bank_id, scope=scope)
+            result = await brain.compile(bank_id, scope=scope, context=ctx)
         except Exception as exc:
             # Translate ConfigError (no WikiStore / no pipeline) to 422
             if "ConfigError" in type(exc).__name__ or "ProviderUnavailable" in type(exc).__name__:
@@ -673,7 +702,7 @@ def create_app(
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="limit must be an integer")
         try:
-            entities = await brain.graph_search(query, bank_id, limit=limit)
+            entities = await brain.graph_search(query, bank_id, limit=limit, context=ctx)
         except Exception as exc:
             if "ConfigError" in type(exc).__name__:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -707,7 +736,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="max_depth and limit must be integers")
         try:
             hits = await brain.graph_neighbors(
-                [str(e) for e in entity_ids], bank_id, max_depth=max_depth, limit=limit
+                [str(e) for e in entity_ids], bank_id, max_depth=max_depth, limit=limit, context=ctx
             )
         except Exception as exc:
             if "ConfigError" in type(exc).__name__:
@@ -804,6 +833,7 @@ def create_app(
                 max_memories=max_memories,
                 max_tokens=max_tokens,
                 tags=[str(t) for t in tags] if isinstance(tags, list) else None,
+                context=ctx,
             )
         except Exception as exc:
             if "ConfigError" in type(exc).__name__:

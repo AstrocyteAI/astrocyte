@@ -16,9 +16,56 @@ from jwt.exceptions import PyJWTError
 
 from astrocyte.types import ActorIdentity, AstrocyteContext
 
-__all__ = ["get_astrocyte_context"]
+__all__ = ["get_astrocyte_context", "validate_auth_startup_config"]
 
 _logger = logging.getLogger(__name__)
+
+# Loopback hosts where dev-mode (no authentication) is considered safe.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def validate_auth_startup_config() -> None:
+    """Fail closed on an unauthenticated deployment bound to a public address.
+
+    ``dev`` auth mode performs no authentication — it trusts the client-supplied
+    ``X-Astrocyte-Principal`` header verbatim. That is fine for local
+    development on a loopback address, but a gateway bound to ``0.0.0.0`` (as
+    the shipped Docker image and Compose file do) with the default ``dev`` mode
+    is fully open: any caller can assert any principal and read any bank.
+
+    This guard refuses to start such a deployment. Operators who genuinely want
+    unauthenticated access on a public interface (e.g. behind a trusted mesh or
+    an authenticating proxy) must opt in explicitly with
+    ``ASTROCYTE_ALLOW_DEV_AUTH=1``.
+
+    Raises:
+        RuntimeError: if ``ASTROCYTE_AUTH_MODE`` is ``dev`` (or unset) AND
+            ``ASTROCYTE_HOST`` is a non-loopback address AND the explicit
+            opt-out is not set.
+    """
+    if _auth_mode() != "dev":
+        return
+    host = os.environ.get("ASTROCYTE_HOST", "127.0.0.1").strip()
+    if host in _LOOPBACK_HOSTS:
+        return
+    if os.environ.get("ASTROCYTE_ALLOW_DEV_AUTH", "").strip().lower() in ("1", "true", "yes"):
+        _logger.warning(
+            "Running in dev auth mode (no authentication) on public host %s — "
+            "ASTROCYTE_ALLOW_DEV_AUTH is set. The gateway trusts the "
+            "X-Astrocyte-Principal header verbatim; ensure an upstream "
+            "authenticating proxy or trusted network fronts this service.",
+            host,
+        )
+        return
+    raise RuntimeError(
+        f"Refusing to start: auth mode is 'dev' (no authentication) but "
+        f"ASTROCYTE_HOST={host!r} is not a loopback address. A dev-mode gateway "
+        f"on a public interface is fully open — any caller can impersonate any "
+        f"principal and read any bank. Set ASTROCYTE_AUTH_MODE to 'api_key', "
+        f"'jwt_hs256', or 'jwt_oidc', bind to 127.0.0.1, or (if you truly intend "
+        f"unauthenticated public access behind a trusted proxy) set "
+        f"ASTROCYTE_ALLOW_DEV_AUTH=1."
+    )
 
 
 @lru_cache(maxsize=1)
