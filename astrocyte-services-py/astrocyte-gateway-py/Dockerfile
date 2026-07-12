@@ -1,3 +1,11 @@
+# DEVELOPMENT image. Builds the gateway + adapters from the local working tree
+# on a python:3.11-slim runtime (has a shell/package manager for debugging,
+# runs as root). Use this for local iteration against uncommitted changes.
+#
+# For PRODUCTION use Dockerfile.release: distroless nonroot (UID 65532, no
+# shell), installed from pinned PyPI wheels at the release version, and paired
+# with the restricted-PSS securityContext in helm/astrocyte-gateway-py.
+#
 # Build from repository root:
 #   docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile -t astrocyte-gateway-py .
 #

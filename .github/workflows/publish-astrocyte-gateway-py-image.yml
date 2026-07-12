@@ -95,6 +95,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      security-events: write  # upload Trivy SARIF to the Security tab
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -151,3 +152,52 @@ jobs:
           subject-name: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+      # Supply-chain: generate an SPDX SBOM from the pushed image and attest it
+      # to GHCR alongside the provenance (verify with `gh attestation verify` or
+      # `cosign download sbom`).
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attest SBOM (→ GHCR)
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
+      # Vulnerability scan. SARIF always uploads to the Security tab for
+      # visibility; the gate below fails the release only on FIXABLE
+      # CRITICAL/HIGH findings (ignore-unfixed) so a base-image CVE with no
+      # patch yet does not block shipping. Tune severity / drop the gate step
+      # if this proves too strict for a given release cadence.
+      - name: Scan image (Trivy → SARIF)
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py@${{ steps.push.outputs.digest }}
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-image
+
+      - name: Fail on fixable CRITICAL/HIGH vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py@${{ steps.push.outputs.digest }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true

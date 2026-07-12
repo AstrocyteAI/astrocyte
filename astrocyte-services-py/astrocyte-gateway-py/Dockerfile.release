@@ -1,12 +1,21 @@
 # Release image: install astrocyte + astrocyte-postgres from PyPI at an exact
 # version (matching the git tag), then install this package from the copied source tree.
 # (astrocyte-age was removed in M9; see ADR-008.)
+#
+# Runtime is distroless nonroot (no shell, no package manager, UID 65532) — it
+# pairs with the restricted-PSS securityContext shipped in the Helm chart. Deps
+# are installed with `pip install --target` (not a venv) so the site-packages
+# tree is interpreter-path-independent: distroless supplies CPython 3.11 and we
+# point PYTHONPATH at the copied tree. All native deps ride in self-contained
+# manylinux wheels (psycopg[binary] bundles libpq/libssl; uvicorn[standard]'s
+# uvloop/httptools are static), so no system libraries are required at runtime.
+#
 # Build from repo root:
 #
 #   docker build -f astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release \
-#     --build-arg ASTROCYTE_VERSION=0.11.0 \
-#     --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.11.0 \
-#     -t astrocyte-gateway-py:0.11.0 .
+#     --build-arg ASTROCYTE_VERSION=0.15.1 \
+#     --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.15.1 \
+#     -t astrocyte-gateway-py:0.15.1 .
 #
 # CI should only run this after wheels for that version exist on PyPI.
 #
@@ -18,31 +27,37 @@
 FROM python:3.11-slim AS builder
 
 ARG ASTROCYTE_VERSION
+ARG SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0
 WORKDIR /build
 
 COPY astrocyte-services-py/astrocyte-gateway-py /build/astrocyte-gateway-py
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 
-ARG SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0
-ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
+RUN test -n "${ASTROCYTE_VERSION}" || (echo "ASTROCYTE_VERSION is required (PEP 440 version, e.g. 0.15.1)" >&2; exit 1)
 
-RUN test -n "${ASTROCYTE_VERSION}" || (echo "ASTROCYTE_VERSION is required (PEP 440 version, e.g. 0.8.0)" >&2; exit 1)
-
-RUN python -m venv /venv \
-    && /venv/bin/pip install --upgrade pip \
-    && /venv/bin/pip install "astrocyte==${ASTROCYTE_VERSION}" "astrocyte-postgres==${ASTROCYTE_VERSION}" \
-    && /venv/bin/pip install /build/astrocyte-gateway-py \
+# Install everything into a self-contained tree at /install. Order the source
+# package last so its pinned deps resolve against the already-installed exact
+# astrocyte/astrocyte-postgres versions.
+RUN python -m pip install --upgrade pip \
+    && pip install --target=/install \
+        "astrocyte==${ASTROCYTE_VERSION}" \
+        "astrocyte-postgres==${ASTROCYTE_VERSION}" \
+        /build/astrocyte-gateway-py \
     && rm -rf /build
 
-FROM python:3.11-slim
+FROM gcr.io/distroless/python3-debian12:nonroot
 
-COPY --from=builder /venv /venv
-ENV PATH="/venv/bin:${PATH}" \
+COPY --from=builder /install /app
+ENV PYTHONPATH=/app \
+    PYTHONDONTWRITEBYTECODE=1 \
     ASTROCYTE_HOST=0.0.0.0 \
     ASTROCYTE_PORT=8080
 
 EXPOSE 8080
 
-CMD ["astrocyte-gateway-py"]
+# Distroless python3 sets ENTRYPOINT to the interpreter; CMD supplies its args.
+# `python -m astrocyte_gateway` runs astrocyte_gateway/__main__.py → main().
+CMD ["-m", "astrocyte_gateway"]
