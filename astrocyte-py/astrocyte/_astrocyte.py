@@ -329,151 +329,18 @@ class Astrocyte:
         """Set the Tier 1 pipeline orchestrator (for programmatic setup)."""
         self._pipeline = pipeline
         self._dispatcher.pipeline = pipeline
-        from astrocyte.pipeline.extraction import merged_extraction_profiles
+        # All feature flags are derived once from config (env overrides,
+        # lazy service construction) and applied in one place — see
+        # PipelineConfig.from_config / PipelineOrchestrator.apply_config.
+        from astrocyte.pipeline.pipeline_config import PipelineConfig
 
-        pipeline.extraction_profiles = merged_extraction_profiles(self._config)
-        pipeline.recall_authority = self._config.recall_authority
-
-        # If a mental-model store was set BEFORE the pipeline was
-        # attached, push the service through now so ``search_mental_models``
-        # is wired into the agentic reflect loop.  The reverse direction
-        # (store set after pipeline) is handled in ``set_mental_model_store``.
-        if self._mental_model_store is not None:
-            from astrocyte.pipeline.mental_model import MentalModelService
-
-            pipeline.mental_model_service = MentalModelService(
-                self._mental_model_store,  # type: ignore[arg-type]
+        pipeline.apply_config(
+            PipelineConfig.from_config(
+                self._config,
+                source_store=self._source_store,
+                mental_model_store=self._mental_model_store,
             )
-
-        # Cross-encoder reranker (Hindsight parity) — only loaded when the
-        # operator opts in via config. Lazy load: deferring the model load
-        # to first-use keeps process startup cheap and keeps the
-        # ``sentence-transformers`` dep optional. ``None`` here means
-        # ``_rank_reflect_context`` falls through to the heuristic.
-        cer_cfg = self._config.cross_encoder_rerank
-        if cer_cfg.enabled:
-            from astrocyte.pipeline.cross_encoder_rerank import (
-                get_default_cross_encoder,
-            )
-
-            pipeline.cross_encoder = get_default_cross_encoder(
-                cer_cfg.model_name,
-                force_cpu=cer_cfg.force_cpu,
-            )
-            pipeline.cross_encoder_top_k = cer_cfg.top_k
-        else:
-            pipeline.cross_encoder = None
-
-        # Spreading activation through entity links (Hindsight parity).
-        # Enabled at recall time when ``spreading_activation.enabled``
-        # AND a graph store is configured AND the adapter implements
-        # ``expand_entities_via_links``. Falls back to seed-only when
-        # the adapter doesn't support multi-hop traversal.
-        # Causal-link extraction at retain time (Hindsight parity).
-        cl_cfg = self._config.causal_links
-        pipeline.causal_links_enabled = cl_cfg.enabled
-        pipeline.causal_max_pairs_per_memory = cl_cfg.max_pairs_per_memory
-        pipeline.causal_min_confidence = cl_cfg.min_confidence
-
-        # Semantic-kNN graph at retain time (Hindsight parity, C3a).
-        slg_cfg = self._config.semantic_link_graph
-        pipeline.semantic_link_graph_enabled = slg_cfg.enabled
-        pipeline.semantic_link_graph_top_k = slg_cfg.top_k
-        pipeline.semantic_link_graph_threshold = slg_cfg.similarity_threshold
-
-        # Structured fact extraction at retain time.
-        sfe_cfg = self._config.structured_fact_extraction
-        pipeline.structured_fact_extraction_enabled = sfe_cfg.enabled
-        pipeline.structured_fact_extraction_max_facts = sfe_cfg.max_facts_per_call
-        pipeline.structured_fact_extraction_mode = sfe_cfg.extraction_mode
-        pipeline.structured_fact_extraction_chunk_strategy = sfe_cfg.chunk_strategy
-        pipeline.structured_fact_extraction_chunk_max_size = sfe_cfg.chunk_max_size
-        pipeline.structured_fact_extraction_parallel_chunks = sfe_cfg.parallel_chunks
-        pipeline.structured_fact_extraction_parallel_chunks_max_concurrency = sfe_cfg.parallel_chunks_max_concurrency
-
-        # Entity co-occurrence link cap (2026-05-06 retain-profile fix).
-        # The all-pairs Cartesian product was 34% of retain wall on the
-        # LME profile; capping the entity set bounds it to O(K²) per
-        # retain regardless of corpus size.
-        coocc_cfg = self._config.entity_cooccurrence
-        pipeline.entity_cooccurrence_enabled = coocc_cfg.enabled
-        pipeline.entity_cooccurrence_max_entities = coocc_cfg.max_entities_per_memory
-
-        # Query analyzer (temporal constraint extraction at recall time).
-        qa_cfg = self._config.query_analyzer
-        pipeline.query_analyzer_enabled = qa_cfg.enabled
-        pipeline.query_analyzer_allow_llm_fallback = qa_cfg.allow_llm_fallback
-        # M18a-1: extended temporal-expansion pattern set. Env-var override
-        # (``ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION=1``) gives bench-time
-        # control without code change; otherwise the per-bank config wins.
-        import os as _os  # noqa: PLC0415
-
-        _env = _os.environ.get("ASTROCYTE_M18_ENABLE_TEMPORAL_EXPANSION", "").lower()
-        if _env in ("1", "true", "yes"):
-            pipeline.query_analyzer_enable_temporal_expansion = True
-        elif _env in ("0", "false", "no"):
-            pipeline.query_analyzer_enable_temporal_expansion = False
-        else:
-            pipeline.query_analyzer_enable_temporal_expansion = qa_cfg.enable_temporal_expansion
-
-        # Link expansion (Hindsight parity, C3) — replaces the previous
-        # spreading-activation BFS with the 3-parallel-signal path.
-        # Reuses the legacy ``spreading_activation:`` config block so
-        # benchmarks don't have to rewrite their YAML; the relevant
-        # knobs (expansion_limit, etc.) translate directly. Block-name
-        # rename can come later as a backward-incompatible change.
-        sa_cfg = self._config.spreading_activation
-        if sa_cfg.enabled:
-            from astrocyte.pipeline.link_expansion import LinkExpansionParams
-
-            pipeline.link_expansion_params = LinkExpansionParams(
-                expansion_limit=sa_cfg.expansion_limit,
-            )
-        else:
-            pipeline.link_expansion_params = None
-
-        # Adversarial-defense layer.
-        # M9 BM25-IDF wiring — opt-in flag plumbed through to ``parallel_retrieve``.
-        pipeline.bm25_idf_enabled = self._config.bm25_idf.enabled
-
-        # M10 source-aware retain + recall. The store handle and the three
-        # behavioural flags are kept independently configurable so a
-        # deployment can enable provenance ingest without paying for the
-        # recall-side chunk expansion (which only helps multi-hop / split-
-        # evidence questions and adds one DB roundtrip per top-K hit).
-        sar_cfg = self._config.source_aware_retrieval
-        pipeline.source_store = self._source_store
-        pipeline.source_retain_provenance = sar_cfg.retain_provenance
-        pipeline.source_chunk_expansion = sar_cfg.chunk_expansion
-        pipeline.source_expansion_score_multiplier = sar_cfg.expansion_score_multiplier
-        pipeline.source_expansion_max_per_hit = sar_cfg.expansion_max_per_hit
-
-        ad_cfg = self._config.adversarial_defense
-        pipeline.adversarial_abstention_enabled = ad_cfg.abstention_enabled
-        pipeline.adversarial_abstention_floor = ad_cfg.abstention_floor
-        pipeline.adversarial_premise_verification_enabled = ad_cfg.premise_verification_enabled
-        pipeline.adversarial_premise_min_confidence = ad_cfg.premise_verification_min_confidence
-        pipeline.adversarial_prompt_enabled = ad_cfg.adversarial_prompt_enabled
-
-        # Agentic reflect loop.
-        ar_cfg = self._config.agentic_reflect
-        if ar_cfg.enabled:
-            from astrocyte.pipeline.agentic_reflect import AgenticReflectParams
-
-            pipeline.agentic_reflect_params = AgenticReflectParams(
-                max_iterations=ar_cfg.max_iterations,
-                recall_step_max_results=ar_cfg.recall_step_max_results,
-                max_evidence_pool_size=ar_cfg.max_evidence_pool_size,
-                # Adversarial-defense rules in the system prompt are
-                # opt-in via the separate adversarial_defense block —
-                # the agentic loop's own ``adversarial_defense`` param
-                # mirrors that flag so a user enabling adversarial
-                # defense automatically gets the loop-level prompt
-                # tightening too.
-                adversarial_defense=ad_cfg.adversarial_prompt_enabled,
-            )
-        else:
-            pipeline.agentic_reflect_params = None
+        )
         # Wire the LLM provider to the MIP router for intent-layer escalation
         if self._mip_router and hasattr(pipeline, "llm_provider"):
             self._mip_router._llm_provider = pipeline.llm_provider

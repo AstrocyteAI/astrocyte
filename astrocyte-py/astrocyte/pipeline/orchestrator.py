@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     from astrocyte.mip.router import MipRouter
     from astrocyte.mip.schema import PipelineSpec
     from astrocyte.pipeline.entity_resolution import EntityResolver
+    from astrocyte.pipeline.pipeline_config import PipelineConfig
     from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore, WikiStore
 
 
@@ -631,6 +632,23 @@ class PipelineOrchestrator:
         # the highest-quality tier in the hierarchical priority order
         # (mental_models → observations → recall → expand → done).
         self.mental_model_service: object | None = None
+
+    def apply_config(self, cfg: PipelineConfig) -> None:
+        """Apply a resolved :class:`PipelineConfig` to this orchestrator.
+
+        Replaces the old inline attribute-poking in ``Astrocyte.set_pipeline``:
+        the config is derived once (see :meth:`PipelineConfig.from_config`) and
+        applied here in a single place. Field names on ``PipelineConfig`` mirror
+        the orchestrator attributes exactly, so this is a flat assignment — any
+        drift between the two surfaces is a loud ``AttributeError`` at wiring
+        time rather than a silently-ignored flag.
+        """
+        for name, value in cfg.as_orchestrator_attrs().items():
+            if not hasattr(self, name):
+                raise AttributeError(
+                    f"PipelineConfig field {name!r} has no matching orchestrator attribute"
+                )
+            setattr(self, name, value)
 
     @property
     def tokens_used(self) -> int:
