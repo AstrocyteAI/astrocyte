@@ -58,3 +58,51 @@ packages = ["astrocyte_gateway"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Mirrors astrocyte-py. SLF001 enforces the public/private API contract at the
+# package boundary — the gateway must consume astrocyte through its public
+# surface (e.g. brain.check_access), never `brain._policy` / `brain._pipeline`.
+select = ["E", "W", "F", "I", "SLF001", "RUF022"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["SLF001"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ── Import contracts (import-linter) ─────────────────────────────────────────
+# Run: uv run --with import-linter lint-imports
+# The gateway consumes astrocyte exclusively through its public surface
+# (`from astrocyte import ...`); underscore modules are internal to core.
+# Symbols the gateway genuinely needs get PROMOTED to astrocyte's public
+# __init__ (e.g. check_access, log_safe, resolve_provider) instead of noqa'd.
+[tool.importlinter]
+root_packages = ["astrocyte_gateway", "astrocyte"]
+
+[[tool.importlinter.contracts]]
+name = "gateway must not import astrocyte private modules"
+type = "forbidden"
+source_modules = ["astrocyte_gateway"]
+# Direct imports only: the gateway importing `astrocyte` (whose own __init__
+# pulls in _astrocyte etc.) is the intended public path, not a violation.
+allow_indirect_imports = true
+forbidden_modules = [
+    "astrocyte._astrocyte",
+    "astrocyte._discovery",
+    "astrocyte._hooks",
+    "astrocyte._ingest_spi",
+    "astrocyte._log_safety",
+    "astrocyte._mcp_identity",
+    "astrocyte._multi_bank",
+    "astrocyte._output_scanner",
+    "astrocyte._policy",
+    "astrocyte._provider_dispatch",
+    "astrocyte._recall_params",
+    "astrocyte._validation",
+]

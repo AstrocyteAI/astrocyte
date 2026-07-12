@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 from astrocyte.tenancy import (
-    AuthenticationError,
     DEFAULT_SCHEMA,
+    AuthenticationError,
     DefaultTenantExtension,
     Tenant,
     TenantContext,

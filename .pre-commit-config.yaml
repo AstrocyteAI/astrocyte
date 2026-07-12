@@ -28,3 +28,22 @@ repos:
       - id: ruff
         name: ruff (adapters-integration-py)
         files: ^adapters-integration-py/.*\.py$
+      - id: ruff
+        name: ruff (astrocyte-services-py)
+        files: ^astrocyte-services-py/.*\.py$
+  # Import contracts: gateway may not import astrocyte._* modules; core
+  # layering rules. Contracts live in each package's [tool.importlinter].
+  - repo: local
+    hooks:
+      - id: import-linter-core
+        name: import contracts (astrocyte-py)
+        language: system
+        entry: bash -c 'cd astrocyte-py && uv run --with import-linter lint-imports'
+        files: ^astrocyte-py/astrocyte/.*\.py$
+        pass_filenames: false
+      - id: import-linter-gateway
+        name: import contracts (astrocyte-gateway-py)
+        language: system
+        entry: bash -c 'cd astrocyte-services-py/astrocyte-gateway-py && uv run --with import-linter lint-imports'
+        files: ^(astrocyte-services-py/astrocyte-gateway-py/astrocyte_gateway|astrocyte-py/astrocyte)/.*\.py$
+        pass_filenames: false

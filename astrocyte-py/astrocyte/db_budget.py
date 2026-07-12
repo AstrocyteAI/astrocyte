@@ -126,7 +126,9 @@ class BudgetedOperation:
 
     @property
     def budget(self) -> OperationBudget:
-        return self._manager._get_budget(self.operation_id)
+        # Friend-class access: BudgetedOperation is the manager's per-operation
+        # view, defined alongside it in this module.
+        return self._manager._get_budget(self.operation_id)  # noqa: SLF001
 
     @asynccontextmanager
     async def acquire(self, pool: Any) -> AsyncIterator[Any]:

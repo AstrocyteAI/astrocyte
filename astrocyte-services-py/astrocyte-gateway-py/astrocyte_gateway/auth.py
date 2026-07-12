@@ -10,11 +10,10 @@ from functools import lru_cache
 from typing import Any
 
 import jwt
+from astrocyte.types import ActorIdentity, AstrocyteContext
 from fastapi import Header, HTTPException
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWTError
-
-from astrocyte.types import ActorIdentity, AstrocyteContext
 
 __all__ = ["get_astrocyte_context", "validate_auth_startup_config"]
 

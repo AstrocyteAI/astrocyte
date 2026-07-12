@@ -4,6 +4,12 @@ Public API surface. Import from here, not from submodules.
 """
 
 from astrocyte._astrocyte import Astrocyte
+
+# Promoted internals: symbols external packages (e.g. the HTTP gateway)
+# legitimately need. Exported here so consumers never import astrocyte._*
+# modules directly — enforced by import-linter contracts.
+from astrocyte._discovery import resolve_provider
+from astrocyte._log_safety import safe as log_safe
 from astrocyte.config import IdentityConfig
 from astrocyte.errors import (
     AccessDenied,
@@ -114,10 +120,13 @@ from astrocyte.types import (
     VectorItem,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022 — grouped by category, not alphabetically
     # Main class
     "Astrocyte",
     "HybridEngineProvider",
+    # Promoted internals (SPI discovery, log-injection scrubbing)
+    "resolve_provider",
+    "log_safe",
     # M3 extraction (stable imports)
     "prepare_retain_input",
     "merged_extraction_profiles",

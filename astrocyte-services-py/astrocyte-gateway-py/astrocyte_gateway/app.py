@@ -11,13 +11,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
-from starlette.middleware.base import BaseHTTPMiddleware
-
 from astrocyte import Astrocyte
-from astrocyte._log_safety import safe as _safe_log
+from astrocyte import log_safe as _safe_log
 from astrocyte.config import SourceConfig
 from astrocyte.errors import (
     AccessDenied,
@@ -33,8 +28,13 @@ from astrocyte.ingest.runtime import retain_callable_for_astrocyte
 from astrocyte.ingest.supervisor import IngestSupervisor, merge_source_health
 from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.pipeline.mental_model import MentalModelService
-from astrocyte.types import AstrocyteContext
 from astrocyte.tenancy import TenantExtension
+from astrocyte.types import AstrocyteContext
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+
 from astrocyte_gateway.auth import get_astrocyte_context, validate_auth_startup_config
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
@@ -506,7 +506,7 @@ def create_app(
         return MentalModelService(store)
 
     # Mental-models + observations endpoints take ``ctx`` and route through
-    # ``brain._policy.check_access`` for symmetry with /v1/recall, /v1/retain,
+    # ``brain.check_access`` for symmetry with /v1/recall, /v1/retain,
     # /v1/reflect, /v1/forget. When ``access_control.enabled = False`` (the
     # default), check_access is a no-op — same effective behaviour as before.
     # When operators turn access control on, these endpoints enforce the same
@@ -523,7 +523,7 @@ def create_app(
         content = body.get("content")
         if not all(isinstance(value, str) for value in (bank_id, model_id, title, content)):
             raise HTTPException(status_code=400, detail="bank_id, model_id, title, and content are required strings")
-        brain._policy.check_access(bank_id, "write", ctx)
+        brain.check_access(bank_id, "write", ctx)
         model = await _mental_models().create(
             bank_id=bank_id,
             model_id=model_id,
@@ -540,7 +540,7 @@ def create_app(
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
         scope: str | None = None,
     ) -> dict[str, Any]:
-        brain._policy.check_access(bank_id, "read", ctx)
+        brain.check_access(bank_id, "read", ctx)
         return {"models": to_jsonable(await _mental_models().list(bank_id, scope=scope))}
 
     @app.get("/v1/mental-models/{model_id}")
@@ -549,7 +549,7 @@ def create_app(
         bank_id: str,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        brain._policy.check_access(bank_id, "read", ctx)
+        brain.check_access(bank_id, "read", ctx)
         model = await _mental_models().get(bank_id, model_id)
         if model is None:
             raise HTTPException(status_code=404, detail="mental model not found")
@@ -565,7 +565,7 @@ def create_app(
         content = body.get("content")
         if not isinstance(bank_id, str) or not isinstance(content, str):
             raise HTTPException(status_code=400, detail="bank_id and content are required strings")
-        brain._policy.check_access(bank_id, "write", ctx)
+        brain.check_access(bank_id, "write", ctx)
         model = await _mental_models().refresh(
             bank_id=bank_id,
             model_id=model_id,
@@ -585,7 +585,7 @@ def create_app(
         # Use the ``forget`` permission to mirror /v1/forget — deleting a
         # mental model is destructive and should require the same right as
         # forgetting raw memories.
-        brain._policy.check_access(bank_id, "forget", ctx)
+        brain.check_access(bank_id, "forget", ctx)
         return {"deleted": await _mental_models().delete(bank_id, model_id)}
 
     @app.post("/v1/observations/invalidate")
@@ -600,7 +600,7 @@ def create_app(
         # Invalidating observations cascades into deleting derived rows —
         # same destructive shape as /v1/forget, so guard with ``forget``
         # permission rather than ``write``.
-        brain._policy.check_access(bank_id, "forget", ctx)
+        brain.check_access(bank_id, "forget", ctx)
         pipeline = getattr(brain, "_pipeline", None)
         consolidator = getattr(pipeline, "_observation_consolidator", None)
         vector_store = getattr(pipeline, "vector_store", None)

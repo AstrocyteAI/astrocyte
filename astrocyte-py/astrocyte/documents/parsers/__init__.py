@@ -22,10 +22,10 @@ from astrocyte.documents.parsers.markdown import MarkdownParser
 
 __all__ = [
     "ConvertResult",
-    "Parser",
-    "UnsupportedFileTypeError",
     "MarkdownParser",
+    "Parser",
     "ParserRegistry",
+    "UnsupportedFileTypeError",
 ]
 
 logger = logging.getLogger(__name__)

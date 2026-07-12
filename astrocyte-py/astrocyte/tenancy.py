@@ -232,8 +232,8 @@ class DefaultTenantExtension(TenantExtension):
 
 
 __all__ = [
-    "AuthenticationError",
     "DEFAULT_SCHEMA",
+    "AuthenticationError",
     "DefaultTenantExtension",
     "Tenant",
     "TenantContext",

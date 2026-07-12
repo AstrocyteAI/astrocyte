@@ -144,8 +144,8 @@ def weights_for_intent(intent: QueryIntent | None) -> ChannelWeights:
 
 
 __all__ = [
-    "ChannelWeights",
     "INTENT_CHANNEL_WEIGHTS",
     "NEUTRAL_WEIGHTS",
+    "ChannelWeights",
     "weights_for_intent",
 ]

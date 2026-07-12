@@ -7,6 +7,7 @@ from pathlib import Path
 
 from astrocyte import Astrocyte
 from astrocyte.config import AstrocyteConfig, access_grants_for_astrocyte, load_config
+
 from astrocyte_gateway.wiring import (
     build_tier1_pipeline,
     resolve_mental_model_store,

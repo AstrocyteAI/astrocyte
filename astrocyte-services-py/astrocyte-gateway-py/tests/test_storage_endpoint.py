@@ -26,7 +26,6 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-
 pytestmark = pytest.mark.anyio
 
 

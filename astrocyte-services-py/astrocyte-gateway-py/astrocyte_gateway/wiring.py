@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, TypeVar
 
-from astrocyte._discovery import resolve_provider
+from astrocyte import resolve_provider
 from astrocyte.config import AstrocyteConfig
 from astrocyte.errors import ConfigError
 from astrocyte.pipeline.entity_resolution import EntityResolver

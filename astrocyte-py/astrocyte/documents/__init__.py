@@ -68,7 +68,7 @@ from astrocyte.documents.types import (
     TreeNode,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022 — grouped by category, not alphabetically
     # types
     "Document",
     "DocumentTree",

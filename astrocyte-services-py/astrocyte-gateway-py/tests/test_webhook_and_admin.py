@@ -6,12 +6,11 @@ import json
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
 from astrocyte.config import AstrocyteConfig, SourceConfig
 from astrocyte.errors import IngestError
 from astrocyte.ingest.registry import SourceRegistry
 from astrocyte.types import HealthStatus, RetainResult
+from fastapi.testclient import TestClient
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "webhook-ingest" / "astrocyte.yaml"
 

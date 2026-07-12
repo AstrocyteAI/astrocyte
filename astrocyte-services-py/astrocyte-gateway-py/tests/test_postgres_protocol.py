@@ -12,7 +12,6 @@ import inspect
 from pathlib import Path
 
 import pytest
-
 from astrocyte.testing.in_memory import InMemoryVectorStore
 from astrocyte.types import VectorItem
 

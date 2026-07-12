@@ -4,14 +4,14 @@ import importlib.util
 from types import SimpleNamespace
 
 import pytest
+from astrocyte.config import AstrocyteConfig
+from astrocyte.errors import ConfigError
+from astrocyte.pipeline.pgqueuer_tasks import PgQueuerMemoryTaskQueue
+
 from astrocyte_gateway.app import _warm_reference_stack_provider, _warm_reference_stack_providers
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.tasks import start_gateway_task_worker
 from astrocyte_gateway.wiring import build_tier1_pipeline, resolve_wiki_store
-
-from astrocyte.config import AstrocyteConfig
-from astrocyte.errors import ConfigError
-from astrocyte.pipeline.pgqueuer_tasks import PgQueuerMemoryTaskQueue
 
 
 def test_gateway_wires_entity_resolver_when_graph_store_is_configured() -> None:

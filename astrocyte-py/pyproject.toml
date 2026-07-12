@@ -248,8 +248,41 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I"]
+# SLF001 — no `obj._private` access on other objects (public/private API contract).
+# F822  — every name in `__all__` must actually exist.
+# RUF022 — keep `__all__` sorted (inline-noqa'd where category comments matter).
+select = ["E", "W", "F", "I", "SLF001", "RUF022"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately reach into private state (e.g. brain._policy in authz
+# regression tests, orchestrator internals in unit tests).
+"tests/**" = ["SLF001"]
 
 [tool.ruff.format]
 quote-style = "double"
+
+# ── Import contracts (import-linter) ─────────────────────────────────────────
+# Run: uv run --with import-linter lint-imports
+# Enforced in pre-commit + CI. These encode the package's layering rules;
+# a violation is an architecture regression, not a style nit.
+[tool.importlinter]
+root_packages = ["astrocyte"]
+
+[[tool.importlinter.contracts]]
+name = "pipeline must not import the Astrocyte facade (no upward dependency)"
+type = "forbidden"
+source_modules = ["astrocyte.pipeline"]
+forbidden_modules = ["astrocyte._astrocyte"]
+
+[[tool.importlinter.contracts]]
+name = "errors is a foundation module (imports no other astrocyte modules)"
+type = "forbidden"
+source_modules = ["astrocyte.errors"]
+forbidden_modules = [
+    "astrocyte._astrocyte",
+    "astrocyte.pipeline",
+    "astrocyte.types",
+    "astrocyte.config",
+    "astrocyte.provider",
+]

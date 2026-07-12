@@ -190,11 +190,12 @@ access_control: { enabled: false }
 
 
 def test_body_size_cap_is_default_on_and_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    from astrocyte_gateway.app import (
-        _MaxBodySizeMiddleware,
-        _configure_gateway_middleware,
-    )
     from fastapi import FastAPI
+
+    from astrocyte_gateway.app import (
+        _configure_gateway_middleware,
+        _MaxBodySizeMiddleware,
+    )
 
     # Unset → body-size middleware present by default.
     monkeypatch.delenv("ASTROCYTE_MAX_REQUEST_BODY_BYTES", raising=False)

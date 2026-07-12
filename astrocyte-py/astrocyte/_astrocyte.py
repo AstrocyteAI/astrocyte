@@ -341,9 +341,10 @@ class Astrocyte:
                 mental_model_store=self._mental_model_store,
             )
         )
-        # Wire the LLM provider to the MIP router for intent-layer escalation
+        # Wire the LLM provider to the MIP router for intent-layer escalation.
+        # Intra-package collaborator wiring (both objects are astrocyte-internal).
         if self._mip_router and hasattr(pipeline, "llm_provider"):
-            self._mip_router._llm_provider = pipeline.llm_provider
+            self._mip_router._llm_provider = pipeline.llm_provider  # noqa: SLF001
         # Expose router for per-bank MIP resolution at recall time (P3)
         pipeline.mip_router = self._mip_router
         self._rebuild_tiered_retrieval()
@@ -404,10 +405,22 @@ class Astrocyte:
         """Configure access grants."""
         self._policy.set_access_grants(grants)
 
+    def check_access(self, bank_id: str, permission: str, context: AstrocyteContext | None) -> None:
+        """Check whether ``context`` holds ``permission`` on ``bank_id``.
+
+        Raises :class:`~astrocyte.errors.AccessDenied` when access control is
+        enabled and the principal lacks the permission; returns silently
+        otherwise. Public counterpart of the internal policy check — external
+        callers (e.g. the HTTP gateway guarding endpoints that bypass
+        retain/recall, such as mental-model CRUD) should use this rather than
+        reaching into ``_policy``.
+        """
+        self._policy.check_access(bank_id, permission, context)
+
     @property
     def _rate_limiters(self) -> dict:
         """Expose rate limiters for testing/introspection."""
-        return self._policy._rate_limiters
+        return self._policy._rate_limiters  # noqa: SLF001 — deliberate test/introspection window into the policy collaborator
 
     def register_hook(self, event_type: str, handler: HookHandler) -> None:
         """Register an event hook handler."""

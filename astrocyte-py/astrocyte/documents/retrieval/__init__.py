@@ -29,7 +29,7 @@ from astrocyte.documents.retrieval.types import (
     TreeSkeleton,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022 — grouped by category, not alphabetically
     # retrieval classes
     "DocumentRetriever",
     "DocumentNavigator",

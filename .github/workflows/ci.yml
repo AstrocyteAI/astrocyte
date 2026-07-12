@@ -112,6 +112,57 @@ jobs:
       packages: read
     uses: ./.github/workflows/gateway-publish-test-gate.yml
 
+  # Public/private API contract enforcement:
+  #  - ruff SLF001/F822/RUF022 — no private-member access across objects,
+  #    __all__ integrity (config in each package's pyproject.toml)
+  #  - import-linter — gateway may not import astrocyte._* modules; core
+  #    layering (contracts in pyproject.toml [tool.importlinter])
+  #  - griffe check — no breaking change to astrocyte's public API vs the
+  #    last release tag (additive-first policy, product-roadmap.md § Stability)
+  api-contracts:
+    name: API contracts (lint, imports, breakage)
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # griffe diffs against the last release tag
+
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Ruff (astrocyte-py)
+        working-directory: astrocyte-py
+        run: uvx ruff check astrocyte/ tests/
+
+      - name: Ruff (astrocyte-gateway-py)
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
+        run: uvx ruff check astrocyte_gateway/ tests/
+
+      - name: Import contracts (astrocyte-py)
+        working-directory: astrocyte-py
+        run: |
+          uv sync --extra dev
+          uv run --with import-linter lint-imports
+
+      - name: Import contracts (astrocyte-gateway-py)
+        working-directory: astrocyte-services-py/astrocyte-gateway-py
+        run: |
+          uv sync
+          uv run --with import-linter lint-imports
+
+      - name: API breakage vs last release (griffe)
+        run: |
+          BASE=$(git describe --tags --abbrev=0 --match 'v*')
+          echo "Checking astrocyte public API against ${BASE}"
+          uvx --from griffe griffe check astrocyte --search astrocyte-py --against "${BASE}"
+
   adapters-integration-tavus:
     name: astrocyte-integration-tavus
     permissions:

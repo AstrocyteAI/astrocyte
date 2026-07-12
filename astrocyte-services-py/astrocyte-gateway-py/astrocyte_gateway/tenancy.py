@@ -55,8 +55,8 @@ import os
 from typing import Any
 
 from astrocyte.tenancy import (
-    AuthenticationError,
     DEFAULT_SCHEMA,
+    AuthenticationError,
     DefaultTenantExtension,
     TenantExtension,
     reset_current_schema,
