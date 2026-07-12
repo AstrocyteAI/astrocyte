@@ -557,6 +557,222 @@ class RetainStageMixin:
             _logger.warning("source-aware retain failed; continuing without provenance: %s", exc)
             return empty
 
+    async def _store_entity_graph(
+        self,
+        *,
+        entities: list[Entity],
+        bank_id: str,
+        memory_ids: list[str],
+        chunks: list[str],
+        sfe_associations: list[tuple[int, int]] | None,
+        sfe_caused_by: list[tuple[int, int, float]] | None,
+        source_text: str,
+        occurred_at: datetime | None,
+    ) -> None:
+        """Retain phase 5 — persist entities, associations, and links.
+
+        No-op without a graph store. Covers: name embeddings + canonical
+        resolution, entity storage, memory↔entity associations (SFE
+        fact-grained or legacy Cartesian), co-occurrence links, causal
+        MemoryLinks (SFE-inline or legacy LLM pass), and the legacy
+        two-stage entity-resolution cascade.
+        """
+        if not (self.graph_store and entities):
+            return
+        # 5a. Attach name embeddings before persistence so the
+        # Hindsight-inspired entity-resolution cascade has the cheap
+        # cosine-similarity tier available.  Only fires when an
+        # entity_resolver is wired up — without one, the embedding
+        # would be persisted but never used, wasting API budget.
+        if self.entity_resolver is not None:
+            async with self._profiler.time("entity_emb"):
+                await self._attach_entity_name_embeddings(entities)
+            # Path B (Hindsight): rewrite tentative IDs to canonicals
+            # before storage. Skipped when canonical_resolution=False
+            # to preserve the legacy two-stage (store → resolve aliases)
+            # flow.
+            if self.entity_resolver.canonical_resolution:
+                try:
+                    async with self._profiler.time("entity_resolve"):
+                        await self.entity_resolver.resolve_canonical_ids_in_place(
+                            new_entities=entities,
+                            bank_id=bank_id,
+                            graph_store=self.graph_store,
+                            event_date=occurred_at,
+                        )
+                except Exception as exc:
+                    _logger.warning(
+                        "canonical resolution failed during retain (falling back to tentative IDs): %s",
+                        exc,
+                    )
+
+        async with self._profiler.time("entity_store"):
+            entity_ids = await self.graph_store.store_entities(entities, bank_id)
+
+        # Link memories to entities. Two paths:
+        # - Structured fact extraction provides per-fact-per-entity
+        #   associations (each memory linked only to entities IT mentions),
+        #   matching Hindsight's fact-grained granularity.
+        # - Legacy path uses the Cartesian product (every memory linked
+        #   to every entity in the batch), which works when extraction
+        #   was over the whole text rather than per fact.
+        if sfe_associations is not None:
+            associations = [
+                MemoryEntityAssociation(
+                    memory_id=memory_ids[mem_idx],
+                    entity_id=entity_ids[ent_idx],
+                )
+                for ent_idx, mem_idx in sfe_associations
+                if 0 <= ent_idx < len(entity_ids) and 0 <= mem_idx < len(memory_ids)
+            ]
+        else:
+            associations = [
+                MemoryEntityAssociation(memory_id=mid, entity_id=eid) for mid in memory_ids for eid in entity_ids
+            ]
+        async with self._profiler.time("entity_link_mem"):
+            await self.graph_store.link_memories_to_entities(associations, bank_id)
+
+        # Create co-occurrence links between entities. The 2026-05-06
+        # LME retain-profile measured the unbounded all-pairs
+        # Cartesian product at 34% of retain wall (52s tail at the
+        # session-100 mark). The cap in
+        # ``_build_cooccurrence_pairs`` bounds the work to O(K²) per
+        # retain regardless of corpus size.
+        if self.entity_cooccurrence_enabled:
+            pairs = _build_cooccurrence_pairs(
+                entity_ids,
+                self.entity_cooccurrence_max_entities,
+            )
+            if pairs:
+                links = [EntityLink(entity_a=a, entity_b=b, link_type="co_occurs") for a, b in pairs]
+                async with self._profiler.time("entity_co_occur"):
+                    await self.graph_store.store_links(links, bank_id)
+
+        # Causal MemoryLinks. Two paths:
+        # - Structured fact extraction supplies them inline (no
+        #   extra LLM call); resolve indices to memory IDs and store.
+        # - Legacy path runs a separate fact_causal_extraction LLM call.
+        if sfe_caused_by is not None and sfe_caused_by:
+            memory_links = [
+                MemoryLink(
+                    source_memory_id=memory_ids[src_idx],
+                    target_memory_id=memory_ids[tgt_idx],
+                    link_type="caused_by",
+                    confidence=conf,
+                    weight=1.0,
+                    created_at=datetime.now(timezone.utc),
+                    metadata={"bank_id": bank_id, "source": "fact_extraction"},
+                )
+                for src_idx, tgt_idx, conf in sfe_caused_by
+                if 0 <= src_idx < len(memory_ids) and 0 <= tgt_idx < len(memory_ids) and src_idx != tgt_idx
+            ]
+            if memory_links:
+                try:
+                    await self.graph_store.store_memory_links(
+                        memory_links,
+                        bank_id,
+                    )
+                except Exception as exc:
+                    _logger.warning("storing memory_links failed: %s", exc)
+        elif (
+            self.causal_links_enabled
+            and len(memory_ids) > 1
+            and len(chunks) == len(memory_ids)
+            and self.llm_provider is not None
+        ):
+            # Legacy fact-causal-extraction LLM pass (separate call).
+            try:
+                from astrocyte.pipeline.fact_causal_extraction import (
+                    build_memory_links_from_relations,
+                    extract_fact_causal_relations,
+                )
+
+                relations = await extract_fact_causal_relations(
+                    chunks,
+                    self.llm_provider,
+                    max_pairs_per_fact=self.causal_max_pairs_per_memory,
+                    min_confidence=self.causal_min_confidence,
+                )
+                memory_links = build_memory_links_from_relations(
+                    relations,
+                    memory_ids,
+                    bank_id=bank_id,
+                )
+            except Exception as exc:
+                _logger.warning("fact-level causal extraction failed: %s", exc)
+                memory_links = []
+            if memory_links:
+                try:
+                    await self.graph_store.store_memory_links(
+                        memory_links,
+                        bank_id,
+                    )
+                except Exception as exc:
+                    _logger.warning("storing memory_links failed: %s", exc)
+
+        # 5b. Entity resolution (M11) — Hindsight-inspired tiered cascade.
+        # Skipped when canonical_resolution=True (Path B) because IDs
+        # are already canonical from the pre-store pass above. Otherwise
+        # the legacy two-stage path runs the cascade and writes
+        # alias_of links for matched candidates.
+        if self.entity_resolver is not None and not self.entity_resolver.canonical_resolution:
+            try:
+                await self.entity_resolver.resolve(
+                    new_entities=entities,
+                    source_text=source_text,
+                    bank_id=bank_id,
+                    graph_store=self.graph_store,
+                    llm_provider=self.llm_provider,
+                    event_date=occurred_at,
+                )
+            except Exception as exc:
+                # Resolution failures must never abort a retain — degrade gracefully.
+                _logger.warning("entity resolution failed during retain: %s", exc)
+
+    def _spawn_observation_consolidation(
+        self,
+        *,
+        chunks: list[str],
+        embeddings: list[list[float]],
+        memory_ids: list[str],
+        bank_id: str,
+        tags: list[str] | None,
+    ) -> None:
+        """Fire-and-forget observation consolidation (retain phase 7).
+
+        Runs after the retain response is returned so it never adds latency to
+        the caller; failures must never surface — the raw memories are already
+        stored and consolidation is best-effort. The representative vector is
+        the first chunk's embedding, sufficient for the observation similarity
+        search.
+        """
+        if self._observation_consolidator is None or not memory_ids or not chunks:
+            return
+        representative_vec = embeddings[0]
+        consolidator = self._observation_consolidator
+        first_chunk = chunks[0]
+        all_ids = list(memory_ids)
+        vs = self.vector_store
+        llm = self.llm_provider
+
+        async def _run_consolidation() -> None:
+            try:
+                await consolidator.consolidate(
+                    new_memory_text=first_chunk,
+                    new_memory_ids=all_ids,
+                    bank_id=bank_id,
+                    vector_store=vs,
+                    llm_provider=llm,
+                    query_vector=representative_vec,
+                    scope="|".join(sorted(tags)) if tags else None,
+                )
+            except Exception as exc:
+                _logger.warning("Observation consolidation task failed for bank %s: %s", bank_id, exc)
+
+        task = asyncio.create_task(_run_consolidation())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
     async def retain(self, request: RetainRequest) -> RetainResult:
         """Retain pipeline: normalize → chunk → extract entities → embed → store."""
         # 0–1. Raw → normalizer → profile metadata/tags (M3 extraction chain)
@@ -786,194 +1002,31 @@ class RetainStageMixin:
                         exc,
                     )
 
-        # 5. Store entities and links (if graph store configured)
-        if self.graph_store and entities:
-            # 5a. Attach name embeddings before persistence so the
-            # Hindsight-inspired entity-resolution cascade has the cheap
-            # cosine-similarity tier available.  Only fires when an
-            # entity_resolver is wired up — without one, the embedding
-            # would be persisted but never used, wasting API budget.
-            if self.entity_resolver is not None:
-                async with self._profiler.time("entity_emb"):
-                    await self._attach_entity_name_embeddings(entities)
-                # Path B (Hindsight): rewrite tentative IDs to canonicals
-                # before storage. Skipped when canonical_resolution=False
-                # to preserve the legacy two-stage (store → resolve aliases)
-                # flow.
-                if self.entity_resolver.canonical_resolution:
-                    try:
-                        async with self._profiler.time("entity_resolve"):
-                            await self.entity_resolver.resolve_canonical_ids_in_place(
-                                new_entities=entities,
-                                bank_id=request.bank_id,
-                                graph_store=self.graph_store,
-                                event_date=request.occurred_at,
-                            )
-                    except Exception as exc:
-                        _logger.warning(
-                            "canonical resolution failed during retain (falling back to tentative IDs): %s",
-                            exc,
-                        )
-
-            async with self._profiler.time("entity_store"):
-                entity_ids = await self.graph_store.store_entities(entities, request.bank_id)
-
-            # Link memories to entities. Two paths:
-            # - Structured fact extraction provides per-fact-per-entity
-            #   associations (each memory linked only to entities IT mentions),
-            #   matching Hindsight's fact-grained granularity.
-            # - Legacy path uses the Cartesian product (every memory linked
-            #   to every entity in the batch), which works when extraction
-            #   was over the whole text rather than per fact.
-            if sfe_associations is not None:
-                associations = [
-                    MemoryEntityAssociation(
-                        memory_id=memory_ids[mem_idx],
-                        entity_id=entity_ids[ent_idx],
-                    )
-                    for ent_idx, mem_idx in sfe_associations
-                    if 0 <= ent_idx < len(entity_ids) and 0 <= mem_idx < len(memory_ids)
-                ]
-            else:
-                associations = [
-                    MemoryEntityAssociation(memory_id=mid, entity_id=eid) for mid in memory_ids for eid in entity_ids
-                ]
-            async with self._profiler.time("entity_link_mem"):
-                await self.graph_store.link_memories_to_entities(associations, request.bank_id)
-
-            # Create co-occurrence links between entities. The 2026-05-06
-            # LME retain-profile measured the unbounded all-pairs
-            # Cartesian product at 34% of retain wall (52s tail at the
-            # session-100 mark). The cap in
-            # ``_build_cooccurrence_pairs`` bounds the work to O(K²) per
-            # retain regardless of corpus size.
-            if self.entity_cooccurrence_enabled:
-                pairs = _build_cooccurrence_pairs(
-                    entity_ids,
-                    self.entity_cooccurrence_max_entities,
-                )
-                if pairs:
-                    links = [EntityLink(entity_a=a, entity_b=b, link_type="co_occurs") for a, b in pairs]
-                    async with self._profiler.time("entity_co_occur"):
-                        await self.graph_store.store_links(links, request.bank_id)
-
-            # Causal MemoryLinks. Two paths:
-            # - Structured fact extraction supplies them inline (no
-            #   extra LLM call); resolve indices to memory IDs and store.
-            # - Legacy path runs a separate fact_causal_extraction LLM call.
-            if sfe_caused_by is not None and sfe_caused_by:
-                memory_links = [
-                    MemoryLink(
-                        source_memory_id=memory_ids[src_idx],
-                        target_memory_id=memory_ids[tgt_idx],
-                        link_type="caused_by",
-                        confidence=conf,
-                        weight=1.0,
-                        created_at=datetime.now(timezone.utc),
-                        metadata={"bank_id": request.bank_id, "source": "fact_extraction"},
-                    )
-                    for src_idx, tgt_idx, conf in sfe_caused_by
-                    if 0 <= src_idx < len(memory_ids) and 0 <= tgt_idx < len(memory_ids) and src_idx != tgt_idx
-                ]
-                if memory_links:
-                    try:
-                        await self.graph_store.store_memory_links(
-                            memory_links,
-                            request.bank_id,
-                        )
-                    except Exception as exc:
-                        _logger.warning("storing memory_links failed: %s", exc)
-            elif (
-                self.causal_links_enabled
-                and len(memory_ids) > 1
-                and len(chunks) == len(memory_ids)
-                and self.llm_provider is not None
-            ):
-                # Legacy fact-causal-extraction LLM pass (separate call).
-                try:
-                    from astrocyte.pipeline.fact_causal_extraction import (
-                        build_memory_links_from_relations,
-                        extract_fact_causal_relations,
-                    )
-
-                    relations = await extract_fact_causal_relations(
-                        chunks,
-                        self.llm_provider,
-                        max_pairs_per_fact=self.causal_max_pairs_per_memory,
-                        min_confidence=self.causal_min_confidence,
-                    )
-                    memory_links = build_memory_links_from_relations(
-                        relations,
-                        memory_ids,
-                        bank_id=request.bank_id,
-                    )
-                except Exception as exc:
-                    _logger.warning("fact-level causal extraction failed: %s", exc)
-                    memory_links = []
-                if memory_links:
-                    try:
-                        await self.graph_store.store_memory_links(
-                            memory_links,
-                            request.bank_id,
-                        )
-                    except Exception as exc:
-                        _logger.warning("storing memory_links failed: %s", exc)
-
-            # 5b. Entity resolution (M11) — Hindsight-inspired tiered cascade.
-            # Skipped when canonical_resolution=True (Path B) because IDs
-            # are already canonical from the pre-store pass above. Otherwise
-            # the legacy two-stage path runs the cascade and writes
-            # alias_of links for matched candidates.
-            if self.entity_resolver is not None and not self.entity_resolver.canonical_resolution:
-                try:
-                    await self.entity_resolver.resolve(
-                        new_entities=entities,
-                        source_text=prepared.text,
-                        bank_id=request.bank_id,
-                        graph_store=self.graph_store,
-                        llm_provider=self.llm_provider,
-                        event_date=request.occurred_at,
-                    )
-                except Exception as exc:
-                    # Resolution failures must never abort a retain — degrade gracefully.
-                    _logger.warning("entity resolution failed during retain: %s", exc)
+        # 5. Store entities and links (if graph store configured) — see
+        # _store_entity_graph for the phase body.
+        await self._store_entity_graph(
+            entities=entities,
+            bank_id=request.bank_id,
+            memory_ids=memory_ids,
+            chunks=chunks,
+            sfe_associations=sfe_associations,
+            sfe_caused_by=sfe_caused_by,
+            source_text=prepared.text,
+            occurred_at=request.occurred_at,
+        )
 
         # 6. Update dedup cache with stored embeddings
         for mem_id, emb in zip(memory_ids, embeddings):
             self._dedup.add(request.bank_id, mem_id, emb)
 
-        # 7. Observation consolidation (fire-and-forget async task).
-        # Runs after the retain response is returned so it never adds latency
-        # to the caller.  A failure here must never surface to the caller —
-        # the raw memories are already stored and the consolidation is
-        # best-effort.  The representative vector is the first chunk's
-        # embedding, which is sufficient for the observation similarity search.
-        if self._observation_consolidator is not None and memory_ids and chunks:
-            representative_vec = embeddings[0]
-            consolidator = self._observation_consolidator
-            bank_id = request.bank_id
-            first_chunk = chunks[0]
-            all_ids = list(memory_ids)
-            vs = self.vector_store
-            llm = self.llm_provider
-
-            async def _run_consolidation() -> None:
-                try:
-                    await consolidator.consolidate(
-                        new_memory_text=first_chunk,
-                        new_memory_ids=all_ids,
-                        bank_id=bank_id,
-                        vector_store=vs,
-                        llm_provider=llm,
-                        query_vector=representative_vec,
-                        scope="|".join(sorted(request.tags)) if request.tags else None,
-                    )
-                except Exception as exc:
-                    _logger.warning("Observation consolidation task failed for bank %s: %s", bank_id, exc)
-
-            task = asyncio.create_task(_run_consolidation())
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
+        # 7. Observation consolidation — see _spawn_observation_consolidation.
+        self._spawn_observation_consolidation(
+            chunks=chunks,
+            embeddings=embeddings,
+            memory_ids=memory_ids,
+            bank_id=request.bank_id,
+            tags=request.tags,
+        )
 
         return RetainResult(
             stored=True,
@@ -1253,36 +1306,13 @@ class RetainStageMixin:
             for mem_id, embedding in zip(memory_ids, embeddings, strict=False):
                 self._dedup.add(request.bank_id, mem_id, embedding)
 
-            if self._observation_consolidator is not None and memory_ids and chunks:
-                representative_vec = embeddings[0]
-                consolidator = self._observation_consolidator
-                bank_id = request.bank_id
-                first_chunk = chunks[0]
-                all_ids = list(memory_ids)
-                vs = self.vector_store
-                llm = self.llm_provider
-
-                async def _run_consolidation() -> None:
-                    try:
-                        await consolidator.consolidate(
-                            new_memory_text=first_chunk,
-                            new_memory_ids=all_ids,
-                            bank_id=bank_id,
-                            vector_store=vs,
-                            llm_provider=llm,
-                            query_vector=representative_vec,
-                            scope="|".join(sorted(request.tags)) if request.tags else None,
-                        )
-                    except Exception as exc:
-                        _logger.warning(
-                            "Observation consolidation task failed for bank %s: %s",
-                            bank_id,
-                            exc,
-                        )
-
-                task = asyncio.create_task(_run_consolidation())
-                self._background_tasks.add(task)
-                task.add_done_callback(self._background_tasks.discard)
+            self._spawn_observation_consolidation(
+                chunks=chunks,
+                embeddings=embeddings,
+                memory_ids=memory_ids,
+                bank_id=request.bank_id,
+                tags=request.tags,
+            )
 
             results[record["index"]] = RetainResult(
                 stored=True,
