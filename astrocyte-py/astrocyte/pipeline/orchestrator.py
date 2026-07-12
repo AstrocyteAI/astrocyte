@@ -53,6 +53,21 @@ if TYPE_CHECKING:
     from astrocyte.provider import DocumentStore, GraphStore, LLMProvider, VectorStore, WikiStore
 
 
+# Public surface of this module. The _orchestrator_common helpers are
+# deliberate re-exports (moved during the stage-mixin extraction; tests and
+# older callers import them from here) — listing them in __all__ marks the
+# re-export as intentional for linters and CodeQL alike.
+__all__ = [  # noqa: RUF022 — grouped: class first, then re-exported helpers
+    "PipelineOrchestrator",
+    "_abstention_floor_for_skepticism",
+    "_build_cooccurrence_pairs",
+    "_deterministic_names",
+    "_entities_from_metadata",
+    "_resolve_skepticism_for_abstention",
+    "_source_ids_from_metadata",
+    "_warn_on_version_drift",
+]
+
 _logger = logging.getLogger("astrocyte.mip")
 
 
