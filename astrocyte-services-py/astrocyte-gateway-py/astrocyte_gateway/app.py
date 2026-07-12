@@ -338,6 +338,13 @@ def create_app(
             content={"detail": str(exc), "provider": exc.provider},
         )
 
+    # ``/health/live`` is a deliberate ALIAS of ``/live`` (same handler), for
+    # infra that mounts every probe under a ``/health/*`` prefix. Liveness must
+    # check NOTHING beyond "the process responds": its failure means "restart
+    # the pod", and restarting the gateway cannot fix a down dependency — a
+    # dependency-checking liveness probe turns a DB outage into a restart loop.
+    # Dependency readiness lives at ``/health``; ingest-subsystem health at
+    # ``/health/ingest``.
     @app.get("/live")
     @app.get("/health/live")
     async def live() -> dict[str, str]:

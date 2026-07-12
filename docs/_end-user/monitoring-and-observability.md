@@ -22,6 +22,13 @@ curl http://localhost:8080/live
 
 Use for Kubernetes liveness probes — if this fails, the process is dead.
 
+`GET /health/live` is an **alias** of `/live` (same handler), for infrastructure
+that expects every probe under a `/health/*` prefix. Both deliberately check
+nothing beyond "the process responds": liveness failure means "restart the
+pod", and a restart cannot fix a down database — a liveness probe that checked
+dependencies would turn a Postgres outage into a gateway restart loop.
+Dependency checks belong to the readiness probe (`/health`, below).
+
 ### GET /health — readiness probe
 
 Checks all critical dependencies (vector store, database). Returns latency for SLO tracking.
