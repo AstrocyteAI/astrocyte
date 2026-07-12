@@ -74,6 +74,8 @@ __all__ = [  # noqa: RUF022 — grouped: re-exported dataclasses, then wrappers
     "InvalidatedResponse",
     "LiveResponse",
     "MentalModelListResponse",
+    # shared responses={} fragments
+    "VALIDATION_ERROR",
 ]
 
 
