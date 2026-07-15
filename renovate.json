@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Mirrors the HelloHQ org policy (hellohqworkspace/renovate/default) — self-contained because the preset repo is private to another org. Tier-1 in HelloHQ operated-oss-inventory.",
+  "extends": ["config:recommended"],
+  "timezone": "Asia/Singapore",
+  "labels": ["deps"],
+  "schedule": ["before 9am on monday"],
+  "prHourlyLimit": 0,
+  "minimumReleaseAge": "3 days",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"],
+    "minimumReleaseAge": "0 days"
+  },
+  "packageRules": [
+    { "matchDatasources": ["docker"], "pinDigests": true },
+    { "matchUpdateTypes": ["patch", "digest", "pin", "pinDigest"], "groupName": "weekly patch & digest bumps" }
+  ]
+}
