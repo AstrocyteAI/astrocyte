@@ -27,20 +27,21 @@ Usage:
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
 # memory-benchmarks is installed as the ``benchmarks`` package (the
 # AstrocyteAI/memory-benchmarks fork, which adds packaging metadata
 # upstream lacks) via ``make bench-runner-deps`` — no sys.path shim,
-# no hardcoded local path.
-try:
-    import benchmarks  # noqa: F401
-except ModuleNotFoundError as exc:  # pragma: no cover
+# no hardcoded local path. Probed via ``find_spec`` rather than a bare
+# ``import benchmarks`` so the availability check doesn't leave an
+# unused import behind (py/unused-import).
+if importlib.util.find_spec("benchmarks") is None:  # pragma: no cover
     raise RuntimeError(
         "memory-benchmarks package not importable — run `make bench-runner-deps` "
         "(installs the AstrocyteAI/memory-benchmarks fork).",
-    ) from exc
+    )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
