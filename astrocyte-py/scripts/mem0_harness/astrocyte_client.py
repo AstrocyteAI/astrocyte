@@ -42,14 +42,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Ensure the astrocyte package and the upstream PageIndex package are
-# importable. Mirrors the path-management in scripts/bench_pageindex_*.py.
+# Ensure the astrocyte package is importable. PageIndex is installed as
+# the ``pageindex`` package (AstrocyteAI fork) via ``make bench-runner-deps``
+# — no sys.path shim, no hardcoded path.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-_PAGEINDEX_ROOT = Path("/Users/calvin/AstrocyteAI/PageIndex")
-if str(_PAGEINDEX_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PAGEINDEX_ROOT))
 
 # M17 Phase 3: ingest-path selection
 #

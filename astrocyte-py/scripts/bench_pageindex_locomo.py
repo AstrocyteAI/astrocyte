@@ -60,20 +60,15 @@ import asyncio
 import json
 import os
 import re
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 # PageIndex package is sibling to the astrocyte repo on the user's machine.
-# We don't take a hard dep — just sys.path-shim it so this script runs
-# without touching pyproject.toml. If we promote this to an Astrocyte
-# adapter (Phase B), we'll add it as a proper workspace dep.
-_PAGEINDEX_ROOT = Path("/Users/calvin/AstrocyteAI/PageIndex")
-if str(_PAGEINDEX_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PAGEINDEX_ROOT))
-
+# PageIndex is installed as the ``pageindex`` package (the
+# AstrocyteAI/PageIndex fork with packaging metadata) via
+# ``make bench-runner-deps`` — no sys.path shim, no hardcoded path. See the AstrocyteAI/PageIndex fork.
 from pageindex import md_to_tree  # noqa: E402
 
 from astrocyte.eval.judges.locomo_judge import LoCoMoLLMJudge  # noqa: E402

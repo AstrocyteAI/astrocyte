@@ -280,26 +280,44 @@ LME_MAX_SAMPLES  ?= 200
 LOCOMO_BANK_ID   ?= bench-pageindex-locomo
 LME_BANK_ID      ?= bench-pageindex-lme
 
-# Bench-runner deps. These are NOT in the [bench] extra in pyproject.toml because:
-#   - PageIndex (vendored at /Users/calvin/AstrocyteAI/PageIndex) — needs litellm,
-#     PyPDF2, pymupdf. Sys.path-imported, not a pyproject dep.
-#   - memory-benchmarks (vendored at /Users/calvin/AstrocyteAI/memory-benchmarks) —
-#     needs aiolimiter, anthropic. Also sys.path-imported.
-#   - astrocyte-llm-litellm — incompatible with the ``mcp`` extra via
-#     litellm's dotenv pin (see comment in pyproject.toml ``[project.optional-dependencies]``).
+# Bench-runner deps. These are installed IMPERATIVELY here, NOT via a
+# pyproject ``bench`` extra, because they re-trigger the documented litellm/
+# dotenv/mcp three-way conflict (see pyproject.toml ``[project.optional-
+# dependencies]`` ~lines 98-112). Layering them on top of ``uv sync`` keeps
+# uv's strict resolver from ever having to solve them together.
 #
-# Bench targets below depend on ``bench-runner-deps``, which installs all of these
-# imperatively via ``uv pip install``. Idempotent — re-running is cheap.
-# Triggered automatically by every bench-* target; runs a smoke import that fails
-# fast if anything's missing.
+#   - astrocyte-llm-litellm — brings litellm in the 1.83.5-1.83.7
+#     secure-aiohttp window. Incompatible with the ``mcp`` extra's dotenv floor.
+#   - memory-benchmarks — the ``benchmarks`` import package. Installed from the
+#     AstrocyteAI/memory-benchmarks fork (upstream mem0ai has no packaging
+#     metadata). Pulls aiolimiter/anthropic/openai/pydantic/etc. transitively.
+#   - pageindex — the ``pageindex`` import package. Installed from the
+#     AstrocyteAI/PageIndex fork. Pulls pymupdf/PyPDF2/pyyaml transitively.
+#
+# Each fork is pinned to an exact commit SHA so bench installs are
+# reproducible — a bare branch ref would let the dependency drift under us
+# between runs, which is exactly the kind of silent variance the bench
+# methodology can't absorb. To move a pin: push the fork's packaging branch,
+# then update the SHA here. Override per-run when testing a fork change:
+#   make bench-runner-deps MEM_BENCH_REF=astrocyte-packaging
+#
+# Bench targets below depend on ``bench-runner-deps``. Idempotent — the smoke
+# import short-circuits when everything's already present. Installs are chained
+# with ``&&`` so any failure aborts the recipe (a prior version used ``;`` and
+# silently masked a failed install).
+MEM_BENCH_REF  ?= 3709348eceda0a572a09715e5003e67d10fd19ae
+PAGEINDEX_REF  ?= 8cbcc08e123400f8da83aca4e1d277d073a332ac
+_MEM_BENCH_GIT := git+https://github.com/AstrocyteAI/memory-benchmarks@$(MEM_BENCH_REF)
+_PAGEINDEX_GIT := git+https://github.com/AstrocyteAI/PageIndex@$(PAGEINDEX_REF)
+
 .PHONY: bench-runner-deps
 bench-runner-deps:
-	@uv run python -c "import litellm, PyPDF2, pymupdf, aiolimiter, anthropic" 2>/dev/null || ( \
-		echo "  [bench-runner-deps] installing missing runner deps..."; \
-		uv pip install -q --editable ../adapters-llm-py/astrocyte-llm-litellm; \
-		uv pip install -q PyPDF2 pymupdf aiolimiter; \
-		uv pip install -q -r /Users/calvin/AstrocyteAI/memory-benchmarks/requirements.txt; \
-		echo "  [bench-runner-deps] done"; \
+	@uv run python -c "import litellm, PyPDF2, pymupdf, aiolimiter, anthropic, benchmarks, pageindex" 2>/dev/null || ( \
+		echo "  [bench-runner-deps] installing missing runner deps..." && \
+		uv pip install -q --editable ../adapters-llm-py/astrocyte-llm-litellm && \
+		uv pip install -q "memory-benchmarks @ $(_MEM_BENCH_GIT)" && \
+		uv pip install -q "pageindex @ $(_PAGEINDEX_GIT)" && \
+		echo "  [bench-runner-deps] done" \
 	)
 
 .PHONY: bench-locomo bench-longmemeval bench-longmemeval-on-2 bench-parallel

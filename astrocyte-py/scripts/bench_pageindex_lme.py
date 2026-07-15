@@ -42,15 +42,13 @@ import argparse
 import asyncio
 import json
 import os
-import sys
 import time
 from datetime import UTC, datetime, timezone
 from pathlib import Path
 
-# PageIndex package is sibling to the astrocyte repo on the user's machine.
-_PAGEINDEX_ROOT = Path("/Users/calvin/AstrocyteAI/PageIndex")
-if str(_PAGEINDEX_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PAGEINDEX_ROOT))
+# PageIndex is installed as the ``pageindex`` package (the
+# AstrocyteAI/PageIndex fork with packaging metadata) via
+# ``make bench-runner-deps`` — no sys.path shim, no hardcoded path. See the AstrocyteAI/PageIndex fork.
 
 # Reuse the LoCoMo bench's helpers (agent loop, mode dispatch, picker,
 # synth, conversion). They're file-format-agnostic; we only need a

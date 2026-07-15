@@ -1,6 +1,9 @@
 r"""Markdown → DocumentTree builder.
 
-PageIndex parity (see ``/Users/calvin/AstrocyteAI/PageIndex/pageindex/page_index_md.py``):
+PageIndex parity (see
+https://github.com/AstrocyteAI/PageIndex/blob/8cbcc08/pageindex/page_index_md.py
+— permalink to the pinned fork the bench installs; byte-identical to
+upstream VectifyAI/PageIndex for this file):
 
 - Header regex: ``^(#{1,6})\s+(.+)$`` — all six heading levels become
   nodes.

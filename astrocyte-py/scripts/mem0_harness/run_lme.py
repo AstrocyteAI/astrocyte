@@ -30,14 +30,17 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-_MEM0_BENCH_REPO = Path("/Users/calvin/AstrocyteAI/memory-benchmarks")
-if not _MEM0_BENCH_REPO.exists():
+# memory-benchmarks is installed as the ``benchmarks`` package (the
+# AstrocyteAI/memory-benchmarks fork, which adds packaging metadata
+# upstream lacks) via ``make bench-runner-deps`` — no sys.path shim,
+# no hardcoded local path.
+try:
+    import benchmarks  # noqa: F401
+except ModuleNotFoundError as exc:  # pragma: no cover
     raise RuntimeError(
-        f"memory-benchmarks repo not found at {_MEM0_BENCH_REPO}. "
-        "Clone https://github.com/mem0ai/memory-benchmarks there first.",
-    )
-if str(_MEM0_BENCH_REPO) not in sys.path:
-    sys.path.insert(0, str(_MEM0_BENCH_REPO))
+        "memory-benchmarks package not importable — run `make bench-runner-deps` "
+        "(installs the AstrocyteAI/memory-benchmarks fork).",
+    ) from exc
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:

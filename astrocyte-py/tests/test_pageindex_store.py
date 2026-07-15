@@ -26,7 +26,6 @@ Postgres store coverage is in
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -253,13 +252,10 @@ class TestInMemoryPageIndexStore:
 # ── Tests: bench harness flatten/reconstruct round-trip ───────────────
 
 
-# Add the bench script to sys.path so we can import its helpers without
-# packaging the script. The bench script does sys.path.insert for the
-# PageIndex package; we replicate that here so the import doesn't fail
-# on test collection in environments without PageIndex installed.
-_PAGEINDEX_ROOT = Path("/Users/calvin/AstrocyteAI/PageIndex")
-if str(_PAGEINDEX_ROOT) not in sys.path and _PAGEINDEX_ROOT.exists():
-    sys.path.insert(0, str(_PAGEINDEX_ROOT))
+# PageIndex is installed as the ``pageindex`` package (AstrocyteAI fork)
+# via ``make bench-runner-deps``. ``_import_bench_module`` below guards
+# with ``pytest.importorskip("pageindex")`` so this file collects clean
+# in environments without it installed. No sys.path shim needed.
 
 
 def _import_bench_module():

@@ -34,8 +34,10 @@ from astrocyte.policy.homeostasis import count_tokens
 logger = logging.getLogger(__name__)
 
 
-# PageIndex parity — the exact prompt from
-# /Users/calvin/AstrocyteAI/PageIndex/pageindex/utils.py:generate_node_summary
+# PageIndex parity — the exact prompt from ``generate_node_summary`` in
+# https://github.com/AstrocyteAI/PageIndex/blob/8cbcc08/pageindex/utils.py
+# (permalink to the pinned fork the bench installs; byte-identical to
+# upstream VectifyAI/PageIndex for this file).
 PAGEINDEX_SUMMARY_PROMPT = """You are given a part of a document, your task is to generate a description of the partial document about what are main points covered in the partial document.
 
     Partial Document Text: {node_text}
