@@ -164,7 +164,7 @@ jobs:
           output-file: sbom.spdx.json
 
       - name: Attest SBOM (→ GHCR)
-        uses: actions/attest-sbom@v2
+        uses: actions/attest-sbom@v4
         with:
           subject-name: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py
           subject-digest: ${{ steps.push.outputs.digest }}
