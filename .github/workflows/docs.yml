@@ -37,7 +37,7 @@ jobs:
       # coverage of a gateway endpoint or a public astrocyte name. The
       # code-side direction (new endpoint/name without docs) runs in ci.yml's
       # api-contracts job.
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           version: "latest"
 
