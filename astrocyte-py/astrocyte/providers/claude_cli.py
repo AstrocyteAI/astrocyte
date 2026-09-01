@@ -26,6 +26,21 @@ Limitations (inherent to the CLI surface, documented rather than hidden):
   via :class:`~astrocyte.providers.composite.CompositeLLMProvider`.
 - Each call pays ~1-3s of process startup on top of inference. Concurrency is
   bounded by a semaphore (``ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY``, default 4).
+
+Resilience (added after the first claude-native n=90 run lost ~1300 ingest
+calls to silent throttling and produced a bench over empty memories):
+
+- **Both streams captured on failure.** The CLI reports throttling on
+  stdout; logging stderr alone made every failure look empty.
+- **Rate-limit-aware backoff.** Output matching a throttle signature backs
+  off on a minutes scale (``ASTROCYTE_CLAUDE_CLI_RATE_LIMIT_BACKOFF``,
+  default 60s, doubling per attempt, capped at 600s) rather than the 2s/4s
+  ladder used for ordinary errors.
+- **Circuit breaker.** After ``ASTROCYTE_CLAUDE_CLI_BREAKER_THRESHOLD``
+  consecutive failures (default 5) *all* callers pause for
+  ``ASTROCYTE_CLAUDE_CLI_BREAKER_COOLDOWN`` seconds (default 300, doubling
+  up to 30min) — the pipeline stops rather than completing a run whose
+  memories were never populated.
 """
 
 from __future__ import annotations
@@ -36,6 +51,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from typing import ClassVar
 
 from astrocyte.types import (
@@ -151,6 +167,90 @@ def _normalize_json_output(text: str) -> str | None:
     return None
 
 
+#: Substrings that indicate the CLI was refused for quota/rate reasons rather
+#: than a genuine error. Matched case-insensitively against combined
+#: stdout+stderr. The CLI reports these on stdout, which is why the first
+#: claude-native bench run saw 1329 failures with empty error text.
+_RATE_LIMIT_SIGNATURES: tuple[str, ...] = (
+    "rate limit",
+    "rate-limit",
+    "usage limit",
+    "limit reached",
+    "quota",
+    "too many requests",
+    "429",
+    "overloaded",
+    "try again later",
+    "please wait",
+    "capacity",
+)
+
+
+def _looks_rate_limited(text: str) -> bool:
+    """True when CLI output smells like throttling rather than a hard error."""
+    low = text.lower()
+    return any(sig in low for sig in _RATE_LIMIT_SIGNATURES)
+
+
+class _CircuitBreaker:
+    """Pauses *all* calls after a sustained failure burst.
+
+    Motivation: the first claude-native n=90 run ground through ~1300 failed
+    ingest calls and produced questions whose memories were empty — a bench
+    that reports a number but measures nothing. A burst of failures means the
+    upstream is refusing us; the correct response is to stop and wait, not to
+    keep spending quota on calls that will fail and silently degrade the data.
+
+    Opens after ``threshold`` consecutive failures, holds every caller for
+    ``cooldown`` seconds, then lets a single probe through. A successful call
+    closes it; a failure re-opens it with the cooldown doubled (capped).
+    """
+
+    def __init__(self, *, threshold: int = 5, cooldown: float = 300.0, max_cooldown: float = 1800.0) -> None:
+        self._threshold = threshold
+        self._base_cooldown = cooldown
+        self._cooldown = cooldown
+        self._max_cooldown = max_cooldown
+        self._consecutive = 0
+        self._open_until = 0.0
+        self._lock = asyncio.Lock()
+
+    async def await_closed(self) -> None:
+        """Block until the breaker is closed. No-op in the healthy path."""
+        while True:
+            async with self._lock:
+                remaining = self._open_until - time.monotonic()
+                if remaining <= 0:
+                    return
+            logger.warning(
+                "claude_cli: circuit OPEN — pausing %.0fs before retrying "
+                "(sustained failures suggest rate limiting)", remaining,
+            )
+            await asyncio.sleep(min(remaining, 30.0))
+
+    async def record_success(self) -> None:
+        async with self._lock:
+            if self._consecutive or self._cooldown != self._base_cooldown:
+                logger.info("claude_cli: circuit CLOSED — calls succeeding again")
+            self._consecutive = 0
+            self._cooldown = self._base_cooldown
+            self._open_until = 0.0
+
+    async def record_failure(self) -> None:
+        async with self._lock:
+            self._consecutive += 1
+            if self._consecutive < self._threshold:
+                return
+            self._open_until = time.monotonic() + self._cooldown
+            logger.error(
+                "claude_cli: %d consecutive failures — opening circuit for %.0fs. "
+                "Ingest is PAUSED rather than proceeding with degraded memories.",
+                self._consecutive, self._cooldown,
+            )
+            self._cooldown = min(self._cooldown * 2, self._max_cooldown)
+            self._consecutive = 0
+
+
 class ClaudeCliProvider:
     """LLMProvider whose ``complete()`` shells out to the Claude Code CLI."""
 
@@ -162,8 +262,9 @@ class ClaudeCliProvider:
         model: str = "haiku",
         binary: str | None = None,
         timeout: float = 180.0,
-        max_retries: int = 3,
+        max_retries: int = 4,
         max_concurrency: int | None = None,
+        rate_limit_backoff: float | None = None,
     ) -> None:
         resolved = binary or os.environ.get("CLAUDE_CLI_BIN") or shutil.which("claude")
         if not resolved:
@@ -175,6 +276,11 @@ class ClaudeCliProvider:
         self._model = model
         self._timeout = timeout
         self._max_retries = max(1, max_retries)
+        # Throttling clears on a minutes-scale window; seconds-scale retries
+        # just burn the budget inside it. First delay, doubled per attempt.
+        self._rate_limit_backoff = rate_limit_backoff or float(
+            os.environ.get("ASTROCYTE_CLAUDE_CLI_RATE_LIMIT_BACKOFF", "60")
+        )
         conc = max_concurrency or int(
             os.environ.get("ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY", "4")
         )
@@ -183,6 +289,13 @@ class ClaudeCliProvider:
         # CLAUDE.md context.
         self._cwd = tempfile.mkdtemp(prefix="astrocyte-claude-cli-")
         self._warned_model_override = False
+        # Shared across every call on this provider: a failure burst pauses
+        # the whole pipeline instead of letting it grind through with broken
+        # ingest. Tunable for tests via the env vars below.
+        self._breaker = _CircuitBreaker(
+            threshold=int(os.environ.get("ASTROCYTE_CLAUDE_CLI_BREAKER_THRESHOLD", "5")),
+            cooldown=float(os.environ.get("ASTROCYTE_CLAUDE_CLI_BREAKER_COOLDOWN", "300")),
+        )
 
     def capabilities(self) -> LLMCapabilities:
         return LLMCapabilities(
@@ -220,7 +333,12 @@ class ClaudeCliProvider:
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
 
         last_error: str = ""
-        for attempt in range(self._max_retries):
+        rate_limited = False
+        attempt = 0
+        while attempt < self._max_retries:
+            # A sustained failure burst pauses every caller here rather than
+            # letting the pipeline grind on with failing ingest.
+            await self._breaker.await_closed()
             try:
                 async with self._sem:
                     proc = await asyncio.create_subprocess_exec(
@@ -250,11 +368,10 @@ class ClaudeCliProvider:
                         # Emulated JSON mode: normalize fences/prose to bare
                         # JSON so downstream ``json.loads`` behaves as it
                         # would under native constrained decoding. An
-                        # unparseable response counts as a failed attempt
-                        # and is retried; after the final attempt we fall
-                        # back to the RAW text (never raise) — pipeline
-                        # stages have their own tolerant parsing and
-                        # graceful-degradation paths.
+                        # unparseable response is retried; after the final
+                        # attempt we fall back to the RAW text (never raise)
+                        # — pipeline stages have tolerant parsing and their
+                        # own graceful-degradation paths.
                         normalized = _normalize_json_output(text)
                         if normalized is not None:
                             text = normalized
@@ -265,7 +382,8 @@ class ClaudeCliProvider:
                                 "(attempt %d/%d) — retrying",
                                 attempt + 1, self._max_retries,
                             )
-                            await asyncio.sleep(2 * (attempt + 1))
+                            attempt += 1
+                            await asyncio.sleep(2 * attempt)
                             continue
                         else:
                             logger.warning(
@@ -273,33 +391,61 @@ class ClaudeCliProvider:
                                 "after %d attempts — returning raw text",
                                 self._max_retries,
                             )
+                    await self._breaker.record_success()
                     return Completion(
                         text=text,
                         model=self._model,
                         usage=None,  # CLI print mode reports no token usage
                         tool_calls=None,
                     )
-                last_error = stderr.decode("utf-8", "replace").strip()[:500]
+                # Non-zero exit. The CLI reports throttling on STDOUT, so both
+                # streams are captured — logging only stderr is what made the
+                # first claude-native run's 1329 failures look empty.
+                out = stdout.decode("utf-8", "replace").strip()
+                err = stderr.decode("utf-8", "replace").strip()
+                combined = (err + "\n" + out).strip()
+                rate_limited = _looks_rate_limited(combined)
+                last_error = (combined or f"exit {proc.returncode}, no output")[:500]
                 logger.warning(
-                    "claude_cli complete attempt %d/%d exited %s: %s",
-                    attempt + 1, self._max_retries, proc.returncode, last_error,
+                    "claude_cli complete attempt %d/%d exited %s%s: %s",
+                    attempt + 1, self._max_retries, proc.returncode,
+                    " [RATE-LIMITED]" if rate_limited else "", last_error,
                 )
             except asyncio.TimeoutError:
                 last_error = f"timeout after {self._timeout}s"
+                rate_limited = False
                 logger.warning(
                     "claude_cli complete attempt %d/%d timed out",
                     attempt + 1, self._max_retries,
                 )
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc)[:500]
+                rate_limited = _looks_rate_limited(last_error)
                 logger.warning(
                     "claude_cli complete attempt %d/%d failed: %s",
                     attempt + 1, self._max_retries, exc,
                 )
-            if attempt < self._max_retries - 1:
-                await asyncio.sleep(2 * (attempt + 1))
 
-        raise RuntimeError(f"claude_cli complete failed after {self._max_retries} attempts: {last_error}")
+            attempt += 1
+            if attempt < self._max_retries:
+                if rate_limited:
+                    # Throttling clears in minutes, not seconds. The old
+                    # 2s/4s ladder burned all retries inside a window that
+                    # had barely started.
+                    delay = min(self._rate_limit_backoff * (2 ** (attempt - 1)), 600.0)
+                    logger.warning(
+                        "claude_cli: rate limited — backing off %.0fs before "
+                        "attempt %d/%d", delay, attempt + 1, self._max_retries,
+                    )
+                else:
+                    delay = 2.0 * attempt
+                await asyncio.sleep(delay)
+
+        await self._breaker.record_failure()
+        raise RuntimeError(
+            f"claude_cli complete failed after {self._max_retries} attempts"
+            f"{' (rate limited)' if rate_limited else ''}: {last_error}"
+        )
 
     async def embed(
         self,

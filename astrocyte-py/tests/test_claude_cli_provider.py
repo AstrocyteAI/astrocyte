@@ -9,6 +9,7 @@ smoke surfaced fenced/prose-wrapped outputs on section_link_extraction).
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -115,3 +116,96 @@ class TestProviderGuards:
         provider = ClaudeCliProvider(model="haiku", binary="/bin/true")
         with pytest.raises(NotImplementedError):
             await provider.embed(["x"])
+
+
+class TestRateLimitDetection:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Claude AI usage limit reached. Your limit will reset at 3pm.",
+            "Error: rate limit exceeded",
+            "429 Too Many Requests",
+            "API is temporarily overloaded, try again later",
+            "You have exceeded your quota",
+        ],
+    )
+    def test_throttle_signatures_detected(self, text):
+        from astrocyte.providers.claude_cli import _looks_rate_limited
+
+        assert _looks_rate_limited(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SyntaxError: unexpected token",
+            "command not found",
+            "",
+            "the model returned an empty response",
+        ],
+    )
+    def test_ordinary_errors_not_flagged(self, text):
+        from astrocyte.providers.claude_cli import _looks_rate_limited
+
+        assert _looks_rate_limited(text) is False
+
+
+class TestCircuitBreaker:
+    @pytest.mark.asyncio
+    async def test_stays_closed_below_threshold(self):
+        from astrocyte.providers.claude_cli import _CircuitBreaker
+
+        cb = _CircuitBreaker(threshold=3, cooldown=60.0)
+        for _ in range(2):
+            await cb.record_failure()
+        # Closed: returns immediately rather than sleeping.
+        await asyncio.wait_for(cb.await_closed(), timeout=0.5)
+
+    @pytest.mark.asyncio
+    async def test_opens_at_threshold(self):
+        from astrocyte.providers.claude_cli import _CircuitBreaker
+
+        cb = _CircuitBreaker(threshold=3, cooldown=60.0)
+        for _ in range(3):
+            await cb.record_failure()
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(cb.await_closed(), timeout=0.3)
+
+    @pytest.mark.asyncio
+    async def test_success_closes_and_resets_cooldown(self):
+        from astrocyte.providers.claude_cli import _CircuitBreaker
+
+        cb = _CircuitBreaker(threshold=2, cooldown=60.0)
+        for _ in range(2):
+            await cb.record_failure()
+        await cb.record_success()
+        await asyncio.wait_for(cb.await_closed(), timeout=0.5)
+        assert cb._cooldown == 60.0
+
+    @pytest.mark.asyncio
+    async def test_cooldown_doubles_on_repeat_open(self):
+        from astrocyte.providers.claude_cli import _CircuitBreaker
+
+        cb = _CircuitBreaker(threshold=1, cooldown=10.0, max_cooldown=100.0)
+        await cb.record_failure()
+        assert cb._cooldown == 20.0
+        await cb.record_failure()
+        assert cb._cooldown == 40.0
+
+    @pytest.mark.asyncio
+    async def test_cooldown_capped(self):
+        from astrocyte.providers.claude_cli import _CircuitBreaker
+
+        cb = _CircuitBreaker(threshold=1, cooldown=50.0, max_cooldown=60.0)
+        for _ in range(5):
+            await cb.record_failure()
+        assert cb._cooldown == 60.0
+
+
+class TestProviderDefaults:
+    def test_safe_defaults(self):
+        from astrocyte.providers.claude_cli import ClaudeCliProvider
+
+        p = ClaudeCliProvider(model="haiku", binary="/bin/true")
+        assert p._sem._value == 4, "concurrency must default to the tested value"
+        assert p._rate_limit_backoff >= 60.0, "throttle backoff must be minutes-scale"
+        assert p._breaker._threshold == 5

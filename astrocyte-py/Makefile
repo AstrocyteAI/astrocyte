@@ -430,13 +430,18 @@ MEM0_HARNESS_JUDGE_MODEL      ?= gpt-4o-mini
 #   ASTROCYTE_LLM_PROVIDER=claude_cli \
 #   ASTROCYTE_LLM_PROVIDER_CONFIG='{"model": "haiku"}' \
 #   ASTROCYTE_EMBEDDING_PROVIDER=local_embeddings \
-#   ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY=8 \
 #   make bench-mem0-harness-lme \
 #     MEM0_HARNESS_PROVIDER=claude-cli \
 #     MEM0_HARNESS_ANSWERER_MODEL=haiku MEM0_HARNESS_JUDGE_MODEL=haiku
-# (CLI subprocess concurrency: default 4; 8 measured as the bench setting —
-#  raise/lower via ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY, or per answerer/judge
-#  via CLAUDE_CLI_MAX_CONCURRENCY on the memory-benchmarks LLMClient side.)
+# CLI subprocess concurrency defaults to 4 on both sides
+# (ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY for the pipeline,
+#  CLAUDE_CLI_MAX_CONCURRENCY for answerer/judge). DO NOT raise to 8 for a
+#  long run: 2026-09-02's n=90 attempt did, exhausted the subscription's
+#  rolling window after ~1h, and lost ~1300 ingest calls to silent throttling
+#  (28.6% vs the 74.4% baseline — a bench over empty memories). A 76-minute
+#  smoke at 4 saw zero failures. The provider now backs off on minutes and
+#  trips a circuit breaker on sustained failure, but 4 remains the tested
+#  setting for multi-hour runs.
 # NOTE: claude-native runs are a separate ablation track — the CLI exposes no
 # temperature/max_tokens control and the embedder differs, so results are NOT
 # comparable to the gpt-4o-mini trend line and must not extend BENCH_PARITY
