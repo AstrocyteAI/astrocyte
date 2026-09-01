@@ -177,7 +177,7 @@ def create_app(brain: Any | None = None) -> FastAPI:
 
     async def _brain() -> Any:
         if app.state.brain is None:
-            from astrocyte import Astrocyte  # noqa: PLC0415
+            from astrocyte import Astrocyte
 
             cfg = os.environ.get("ASTROCYTE_CONFIG_PATH")
             app.state.brain = (
@@ -239,12 +239,12 @@ def create_app(brain: Any | None = None) -> FastAPI:
 
         # Only report success once the content is persisted AND searchable.
         # Surfacing a pipeline-level failure as 500 lets AML retry rather
-        # than silently scoring us on memories we never stored.
-        if getattr(result, "error", None) or not getattr(result, "stored", False):
-            # Dedup is a legitimate no-op store: content is already searchable.
-            if not getattr(result, "deduplicated", False):
-                detail = getattr(result, "error", None) or "retain did not store content"
-                raise HTTPException(status_code=500, detail=detail)
+        # than silently scoring us on memories we never stored. Dedup is a
+        # legitimate no-op store — the content is already searchable.
+        not_stored = getattr(result, "error", None) or not getattr(result, "stored", False)
+        if not_stored and not getattr(result, "deduplicated", False):
+            detail = getattr(result, "error", None) or "retain did not store content"
+            raise HTTPException(status_code=500, detail=detail)
 
         return AddResponse(
             success=True,
