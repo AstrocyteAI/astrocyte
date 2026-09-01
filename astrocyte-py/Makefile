@@ -305,7 +305,7 @@ LME_BANK_ID      ?= bench-pageindex-lme
 # import short-circuits when everything's already present. Installs are chained
 # with ``&&`` so any failure aborts the recipe (a prior version used ``;`` and
 # silently masked a failed install).
-MEM_BENCH_REF  ?= 3709348eceda0a572a09715e5003e67d10fd19ae
+MEM_BENCH_REF  ?= 575e14183d1e307381461cac64d38a9d5cd7f754
 PAGEINDEX_REF  ?= 8cbcc08e123400f8da83aca4e1d277d073a332ac
 _MEM_BENCH_GIT := git+https://github.com/AstrocyteAI/memory-benchmarks@$(MEM_BENCH_REF)
 _PAGEINDEX_GIT := git+https://github.com/AstrocyteAI/PageIndex@$(PAGEINDEX_REF)
