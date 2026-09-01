@@ -113,7 +113,94 @@ Priority order changed by the survey; the centerpiece is now AML, with a hard da
 
 **Remaining gap:** the A-H capability legend is SPA-rendered and not exposed via API; resolve it before tuning toward G/C (see §10).
 
-1. **AML cycle-2 submission (opens 2026-09-20 — schedule-driving).** Build the Add/Search adapter (their contract: systems expose only `Add` and `Search`; the platform owns answerer/judge/scoring; Search must return memories, not answers). Astrocyte's `retain()`/`recall()` map directly. Context: 69 frameworks in cycle 1; top score 58.02; best OSS 45.06. **Beating 45.06 makes Astrocyte the top open-source memory framework on the only multi-institution matched harness in existence** — a stronger claim than any self-reported 90s number. Pre-work: pull their full cycle-1 score table and metric composition before tuning anything toward it.
+### The `academic` track — where Astrocyte should enter (retrieved 2026-09-01)
+
+The open-source track is named **`academic`**, not "open source". Correct query:
+`GET /leaderboard?track=academic&benchmark_type=textual`. Valid enums (from the API's own 422 validation): `track ∈ {industry, academic}`, `benchmark_type ∈ {textual, coding}`. Full spec at `/api/openapi.json`.
+
+**50 entries. Crucially, most submit code, not a hosted service**: 39 `Submitted (repo)`, 6 `Submitted (API)`, 5 platform-`Evaluated`. Repo submission likely removes the "deploy and fund a public HTTPS endpoint" burden — confirm mechanics, but our adapter serves either path.
+
+| # | System | Score | Repo |
+|---|---|---|---|
+| 1 | InvMem | **45.06** | `wenxiaof345-ctrl/vanilla-rag-memory` |
+| 2 | Refind | 44.97 | `imlrz/ReFind` |
+| 3 | ActiveMemoryIndex | 44.84 | `linxuhao/ActiveMemoryIndex` |
+| 4 | Hybrid Search v2.0 | 44.57 | `cydd-1972/hybrid_search` |
+| 5 | ChronoHybridMem | 44.33 | `Tin11Mn/chrono-hybrid-mem` |
+| 6 | Hybrid Episodic Memory | 44.28 | `tlysanhuo/agent-memory-challenge` |
+| 7 | Chronicle | 44.19 | `simple-boy/Chronicle-Memory` |
+| 8 | FlowGrid_AML_Retriever | 43.98 | `dlxeva/flowgrid-aml-retriever` |
+| 9 | LLLMemoryAgent | 43.06 | `llLAlisa/memory-agent-submission` |
+| 10 | aml-memory-mvp | 42.95 | `0xboyu/aml-memory-mvp` |
+
+Distribution: top **45.06** · rank-10 42.95 · median 40.78 · min 23.55.
+
+**Why this reframes the goal.** The #1 open-source system's repo is named `vanilla-rag-memory`, and the entire top 10 spans **2.1 points**. These are hackathon-grade entries; Astrocyte brings a three-engine pipeline, RRF fusion, cross-encoder rerank, typed section links, and observation/wiki tiers. **Target: >45.06 = #1 open source.** Mid-pack (~41) is the floor, not the ambition.
+
+**Academic-track capability ranges (min / median / max)** — the concrete M46 targets:
+
+| | A | B | C | D | E | G | H |
+|---|---|---|---|---|---|---|---|
+| min | 17.3 | 14.6 | 8.6 | 14.4 | 40.3 | 3.5 | 22.6 |
+| median | 51.0 | 41.0 | **19.5** | 32.1 | 53.5 | **27.5** | 32.9 |
+| max | 63.5 | 53.1 | **37.9** | 38.7 | 58.3 | **30.9** | 67.7 |
+
+**C and G are the field's walls** — C caps at 37.9 here (vs MemoraX's 60 in industry) and G at 30.9; nobody in open source has cracked either. **H has a lone 67.7 outlier against a 32.9 median**, so one entrant found something specific there worth understanding. These three columns are where a differentiated architecture separates.
+
+**The `coding` track is empty** (`benchmark_type=coding` → 0 entries) despite 12 repos / 1,290 tasks being built. A second land-grab to watch.
+
+### Merged field — we measure against BOTH tracks
+
+Cross-track comparison is legitimate: every entry in both tracks reports
+`dataset_suite_version: public_suite_v3`, `evaluator_id: official-benchmark-pipelines-v3`,
+`score_scale: 0-100`. The tracks differ in *who submits* (commercial API vs
+open repo), **not** in what is measured. **65 systems total** (15 industry + 50 academic).
+
+Merged top 20:
+
+| # | Track | System | Score |
+|---|---|---|---|
+| 1 | IND | MemoraX | 58.02 |
+| 2 | IND | MemOS | 45.89 |
+| 3 | ACA | InvMem | 45.06 |
+| 4 | ACA | Refind | 44.97 |
+| 5 | ACA | ActiveMemoryIndex | 44.84 |
+| 6 | ACA | Hybrid Search v2.0 | 44.57 |
+| 7 | ACA | ChronoHybridMem | 44.33 |
+| 8 | ACA | Hybrid Episodic Memory | 44.28 |
+| 9 | IND | NTES-MEMORY-SMART | 44.21 |
+| 10 | ACA | Chronicle | 44.19 |
+| 11 | ACA | FlowGrid_AML_Retriever | 43.98 |
+| 12 | IND | AML-Eval-FLASH | 43.65 |
+| 13 | ACA | LLLMemoryAgent | 43.06 |
+| 14 | ACA | aml-memory-mvp | 42.95 |
+| 15 | IND | Cognee | 42.61 |
+| 16 | ACA | TraceMem | 42.53 |
+| 17 | ACA | Memoria | 42.33 |
+| 18 | ACA | Raw Memory | 42.31 |
+| 19 | ACA | fenghe | 42.26 |
+| 20 | ACA | AMC-Memory | 42.22 |
+
+Mem0 (41.40) and Vectorize Hindsight Cloud (38.54) fall **outside the merged top 20** — behind a dozen anonymous academic entries.
+
+**Score → placement (the target table for M46/M47):**
+
+| Score | Merged rank | Meaning |
+|---|---|---|
+| 41 | ~33rd | mid-pack; ahead of Hindsight Cloud, roughly level with Mem0 |
+| 43 | ~14th | top quartile |
+| 45.1 | **3rd** | **#1 open source** (clears InvMem 45.06) |
+| 46 | **2nd** | clears MemOS — best system on the board except MemoraX |
+| 50 | 2nd | still 2nd; MemoraX's 58.02 is a wide moat |
+
+**Positioning consequence.** Two claims are available at different price points:
+"#1 open-source memory framework" needs **>45.06**; "#2 overall, ahead of every
+commercial system except MemoraX" needs **>45.89** — only 0.83 points more.
+Both are far cheaper than the 58.02 outright lead, and both are more defensible
+than any unmatched self-report. Report our result against the merged field, not
+only the academic track.
+
+1. **AML cycle-2 submission (opens 2026-09-20 — schedule-driving).** Build the Add/Search adapter (their contract: systems expose only `Add` and `Search`; the platform owns answerer/judge/scoring; Search must return memories, not answers). Astrocyte's `retain()`/`recall()` map directly — shipped in `astrocyte-services-py/astrocyte-aml-py` (33 contract tests, CI-gated). **Enter the `academic` track; beat 45.06 for #1 open source** — a stronger claim than any self-reported 90s number.
 2. **LongMemEval-V2 submission** (~1 wk incl. multimodal triage): 451 questions, LAFS Gain headline metric, **leaderboards currently empty** — early presence is cheap and durable. Our latency data from M45/M46 feeds directly into the LAFS frontier.
 3. **AMA-Bench adapter** (~2-3 days): HF leaderboard live since March 2026 (top: GPT-5.2 raw at 0.7226 avg SR); typed A/B/C/D diagnostics remain the value.
 4. **Mem0 open harness** (demoted to optional): still useful for one-to-one comparison against their published Table 1, but AML supersedes it as the credibility instrument.
@@ -150,7 +237,7 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
 ## 8. Projected outcome (revised per §0b)
 
 - **Internal**: LME-v1 ~80-85% after Phases 0-1 at evidence midpoints (LoCoMo held as regression guard near its ~85% discriminative limit).
-- **Public — the actual SOTA definition now**: (a) an AML cycle-2 composite above 45.06 = top open-source memory framework on the field's only matched harness; (b) early rows on the empty LME-V2 leaderboards with a competitive LAFS frontier; (c) AMA-Bench presence with per-category diagnostics.
+- **Public — the actual SOTA definition now**, measured against the merged 65-system field (both AML tracks, same suite/evaluator): (a) **>45.06 = #1 open source (3rd overall)**; (b) **>45.89 = 2nd overall**, ahead of every commercial system except MemoraX — 0.83 points beyond the first milestone; (c) early rows on the empty LME-V2 leaderboards with a competitive LAFS frontier; (d) AMA-Bench presence with per-category diagnostics. Mid-pack (~41) already places ahead of Hindsight Cloud (38.54) and level with Mem0 (41.40).
 - **Open-field headline**: MemoryArena (M48b) remains untouched by every vendor surveyed — first credible ≥0.35 SR on any domain stands.
 - Vendor self-reports in the 90s are no longer the bar to clear: under matched conditions the entire field sits at ≤58 composite, and our honestly-harnessed numbers may already be more competitive than the raw comparison suggested.
 
@@ -166,5 +253,6 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
 1. **A-H capability legend.** The leaderboard exposes per-capability scores but not their definitions (`/api/capabilities` 404s; the legend is SPA-rendered). G and C are the differentiating axes — we should not tune toward them blind. Resolve by reading the rendered leaderboard UI or the AML paper/docs.
-2. **Open-source track.** Only the `industry` track was returned by the API (15 entries). Cycle-1 reporting cited ~69 frameworks and a best-OSS of 45.06 (InvMem), so an OSS track exists somewhere — determine which track Astrocyte should enter, since "top open-source" is the more attainable and more defensible claim.
-3. **Add-side cost/latency of a full evaluation run.** ~1,500 histories and ~5,000 questions, batched at ≤20 messages / 2,000 words per Add. Our retain path is LLM-heavy (fact extraction + tree summaries + embeddings). Estimate total ingest spend under each provider config BEFORE requesting evaluation access; this is the real budget question for the submission.
+2. ~~**Open-source track.**~~ **RESOLVED 2026-09-01**: it is the **`academic`** track (`?track=academic&benchmark_type=textual`), 50 entries, top 45.06. See §4. Follow-up: confirm the `Submitted (repo)` mechanics (39 of 50 chose it) — if code submission is accepted, the hosting/funding burden largely disappears and the deployment decision shrinks to a bench-config choice.
+3. **Add-side cost/latency of a full evaluation run.** ~1,500 histories and ~5,000 questions, batched at ≤20 messages / 2,000 words per Add. Our retain path is LLM-heavy (fact extraction + tree summaries + embeddings). Estimate total ingest spend under each provider config BEFORE requesting evaluation access; this is the real budget question. **Note:** the OpenAI account is currently credit-exhausted, so either credits are restored or the run uses the claude-native provider stack (`claude_cli` + `local_embeddings`) — the latter is untested at evaluation scale, and the CLI's subscription auth is awkward for a hosted service (a point in favour of repo submission).
+4. **The lone H=67.7 outlier** in the academic track (median 32.9). Whatever that entrant did in capability H is the single largest unexplained delta on the board; identify it once the A-H legend is known.
