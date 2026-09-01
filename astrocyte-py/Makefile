@@ -412,6 +412,37 @@ MEM0_HARNESS_USER_PROFILE     ?= 1
 # Mem0's paper Table 1 (which uses gpt-4o).
 MEM0_HARNESS_ANSWERER_MODEL   ?= gpt-4o-mini
 MEM0_HARNESS_JUDGE_MODEL      ?= gpt-4o-mini
+# Provider for answerer / judge LLM calls. ``openai`` (default) uses
+# OPENAI_API_KEY via Doppler. ``claude-cli`` shells out to the local
+# ``claude`` binary in print mode — subscription auth, no API key
+# (ANTHROPIC_API_KEY is deliberately NOT passed to the subprocess).
+#
+# The PIPELINE side (tree build, summaries, extraction, embeddings) is
+# configured separately and generically via env — any entry point in the
+# ``astrocyte.llm_providers`` group or a ``module:Class`` path works
+# (see ``_build_llm_provider_from_env`` in scripts/mem0_harness/astrocyte_client.py):
+#   ASTROCYTE_LLM_PROVIDER            (default openai)
+#   ASTROCYTE_LLM_PROVIDER_CONFIG     JSON kwargs, e.g. '{"model": "haiku"}'
+#   ASTROCYTE_EMBEDDING_PROVIDER      optional split embed-side provider
+#   ASTROCYTE_EMBEDDING_PROVIDER_CONFIG
+#
+# Fully Claude-native run (zero OpenAI anywhere):
+#   ASTROCYTE_LLM_PROVIDER=claude_cli \
+#   ASTROCYTE_LLM_PROVIDER_CONFIG='{"model": "haiku"}' \
+#   ASTROCYTE_EMBEDDING_PROVIDER=local_embeddings \
+#   ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY=8 \
+#   make bench-mem0-harness-lme \
+#     MEM0_HARNESS_PROVIDER=claude-cli \
+#     MEM0_HARNESS_ANSWERER_MODEL=haiku MEM0_HARNESS_JUDGE_MODEL=haiku
+# (CLI subprocess concurrency: default 4; 8 measured as the bench setting —
+#  raise/lower via ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY, or per answerer/judge
+#  via CLAUDE_CLI_MAX_CONCURRENCY on the memory-benchmarks LLMClient side.)
+# NOTE: claude-native runs are a separate ablation track — the CLI exposes no
+# temperature/max_tokens control and the embedder differs, so results are NOT
+# comparable to the gpt-4o-mini trend line and must not extend BENCH_PARITY
+# history.
+MEM0_HARNESS_PROVIDER         ?= openai
+MEM0_HARNESS_JUDGE_PROVIDER   ?= $(MEM0_HARNESS_PROVIDER)
 
 # Question-cap defaults — standing methodology going forward:
 #   LOCOMO_MAX_Q  total-question cap for LoCoMo (run_locomo.py passes this
@@ -443,8 +474,8 @@ bench-mem0-harness-locomo: $(_BENCH_DB) bench-runner-deps
 	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	  uv run python scripts/mem0_harness/run_locomo.py \
 	    --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
-	    --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
-	    --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider openai \
+	    --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider $(MEM0_HARNESS_JUDGE_PROVIDER) \
+	    --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider $(MEM0_HARNESS_PROVIDER) \
 	    --max-workers $(MEM0_HARNESS_MAX_WORKERS) --rpm 60 \
 	    --top-k $(MEM0_HARNESS_TOP_K) --top-k-cutoffs $(MEM0_HARNESS_CUTOFFS) \
 	    $(_MEM0_HARNESS_USER_PROFILE_FLAG) \
@@ -456,8 +487,8 @@ bench-mem0-harness-lme: $(_BENCH_DB_2) bench-runner-deps
 	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	  uv run python scripts/mem0_harness/run_lme.py \
 	    --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
-	    --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
-	    --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider openai \
+	    --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider $(MEM0_HARNESS_JUDGE_PROVIDER) \
+	    --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider $(MEM0_HARNESS_PROVIDER) \
 	    --max-workers $(MEM0_HARNESS_MAX_WORKERS) --rpm 60 \
 	    --top-k $(MEM0_HARNESS_TOP_K) --top-k-cutoffs $(MEM0_HARNESS_CUTOFFS) \
 	    $(_MEM0_HARNESS_USER_PROFILE_FLAG) \
@@ -474,8 +505,8 @@ bench-mem0-harness-parallel: $(_BENCH_DB) $(_BENCH_DB_2) bench-runner-deps
 	@( $(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	     uv run python scripts/mem0_harness/run_locomo.py \
 	       --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
-	       --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
-	       --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider openai \
+	       --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider $(MEM0_HARNESS_JUDGE_PROVIDER) \
+	       --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider $(MEM0_HARNESS_PROVIDER) \
 	       --max-workers $(MEM0_HARNESS_MAX_WORKERS) --rpm 60 \
 	       --top-k $(MEM0_HARNESS_TOP_K) --top-k-cutoffs $(MEM0_HARNESS_CUTOFFS) \
 	       $(_MEM0_HARNESS_USER_PROFILE_FLAG) \
@@ -486,8 +517,8 @@ bench-mem0-harness-parallel: $(_BENCH_DB) $(_BENCH_DB_2) bench-runner-deps
 	 ( $(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	     uv run python scripts/mem0_harness/run_lme.py \
 	       --project-name $(MEM0_HARNESS_PROJECT) --backend oss \
-	       --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider openai \
-	       --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider openai \
+	       --judge-model $(MEM0_HARNESS_JUDGE_MODEL) --judge-provider $(MEM0_HARNESS_JUDGE_PROVIDER) \
+	       --answerer-model $(MEM0_HARNESS_ANSWERER_MODEL) --provider $(MEM0_HARNESS_PROVIDER) \
 	       --max-workers $(MEM0_HARNESS_MAX_WORKERS) --rpm 60 \
 	       --top-k $(MEM0_HARNESS_TOP_K) --top-k-cutoffs $(MEM0_HARNESS_CUTOFFS) \
 	       $(_MEM0_HARNESS_USER_PROFILE_FLAG) \

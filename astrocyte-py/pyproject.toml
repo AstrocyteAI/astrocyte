@@ -210,6 +210,8 @@ in_memory = "astrocyte.testing.in_memory:InMemoryPageIndexStore"
 [project.entry-points."astrocyte.llm_providers"]
 mock = "astrocyte.testing.in_memory:MockLLMProvider"
 openai = "astrocyte.providers.openai:OpenAIProvider"
+claude_cli = "astrocyte.providers.claude_cli:ClaudeCliProvider"
+local_embeddings = "astrocyte.providers.local_embeddings:LocalEmbeddingsProvider"
 
 [tool.hatch.version]
 source = "vcs"

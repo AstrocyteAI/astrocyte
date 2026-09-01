@@ -143,6 +143,72 @@ def _slug_snake_case(text: str) -> str:
 # These helpers bridge the two without touching the downstream pipeline.
 
 
+def _build_llm_provider_from_env() -> Any:
+    """Resolve the pipeline LLM provider from env — fully configurable.
+
+    Mirrors the ``astrocyte.yaml`` keys 1:1 so a bench env translates
+    directly to a production config, and resolves through
+    ``astrocyte._discovery.resolve_provider`` — the same registry the
+    library and gateway use — so ANY installed provider adapter works
+    without touching this file.
+
+    Env surface:
+
+    - ``ASTROCYTE_LLM_PROVIDER`` — entry-point name in the
+      ``astrocyte.llm_providers`` group (``openai`` | ``claude_cli`` |
+      ``local_embeddings`` | ``litellm`` | ``mock`` | …) or a direct
+      ``module:Class`` import path. Hyphens are normalized to
+      underscores for entry-point lookup. Default: ``openai``
+      (pre-existing bench behavior).
+    - ``ASTROCYTE_LLM_PROVIDER_CONFIG`` — JSON object of constructor
+      kwargs, e.g. ``{"model": "haiku"}``.
+    - ``ASTROCYTE_EMBEDDING_PROVIDER`` /
+      ``ASTROCYTE_EMBEDDING_PROVIDER_CONFIG`` — optional separate
+      embed-side provider (same resolution rules). When set, the two
+      are composed via ``CompositeLLMProvider``: ``complete()`` goes to
+      the LLM provider, ``embed()`` to the embedding provider.
+
+    Example — fully Claude-native, zero OpenAI::
+
+        ASTROCYTE_LLM_PROVIDER=claude_cli
+        ASTROCYTE_LLM_PROVIDER_CONFIG='{"model": "haiku"}'
+        ASTROCYTE_EMBEDDING_PROVIDER=local_embeddings
+    """
+    import json as _json  # noqa: PLC0415
+
+    from astrocyte._discovery import resolve_provider  # noqa: PLC0415
+
+    def _instantiate(name_var: str, cfg_var: str, default: str | None) -> Any | None:
+        name = os.environ.get(name_var, default)
+        if not name:
+            return None
+        raw = os.environ.get(cfg_var, "")
+        try:
+            kwargs = _json.loads(raw) if raw else {}
+        except _json.JSONDecodeError as exc:
+            raise RuntimeError(f"{cfg_var} is not valid JSON: {raw!r}") from exc
+        if not isinstance(kwargs, dict):
+            raise RuntimeError(f"{cfg_var} must be a JSON object, got: {raw!r}")
+        lookup = name if ":" in name else name.replace("-", "_")
+        cls = resolve_provider(lookup, "llm_providers")
+        return cls(**kwargs)
+
+    provider = _instantiate(
+        "ASTROCYTE_LLM_PROVIDER", "ASTROCYTE_LLM_PROVIDER_CONFIG", default="openai",
+    )
+    embedder = _instantiate(
+        "ASTROCYTE_EMBEDDING_PROVIDER", "ASTROCYTE_EMBEDDING_PROVIDER_CONFIG", default=None,
+    )
+    if embedder is None:
+        return provider
+
+    from astrocyte.providers.composite import CompositeLLMProvider  # noqa: PLC0415
+
+    return CompositeLLMProvider(
+        completion_provider=provider, embedding_provider=embedder,
+    )
+
+
 def _make_summarizer_llm_call(provider: Any, model: str):
     """Adapt our LLMProvider.complete to AdaptiveSummarizer's ``LlmCall`` signature.
 
@@ -658,19 +724,15 @@ class AstrocyteClient:
             PostgresPageIndexStore,
         )
 
-        from astrocyte.providers.openai import OpenAIProvider  # noqa: PLC0415
-
         if not (os.environ.get("DATABASE_URL") or os.environ.get("ASTROCYTE_PG_DSN")):
             raise RuntimeError(
                 "AstrocyteClient requires DATABASE_URL or ASTROCYTE_PG_DSN; "
                 "run via `doppler run -- env DATABASE_URL=... ...`.",
             )
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise RuntimeError("AstrocyteClient requires OPENAI_API_KEY in env.")
 
         self._store = PostgresPageIndexStore(bootstrap_schema=True)
         self._mental_model_store = PostgresMentalModelStore(bootstrap_schema=True)
-        self._provider = OpenAIProvider(api_key=os.environ["OPENAI_API_KEY"])
+        self._provider = _build_llm_provider_from_env()
 
     async def close(self) -> None:
         # Provider + store may have their own resources to drain. Be
