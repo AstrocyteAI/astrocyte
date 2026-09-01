@@ -75,3 +75,61 @@ PYTHONPATH=. pytest tests/ -q
 ```
 
 33 contract-conformance tests; no DB, LLM, or network required.
+
+## Local self-evaluation (`aml_selfeval`)
+
+AML publishes the **answer** and **judge** halves of its pipelines
+([`data/<bench>/pipeline.py`](https://github.com/AML-memory/agent-memory-leaderboard)),
+which consume an `--input` JSONL of already-retrieved memories. Retrieval runs on
+their orchestrator. `aml_selfeval.retrieve` is that missing half, run locally:
+
+```
+ingest (Add) → retrieve (Search) → AML-shaped input JSONL
+             → their `pipeline.py answer` → their `pipeline.py evaluate`
+```
+
+**What this buys.** AML's answer prompt and judge rubric are used *verbatim*, and
+retrieval goes through the same `/add` + `/search` contract the platform exercises
+— so the number is far closer to a leaderboard score than our internal bench.
+
+**What it cannot replicate.** AML's private answerer/judge model choice, and four
+of the six suite benchmarks (`personamem`, `clbench`, `scriptmem`, `beam`) whose
+data is not published. Treat results as **directional, not a predicted placement.**
+
+### Run
+
+```bash
+# 0. Serve the adapter (own terminal)
+uvicorn astrocyte_aml.app:app --port 8080
+
+# 1. Retrieve
+python -m aml_selfeval.retrieve retrieve \
+    --dataset longmemeval \
+    --source ../../astrocyte-py/datasets/longmemeval/longmemeval_s_cleaned.json \
+    --output runs/lme_input.jsonl --limit 90
+
+# 2. Answer + judge with AML's own prompts (their repo, our models)
+git clone https://github.com/AML-memory/agent-memory-leaderboard /tmp/aml
+export ANSWER_API_BASE=... ANSWER_MODEL=... ANSWER_API_KEY=...
+export JUDGE_API_BASE=...  JUDGE_MODEL=...  JUDGE_API_KEY=...
+python /tmp/aml/data/longmemeval-s/pipeline.py answer \
+    --input runs/lme_input.jsonl --output runs/lme_answers.jsonl
+python /tmp/aml/data/longmemeval-s/pipeline.py evaluate \
+    --input runs/lme_input.jsonl --answers runs/lme_answers.jsonl \
+    --output runs/lme_scored.jsonl
+
+# 3. Score (overall + per question_type)
+python -m aml_selfeval.retrieve score \
+    --scored runs/lme_scored.jsonl --input runs/lme_input.jsonl
+```
+
+Datasets supported: `longmemeval` (LongMemEval-S) and `locomo`. `--resume` skips
+already-retrieved ids; `--concurrency` bounds in-flight items.
+
+### Measured ingest cost
+
+For LongMemEval at **n=90**: 500 items available, ~67 Add batches per item →
+**6,056 Add calls**, each running the full retain pipeline (fact extraction +
+tree summary + embeddings). Comparable to our internal n=90 LME bench
+(~50 min, ~$12) plus answer/judge calls. Budget accordingly before scaling to
+the full suite.
