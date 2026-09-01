@@ -66,6 +66,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from astrocyte.pipeline._json_tolerant import tolerant_json_loads_or_raise
 from astrocyte.types import Message
 
 if TYPE_CHECKING:
@@ -336,7 +337,7 @@ async def _update_one_wiki(  # noqa: PLR0913
         )
 
     try:
-        data = json.loads(completion.text)
+        data = tolerant_json_loads_or_raise(completion.text)
     except (json.JSONDecodeError, AttributeError) as exc:
         _logger.warning(
             "wiki_incremental.parse: bad JSON for page=%s (%s)",

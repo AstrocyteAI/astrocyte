@@ -48,6 +48,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from astrocyte.pipeline._json_tolerant import tolerant_json_loads_or_raise
 from astrocyte.types import MentalModel, Message
 
 if TYPE_CHECKING:
@@ -217,7 +218,7 @@ async def compile_preferences_for_document(
         return []
 
     try:
-        data = json.loads(completion.text)
+        data = tolerant_json_loads_or_raise(completion.text)
     except (json.JSONDecodeError, AttributeError) as exc:
         _logger.warning(
             "preference_compile.parse: bad JSON for doc=%s (%s) text=%r",
@@ -248,11 +249,7 @@ async def compile_preferences_for_document(
         f = _fact_by_id.get(fid)
         if f is None:
             return now
-        return (
-            getattr(f, "mentioned_at", None)
-            or getattr(f, "occurred_start", None)
-            or now
-        )
+        return getattr(f, "mentioned_at", None) or getattr(f, "occurred_start", None) or now
 
     for raw in items[:max_preferences]:
         if not isinstance(raw, dict):

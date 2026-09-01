@@ -88,3 +88,21 @@ def looks_truncated(text: str) -> bool:
     if last not in "}]\"'":
         return True
     return False
+
+
+def tolerant_json_loads_or_raise(text: str) -> Any:
+    """Like :func:`tolerant_json_loads` but raises ``json.JSONDecodeError``
+    when no strategy recovers a value.
+
+    Exists so call sites written as ``json.loads(completion.text)`` inside a
+    ``try/except json.JSONDecodeError`` block can upgrade to tolerant parsing
+    with a one-line swap, keeping their existing failure handling verbatim.
+    Providers with native constrained decoding (OpenAI json_object mode)
+    always emit bare JSON, so this is a provable no-op on that path; it only
+    widens acceptance for providers whose JSON mode is emulated (claude_cli)
+    or absent.
+    """
+    parsed = tolerant_json_loads(text)
+    if parsed is None:
+        raise json.JSONDecodeError("no JSON value recoverable", text[:80] or " ", 0)
+    return parsed

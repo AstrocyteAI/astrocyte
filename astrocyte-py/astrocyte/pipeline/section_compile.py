@@ -42,6 +42,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from astrocyte.pipeline._json_tolerant import tolerant_json_loads_or_raise
 from astrocyte.pipeline.compile import _dbscan  # reuse pure-Python DBSCAN
 from astrocyte.types import Message, WikiPage
 
@@ -172,7 +173,7 @@ async def _synthesize_observation(
         )
         return None
     try:
-        data = json.loads(completion.text)
+        data = tolerant_json_loads_or_raise(completion.text)
     except json.JSONDecodeError as exc:
         _logger.warning(
             "section_compile.synthesize: JSON parse failed (%s) text=%r",
@@ -262,7 +263,7 @@ async def _revise_observation(
         )
         return None
     try:
-        data = json.loads(completion.text)
+        data = tolerant_json_loads_or_raise(completion.text)
     except json.JSONDecodeError as exc:
         _logger.warning(
             "section_compile.revise: JSON parse failed for page=%s (%s) text=%r",

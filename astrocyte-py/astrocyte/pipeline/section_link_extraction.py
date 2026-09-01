@@ -44,7 +44,6 @@ See:
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -143,16 +142,21 @@ async def extract_links_for_section(
         response_format={"type": "json_object"},
     )
 
-    try:
-        parsed = json.loads(completion.text)
-        raw = parsed.get("links") or []
-    except json.JSONDecodeError:
+    # Tolerant parse (fence-stripping + outermost-brace slicing) — providers
+    # whose json_object mode is emulated rather than native (e.g. claude_cli)
+    # occasionally wrap the object in ```json fences or prose. Bare
+    # json.loads was safe only under OpenAI's native constrained decoding.
+    from astrocyte.pipeline._json_tolerant import tolerant_json_loads  # noqa: PLC0415
+
+    parsed = tolerant_json_loads(completion.text)
+    if not isinstance(parsed, dict):
         logger.warning(
             "section_link_extraction: JSON parse failed for doc=%s line=%d",
             document_id,
             current.line_num,
         )
         return []
+    raw = parsed.get("links") or []
 
     out: list[PageIndexSectionLink] = []
     seen_to: set[tuple[int, str]] = set()  # (to_line, type) dedupe

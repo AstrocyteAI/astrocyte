@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from astrocyte.provider import LLMProvider
 
+from astrocyte.pipeline._json_tolerant import tolerant_json_loads_or_raise
 from astrocyte.types import Message
 
 logger = logging.getLogger("astrocyte.pipeline.question_annotator")
@@ -132,7 +133,7 @@ async def annotate_question(
         return QuestionAnnotation(entities=[], date_range=None)
 
     try:
-        parsed = json.loads(completion.text)
+        parsed = tolerant_json_loads_or_raise(completion.text)
     except json.JSONDecodeError:
         logger.warning(
             "annotate_question: JSON parse failed for q=%r; raw=%r",

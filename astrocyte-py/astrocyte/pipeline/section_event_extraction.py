@@ -35,6 +35,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from astrocyte.pipeline._json_tolerant import tolerant_json_loads_or_raise
 from astrocyte.types import Message
 
 if TYPE_CHECKING:
@@ -149,7 +150,7 @@ async def extract_event_date_for_section(
         )
         return None, None
     try:
-        data = json.loads(completion.text)
+        data = tolerant_json_loads_or_raise(completion.text)
     except json.JSONDecodeError:
         _logger.warning(
             "section_event_extraction: JSON parse failed doc=%s line=%d text=%r",

@@ -39,6 +39,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from astrocyte.pipeline._json_tolerant import tolerant_json_loads_or_raise
 from astrocyte.types import MentalModel, Message
 
 if TYPE_CHECKING:
@@ -178,7 +179,7 @@ async def compile_mental_models_for_document(
         )
         return []
     try:
-        data = json.loads(completion.text)
+        data = tolerant_json_loads_or_raise(completion.text)
     except json.JSONDecodeError as exc:
         _logger.warning(
             "mental_model_compile: JSON parse failed doc=%s: %s text=%r",
@@ -200,10 +201,7 @@ async def compile_mental_models_for_document(
     # start existing" anchor. Single-point (matches the synthetic single
     # source_id ``"{document_id}:doc"``); compute_trend will classify
     # NEW (recent doc relative to reference_date) or STALE (old doc).
-    _section_dates = [
-        s.session_date for s in sections
-        if getattr(s, "session_date", None) is not None
-    ]
+    _section_dates = [s.session_date for s in sections if getattr(s, "session_date", None) is not None]
     _evidence_anchor: datetime | None = min(_section_dates) if _section_dates else None
     for entry in raw_models:
         if not isinstance(entry, dict):

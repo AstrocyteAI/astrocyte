@@ -31,6 +31,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from astrocyte.pipeline._json_tolerant import tolerant_json_loads_or_raise
+
 if TYPE_CHECKING:
     from astrocyte.provider import LLMProvider
 
@@ -118,7 +120,7 @@ async def lint_one_wiki(
         return None
 
     try:
-        parsed = json.loads(completion.text)
+        parsed = tolerant_json_loads_or_raise(completion.text)
     except (json.JSONDecodeError, AttributeError):
         logger.warning("wiki_lint json parse failed for page=%s", page_id)
         return None
