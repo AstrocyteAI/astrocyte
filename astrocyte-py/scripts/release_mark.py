@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -169,6 +170,27 @@ def _compute_cycle_scores(label: str) -> dict[str, dict]:
     return result
 
 
+def _harness_config() -> dict[str, str]:
+    """Record WHICH models produced the scores.
+
+    Without this a parity row is just a number: 0.7444 tells a future reader
+    nothing about whether it was graded by gpt-4o-mini or something else, and
+    cross-run comparisons silently conflate model changes with memory-quality
+    changes. Mirrors the env the bench targets actually pass.
+    """
+    pipeline = os.environ.get("ASTROCYTE_LLM_PROVIDER", "openai")
+    embed = os.environ.get("ASTROCYTE_EMBEDDING_PROVIDER") or (
+        "text-embedding-3-small" if pipeline == "openai" else "unknown"
+    )
+    return {
+        "answerer_model": os.environ.get("MEM0_HARNESS_ANSWERER_MODEL", "gpt-4o-mini"),
+        "judge_model": os.environ.get("MEM0_HARNESS_JUDGE_MODEL", "gpt-4o-mini"),
+        "answerer_provider": os.environ.get("MEM0_HARNESS_PROVIDER", "openai"),
+        "pipeline_llm_provider": pipeline,
+        "embedding_provider": embed,
+    }
+
+
 def _build_release_row(
     *, package: str, version: str, cycle: str, repo_root: Path
 ) -> dict:
@@ -187,6 +209,7 @@ def _build_release_row(
         "bench_tag": f"bench/{cycle}",
         "bench_commit": bench_commit,
         "released_at": datetime.now(timezone.utc).date().isoformat(),
+        "harness": _harness_config(),
         "scores": scores,
     }
 

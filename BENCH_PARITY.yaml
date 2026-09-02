@@ -1,25 +1,3 @@
-# BENCH_PARITY.yaml — bench-cycle parity for released package versions.
-#
-# Each `releases[]` row is appended by `make release-mark` and records:
-#   - package + version released to PyPI / GHCR
-#   - bench_cycle (the ship_label of the cycle that produced the embedded behavior)
-#   - bench_tag + bench_commit (the resolved annotated git tag for that cycle, for
-#     reproducibility — `git checkout <bench_commit>` to verify the score)
-#   - frozen scores from the cycle's shipped run set at release time
-#
-# The README badge writer
-# (`scripts/archive_bench_results._build_badge_payload`) prefers the most recent
-# astrocyte release's scores over raw cycle data — so the badge always reflects
-# what `pip install astrocyte` actually produces, not whatever ablation ran last
-# night.
-#
-# Live trajectory (canonical, real-time source):
-#   https://pub-fd2a5bf01e5b443085a14aedb49c4206.r2.dev/trajectory/locomo.json
-#   https://pub-fd2a5bf01e5b443085a14aedb49c4206.r2.dev/trajectory/longmemeval.json
-#
-# This file is a curated, version-anchored snapshot. Do not hand-edit unless
-# you're correcting a release-time mistake; use `make release-mark` to add rows.
-
 schema_version: 1
 releases:
 - package: astrocyte-postgres
@@ -28,6 +6,12 @@ releases:
   bench_tag: bench/v015w
   bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
   released_at: '2026-07-04'
+  harness:
+    answerer_model: gpt-4o-mini
+    judge_model: gpt-4o-mini
+    answerer_provider: openai
+    pipeline_llm_provider: openai
+    embedding_provider: text-embedding-3-small
   scores:
     longmemeval:
       overall: 0.7444
@@ -43,6 +27,12 @@ releases:
   bench_tag: bench/v015w
   bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
   released_at: '2026-07-04'
+  harness:
+    answerer_model: gpt-4o-mini
+    judge_model: gpt-4o-mini
+    answerer_provider: openai
+    pipeline_llm_provider: openai
+    embedding_provider: text-embedding-3-small
   scores:
     longmemeval:
       overall: 0.7444
@@ -58,6 +48,12 @@ releases:
   bench_tag: bench/v015w
   bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
   released_at: '2026-07-04'
+  harness:
+    answerer_model: gpt-4o-mini
+    judge_model: gpt-4o-mini
+    answerer_provider: openai
+    pipeline_llm_provider: openai
+    embedding_provider: text-embedding-3-small
   scores:
     longmemeval:
       overall: 0.7444
@@ -73,6 +69,12 @@ releases:
   bench_tag: bench/v015w
   bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
   released_at: '2026-05-23'
+  harness:
+    answerer_model: gpt-4o-mini
+    judge_model: gpt-4o-mini
+    answerer_provider: openai
+    pipeline_llm_provider: openai
+    embedding_provider: text-embedding-3-small
   scores:
     longmemeval:
       overall: 0.7444
@@ -88,6 +90,12 @@ releases:
   bench_tag: bench/v015w
   bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
   released_at: '2026-05-23'
+  harness:
+    answerer_model: gpt-4o-mini
+    judge_model: gpt-4o-mini
+    answerer_provider: openai
+    pipeline_llm_provider: openai
+    embedding_provider: text-embedding-3-small
   scores:
     longmemeval:
       overall: 0.7444
@@ -103,6 +111,12 @@ releases:
   bench_tag: bench/v015w
   bench_commit: f8d73f06e15ccfbca07669cc66d9b54c4b7f4903
   released_at: '2026-05-23'
+  harness:
+    answerer_model: gpt-4o-mini
+    judge_model: gpt-4o-mini
+    answerer_provider: openai
+    pipeline_llm_provider: openai
+    embedding_provider: text-embedding-3-small
   scores:
     longmemeval:
       overall: 0.7444
@@ -118,6 +132,12 @@ releases:
   bench_tag: bench/m19
   bench_commit: 6716ca327fbca8b34a361c43447370fe51906f15
   released_at: '2026-05-18'
+  harness:
+    answerer_model: gpt-4o-mini
+    judge_model: gpt-4o-mini
+    answerer_provider: openai
+    pipeline_llm_provider: openai
+    embedding_provider: text-embedding-3-small
   scores:
     longmemeval:
       overall: 0.8167
@@ -133,6 +153,12 @@ releases:
   bench_tag: bench/m19
   bench_commit: 6716ca327fbca8b34a361c43447370fe51906f15
   released_at: '2026-05-18'
+  harness:
+    answerer_model: gpt-4o-mini
+    judge_model: gpt-4o-mini
+    answerer_provider: openai
+    pipeline_llm_provider: openai
+    embedding_provider: text-embedding-3-small
   scores:
     longmemeval:
       overall: 0.8167
@@ -148,6 +174,12 @@ releases:
   bench_tag: bench/m19
   bench_commit: 6716ca327fbca8b34a361c43447370fe51906f15
   released_at: '2026-05-18'
+  harness:
+    answerer_model: gpt-4o-mini
+    judge_model: gpt-4o-mini
+    answerer_provider: openai
+    pipeline_llm_provider: openai
+    embedding_provider: text-embedding-3-small
   scores:
     longmemeval:
       overall: 0.8167
