@@ -320,6 +320,14 @@ bench-runner-deps:
 		echo "  [bench-runner-deps] done" \
 	)
 
+.PHONY: bench-preflight
+# Validates the answerer/judge/pipeline/embedding model config against the real
+# services BEFORE the expensive DB-reset + ingest phases. Added after a run
+# burned an hour producing a bench over empty memories because every OpenAI
+# call 429'd. Skip with BENCH_SKIP_PREFLIGHT=1 (not recommended).
+bench-preflight:
+	@[ "$(BENCH_SKIP_PREFLIGHT)" = "1" ] || $(BENCH_SECRETS_WRAPPER) uv run python -m scripts.bench_preflight
+
 .PHONY: bench-locomo bench-longmemeval bench-longmemeval-on-2 bench-parallel
 
 bench-locomo: fetch-locomo $(_BENCH_DB) bench-runner-deps
@@ -474,7 +482,7 @@ _MEM0_HARNESS_USER_PROFILE_FLAG := $(if $(MEM0_HARNESS_USER_PROFILE),--user-prof
 _MEM0_HARNESS_LOCOMO_MAX_Q_FLAG := $(if $(MEM0_HARNESS_LOCOMO_MAX_Q),--max-questions $(MEM0_HARNESS_LOCOMO_MAX_Q),)
 _MEM0_HARNESS_LME_PER_TYPE_FLAG := $(if $(MEM0_HARNESS_LME_PER_TYPE),--per-type $(MEM0_HARNESS_LME_PER_TYPE),)
 
-bench-mem0-harness-locomo: $(_BENCH_DB) bench-runner-deps
+bench-mem0-harness-locomo: bench-preflight $(_BENCH_DB) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/locomo
 	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	  uv run python scripts/mem0_harness/run_locomo.py \
@@ -487,7 +495,7 @@ bench-mem0-harness-locomo: $(_BENCH_DB) bench-runner-deps
 	    $(_MEM0_HARNESS_LOCOMO_MAX_Q_FLAG) \
 	    --output-dir $(RESULTS_DIR)/mem0_harness/locomo/$(MEM0_HARNESS_PROJECT)
 
-bench-mem0-harness-lme: $(_BENCH_DB_2) bench-runner-deps
+bench-mem0-harness-lme: bench-preflight $(_BENCH_DB_2) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/lme
 	$(BENCH_SECRETS_WRAPPER) env DATABASE_URL='$(BENCH_DATABASE_URL_2)' ASTROCYTE_PG_DSN='$(BENCH_DATABASE_URL_2)' ASTROCYTE_MAX_TOKENS_CUTOFFS='$(MEM0_HARNESS_TOKEN_CUTOFFS)' \
 	  uv run python scripts/mem0_harness/run_lme.py \
@@ -502,7 +510,7 @@ bench-mem0-harness-lme: $(_BENCH_DB_2) bench-runner-deps
 
 # True parallel: LoCoMo on :5433 + LME on :5434, distinct logs, single
 # command. Same shape as bench-parallel for the native PageIndex bench.
-bench-mem0-harness-parallel: $(_BENCH_DB) $(_BENCH_DB_2) bench-runner-deps
+bench-mem0-harness-parallel: bench-preflight $(_BENCH_DB) $(_BENCH_DB_2) bench-runner-deps
 	@mkdir -p $(RESULTS_DIR)/mem0_harness/locomo $(RESULTS_DIR)/mem0_harness/lme $(RESULTS_DIR)/parallel
 	@echo "  [mem0-parallel] LoCoMo on :5433 + LME on :5434 (project=$(MEM0_HARNESS_PROJECT))"
 	@echo "  [mem0-parallel] judge=$(MEM0_HARNESS_JUDGE_MODEL)  answerer=$(MEM0_HARNESS_ANSWERER_MODEL)"

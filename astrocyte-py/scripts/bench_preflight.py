@@ -1,0 +1,114 @@
+"""Fail fast when a bench run's model config can't actually work.
+
+Runs before the expensive phases (DB reset, ingest). Without it a
+misconfigured run dies mid-ingest — which is how 2026-09-01's attempt burned
+an hour producing a benchmark over empty memories after OpenAI returned 429
+on every extraction call.
+
+Validates only what the run will actually use, then exits non-zero with a
+remediation hint.
+
+    uv run python -m scripts.bench_preflight
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.request
+
+
+def _fail(msg: str, hint: str) -> None:
+    print(f"\n  [preflight] FAIL — {msg}\n  [preflight] fix: {hint}\n", file=sys.stderr)
+    sys.exit(2)
+
+
+def _check_openai(role: str, model: str) -> None:
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        _fail(f"{role} uses openai ({model}) but OPENAI_API_KEY is unset",
+              "run under `doppler run --`, or switch provider to claude-cli")
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps({"model": model, "messages": [{"role": "user", "content": "hi"}],
+                         "max_tokens": 1}).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=30)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:200]
+        if e.code == 429:
+            _fail(f"{role} model {model} returned 429 (no credits / rate limited)",
+                  "add OpenAI credits, or use MEM0_HARNESS_PROVIDER=claude-cli "
+                  "ASTROCYTE_LLM_PROVIDER=claude_cli ASTROCYTE_EMBEDDING_PROVIDER=local_embeddings")
+        _fail(f"{role} model {model} rejected: HTTP {e.code} {body}", "check model name and key")
+    except Exception as e:  # noqa: BLE001
+        _fail(f"{role} model {model} unreachable: {e}", "check network / key")
+    print(f"  [preflight] {role}: openai/{model} OK")
+
+
+def _check_claude_cli(role: str, model: str) -> None:
+    binary = os.environ.get("CLAUDE_CLI_BIN") or shutil.which("claude")
+    if not binary:
+        _fail(f"{role} uses claude-cli but the `claude` binary is not on PATH",
+              "install Claude Code, or set CLAUDE_CLI_BIN=/path/to/claude")
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    with tempfile.TemporaryDirectory(prefix="preflight-") as cwd:
+        try:
+            r = subprocess.run(
+                [binary, "-p", "--model", model, "--output-format", "text", "--max-turns", "1"],
+                input=b"Reply with exactly: OK", capture_output=True, timeout=120, cwd=cwd, env=env)
+        except subprocess.TimeoutExpired:
+            _fail(f"{role} claude-cli ({model}) timed out after 120s", "check `claude -p` works manually")
+    if r.returncode != 0:
+        out = (r.stderr.decode("utf-8", "replace") + r.stdout.decode("utf-8", "replace")).strip()[:200]
+        _fail(f"{role} claude-cli ({model}) exited {r.returncode}: {out or '<no output>'}",
+              "run `claude -p --model haiku` manually; check login and usage limits")
+    print(f"  [preflight] {role}: claude-cli/{model} OK")
+
+
+def main() -> int:
+    print("  [preflight] validating bench model config...")
+    ans_provider = os.environ.get("MEM0_HARNESS_PROVIDER", "openai").lower()
+    ans_model = os.environ.get("MEM0_HARNESS_ANSWERER_MODEL", "gpt-4o-mini")
+    judge_model = os.environ.get("MEM0_HARNESS_JUDGE_MODEL", ans_model)
+    pipeline = os.environ.get("ASTROCYTE_LLM_PROVIDER", "openai").lower()
+
+    if ans_provider in ("claude-cli", "claude_cli"):
+        _check_claude_cli("answerer/judge", ans_model)
+        if judge_model != ans_model:
+            _check_claude_cli("judge", judge_model)
+    else:
+        _check_openai("answerer", ans_model)
+        if judge_model != ans_model:
+            _check_openai("judge", judge_model)
+
+    if pipeline in ("claude-cli", "claude_cli"):
+        cfg = json.loads(os.environ.get("ASTROCYTE_LLM_PROVIDER_CONFIG") or "{}")
+        _check_claude_cli("pipeline", cfg.get("model", "haiku"))
+    else:
+        _check_openai("pipeline", "gpt-4o-mini")
+
+    embed = os.environ.get("ASTROCYTE_EMBEDDING_PROVIDER")
+    if embed:
+        try:
+            from astrocyte._discovery import resolve_provider
+            resolve_provider(embed.replace("-", "_"), "llm_providers")
+            print(f"  [preflight] embeddings: {embed} resolvable OK")
+        except Exception as e:  # noqa: BLE001
+            _fail(f"embedding provider {embed!r} does not resolve: {e}",
+                  "check the entry point name and that its package is installed")
+    elif pipeline in ("claude-cli", "claude_cli"):
+        _fail("pipeline is claude-cli but no ASTROCYTE_EMBEDDING_PROVIDER is set "
+              "(the CLI has no embeddings surface)",
+              "set ASTROCYTE_EMBEDDING_PROVIDER=local_embeddings")
+
+    print("  [preflight] all checks passed\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
