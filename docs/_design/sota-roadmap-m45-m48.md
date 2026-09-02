@@ -6,10 +6,11 @@ topic: design
 
 # SOTA roadmap — M45-M48
 
-**Status:** PROPOSED (2026-09-01; revised same day after the AI-memory landscape survey — see §0b)
+**Status:** PROPOSED (2026-09-01; revised same day after the AI-memory landscape survey — see §0b; revised 2026-09-02 with the local self-evaluation harness — see §4b, §9.7)
 **Predecessor:** v0.15.1 (cycle `v015w` ship-floor: LME 74.4% @ mt_8192 n=90; LoCoMo 84.5% n=200 / 82.1% n=1540)
 **Goal:** credible SOTA positioning across the matched-harness leaderboards (AML, LongMemEval-V2, AMA-Bench, MemoryArena), with an explicit cost/latency/accuracy tiering doctrine.
 **Hard date:** AML submission cycle 2 opens **2026-09-20** (§4).
+**Implementation status:** the AML adapter + self-eval harness described in §4/§4b live on branch **`feat/aml-adapter`** (worktree `astrocyte-wt-aml`, HEAD `fd979d2`) — **not merged to `main`**, so they are invisible from a default checkout. 68 tests pass, CI-gated. Everything else in this doc is proposal.
 
 ## 0. Inputs
 
@@ -58,17 +59,71 @@ Conclusion: **no external source moves benchmarks; the SOTA path is internal.** 
 | # | Decision | Locked value |
 |---|---|---|
 | 1 | Scope | Answerer model ONLY; retrieval stack frozen at v015w config |
-| 2 | Matrix | {gpt-4o-mini (baseline), gpt-4.1-mini, claude-haiku-4.5 (via claude-cli track), gpt-4o} × {LME n=90, LoCoMo n=200} @ mt_8192 |
-| 3 | Judge | gpt-4o-mini, unchanged (isolates the answerer variable) |
+| 2 | Matrix | {gpt-4o-mini (baseline), gpt-4.1-mini, claude-haiku-4.5 (via claude-cli track), gpt-4o} × {LME n=90, LoCoMo n=200} @ mt_8192 — **see availability table below** |
+| 3 | Judge | gpt-4o-mini, unchanged (isolates the answerer variable) — **currently credit-blocked** |
 | 4 | Budget | ~$50 API + subscription quota for the Haiku cell |
 | 5 | Comparability | Non-baseline cells are a NEW ablation track; do not extend BENCH_PARITY gpt-4o-mini history |
 | 6 | Decision rule | If best cell ≥ +8pp LME over baseline → answerer-bound; Quality tier (§7) adopts it and M48a headroom shrinks accordingly. If < +4pp → architecture-bound; M48a priority rises. |
 
-Also closes out: the orphaned claude-native smoke (fully local pipeline) — rerun at per-type 3 to record pace/quota/score.
+### Reachability as of 2026-09-03 (blocking; revised from the 2026-09-01 plan)
+
+The matrix above was written assuming OpenAI API access. That assumption no longer holds, and
+three of four answerer cells **plus the judge** are gated:
+
+| Cell | Status | Route |
+|---|---|---|
+| gpt-4o-mini (baseline **and judge**) | ❌ **blocked** | API only; key returns HTTP 429 (no credits). Unreachable locally: Codex CLI on a ChatGPT account serves **only `gpt-5.5`** (every other model id rejected, incl. `gpt-4o-mini`, `gpt-5-mini`, `o4-mini`); Ollama has no OpenAI models. |
+| gpt-4.1-mini | ❌ blocked | same |
+| gpt-4o | ❌ blocked | same |
+| claude-haiku-4.5 | ✅ **DONE** | see below |
+| gpt-5.5 (NEW cell, not in the original plan) | ✅ available | Codex CLI, ChatGPT subscription auth |
+
+**The Haiku cell is already measured.** It did not stay a smoke: it ran at **n=48
+(per-type 8), LME 83.3% @ mt_8192**, zero CLI failures over ~20h, with a full record —
+config, all four cutoffs, per-type deltas, operational notes — in
+[`claude-native-ablation.md`](claude-native-ablation.md). Do **not** re-run it.
+
+Two findings from that cell feed directly into this roadmap:
+
+1. **Judge sensitivity is partially answered.** All 48 answers were re-graded by **gpt-5.5 via
+   Codex** using the harness `JUDGE_PROMPT` verbatim: **91.7% agreement, and all four
+   disagreements favoured gpt-5.5** (83.3% → 91.7%). A cross-vendor frontier judge was *more*
+   generous than Haiku, so the judge-leniency hypothesis is falsified in the testable direction.
+   Tool: `astrocyte-py/scripts/cross_judge_codex.py`, reusable on any results dir.
+2. **Temporal-reasoning regressed to 62.5%** — the only category that got worse, and **both
+   judges scored it identically (5/8)**, so it is a real weakness rather than judging noise.
+   Consistent with date arithmetic depending on temporal-resolution-at-retain. **This is a
+   direct M46 input** (§3).
+
+**Revised M45 scope.** The answerer-strength hypothesis cannot be settled without OpenAI
+credits, because the baseline cell *is* gpt-4o-mini. What remains executable now:
+
+- **r4 (highest value, ~$12, ~4h):** re-run the *existing* claude-native memories with
+  gpt-4o-mini as answerer **and** judge. Ingest already exists in the bench DB, so this is
+  answer+judge only. Everything then matches the v015w baseline except the memory pipeline,
+  making any delta attributable to memory quality — the single experiment that separates
+  memory quality from answerer strength. **Blocked on credits only.**
+- **gpt-5.5 answerer cell (free):** available today via Codex; adds an upper anchor to the
+  ladder but does not restore the baseline, so it informs the tiering table (§7 Quality row)
+  rather than the isolation question.
+
+Until credits exist, **the 83.3% must not be compared to the 74.4% baseline** — four variables
+differ (answerer, judge, embedder, concurrency). See `claude-native-ablation.md` §5.
 
 **Side measurement (cheap, LME-V2 prep):** record per-question wall latency in every M45 cell so we can plot our first accuracy-latency frontier — LongMemEval-V2's headline metric (LAFS Gain) prices latency, and we have never measured our own curve.
 
 ## 3. M46 — Phase 1: retrieval residue + embedding gate
+
+> **PREREQUISITE — resolve the A-H capability legend before tuning toward G/C (§10.1).**
+> §4 identifies G and C as the differentiating axes, but the leaderboard exposes
+> per-capability *scores* without their *definitions* (`/api/capabilities` 404s; the legend
+> is SPA-rendered). Tuning retrieval toward two unlabelled columns is the one place this
+> plan can waste a full cycle: every item below would be selected and gated against a
+> target we cannot read. Cost to resolve is near zero (read the rendered UI, the AML paper,
+> or `/api/openapi.json`). **Items 1-3 and 5 are safe to run regardless** — they target
+> known internal failures (M31c/M33 bank, the M45 temporal regression). **Do not select or
+> prioritise work *because* it should raise G or C until the legend is known.**
+
 
 One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means, M31-style gates:
 
@@ -76,8 +131,14 @@ One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means,
 2. **Entity-overlap boost** (M33 #2) — keyword signal without a 5th RRF sibling.
 3. **Extraction factoid fix** (M33 #3) — "I have a Y" discrete facts; targets SSU misses that were extraction failures.
 4. **Embedding gate**: (a) linear-CCA sanity check on (chunk, fact) pairs with production embeddings — afternoon, CPU-only; (b) if signal, BGE-M3 A/B via provider config (one cycle); (c) MemoryJEPA fine-tune ONLY if (a)+(b) pass.
-5. **Neighbor-episode context expansion** (NEW — MemMachine ablation evidence, arXiv:2604.04853): expand nucleus fact hits with adjacent-turn context from the same session before the answerer. Their ablation attributes +4.2 to retrieval-depth-style tuning; our section anchors (`document_id`,`line_num`) make this a cheap SQL join, not new infrastructure.
-6. **Rerank on/off latency frontier** (measurement, not a ship item): quantify the cross-encoder stage's accuracy-vs-latency contribution — under LAFS-style scoring (§0b.3) a stage that buys +1q for +2s may be net-negative on LME-V2 while positive on v1.
+5. **Temporal-resolution repair** (NEW — from the M45 Haiku cell): temporal-reasoning fell to
+   **62.5%**, confirmed by both judges (§2). The stack resolves relative dates at retain time;
+   the cell suggests that path is weaker under a non-OpenAI extractor. Audit
+   `temporal_resolution` / `temporal_dateparser` coverage on claude-native-extracted facts
+   before assuming a retrieval fix. Cheap, and it targets a measured regression rather than
+   a hypothesised one.
+6. **Neighbor-episode context expansion** (NEW — MemMachine ablation evidence, arXiv:2604.04853): expand nucleus fact hits with adjacent-turn context from the same session before the answerer. Their ablation attributes +4.2 to retrieval-depth-style tuning; our section anchors (`document_id`,`line_num`) make this a cheap SQL join, not new infrastructure.
+7. **Rerank on/off latency frontier** (measurement, not a ship item): quantify the cross-encoder stage's accuracy-vs-latency contribution — under LAFS-style scoring (§0b.3) a stage that buys +1q for +2s may be net-negative on LME-V2 while positive on v1.
 
 Ship gate per item: ≥ +1σ over v015w on the target bench, no >1σ regression on the other.
 
@@ -200,11 +261,56 @@ Both are far cheaper than the 58.02 outright lead, and both are more defensible
 than any unmatched self-report. Report our result against the merged field, not
 only the academic track.
 
-1. **AML cycle-2 submission (opens 2026-09-20 — schedule-driving).** Build the Add/Search adapter (their contract: systems expose only `Add` and `Search`; the platform owns answerer/judge/scoring; Search must return memories, not answers). Astrocyte's `retain()`/`recall()` map directly — shipped in `astrocyte-services-py/astrocyte-aml-py` (33 contract tests, CI-gated). **Enter the `academic` track; beat 45.06 for #1 open source** — a stronger claim than any self-reported 90s number.
+1. **AML cycle-2 submission (opens 2026-09-20 — schedule-driving).** Build the Add/Search adapter (their contract: systems expose only `Add` and `Search`; the platform owns answerer/judge/scoring; Search must return memories, not answers). Astrocyte's `retain()`/`recall()` map directly — implemented in `astrocyte-services-py/astrocyte-aml-py` on branch `feat/aml-adapter` (68 tests passing, CI-gated; **unmerged**), together with the local self-evaluation harness described in §4b. **Enter the `academic` track; beat 45.06 for #1 open source** — a stronger claim than any self-reported 90s number.
 2. **LongMemEval-V2 submission** (~1 wk incl. multimodal triage): 451 questions, LAFS Gain headline metric, **leaderboards currently empty** — early presence is cheap and durable. Our latency data from M45/M46 feeds directly into the LAFS frontier.
 3. **AMA-Bench adapter** (~2-3 days): HF leaderboard live since March 2026 (top: GPT-5.2 raw at 0.7226 avg SR); typed A/B/C/D diagnostics remain the value.
 4. **Mem0 open harness** (demoted to optional): still useful for one-to-one comparison against their published Table 1, but AML supersedes it as the credibility instrument.
 5. **LoCoMo**: retained ONLY as an internal regression guard (n=200, mt_8192). Per the Penfield audit (§0b.2) it cannot rank systems above ~85%; no public claims will be staked on it.
+
+## 4b. Local self-evaluation before submitting (added 2026-09-02)
+
+We can produce a directional AML-methodology number **before** requesting
+evaluation access, which de-risks the cycle-2 window. Shipped in
+`astrocyte-services-py/astrocyte-aml-py/aml_selfeval/`.
+
+**What AML publishes, and what it doesn't.** Their `data/<bench>/pipeline.py`
+files ship the **answer** and **judge** halves only: each consumes an `--input`
+JSONL whose records *already contain retrieved memories*. Retrieval runs on
+their orchestrator against each participant's Add/Search — so the retrieval half
+is the piece we had to build:
+
+```
+ingest (Add) → retrieve (Search) → AML-shaped input JSONL
+             → AML's answer prompt → AML's judge rubric → score
+```
+
+**Why it is worth more than our internal bench.** AML's answer prompt and judge
+rubric are used *verbatim*, and retrieval goes through the same `/add` +
+`/search` contract the platform will exercise. **What it cannot replicate:**
+AML's private answerer/judge model choice, and four of the six suite benchmarks
+(`personamem`, `clbench`, `scriptmem`, `beam`) whose data is unpublished. Treat
+the output as **directional, not a predicted placement** — `beam` in particular
+(10M-token degradation testing) is a capability we have never exercised.
+
+**Two findings from building it:**
+
+1. **AML's published pipelines cannot run as shipped.** All six contain
+   `async with httpx.AsyncClient(...) as client, output.open(...) as handle:` —
+   `Path.open()` is a *synchronous* context manager, which `async with` rejects
+   on every Python 3.x (9 sites). The defect is confined to the driver loop; the
+   prompt and judging logic are sound. `aml_selfeval.judge` therefore imports
+   `render_answer_prompt` / `render_accuracy_prompt` / `parse_judge_label`
+   verbatim and supplies its own loop, issuing byte-identical
+   `/chat/completions` requests. Worth raising upstream — it blocks anyone
+   trying to reproduce AML results locally.
+2. **Their harness assumes an OpenAI-compatible endpoint, not OpenAI.** The
+   dependency is a wire format (one POST, three fields), so
+   `aml_selfeval.shim` serves that endpoint backed by any provider the SPI
+   resolves (`astrocyte.llm_providers`). See §9.7.
+
+**Measured ingest cost:** LongMemEval at n=90 = **6,056 Add calls**, each running
+the full retain pipeline (fact extraction + tree summary + embeddings). Partially
+answers §10.3.
 
 ## 5. M48 — Phase 3 (both sub-items gated)
 
@@ -232,7 +338,7 @@ Historical pattern: every shipped accuracy win was cost-neutral or cost-negative
 | Quality | M45 winner, same retrieval | ~2-5× Standard | ≈same | M45 measures |
 | Max | Quality + reflect-v3 on TR/MS | +~$0.0005/q | +9-10s on ~30% of questions | target LME ≥85% |
 
-Principles: (1) routing/calibration before model spend; (2) never pay for breadth past top_50; (3) subscription CLI = exploration volume, API = ship gates; (4) no matched harness → no SOTA claim; (5) **latency is now externally scored** (LME-V2 LAFS Gain) — every accuracy lever must report its latency cost, and the tier table above doubles as our leaderboard configuration menu (Standard ≈ the LAFS sweet spot; Max only where the budget curve rewards it).
+Principles: (1) routing/calibration before model spend; (2) never pay for breadth past top_50; (3) subscription CLI = exploration volume, API = ship gates; (4) no matched harness → no SOTA claim; (5) **latency is now externally scored** (LME-V2 LAFS Gain) — every accuracy lever must report its latency cost, and the tier table above doubles as our leaderboard configuration menu (Standard ≈ the LAFS sweet spot; Max only where the budget curve rewards it); (6) **the tier is a provider choice, never a harness constraint** — any external harness's model assumption is shimmed at the wire boundary (§9.7), so every row above is runnable on every bench, and the Edge row is now measurable under AML methodology via §4b rather than staying TBD.
 
 ## 8. Projected outcome (revised per §0b)
 
@@ -249,10 +355,11 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
 4. **Reconstruction-at-recall as a named stage**: nucleus hit → bounded context expansion at query time (neighbor turns / same-session / entity-linked), leveraging section anchors — the general form of M46 #5, aligned with the ground-truth-preservation trend.
 5. **Unified consolidation scheduler (M49+ shape decision now)**: observation consolidation + mental-model refresh + wiki compile under one offline scheduler with value-based-forgetting hooks; the OKF-aligned `stale_after`/`status`/trust fields (§6) double as forgetting-policy inputs. Note: `retained_at`/`occurred_at` already constitutes TOKI-style bitemporality (arXiv:2606.06240) — adopt the vocabulary, build nothing.
 6. **Known gap**: LME-V2 is multimodal; the `caption_then_embed` path is spec'd but unexercised — first real test is the M47 #2 submission.
+7. **LLM-agnosticism extends to the evaluation path, not just the product** (added 2026-09-02). Third-party harnesses encode an OpenAI-shaped `/chat/completions` call as though it were a vendor dependency; it is a wire format. The rule: an external harness never dictates our provider — put a shim at the wire boundary and resolve the provider through `astrocyte.llm_providers`, the same names valid in `astrocyte.yaml`. Consequence: no benchmark, ours or anyone's, may be blocked on a specific vendor's credits, and every published number carries an explicit statement of which provider produced it. Fidelity caveat to state whenever we report shim-driven results: providers that cannot honour `temperature=0` (the Claude CLI has no temperature flag) give stable rather than bit-for-bit deterministic runs.
 
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
-1. **A-H capability legend.** The leaderboard exposes per-capability scores but not their definitions (`/api/capabilities` 404s; the legend is SPA-rendered). G and C are the differentiating axes — we should not tune toward them blind. Resolve by reading the rendered leaderboard UI or the AML paper/docs.
+1. **A-H capability legend — GATES M46 (§3).** The leaderboard exposes per-capability scores but not their definitions (`/api/capabilities` 404s; the legend is SPA-rendered). G and C are the differentiating axes — we should not tune toward them blind. Resolve by reading the rendered leaderboard UI or the AML paper/docs.
 2. ~~**Open-source track.**~~ **RESOLVED 2026-09-01**: it is the **`academic`** track (`?track=academic&benchmark_type=textual`), 50 entries, top 45.06. See §4. Follow-up: confirm the `Submitted (repo)` mechanics (39 of 50 chose it) — if code submission is accepted, the hosting/funding burden largely disappears and the deployment decision shrinks to a bench-config choice.
-3. **Add-side cost/latency of a full evaluation run.** ~1,500 histories and ~5,000 questions, batched at ≤20 messages / 2,000 words per Add. Our retain path is LLM-heavy (fact extraction + tree summaries + embeddings). Estimate total ingest spend under each provider config BEFORE requesting evaluation access; this is the real budget question. **Note:** the OpenAI account is currently credit-exhausted, so either credits are restored or the run uses the claude-native provider stack (`claude_cli` + `local_embeddings`) — the latter is untested at evaluation scale, and the CLI's subscription auth is awkward for a hosted service (a point in favour of repo submission).
+3. **Add-side cost/latency of a full evaluation run.** ~1,500 histories and ~5,000 questions, batched at ≤20 messages / 2,000 words per Add. Our retain path is LLM-heavy (fact extraction + tree summaries + embeddings). Estimate total ingest spend under each provider config BEFORE requesting evaluation access; this is the real budget question. **Partially measured (2026-09-02):** LongMemEval at n=90 = **6,056 Add calls** (§4b) — comparable to our internal n=90 LME bench (~50 min, ~$12) plus answer/judge calls. Extrapolate to the full suite before committing. **Correction to the earlier note here:** this is *not* blocked on OpenAI credits. Per §9.7 the whole self-eval path — ingest, answer, and judge — runs through SPI-resolved providers, so the claude-native stack (`claude_cli` + `local_embeddings`) covers it end to end. What remains genuinely untested is that stack *at evaluation scale*; and the CLI's subscription auth is still awkward for a hosted service, which remains a point in favour of repo submission (§10.2).
 4. **The lone H=67.7 outlier** in the academic track (median 32.9). Whatever that entrant did in capability H is the single largest unexplained delta on the board; identify it once the A-H legend is known.
