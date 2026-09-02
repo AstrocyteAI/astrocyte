@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 
 
@@ -26,15 +27,25 @@ def _fail(msg: str, hint: str) -> None:
     sys.exit(2)
 
 
-def _check_openai(role: str, model: str) -> None:
+def _check_openai(role: str, model: str, *, kind: str = "chat") -> None:
+    """Probe the endpoint this role will actually call.
+
+    ``kind="embed"`` hits /v1/embeddings — a chat probe says nothing about
+    whether an embedding model name is valid, and the pipeline uses both.
+    """
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
         _fail(f"{role} uses openai ({model}) but OPENAI_API_KEY is unset",
               "run under `doppler run --`, or switch provider to claude-cli")
+    if kind == "embed":
+        url = "https://api.openai.com/v1/embeddings"
+        body = {"model": model, "input": "hi"}
+    else:
+        url = "https://api.openai.com/v1/chat/completions"
+        body = {"model": model, "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1}
     req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
-        data=json.dumps({"model": model, "messages": [{"role": "user", "content": "hi"}],
-                         "max_tokens": 1}).encode(),
+        url, data=json.dumps(body).encode(),
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     try:
         urllib.request.urlopen(req, timeout=30)
@@ -77,6 +88,18 @@ def main() -> int:
     judge_model = os.environ.get("MEM0_HARNESS_JUDGE_MODEL", ans_model)
     pipeline = os.environ.get("ASTROCYTE_LLM_PROVIDER", "openai").lower()
 
+    # The pipeline provider's constructor kwargs decide which models it uses
+    # (both OpenAIProvider.model and .embedding_model are configurable), so
+    # read them rather than assuming defaults — validating a hardcoded model
+    # passes preflight and then dies mid-ingest, which is the exact failure
+    # this script exists to prevent.
+    raw_cfg = os.environ.get("ASTROCYTE_LLM_PROVIDER_CONFIG") or "{}"
+    try:
+        cfg = json.loads(raw_cfg)
+    except json.JSONDecodeError as e:
+        _fail(f"ASTROCYTE_LLM_PROVIDER_CONFIG is not valid JSON: {e}",
+              'pass a JSON object in single quotes, e.g. \'{"model": "haiku"}\'')
+
     if ans_provider in ("claude-cli", "claude_cli"):
         _check_claude_cli("answerer/judge", ans_model)
         if judge_model != ans_model:
@@ -87,10 +110,9 @@ def main() -> int:
             _check_openai("judge", judge_model)
 
     if pipeline in ("claude-cli", "claude_cli"):
-        cfg = json.loads(os.environ.get("ASTROCYTE_LLM_PROVIDER_CONFIG") or "{}")
         _check_claude_cli("pipeline", cfg.get("model", "haiku"))
     else:
-        _check_openai("pipeline", "gpt-4o-mini")
+        _check_openai("pipeline", cfg.get("model", "gpt-4o-mini"))
 
     embed = os.environ.get("ASTROCYTE_EMBEDDING_PROVIDER")
     if embed:
@@ -105,6 +127,13 @@ def main() -> int:
         _fail("pipeline is claude-cli but no ASTROCYTE_EMBEDDING_PROVIDER is set "
               "(the CLI has no embeddings surface)",
               "set ASTROCYTE_EMBEDDING_PROVIDER=local_embeddings")
+    else:
+        # No split embed provider means the pipeline provider does the
+        # embedding, under its own embedding_model kwarg. The chat probe above
+        # says nothing about whether that model name is valid.
+        _check_openai("pipeline embeddings",
+                      cfg.get("embedding_model", "text-embedding-3-small"),
+                      kind="embed")
 
     print("  [preflight] all checks passed\n")
     return 0
