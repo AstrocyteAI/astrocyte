@@ -155,7 +155,33 @@ One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means,
 1. **bge-reranker-large** swap (M33 direction #1) — precision without pool inflation.
 2. **Entity-overlap boost** (M33 #2) — keyword signal without a 5th RRF sibling.
 3. **Extraction factoid fix** (M33 #3) — "I have a Y" discrete facts; targets SSU misses that were extraction failures.
-4. **Embedding gate**: (a) linear-CCA sanity check on (chunk, fact) pairs with production embeddings — afternoon, CPU-only; (b) if signal, BGE-M3 A/B via provider config (one cycle); (c) MemoryJEPA fine-tune ONLY if (a)+(b) pass.
+4. **Embedding gate**: (a) ✅ **PASSED 2026-09-03** — linear-CCA on (section, extracted-facts)
+   pairs; (b) **NEXT** — BGE-M3 A/B via provider config (one cycle); (c) MemoryJEPA / Deep-CCA
+   fine-tune ONLY if (b) also clears.
+
+   **(a) result** (`astrocyte-py/scripts/cca_view_pair_check.py`, n=2306 from the r3 bench DB,
+   bge-small, PCA-64 per view):
+
+   | View X | true (mean top-10) | shuffled null | gap |
+   |---|---|---|---|
+   | LLM `summary` | 0.937 | 0.275 | +0.663 |
+   | **raw markdown** (strict) | **0.919** | 0.277 | **+0.642** |
+
+   The strict variant is what counts, and it differs from the summary variant by only −0.02 —
+   ruling out the tautology risk (both views being LLM derivatives of one source). Raw section
+   text and its extracted facts share a real linear subspace ~3.3× above chance, so the
+   MemoryJEPA precondition holds *before* any neural machinery.
+
+   **Two methodology constraints — do not repeat these mistakes.** (i) The first run omitted PCA:
+   at d=384 with n≈2000 the *shuffled* null was **0.766**, i.e. CCA overfits badly when n is not
+   ≫ d and reports ~0.98 "signal" that is mostly noise. Pre-reduce (n/d ≈ 36 here). (ii) The
+   shuffled-pair null is the load-bearing part of the test, not a nicety — without it the raw
+   correlation is uninterpretable. Both are built into the script.
+
+   **What (a) licenses:** a *linear* map already finds the shared structure, which argues for
+   **Deep CCA** (explicit whitening, no collapse risk, ~2 GPU-hours) at least as strongly as for
+   full JEPA — revisit the (c) choice when it comes. It says nothing about whether better
+   embeddings lift LME; that is exactly what (b) measures.
 5. **Temporal-resolution repair** (NEW — from the M45 Haiku cell): temporal-reasoning fell to
    **62.5%**, confirmed by both judges (§2). The stack resolves relative dates at retain time;
    the cell suggests that path is weaker under a non-OpenAI extractor. Audit
@@ -164,6 +190,42 @@ One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means,
    a hypothesised one.
 6. **Neighbor-episode context expansion** (NEW — MemMachine ablation evidence, arXiv:2604.04853): expand nucleus fact hits with adjacent-turn context from the same session before the answerer. Their ablation attributes +4.2 to retrieval-depth-style tuning; our section anchors (`document_id`,`line_num`) make this a cheap SQL join, not new infrastructure.
 7. **Rerank on/off latency frontier** (measurement, not a ship item): quantify the cross-encoder stage's accuracy-vs-latency contribution — under LAFS-style scoring (§0b.3) a stage that buys +1q for +2s may be net-negative on LME-V2 while positive on v1.
+
+### 3b. Queued: embedding gate (b) — BGE-M3 A/B  [READY TO RUN]
+
+Gate (a) passed, so (b) is next. No new code — `local_embeddings` already takes
+`model_name`/`pad_to`, and BGE-M3's native 1024 dims pad to the schema's 1536 with no
+migration.
+
+| Arm | Config | Status |
+|---|---|---|
+| **A** (control) | `bge-small-en-v1.5` @ 384→1536 | **done** — this is `claude-native-r3`, LME 83.3% @ n=48 |
+| **B** (treatment) | `BAAI/bge-m3` @ 1024→1536 | to run |
+
+```bash
+ASTROCYTE_LLM_PROVIDER=claude_cli ASTROCYTE_LLM_PROVIDER_CONFIG='{"model":"haiku"}' \
+ASTROCYTE_EMBEDDING_PROVIDER=local_embeddings \
+ASTROCYTE_EMBEDDING_PROVIDER_CONFIG='{"model_name":"BAAI/bge-m3"}' \
+ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY=4 CLAUDE_CLI_MAX_CONCURRENCY=4 \
+make bench-mem0-harness-lme MEM0_HARNESS_PROVIDER=claude-cli \
+  MEM0_HARNESS_ANSWERER_MODEL=haiku MEM0_HARNESS_JUDGE_MODEL=haiku \
+  MEM0_HARNESS_LME_PER_TYPE=8 MEM0_HARNESS_PROJECT=embed-bge-m3-r1
+```
+
+**Cost/time:** ~20h wall (full re-ingest — embeddings change, so the corpus must be rebuilt),
+zero API spend. **Not** a same-day experiment.
+
+**Decision rule.** Arm B vs arm A at mt_8192, n=48:
+- **≥ +5pp** → embedding quality is a live lever; proceed to (c), and prefer **Deep CCA** over
+  full JEPA on the (a) evidence.
+- **±3pp (noise band at n=48)** → embeddings are *not* the binding constraint at this scale;
+  **drop (c) entirely** and redirect M46 to items 1-3/5-6. This is the outcome that saves the
+  most time, and it is the more likely one given M18b's retrieval-feature ceiling.
+- **≤ −5pp** → bge-small is already well-matched; document and stop.
+
+**Caveat:** both arms use a Haiku answerer/judge, so this measures *relative* embedder effect
+within the claude-native track only. It does not transfer to the gpt-4o-mini baseline without
+re-running under M45's matrix.
 
 Ship gate per item: ≥ +1σ over v015w on the target bench, no >1σ regression on the other.
 
