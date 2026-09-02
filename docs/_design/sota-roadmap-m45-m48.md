@@ -43,6 +43,31 @@ Conclusion: **no external source moves benchmarks; the SOTA path is internal.** 
 
 ## 1. Gap decomposition
 
+### 1a. The five barriers (framing)
+
+Taxonomy salvaged from `claude/review-project-progress-JZM4X` (2026-04-24, branch since
+deleted). The five-barrier frame is durable and worth keeping; **its original numbers and
+projected ceilings were dropped as obsolete** — they predated the M17-M44 arc, the Penfield
+LoCoMo audit, and the AML matched-harness data, and projected 92-95% LoCoMo / 90-93% LME
+ceilings that we now know sit at or above the instruments' discriminative limits. Each barrier
+below is re-grounded in evidence we actually have.
+
+| # | Barrier | Current evidence | Phase |
+|---|---|---|---|
+| 1 | **Retrieval recall** — the right memory never reaches the answerer | M31c forensic: SSU factoids ("Philips LED bulb", "500 Mbps plan") were *never in top_50* — a retrieval miss, not a synthesis miss | M46 (1-3, 6) |
+| 2 | **Synthesis quality** — answerer misreads correct context | m13.1 (gpt-4o 76.7% vs mini ~60%, same retrieval); externally confirmed by Hindsight's disclosed ladder (83.6 → 94.6 from the answerer alone) | **M45** |
+| 3 | **Knowledge representation** — flat chunks lose structure needed for multi-hop | Largely *built* (typed `section_links`, wiki tier, observations-with-trends); the open question is whether it converts on AML's C and G axes, where the whole field walls out | M46 + M47 |
+| 4 | **Temporal reasoning** — event ordering and date arithmetic | **Measured, not hypothesised**: claude-native cell scored temporal-reasoning 62.5%, the only category to regress, and *both judges agreed exactly* (`claude-native-ablation.md`) | M46 (5) |
+| 5 | **Abstention calibration** — confidence on unanswerable/edge cases | M31 Fix 3 (confidence-aware abstention) shipped; LoCoMo's adversarial category is now unreliable as a measure of it (Penfield: the judge accepts 62.8% of intentionally wrong answers) | M46 / deferred |
+
+**Why the frame is useful.** It separates barriers that are *architecture* (1, 3) from
+*model choice* (2) from *pipeline mechanics* (4, 5) — which maps cleanly onto the phase split
+and explains why M45 must run first: until the answerer variable is measured, any barrier-2
+contribution is indistinguishable from barriers 1/3/4.
+
+### 1b. Gap-to-phase mapping
+
+
 | Gap | Evidence | Owner phase |
 |---|---|---|
 | Answerer strength (never measured as a matrix) | m13.1: gpt-4o 76.7% vs mini ~60% same config; **externally confirmed: Hindsight's disclosed ladder = ~11 LME points from answerer alone (83.6→94.6)** | **M45** |
