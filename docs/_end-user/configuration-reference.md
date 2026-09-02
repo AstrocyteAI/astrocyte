@@ -70,7 +70,7 @@ provider_config:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `llm_provider` | string \| null | `null` | LLM provider for reflect and extraction: `openai`, `anthropic`, `litellm`, `mock`, etc. |
+| `llm_provider` | string \| null | `null` | LLM provider for reflect and extraction: `openai`, `claude_cli`, `local_embeddings`, `litellm`, `mock`, or any installed adapter. Also accepts a direct `module:Class` import path. |
 | `llm_provider_config` | dict \| null | `null` | API key, model name, endpoint, etc. |
 | `embedding_provider` | string \| null | `null` | Separate embedding provider (if different from LLM) |
 | `embedding_provider_config` | dict \| null | `null` | Embedding-specific settings (dimensions, model, etc.) |
@@ -83,6 +83,48 @@ llm_provider_config:
 # The OpenAI provider handles both chat completions and embeddings.
 # Use astrocyte-llm-litellm for Anthropic, Bedrock, Vertex, Ollama, and other providers.
 ```
+
+### Built-in providers
+
+| Name | Completions | Embeddings | Requires |
+|------|:---:|:---:|----------|
+| `openai` | ✅ | ✅ | `OPENAI_API_KEY` |
+| `litellm` | ✅ | ✅ | `astrocyte-llm-litellm` + the backing provider's key |
+| `claude_cli` | ✅ | — | Claude Code CLI on `PATH` (subscription auth — **no API key**) |
+| `local_embeddings` | — | ✅ | `sentence-transformers` (`pip install 'astrocyte[rerank]'`) |
+| `mock` | ✅ | ✅ | nothing (tests only) |
+
+### Splitting completions and embeddings
+
+Set `embedding_provider` when one backend can't do both. The two are composed
+automatically: `complete()` routes to `llm_provider`, `embed()` to
+`embedding_provider`.
+
+```yaml
+# Fully local / subscription-auth — no API keys anywhere.
+llm_provider: claude_cli
+llm_provider_config:
+  model: haiku            # or sonnet / opus / a pinned model id
+embedding_provider: local_embeddings
+```
+
+**`claude_cli` caveats.** Each call spawns a `claude -p` subprocess
+(~1-3s startup) with concurrency bounded by
+`ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY` (default 4). The CLI exposes no
+sampling controls, so `temperature` and `max_tokens` are accepted but
+**ignored**, and native function calling (`tools=`) raises
+`NotImplementedError` rather than silently dropping tool calls. JSON
+response formats are emulated via prompt instruction. `ANTHROPIC_API_KEY`
+is deliberately stripped from the subprocess environment so calls always
+bill the CLI's logged-in subscription.
+
+**`local_embeddings` caveats.** Defaults to `BAAI/bge-small-en-v1.5`
+(384-dim), zero-padded to 1536 so it drops into the reference schema's
+`vector(1536)` columns with no migration — padding a normalized vector
+preserves cosine ordering exactly. A model wider than `pad_to` raises
+rather than truncating. Override with
+`embedding_provider_config: {model_name: ..., pad_to: ...}`; note that
+raising `pad_to` above 1536 requires a schema migration.
 
 ---
 
