@@ -74,7 +74,8 @@ Endpoints: `POST /add`, `POST /search`, `GET /health` (unauthenticated).
 PYTHONPATH=. pytest tests/ -q
 ```
 
-33 contract-conformance tests; no DB, LLM, or network required.
+68 tests — AML contract conformance, self-eval retrieval, the shim's OpenAI wire
+contract, and the answer/judge driver. No DB, LLM, or network required.
 
 ## Local self-evaluation (`aml_selfeval`)
 
@@ -96,11 +97,41 @@ retrieval goes through the same `/add` + `/search` contract the platform exercis
 of the six suite benchmarks (`personamem`, `clbench`, `scriptmem`, `beam`) whose
 data is not published. Treat results as **directional, not a predicted placement.**
 
+### No OpenAI account required
+
+AML's pipelines reach their answerer and judge through exactly one call shape:
+
+```
+POST {ANSWER_API_BASE}/chat/completions   →  choices[0].message.content
+```
+
+That is an OpenAI *wire format*, not an OpenAI *dependency*. `aml_selfeval.shim`
+serves that endpoint and fulfils it with whatever the **provider SPI** resolves,
+so AML's prompts and judge rubric run unmodified against the Claude CLI, a local
+model, or anything registered under `astrocyte.llm_providers`. Configuration uses
+the same names that are valid in `astrocyte.yaml`:
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `ASTROCYTE_SELFEVAL_PROVIDER` | `claude_cli` | entry-point name or `module:Class` |
+| `ASTROCYTE_SELFEVAL_PROVIDER_CONFIG` | `{}` | JSON kwargs for its constructor |
+| `ASTROCYTE_SELFEVAL_MAX_TOKENS` | `1024` | cap when the caller sends none |
+| `ASTROCYTE_SELFEVAL_API_KEY` | unset (open) | optional bearer gate |
+
+Fidelity caveats, stated rather than hidden: `temperature=0` is forwarded but
+providers that cannot honour it (the Claude CLI has no temperature flag) ignore
+it, so runs are stable rather than bit-for-bit deterministic; and `ANSWER_MODEL`
+is passed through verbatim, meaning whatever the configured provider says it
+means. Leave it empty to use the provider's own default.
+
 ### Run
 
 ```bash
-# 0. Serve the adapter (own terminal)
+# 0. Serve the adapter and the provider-agnostic shim (own terminals)
 uvicorn astrocyte_aml.app:app --port 8080
+ASTROCYTE_SELFEVAL_PROVIDER=claude_cli \
+ASTROCYTE_SELFEVAL_PROVIDER_CONFIG='{"model":"haiku"}' \
+    uvicorn aml_selfeval.shim:app --port 8081
 
 # 1. Retrieve
 python -m aml_selfeval.retrieve retrieve \
@@ -108,20 +139,42 @@ python -m aml_selfeval.retrieve retrieve \
     --source ../../astrocyte-py/datasets/longmemeval/longmemeval_s_cleaned.json \
     --output runs/lme_input.jsonl --limit 90
 
-# 2. Answer + judge with AML's own prompts (their repo, our models)
+# 2. Answer + judge using AML's own prompts, through our own provider
 git clone https://github.com/AML-memory/agent-memory-leaderboard /tmp/aml
-export ANSWER_API_BASE=... ANSWER_MODEL=... ANSWER_API_KEY=...
-export JUDGE_API_BASE=...  JUDGE_MODEL=...  JUDGE_API_KEY=...
-python /tmp/aml/data/longmemeval-s/pipeline.py answer \
-    --input runs/lme_input.jsonl --output runs/lme_answers.jsonl
-python /tmp/aml/data/longmemeval-s/pipeline.py evaluate \
-    --input runs/lme_input.jsonl --answers runs/lme_answers.jsonl \
-    --output runs/lme_scored.jsonl
+python -m aml_selfeval.judge \
+    --aml-repo /tmp/aml --bench longmemeval-s \
+    --input runs/lme_input.jsonl \
+    --output runs/lme_answers.jsonl --scored runs/lme_scored.jsonl \
+    --answer-model haiku --judge-model haiku
 
 # 3. Score (overall + per question_type)
 python -m aml_selfeval.retrieve score \
     --scored runs/lme_scored.jsonl --input runs/lme_input.jsonl
 ```
+
+Swapping providers is a one-line change — nothing in the harness or in AML's
+prompts is aware of which model answered.
+
+### Why step 2 doesn't invoke `pipeline.py` directly
+
+AML's shipped `answer` and `evaluate` subcommands cannot run:
+
+```python
+async with httpx.AsyncClient(timeout=120) as client, \
+        output.open("a", encoding="utf-8") as handle:
+TypeError: '_io.TextIOWrapper' object does not support the
+           asynchronous context manager protocol
+```
+
+`Path.open()` is a *synchronous* context manager, which `async with` rejects on
+every Python 3.x. It affects **all six pipelines** (9 sites). The defect is in
+the driver loop only — the prompts and judging logic are sound — so
+`aml_selfeval.judge` imports their `render_answer_prompt`,
+`render_accuracy_prompt`, and `parse_judge_label` **verbatim** and supplies its
+own loop, issuing byte-identical `/chat/completions` requests. Prompt fidelity is
+preserved; only the broken plumbing is replaced. It also adds resume support and
+downgrades AML's fatal ID-mismatch check to a warning, so one dropped answer
+doesn't discard an expensive run.
 
 Datasets supported: `longmemeval` (LongMemEval-S) and `locomo`. `--resume` skips
 already-retrieved ids; `--concurrency` bounds in-flight items.

@@ -228,8 +228,11 @@ jobs:
   # astrocyte-aml-py: Agent Memory Leaderboard Add/Search adapter.
   # The contract tests pin AML's published API requirements (echoed IDs,
   # data[].id/content, user_id isolation, retryable-vs-terminal status
-  # codes). They are hermetic — a fake brain stands in for Astrocyte, so
-  # no DB, LLM, or network is needed. Breaking them means the submission
+  # codes) and the self-eval shim's OpenAI-shaped wire contract, which
+  # AML's own pipelines index into blindly. No DB, LLM, or network: a
+  # fake brain and a stub provider stand in. astrocyte itself IS installed
+  # (core deps are light) so provider-SPI resolution is exercised for
+  # real rather than mocked away. Breaking these means the submission
   # would be rejected or mis-scored, so they gate CI.
   astrocyte-aml-py:
     name: astrocyte-aml-py
@@ -252,6 +255,7 @@ jobs:
         run: |
           uv venv
           uv pip install fastapi uvicorn pydantic pytest pytest-asyncio httpx
+          uv pip install -e ../../astrocyte-py
           PYTHONPATH=. uv run --no-project pytest tests -v --override-ini="addopts="
 
   # End-to-end: Claude Agent SDK + Astrocyte memory (real API calls).

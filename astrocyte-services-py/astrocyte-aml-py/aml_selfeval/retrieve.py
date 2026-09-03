@@ -29,13 +29,12 @@ Usage
         --source ../../astrocyte-py/datasets/longmemeval/longmemeval_s_cleaned.json \\
         --output runs/lme_input.jsonl --limit 90
 
-    # 2. Answer + judge with AML's own prompts (their repo, our models)
-    export ANSWER_API_BASE=... ANSWER_MODEL=... JUDGE_API_BASE=... JUDGE_MODEL=...
-    python data/longmemeval-s/pipeline.py answer \\
-        --input runs/lme_input.jsonl --output runs/lme_answers.jsonl
-    python data/longmemeval-s/pipeline.py evaluate \\
-        --input runs/lme_input.jsonl --answers runs/lme_answers.jsonl \\
-        --output runs/lme_scored.jsonl
+    # 2. Answer + judge with AML's own prompts, through our own provider.
+    #    aml_selfeval.shim serves the OpenAI-shaped endpoint they call,
+    #    backed by any SPI-resolved provider — no OpenAI account.
+    python -m aml_selfeval.judge --aml-repo /tmp/aml --bench longmemeval-s \\
+        --input runs/lme_input.jsonl \\
+        --output runs/lme_answers.jsonl --scored runs/lme_scored.jsonl
 
     # 3. Score
     python -m aml_selfeval.retrieve score --scored runs/lme_scored.jsonl
