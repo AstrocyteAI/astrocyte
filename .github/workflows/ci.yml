@@ -145,6 +145,10 @@ jobs:
         working-directory: astrocyte-services-py/astrocyte-gateway-py
         run: uvx ruff check astrocyte_gateway/ tests/
 
+      - name: Ruff (astrocyte-aml-py)
+        working-directory: astrocyte-services-py/astrocyte-aml-py
+        run: uvx ruff check astrocyte_aml/ tests/
+
       - name: Import contracts (astrocyte-py)
         working-directory: astrocyte-py
         run: |
@@ -220,6 +224,39 @@ jobs:
         run: |
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="
+
+  # astrocyte-aml-py: Agent Memory Leaderboard Add/Search adapter.
+  # The contract tests pin AML's published API requirements (echoed IDs,
+  # data[].id/content, user_id isolation, retryable-vs-terminal status
+  # codes) and the self-eval shim's OpenAI-shaped wire contract, which
+  # AML's own pipelines index into blindly. No DB, LLM, or network: a
+  # fake brain and a stub provider stand in. astrocyte itself IS installed
+  # (core deps are light) so provider-SPI resolution is exercised for
+  # real rather than mocked away. Breaking these means the submission
+  # would be rejected or mis-scored, so they gate CI.
+  astrocyte-aml-py:
+    name: astrocyte-aml-py
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: pytest (astrocyte-aml-py)
+        working-directory: astrocyte-services-py/astrocyte-aml-py
+        run: |
+          uv venv
+          uv pip install fastapi uvicorn pydantic pytest pytest-asyncio httpx
+          uv pip install -e ../../astrocyte-py
+          PYTHONPATH=. uv run --no-project pytest tests -v --override-ini="addopts="
 
   # End-to-end: Claude Agent SDK + Astrocyte memory (real API calls).
   # Manual only (workflow_dispatch) — not run on push/PR. Not required for CI gate.
@@ -321,7 +358,7 @@ jobs:
   # Single green gate for branch protection (optional — pin this job instead of each matrix leg).
   ci:
     name: CI
-    needs: [astrocyte-py, gateway-publish-test-gate, adapters-integration-tavus]
+    needs: [astrocyte-py, gateway-publish-test-gate, adapters-integration-tavus, astrocyte-aml-py]
     permissions:
       contents: read
     runs-on: ubuntu-latest

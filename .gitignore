@@ -56,3 +56,5 @@ astrocyte-py/logs/
 astrocyte-py/logs/ # if not already there
 docs/src/content/docs/reference-archive/
 docs/public/openapi.json
+astrocyte-services-py/astrocyte-aml-py/.venv/
+astrocyte-services-py/astrocyte-aml-py/runs/
