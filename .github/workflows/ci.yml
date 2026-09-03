@@ -250,12 +250,32 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: pytest (astrocyte-aml-py)
+      - name: Provider SPI resolves from source (not a released wheel)
         working-directory: astrocyte-services-py/astrocyte-aml-py
         run: |
           uv venv
           uv pip install fastapi uvicorn pydantic pytest pytest-asyncio httpx
           uv pip install -e ../../astrocyte-py
+          # The shim's whole premise is that ASTROCYTE_SELFEVAL_PROVIDER resolves
+          # through astrocyte's entry points. The suite uses a stub provider, so it
+          # passes even when astrocyte resolves to a stale PyPI wheel whose registry
+          # predates these adapters — exactly what uv.lock pinned before 2026-09-03.
+          # Assert resolution explicitly so that failure mode is loud, not silent.
+          PYTHONPATH=. uv run --no-project python -c '
+          import importlib.metadata as m
+          names = {e.name for e in m.entry_points(group="astrocyte.llm_providers")}
+          required = {"mock", "openai", "claude_cli", "local_embeddings"}
+          missing = required - names
+          assert not missing, (
+              f"astrocyte resolved without {sorted(missing)} — a released wheel is "
+              "shadowing the local source. Check uv.lock and [tool.uv.sources]."
+          )
+          print("provider SPI OK:", sorted(names))
+          '
+
+      - name: pytest (astrocyte-aml-py)
+        working-directory: astrocyte-services-py/astrocyte-aml-py
+        run: |
           PYTHONPATH=. uv run --no-project pytest tests -v --override-ini="addopts="
 
   # End-to-end: Claude Agent SDK + Astrocyte memory (real API calls).
