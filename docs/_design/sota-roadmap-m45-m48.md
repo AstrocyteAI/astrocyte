@@ -176,8 +176,8 @@ One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means,
 2. **Entity-overlap boost** (M33 #2) — keyword signal without a 5th RRF sibling.
 3. **Extraction factoid fix** (M33 #3) — "I have a Y" discrete facts; targets SSU misses that were extraction failures.
 4. **Embedding gate**: (a) ✅ **PASSED 2026-09-03** — linear-CCA on (section, extracted-facts)
-   pairs; (b) **NEXT** — BGE-M3 A/B via provider config (one cycle); (c) MemoryJEPA / Deep-CCA
-   fine-tune ONLY if (b) also clears.
+   pairs; (b) ✅ **RAN 2026-09-04** — BGE-M3 A/B, −2.1pp @ n=48, inside the noise band (§3b);
+   (c) **DROPPED** — MemoryJEPA / Deep-CCA fine-tune does not proceed, per (b)'s decision rule.
 
    **(a) result** (`astrocyte-py/scripts/cca_view_pair_check.py`, n=2306 from the r3 bench DB,
    bge-small, PCA-64 per view):
@@ -198,10 +198,11 @@ One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means,
    shuffled-pair null is the load-bearing part of the test, not a nicety — without it the raw
    correlation is uninterpretable. Both are built into the script.
 
-   **What (a) licenses:** a *linear* map already finds the shared structure, which argues for
-   **Deep CCA** (explicit whitening, no collapse risk, ~2 GPU-hours) at least as strongly as for
-   full JEPA — revisit the (c) choice when it comes. It says nothing about whether better
-   embeddings lift LME; that is exactly what (b) measures.
+   **What (a) licensed:** a *linear* map already finds the shared structure, which would have
+   argued for **Deep CCA** (explicit whitening, no collapse risk, ~2 GPU-hours) over full JEPA
+   if (c) had gone ahead. It said nothing about whether better embeddings lift LME — that was
+   exactly what (b) measured, and (b)'s −2.1pp result (§3b) means (c) does not proceed; this
+   CCA evidence is recorded for the record, not acted on.
 5. **Temporal-resolution repair** (NEW — from the M45 Haiku cell): temporal-reasoning fell to
    **62.5%**, confirmed by both judges (§2). The stack resolves relative dates at retain time;
    the cell suggests that path is weaker under a non-OpenAI extractor. Audit
@@ -211,43 +212,42 @@ One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means,
 6. **Neighbor-episode context expansion** (NEW — MemMachine ablation evidence, arXiv:2604.04853): expand nucleus fact hits with adjacent-turn context from the same session before the answerer. Their ablation attributes +4.2 to retrieval-depth-style tuning; our section anchors (`document_id`,`line_num`) make this a cheap SQL join, not new infrastructure.
 7. **Rerank on/off latency frontier** (measurement, not a ship item): quantify the cross-encoder stage's accuracy-vs-latency contribution — under LAFS-style scoring (§0b.3) a stage that buys +1q for +2s may be net-negative on LME-V2 while positive on v1.
 
-### 3b. Queued: embedding gate (b) — BGE-M3 A/B  [READY TO RUN]
+### 3b. Embedding gate (b) — BGE-M3 A/B  [DONE — decision rule fired: drop (c)]
 
-Gate (a) passed, so (b) is next. No new code — `local_embeddings` already takes
+Gate (a) passed, so (b) ran next. No new code — `local_embeddings` already takes
 `model_name`/`pad_to`, and BGE-M3's native 1024 dims pad to the schema's 1536 with no
 migration.
 
-| Arm | Config | Status |
+| Arm | Config | Result |
 |---|---|---|
-| **A** (control) | `bge-small-en-v1.5` @ 384→1536 | **done** — this is `claude-native-r3`, LME 83.3% @ n=48 |
-| **B** (treatment) | `BAAI/bge-m3` @ 1024→1536 | to run |
+| **A** (control) | `bge-small-en-v1.5` @ 384→1536 | `claude-native-r3`, LME **83.3%** @ n=48 |
+| **B** (treatment) | `BAAI/bge-m3` @ 1024→1536 | `embed-bge-m3-r1`, LME **81.2%** @ n=48 |
 
-```bash
-ASTROCYTE_LLM_PROVIDER=claude_cli ASTROCYTE_LLM_PROVIDER_CONFIG='{"model":"haiku"}' \
-ASTROCYTE_EMBEDDING_PROVIDER=local_embeddings \
-ASTROCYTE_EMBEDDING_PROVIDER_CONFIG='{"model_name":"BAAI/bge-m3"}' \
-ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY=4 CLAUDE_CLI_MAX_CONCURRENCY=4 \
-make bench-mem0-harness-lme MEM0_HARNESS_PROVIDER=claude-cli \
-  MEM0_HARNESS_ANSWERER_MODEL=haiku MEM0_HARNESS_JUDGE_MODEL=haiku \
-  MEM0_HARNESS_LME_PER_TYPE=8 MEM0_HARNESS_PROJECT=embed-bge-m3-r1
-```
-
-**Cost/time:** ~20h wall (full re-ingest — embeddings change, so the corpus must be rebuilt),
-zero API spend. **Not** a same-day experiment.
+**Result: −2.1pp (mt_8192, n=48, matched question set), consistent across cutoffs** (mt_1024
+−2.1, mt_2048 +0.0, mt_4096 +2.1, mt_8192 −2.1 — no systematic direction). Per-type deltas
+partially cancel (`multi-session` −12pp, `single-session-user` +12pp at n=8/type), consistent
+with per-type noise rather than a real embedding-quality effect.
 
 **Decision rule.** Arm B vs arm A at mt_8192, n=48:
-- **≥ +5pp** → embedding quality is a live lever; proceed to (c), and prefer **Deep CCA** over
+- ≥ +5pp → embedding quality is a live lever; proceed to (c), and prefer **Deep CCA** over
   full JEPA on the (a) evidence.
-- **±3pp (noise band at n=48)** → embeddings are *not* the binding constraint at this scale;
-  **drop (c) entirely** and redirect M46 to items 1-3/5-6. This is the outcome that saves the
-  most time, and it is the more likely one given M18b's retrieval-feature ceiling.
-- **≤ −5pp** → bge-small is already well-matched; document and stop.
+- **±3pp (noise band at n=48) → embeddings are *not* the binding constraint at this scale;
+  drop (c) entirely and redirect M46 to items 1-3/5-6.** ← **−2.1pp fires this branch.**
+- ≤ −5pp → bge-small is already well-matched; document and stop.
 
-**Caveat:** both arms use a Haiku answerer/judge, so this measures *relative* embedder effect
-within the claude-native track only. It does not transfer to the gpt-4o-mini baseline without
-re-running under M45's matrix.
+**Outcome: (c) — Deep CCA / full JEPA — is dropped.** M46 effort redirects to items 1-3 and
+5-6 (bge-reranker-large, entity-overlap boost, extraction factoid fix, temporal-resolution
+repair, neighbor-episode expansion), each already scoped against a measured internal failure
+and none gated on this result (§3a preamble).
 
-Ship gate per item: ≥ +1σ over v015w on the target bench, no >1σ regression on the other.
+**Caveat (still applies to the result above):** both arms used a Haiku answerer/judge, so this
+measured *relative* embedder effect within the claude-native track only. It does not transfer
+to the gpt-4o-mini baseline without re-running under M45's matrix — if r4 (gpt-4o-mini
+answerer/judge) ever runs, this A/B is not re-litigated by it, since r4 targets answerer
+strength, not embedder choice.
+
+Ship gate per item (1-3, 5-6): ≥ +1σ over v015w on the target bench, no >1σ regression on the
+other.
 
 ## 4. M47 — Phase 2: matched-harness credibility (REWRITTEN per §0b)
 
