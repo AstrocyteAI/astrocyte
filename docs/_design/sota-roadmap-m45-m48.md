@@ -139,15 +139,35 @@ differ (answerer, judge, embedder, concurrency). See `claude-native-ablation.md`
 
 ## 3. M46 — Phase 1: retrieval residue + embedding gate
 
-> **PREREQUISITE — resolve the A-H capability legend before tuning toward G/C (§10.1).**
-> §4 identifies G and C as the differentiating axes, but the leaderboard exposes
-> per-capability *scores* without their *definitions* (`/api/capabilities` 404s; the legend
-> is SPA-rendered). Tuning retrieval toward two unlabelled columns is the one place this
-> plan can waste a full cycle: every item below would be selected and gated against a
-> target we cannot read. Cost to resolve is near zero (read the rendered UI, the AML paper,
-> or `/api/openapi.json`). **Items 1-3 and 5 are safe to run regardless** — they target
-> known internal failures (M31c/M33 bank, the M45 temporal regression). **Do not select or
-> prioritise work *because* it should raise G or C until the legend is known.**
+> **GATE LIFTED → INFERENCE-ONLY (2026-09-03).** The A-H legend is **not published
+> anywhere public** — a full search (README EN+CN, site pages, all 47 OpenAPI paths,
+> `/datasets`, `/locale`, the GitHub org, all six `data/*/pipeline.py`, Wayback, launch
+> press) found no letter→capability mapping, and no AML paper appears to exist. The letters
+> are opaque API codes; every human-readable capability list AML publishes is *unlettered*.
+> Waiting for it would block M46 indefinitely, so the prerequisite is replaced by a
+> standing constraint:
+>
+> **Run items 1-3 and 5-6 on their own merits** — each targets a *measured internal*
+> failure (M31c SSU retrieval misses, the M45 temporal regression), which needs no
+> leaderboard mapping to justify. **Do not justify, select, or gate any work on "this
+> should raise G or C"** — that mapping is inference, not documentation (§10.1), and one
+> competing reading of the site's own scope sentence inverts it.
+>
+> **Documented (high confidence):** seven capabilities in a stable canonical order — fact
+> recall, relational/multi-hop, temporal/event, memory governance, personalization,
+> rules/process execution, epistemic safety & privacy. **Corrections to earlier notes in
+> this doc:** G has **five** leaves (G1-G5), and **F is not absent** — `F1` exists in
+> `by_capability_leaf`; only the parent F aggregate is unpublished, reason unknown.
+>
+> **Warning on the H=67.7 outlier.** If H is safety/abstention, that outlier is most likely
+> a *policy* choice, not a capability: most systems never abstain and floor, one with an
+> explicit insufficient-evidence gate leaps. It is the cheapest apparent win **and the most
+> dangerous** — abstention trades directly against fact recall (A), so an aggressive gate
+> would flatter H while tanking A. Do not chase it blind.
+>
+> **To resolve empirically** (cheaper and more reliable than more documentation hunting):
+> submit one probe with a single deliberately manipulated behaviour and read which column
+> moves; or email the address in the site's Benchmark Details section.
 
 
 One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means, M31-style gates:
@@ -257,9 +277,13 @@ Priority order changed by the survey; the centerpiece is now AML, with a hard da
 
 1. **Hindsight Cloud scores 38.54 here** — the same system that self-reports **94.6% LongMemEval**. That single row is the strongest available evidence that unmatched self-reports are not measurements. Mem0 (self-reports 92.5/94.4) lands 41.40.
 2. **Realistic bands:** ~38-45 is the crowded middle (where the best-known names sit); **>45.89 beats MemOS**; **>58.02 leads outright**. Our internal 74.4% LME with the weakest common answerer is *not* comparable to these, but it means entering mid-pack is a plausible floor rather than an aspiration.
-3. **Capability G is the field-wide failure** (6.9-30.0; MemOS 9.8, MemPalace 6.9, leaf G4 at 0.0-9.0) and **C is second** (13-30 for everyone except MemoraX's 60). MemoraX's entire 12-point lead is concentrated in A (89.9 vs ~50) and C (60 vs ~20). **G and C are therefore the differentiating axes** — an unusually clear target for M46's retrieval work, and a far better-specified goal than "raise LME by 2pp".
+3. **Capability G is the field-wide failure** (6.9-30.0; MemOS 9.8, MemPalace 6.9, leaf G4 at 0.0-9.0) and **C is second** (13-30 for everyone except MemoraX's 60). MemoraX's entire 12-point lead is concentrated in A (89.9 vs ~50) and C (60 vs ~20). **G and C are therefore the differentiating score columns** — where the field-wide headroom demonstrably is. Whether that translates into a *retrieval* target depends on what G and C measure, which is not published (see caveat below).
 
-**Remaining gap:** the A-H capability legend is SPA-rendered and not exposed via API; resolve it before tuning toward G/C (see §10).
+**Caveat (2026-09-03):** the A-H legend is **unpublished** — G and C are differentiating
+*score columns*, and calling them "retrieval targets" assumes a letter→capability mapping that
+no source states. The score-gap observation stands on its own (it is read directly from the
+API); the engineering interpretation does not. See §3's inference-only constraint. Also
+correcting this paragraph: leaf **G4 is one of five** (G1-G5), not four.
 
 ### The `academic` track — where Astrocyte should enter (retrieved 2026-09-01)
 
@@ -446,7 +470,7 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
 
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
-1. **A-H capability legend — GATES M46 (§3).** The leaderboard exposes per-capability scores but not their definitions (`/api/capabilities` 404s; the legend is SPA-rendered). G and C are the differentiating axes — we should not tune toward them blind. Resolve by reading the rendered leaderboard UI or the AML paper/docs.
+1. ~~**A-H capability legend — GATES M46.**~~ **RESOLVED-AS-UNPUBLISHED 2026-09-03.** No public legend exists (search scope in §3). M46's gate is lifted to inference-only; the documented seven-capability list, the G1-G5 / F1 leaf corrections, and the empirical probe proposal are recorded in §3. Reopen only if an AML paper appears or they answer by email.
 2. ~~**Open-source track.**~~ **RESOLVED 2026-09-01**: it is the **`academic`** track (`?track=academic&benchmark_type=textual`), 50 entries, top 45.06. See §4. Follow-up: confirm the `Submitted (repo)` mechanics (39 of 50 chose it) — if code submission is accepted, the hosting/funding burden largely disappears and the deployment decision shrinks to a bench-config choice.
 3. **Add-side cost/latency of a full evaluation run.** ~1,500 histories and ~5,000 questions, batched at ≤20 messages / 2,000 words per Add. Our retain path is LLM-heavy (fact extraction + tree summaries + embeddings). Estimate total ingest spend under each provider config BEFORE requesting evaluation access; this is the real budget question. **Partially measured (2026-09-02):** LongMemEval at n=90 = **6,056 Add calls** (§4b) — comparable to our internal n=90 LME bench (~50 min, ~$12) plus answer/judge calls. Extrapolate to the full suite before committing. **Correction to the earlier note here:** this is *not* blocked on OpenAI credits. Per §9.7 the whole self-eval path — ingest, answer, and judge — runs through SPI-resolved providers, so the claude-native stack (`claude_cli` + `local_embeddings`) covers it end to end. What remains genuinely untested is that stack *at evaluation scale*; and the CLI's subscription auth is still awkward for a hosted service, which remains a point in favour of repo submission (§10.2).
 4. **The lone H=67.7 outlier** in the academic track (median 32.9). Whatever that entrant did in capability H is the single largest unexplained delta on the board; identify it once the A-H legend is known.
