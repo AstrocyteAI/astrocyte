@@ -20,9 +20,10 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from typing import NoReturn
 
 
-def _fail(msg: str, hint: str) -> None:
+def _fail(msg: str, hint: str) -> NoReturn:
     print(f"\n  [preflight] FAIL — {msg}\n  [preflight] fix: {hint}\n", file=sys.stderr)
     sys.exit(2)
 
@@ -94,10 +95,14 @@ def main() -> int:
     # passes preflight and then dies mid-ingest, which is the exact failure
     # this script exists to prevent.
     raw_cfg = os.environ.get("ASTROCYTE_LLM_PROVIDER_CONFIG") or "{}"
+    cfg: dict = {}
     try:
         cfg = json.loads(raw_cfg)
     except json.JSONDecodeError as e:
         _fail(f"ASTROCYTE_LLM_PROVIDER_CONFIG is not valid JSON: {e}",
+              'pass a JSON object in single quotes, e.g. \'{"model": "haiku"}\'')
+    if not isinstance(cfg, dict):
+        _fail("ASTROCYTE_LLM_PROVIDER_CONFIG must be a JSON object",
               'pass a JSON object in single quotes, e.g. \'{"model": "haiku"}\'')
 
     if ans_provider in ("claude-cli", "claude_cli"):

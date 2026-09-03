@@ -69,7 +69,8 @@ async def main() -> int:
 
     items = []
     for f in files:
-        d = json.load(open(f))
+        with open(f) as fh:
+            d = json.load(fh)
         cr = (d.get("cutoff_results") or {}).get(a.cutoff) or {}
         gen, orig = cr.get("generated_answer"), cr.get("judgment")
         if not gen or not orig:
@@ -115,7 +116,8 @@ async def main() -> int:
     for t, (o, nn, c) in sorted(bytype.items()):
         print(f"  {t:28}{o:>8}{nn:>8}{c:>5}")
     if a.out:
-        json.dump(rows, open(a.out, "w"), indent=2)
+        with open(a.out, "w") as fh:
+            json.dump(rows, fh, indent=2)
         print(f"\nper-question verdicts -> {a.out}")
     return 0
 

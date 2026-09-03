@@ -149,6 +149,17 @@ class TestAddContract:
         brain.raise_on_retain = RuntimeError("boom")
         assert _client(brain).post("/add", json=ADD_BODY).status_code == 500
 
+    def test_retain_failure_log_strips_crlf_from_request_id(self, caplog):
+        """CWE-117: user-controlled request_id must not forge extra log lines."""
+        brain = _FakeBrain()
+        brain.raise_on_retain = RuntimeError("boom")
+        body = {**ADD_BODY, "request_id": "id\nFORGED: admin"}
+        with caplog.at_level("ERROR", logger="astrocyte.aml"):
+            assert _client(brain).post("/add", json=body).status_code == 500
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "id FORGED: admin" in text
+        assert "id\nFORGED" not in text
+
     def test_empty_messages_is_a_non_retryable_400(self):
         """400/422 are in AML's do-not-retry set — correct for contract errors."""
         brain = _FakeBrain()
@@ -241,6 +252,19 @@ class TestSearchContract:
         brain.raise_on_recall = RuntimeError("boom")
         r = _client(brain).post("/search", json={"query": "q", "user_id": "u1", "top_k": 10})
         assert r.status_code == 500
+
+    def test_recall_failure_log_strips_crlf_from_user_id(self, caplog):
+        """CWE-117: user-controlled user_id must not forge extra log lines."""
+        brain = _FakeBrain()
+        brain.raise_on_recall = RuntimeError("boom")
+        with caplog.at_level("ERROR", logger="astrocyte.aml"):
+            r = _client(brain).post(
+                "/search", json={"query": "q", "user_id": "u1\nFORGED: admin", "top_k": 10},
+            )
+        assert r.status_code == 500
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "u1 FORGED: admin" in text
+        assert "u1\nFORGED" not in text
 
     def test_search_never_calls_reflect(self):
         """AML integrity rule: Search must not generate or disguise answers.

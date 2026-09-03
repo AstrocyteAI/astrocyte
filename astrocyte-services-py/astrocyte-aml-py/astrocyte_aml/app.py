@@ -43,6 +43,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
+from astrocyte import log_safe as _safe_log
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -233,7 +234,7 @@ def create_app(brain: Any | None = None) -> FastAPI:
                 },
             )
         except Exception as exc:
-            logger.exception("aml.add failed request_id=%s", req.request_id)
+            logger.exception("aml.add failed request_id=%s", _safe_log(req.request_id))
             # 500 is retried by the platform with bounded backoff.
             raise HTTPException(status_code=500, detail=f"retain failed: {exc}") from exc
 
@@ -274,7 +275,7 @@ def create_app(brain: Any | None = None) -> FastAPI:
                 # for grouping only and must not filter Search.
             )
         except Exception as exc:
-            logger.exception("aml.search failed user_id=%s", req.user_id)
+            logger.exception("aml.search failed user_id=%s", _safe_log(req.user_id))
             raise HTTPException(status_code=500, detail=f"recall failed: {exc}") from exc
 
         cap = min(req.top_k, DEFAULT_RESULT_CAP)
