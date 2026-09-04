@@ -32,7 +32,7 @@ Conclusion: **no external source moves benchmarks; the SOTA path is internal.** 
 3. **LongMemEval-V2 shipped** (arXiv:2605.12493, same authors): 451 questions, ≤500 sessions / 115M tokens, multimodal, and a **latency-priced headline metric (LAFS Gain** — accuracy-latency frontier over 1-200s budgets). Best released baseline 74.9%; **leaderboards still unpopulated** — a land-grab. Consequence: latency becomes a *scored* axis, which converts §7's tiering table from product hygiene into leaderboard strategy, and prices the cross-encoder stage (§3 measurement).
 4. **Answerer-model dependence is now externally quantified**: Hindsight's ACL 2026 demo discloses its own ladder — LME **83.6 with a 20B open model → 91.4 with Gemini-3 Pro → 94.6 top config** (~11 points from the answerer alone). This independently confirms the M45 hypothesis and sets the honest comparison band: our 74.4 with gpt-4o-mini answerer+judge vs their 83.6 with a 20B open answerer.
 5. **Retrieval-stage tuning beats architecture** (MemMachine ablation, arXiv:2604.04853): retrieval depth +4.2, context formatting +2.0, search-prompt design +1.8, query-bias correction +1.4. Independently corroborates the M46 emphasis; adds one cheap candidate — **neighbor-episode context expansion** (§3 item 5).
-6. **Field convergence, no rearchitecture required**: sleep-time/offline consolidation is the dominant 2026 theme (SCM arXiv:2604.20943; Nemori accepted to ACL 2026; ChatGPT "Dreaming," 2026-06-04) — Astrocyte's observations-with-trends + mental-model compile already are this tier; the field's delta (offline scheduling, value-based forgetting, future-utility scoring) is an incremental M49+ lane. Model-native memory is **no threat in a 12-month window**: DeepSeek shipped V4 *without* Engram; the credible line (Cartridges at Scale arXiv:2606.04557, Still arXiv:2606.07878) compiles per-corpus KV artifacts, not per-user memory. Watch item only.
+6. **Field convergence, no rearchitecture required**: sleep-time/offline consolidation is the dominant 2026 theme (SCM arXiv:2604.20943; Nemori accepted to ACL 2026; ChatGPT "Dreaming," 2026-06-04) — Astrocyte's observations-with-trends + mental-model compile already are this tier; the field's delta (offline scheduling, value-based forgetting, future-utility scoring) is an incremental M49+ lane. Model-native memory is **no threat in a 12-month window**: DeepSeek shipped V4 *without* Engram; the credible line (Cartridges at Scale arXiv:2606.04557, Still arXiv:2606.07878) compiles per-corpus KV artifacts, not per-user memory. **Watch item only — plan banked 2026-09-04** in [`m49-memory-activation.md`](m49-memory-activation.md): Engram-as-published is a pretrained N-gram lookup, not a writable user-memory API; we negotiate substrates (text / residual / cartridge / Still / Engram) and do not wait on DeepSeek.
 
 **Banked evidence constraints (do not retry):**
 - More parallel RRF siblings anti-compose past ~4 (M18b, M31c).
@@ -249,6 +249,42 @@ strength, not embedder choice.
 Ship gate per item (1-3, 5-6): ≥ +1σ over v015w on the target bench, no >1σ regression on the
 other.
 
+### 3c. M46 item 1 — bge-reranker-large A/B  [RETRYING 2026-09-05, first attempt failed]
+
+One variable: the query-time cross-encoder. Embeddings stay at arm A
+(`bge-small-en-v1.5`). No new code — `ASTROCYTE_CROSS_ENCODER_MODEL=bge-large`
+already resolves to `BAAI/bge-reranker-large` via the M33-1a seam in
+`cross_encoder_rerank.py`. The bench client's unified rerank path calls
+`cross_encoder_rerank()` with no explicit model, so the env var is the
+whole treatment.
+
+The :5434 DB currently holds **BGE-M3** memories from (b). Reusing them
+would confound embedder and reranker. Ingest is therefore redone on a
+reset DB with bge-small; expected wall ~20h at concurrency 4, same as (b).
+
+**First attempt (2026-09-03T23:40Z–2026-09-04T09:59) failed**: it was launched
+while arm (b)'s `embed-bge-m3-r1` was still running, so both processes drove
+`CLAUDE_CLI_MAX_CONCURRENCY=4` against the same subscription simultaneously
+(8 effective concurrent CLI calls). Ingest hit 20 circuit-breaker trips,
+backoff escalating to the 30-minute cap, before crawling to 1/48 questions
+(0%, all 5 generation attempts failed) — then the process was killed
+externally (no traceback; likely no `caffeinate`, so sleep/terminal-close).
+Not a code bug: the identical provider ran arm (b) for 21h with zero
+failures once it had the subscription to itself. **Retried solo 2026-09-05**
+with `caffeinate -i`, nothing else contending for the CLI.
+
+| Arm | Config | Result |
+|---|---|---|
+| **A** (control) | MiniLM-L-6-v2 (default) + bge-small | `claude-native-r3`, LME **83.3%** @ n=48 |
+| **B** (treatment) | `bge-reranker-large` + bge-small | `rerank-bge-large-r1`, running (retry) |
+
+**Decision rule** (same n=48 noise band as (b), mt_8192):
+- ≥ +5pp → reranker is a live lever; ship `bge-large` as the claude-native default and keep it for the next item.
+- **±3pp (noise band)** → reranker quality is not the binding constraint at this scale; keep MiniLM; proceed to item 2 (entity-overlap boost).
+- ≤ −5pp → MiniLM is already well-matched; document and stop.
+
+Do not compare this cell to the 74.4% gpt-4o-mini baseline — same caveat as §3b.
+
 ## 4. M47 — Phase 2: matched-harness credibility (REWRITTEN per §0b)
 
 Priority order changed by the survey; the centerpiece is now AML, with a hard date.
@@ -464,7 +500,7 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
 2. **`recall()` synthesis-free invariant.** AML's "Search must not generate answers" rule elevates the recall-vs-reflect split from convention to compliance property. Guarantee: no LLM-generated text in recall hits — only retained/derived memory with provenance. Document as an API invariant.
 3. **Latency budget as a runtime parameter** (`recall(latency_budget=…)` / execution profiles) with stage-level degradation (skip cross-encoder + expansions under tight budgets). LAFS scores the frontier; a budget-aware pipeline produces the whole curve, and §7's tiers become execution paths through one pipeline.
 4. **Reconstruction-at-recall as a named stage**: nucleus hit → bounded context expansion at query time (neighbor turns / same-session / entity-linked), leveraging section anchors — the general form of M46 #5, aligned with the ground-truth-preservation trend.
-5. **Unified consolidation scheduler (M49+ shape decision now)**: observation consolidation + mental-model refresh + wiki compile under one offline scheduler with value-based-forgetting hooks; the OKF-aligned `stale_after`/`status`/trust fields (§6) double as forgetting-policy inputs. Note: `retained_at`/`occurred_at` already constitutes TOKI-style bitemporality (arXiv:2606.06240) — adopt the vocabulary, build nothing.
+5. **Unified consolidation scheduler (M49+ shape decision now)**: observation consolidation + mental-model refresh + wiki compile under one offline scheduler with value-based-forgetting hooks; the OKF-aligned `stale_after`/`status`/trust fields (§6) double as forgetting-policy inputs. Note: `retained_at`/`occurred_at` already constitutes TOKI-style bitemporality (arXiv:2606.06240) — adopt the vocabulary, build nothing. **Activation compile** (`compile(M, model_abi) → z`) hangs on this same scheduler; flags default OFF. SPI, Engram/Cartridge/Still negotiation, and the E-vs-C experiment are in [`m49-memory-activation.md`](m49-memory-activation.md) — docs only until after AML cycle 2.
 6. **Known gap**: LME-V2 is multimodal; the `caption_then_embed` path is spec'd but unexercised — first real test is the M47 #2 submission.
 7. **LLM-agnosticism extends to the evaluation path, not just the product** (added 2026-09-02). Third-party harnesses encode an OpenAI-shaped `/chat/completions` call as though it were a vendor dependency; it is a wire format. The rule: an external harness never dictates our provider — put a shim at the wire boundary and resolve the provider through `astrocyte.llm_providers`, the same names valid in `astrocyte.yaml`. Consequence: no benchmark, ours or anyone's, may be blocked on a specific vendor's credits, and every published number carries an explicit statement of which provider produced it. Fidelity caveat to state whenever we report shim-driven results: providers that cannot honour `temperature=0` (the Claude CLI has no temperature flag) give stable rather than bit-for-bit deterministic runs.
 
