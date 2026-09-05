@@ -530,6 +530,68 @@ email with no reply; #15 and #5 (both cycle-2 questions) are also unanswered.
 Budget for the possibility that pre-submission questions simply do not get
 answered, and design the submission to be correct without them.
 
+### 4d. AML ingest cost in gpt-4o-mini terms — priced 2026-09-05
+
+Answers §10.3. **Bottom line: ~$230 for full-suite ingest; range $30–$720.** Not a
+blocker — a budget line. Prices verified current at **$0.15 / $0.60 per 1M**
+input/output (cached input $0.075), matching `scripts/_bench_usage.py`.
+
+**Structural finding that sets the price: the expensive compile stages do not run
+per-Add.** `wiki_incremental` and `section_link_extraction` have **zero** callers
+outside their own modules; the `section_compile` / `mental_model_compile`
+references are docstring mentions. They are reachable only through the bench
+harness's PageIndex tree-builder, and `PageIndexPipeline` exposes `recall` only —
+no `retain`. Wiki compile is separately threshold-batched off the retain path
+(`CompileTriggerConfig.size_threshold=50`, and `WikiCompileConfig.enabled` /
+`auto_start` both default `False`). **So `Add` → `retain()` is confined to
+`pipeline/retain_stage.py`.** This is why the §10.3 "LLM-heavy … + tree summaries"
+framing overstated the cost.
+
+| Config | Input tok | Output tok | $/Add | **Suite total** |
+|---|---|---|---|---|
+| Repo defaults (SFE off) | 948 | 200 | $0.00026 | **$30** |
+| **Expected** (SFE batched + observations) | 4,304 | 2,600 | $0.00221 | **~$228** |
+| High (`parallel_chunks` on) | 28,071 | 4,760 | $0.00707 | **~$719** |
+
+Basis: ~1,500 histories × 67.3 Adds/history ≈ **101k Add calls**. Embeddings are
+negligible (~$5 total at $0.02/1M). **Search-side cost for the ~5,000 questions is
+not included.**
+
+**The dominant variable is one boolean.** `structured_fact_extraction.parallel_chunks`
+converts a single batched extraction call into **one call per chunk (~40 for a
+2,000-word Add)** — by itself the $228 → $719 difference. The submission must pin
+this deliberately. Note also `enable_observation_consolidation` defaults `True` at
+`orchestrator.py:286` with nothing overriding it, so observation consolidation is
+unconditional on the Add path.
+
+**Confidence and its limits.** The per-Add fan-out is well-grounded (verified
+call-graph + tiktoken-counted templates). The weak link is **67.3 Adds/history**,
+inherited from the 6,056 figure — which prices a different code path (§10.3) and
+so is the right *shape* but not a validated ratio. Sensitivity: 30 Adds/history →
+$99; 120 → $397. AML's four unpublished benchmarks could sit anywhere in that band.
+**A second unknown is not resolvable from the repo at all:** no AML config file is
+committed (`ASTROCYTE_CONFIG_PATH` has no counterpart; the only AML yaml sets
+`llm_provider: mock`), so which flags the submission runs under is an open
+decision, not a lookup.
+
+**QUEUED — calibration run (~$3, ~1h, needs OpenAI credits + a free bench slot).**
+Replaces this whole estimate with a receipt and settles `parallel_chunks`
+empirically. Run a metered 20-history ingest through the real Add path:
+
+```bash
+# Requires OPENAI_API_KEY with credit. Run when no other bench holds the CLI/DB.
+ASTROCYTE_LLM_PROVIDER=openai ASTROCYTE_LLM_PROVIDER_CONFIG='{"model":"gpt-4o-mini"}' \
+ASTROCYTE_EMBEDDING_PROVIDER=openai \
+ASTROCYTE_EMBEDDING_PROVIDER_CONFIG='{"model":"text-embedding-3-small"}' \
+  <metered 20-history Add-path driver>   # must meter retain(), NOT build_lme_tree
+```
+
+Two requirements, both learned the hard way above: (1) it must exercise
+`Astrocyte.retain()` via the AML `add` endpoint — metering `build_lme_tree` prices
+the wrong path; (2) run it **twice**, once with `parallel_chunks` off and once on,
+to bound the 9× swing with data instead of inference. Record the resulting
+`usage.phases.ingest.cost_usd` here and retire the estimate.
+
 ## 5. M48 — Phase 3 (both sub-items gated)
 
 **M48a — reflect v3 (gate: M45 shows ≥8pp remaining headroom).** Termination architecture FIRST: forced candidate answer every iteration, hard 2-pass cap, no `done` tool reliance. Routed to TR/MS only via the shipped `_reflect_routing` signal. Validate as a bundle (M44 lesson).
@@ -579,5 +641,5 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
 
 1. ~~**A-H capability legend — GATES M46.**~~ **RESOLVED-AS-UNPUBLISHED 2026-09-03.** No public legend exists (search scope in §3). M46's gate is lifted to inference-only; the documented seven-capability list, the G1-G5 / F1 leaf corrections, and the empirical probe proposal are recorded in §3. Reopen only if an AML paper appears or they answer by email.
 2. ~~**Open-source track.**~~ **RESOLVED 2026-09-01**: it is the **`academic`** track (`?track=academic&benchmark_type=textual`), 50 entries, top 45.06. See §4. **Submission mechanics RESOLVED 2026-09-05 — see §4c.** Hosting is indeed avoidable, but *not* for the reason recorded here: the `Submitted (repo)` count was misread. Correction and the newly-surfaced gpt-4o-mini blocker are in §4c.
-3. **Add-side cost/latency of a full evaluation run.** ~1,500 histories and ~5,000 questions, batched at ≤20 messages / 2,000 words per Add. Our retain path is LLM-heavy (fact extraction + tree summaries + embeddings). Estimate total ingest spend under each provider config BEFORE requesting evaluation access; this is the real budget question. **Partially measured (2026-09-02):** LongMemEval at n=90 = **6,056 Add calls** (§4b) — comparable to our internal n=90 LME bench (~50 min, ~$12) plus answer/judge calls. Extrapolate to the full suite before committing. **Correction to the earlier note here:** our *internal self-eval* is not blocked on OpenAI credits — per §9.7 it runs through SPI-resolved providers, so the claude-native stack (`claude_cli` + `local_embeddings`) covers it end to end. **But an actual AML submission is: AML mandates gpt-4o-mini for Add and Search, and participants fund their own API spend (§4c).** So this cost question is now a *hard* budget prerequisite for entry, not a planning nicety, and it must be priced in gpt-4o-mini terms — the claude-native measurement does not substitute. What remains genuinely untested is our stack at evaluation scale.
+3. ~~**Add-side cost/latency of a full evaluation run.**~~ **PRICED 2026-09-05 — not a blocker. See §4d.** Estimated **~$230** of gpt-4o-mini for full-suite ingest (range **$30–$720**, driven almost entirely by one config flag). AML mandates gpt-4o-mini for Add and Search and participants fund their own spend (§4c), so this is a real budget line — but a couple hundred dollars is an affordable entry fee, not a gate. **Two corrections folded in:** (a) the retain path is *not* "LLM-heavy (fact extraction + tree summaries + embeddings)" as written here — tree/wiki/mental-model compile do **not** run per-Add (§4d); (b) the **6,056 figure does not price this path** — it came from `bench_pageindex_lme.py`'s ingest phase, which wraps `build_lme_tree`, so it measures the PageIndex tree path and would *overstate* Add cost. Our *internal self-eval* remains unblocked on OpenAI credits (§9.7, SPI-resolved providers); only an actual AML submission carries the OpenAI dependency.
 4. **The lone H=67.7 outlier** in the academic track (median 32.9). Whatever that entrant did in capability H is the single largest unexplained delta on the board; identify it once the A-H legend is known.
