@@ -459,6 +459,77 @@ the output as **directional, not a predicted placement** — `beam` in particula
 the full retain pipeline (fact extraction + tree summary + embeddings). Partially
 answers §10.3.
 
+### 4c. AML submission mechanics — resolved 2026-09-05
+
+Answers §10.2. Two findings: the hosting question resolves **in our favour**, and a
+previously-unknown **model mandate blocks the claude-native stack from entry**.
+
+**Correction — the `Submitted (repo)` reading in §4 was wrong.** Those labels are
+*provenance tags on cycle-1 results*, not submission routes. From the site's own
+tooltip source (`/static/app.js`, `leaderboardCateTooltip`): `Submitted (repo)` =
+"Submitted directly by the original authors/developers with their provided runtime
+parameters and environments"; `Submitted (API)` = "…with their provided API";
+`Evaluated` = "Evaluated by the leaderboard committee using the method's public
+GitHub repository, or paper reimplementation". All 50 academic rows share one
+`submitted_at` and a `run_label` of `excel-import-fixed-1-all-academic-rankNN` —
+a bulk spreadsheet import. **39 of 50 therefore means "39 authors self-reported
+numbers", not "39 teams used a low-friction code-drop path."** Do not cite the
+39 as evidence about cycle-2 friction.
+
+**Hosting is still avoidable — via a different, verified mechanism.** Cycle 2's
+access request (`POST /evaluation-access-requests`) takes an `evaluation_route` of
+`participant_api` | `maintainer_wrapped`. On `maintainer_wrapped`: *"Maintainers
+will clone the verified public GitHub repository, build and start the documented
+Docker entrypoint, wrap it as the official API, and run the evaluation from the
+leaderboard page."* No leaderboard key is issued, and `add_endpoint` /
+`search_endpoint` / `health_endpoint` / `memory_api_key` are all nullable in
+`EvaluationAccessRequestCreate` (verified against `/api/openapi.json`), with the
+30-day public-reachability confirmation required only on the `participant_api`
+route. **So: no public HTTPS service, no funded endpoint — a public GitHub repo
+with a documented Docker entrypoint is the deliverable.**
+
+**BLOCKER — gpt-4o-mini is mandated for Add and Search.** Verified verbatim from
+the docs: *"Add/Search uses gpt-4o-mini: The model used by the submitted memory
+system during both Add and Search must be gpt-4o-mini."* Applies to formal
+evaluation submissions on both tracks; the platform separately owns the
+Answer/Judge models. Cost split: *"Participants cover the cost of their own APIs,
+databases, bandwidth, and compute; the platform covers unified Answer, Eval, and
+evaluation orchestration."*
+
+Consequences, in order of importance:
+1. **The claude-native stack cannot be submitted as-is.** Entry requires an
+   OpenAI-backed retain/recall path. This does not invalidate §9.7's
+   provider-agnosticism principle — it is the SPI working as designed, since the
+   submission is one more provider config — but it does mean **AML entry has a
+   hard OpenAI dependency and therefore a hard funding prerequisite.**
+2. **§10.3's cost estimate must be redone in gpt-4o-mini terms.** The
+   claude-native measurement does not substitute, and the AML suite (~1,500
+   histories / ~5,000 questions) is far larger than our n=90 = 6,056 Add calls.
+   **Price this before requesting access.**
+3. **Reproducibility clause:** *"The platform will reproduce the submission; if the
+   reproduced score differs materially, the leaderboard result may be
+   invalidated."* Non-determinism in our pipeline is now a submission risk, not
+   just a reporting caveat.
+
+**Undocumented — do not assume.** Who supplies the LLM key inside a
+platform-built container, whether network egress is permitted during their run,
+and any CPU/RAM/wall-clock limits are **not published anywhere I could find**.
+The only cost language is written for the self-hosted case. These must be asked
+before committing engineering effort to the `maintainer_wrapped` path.
+
+**Cycle-2 logistics — mostly unpublished.** Only *"The second cycle is expected to
+open on September 20, 2026"*; **no deadline, no window length, no cycle-2 artifact
+list exists publicly.** Cycle 1 closed 2026-08-07 23:59 UTC+8 (a ~9-day window
+after opening — plan for something similar, but do not rely on it). Access
+requests are **currently closed**. The GitHub repo has no CONTRIBUTING, `docs/`,
+`submissions/` dir, or template, and no PR-based submission path — the code route
+is documented *only* on the website.
+
+**Responsiveness risk:** issue #13 reports two access-request submissions plus an
+email with no reply; #15 and #5 (both cycle-2 questions) are also unanswered.
+Budget for the possibility that pre-submission questions simply do not get
+answered, and design the submission to be correct without them.
+
 ## 5. M48 — Phase 3 (both sub-items gated)
 
 **M48a — reflect v3 (gate: M45 shows ≥8pp remaining headroom).** Termination architecture FIRST: forced candidate answer every iteration, hard 2-pass cap, no `done` tool reliance. Routed to TR/MS only via the shipped `_reflect_routing` signal. Validate as a bundle (M44 lesson).
@@ -507,6 +578,6 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
 1. ~~**A-H capability legend — GATES M46.**~~ **RESOLVED-AS-UNPUBLISHED 2026-09-03.** No public legend exists (search scope in §3). M46's gate is lifted to inference-only; the documented seven-capability list, the G1-G5 / F1 leaf corrections, and the empirical probe proposal are recorded in §3. Reopen only if an AML paper appears or they answer by email.
-2. ~~**Open-source track.**~~ **RESOLVED 2026-09-01**: it is the **`academic`** track (`?track=academic&benchmark_type=textual`), 50 entries, top 45.06. See §4. Follow-up: confirm the `Submitted (repo)` mechanics (39 of 50 chose it) — if code submission is accepted, the hosting/funding burden largely disappears and the deployment decision shrinks to a bench-config choice.
-3. **Add-side cost/latency of a full evaluation run.** ~1,500 histories and ~5,000 questions, batched at ≤20 messages / 2,000 words per Add. Our retain path is LLM-heavy (fact extraction + tree summaries + embeddings). Estimate total ingest spend under each provider config BEFORE requesting evaluation access; this is the real budget question. **Partially measured (2026-09-02):** LongMemEval at n=90 = **6,056 Add calls** (§4b) — comparable to our internal n=90 LME bench (~50 min, ~$12) plus answer/judge calls. Extrapolate to the full suite before committing. **Correction to the earlier note here:** this is *not* blocked on OpenAI credits. Per §9.7 the whole self-eval path — ingest, answer, and judge — runs through SPI-resolved providers, so the claude-native stack (`claude_cli` + `local_embeddings`) covers it end to end. What remains genuinely untested is that stack *at evaluation scale*; and the CLI's subscription auth is still awkward for a hosted service, which remains a point in favour of repo submission (§10.2).
+2. ~~**Open-source track.**~~ **RESOLVED 2026-09-01**: it is the **`academic`** track (`?track=academic&benchmark_type=textual`), 50 entries, top 45.06. See §4. **Submission mechanics RESOLVED 2026-09-05 — see §4c.** Hosting is indeed avoidable, but *not* for the reason recorded here: the `Submitted (repo)` count was misread. Correction and the newly-surfaced gpt-4o-mini blocker are in §4c.
+3. **Add-side cost/latency of a full evaluation run.** ~1,500 histories and ~5,000 questions, batched at ≤20 messages / 2,000 words per Add. Our retain path is LLM-heavy (fact extraction + tree summaries + embeddings). Estimate total ingest spend under each provider config BEFORE requesting evaluation access; this is the real budget question. **Partially measured (2026-09-02):** LongMemEval at n=90 = **6,056 Add calls** (§4b) — comparable to our internal n=90 LME bench (~50 min, ~$12) plus answer/judge calls. Extrapolate to the full suite before committing. **Correction to the earlier note here:** our *internal self-eval* is not blocked on OpenAI credits — per §9.7 it runs through SPI-resolved providers, so the claude-native stack (`claude_cli` + `local_embeddings`) covers it end to end. **But an actual AML submission is: AML mandates gpt-4o-mini for Add and Search, and participants fund their own API spend (§4c).** So this cost question is now a *hard* budget prerequisite for entry, not a planning nicety, and it must be priced in gpt-4o-mini terms — the claude-native measurement does not substitute. What remains genuinely untested is our stack at evaluation scale.
 4. **The lone H=67.7 outlier** in the academic track (median 32.9). Whatever that entrant did in capability H is the single largest unexplained delta on the board; identify it once the A-H legend is known.
