@@ -2086,6 +2086,60 @@ class Astrocyte:
         await self._hook_manager.fire("on_export", bank_id=bank_id, data={"memory_count": count, "path": path})
         return count
 
+    async def export_okf_bundle(
+        self,
+        bank_id: str,
+        path: str,
+        *,
+        scope: str | None = None,
+        kind: str | None = None,
+        allowed_roots: list[str] | None = None,
+        allow_uncontained: bool = False,
+        context: AstrocyteContext | None = None,
+    ) -> Any:
+        """Export a bank's compiled wiki pages as an OKF v0.2 bundle.
+
+        A directory of markdown files with YAML frontmatter, readable by any
+        OKF consumer. This is a projection: nothing is written back, and the
+        bundle is a point-in-time view of the current revision of each page.
+
+        Only fields Astrocyte actually persists are emitted — see
+        :mod:`astrocyte.okf` for the deliberate omissions (``verified``,
+        ``status``, ``stale_after``), which are absent rather than invented.
+
+        ``allowed_roots`` / ``allow_uncontained`` behave as in
+        :meth:`export_bank`: by default the export refuses to run unless
+        containment is configured.
+
+        Returns an ``astrocyte.okf.ExportResult``.
+        """
+        from astrocyte.okf import export_wiki_bundle
+
+        validate_bank_id(bank_id)
+        # Parity with export_bank: taking a full copy of a bank's compiled
+        # knowledge out of the system is an admin-level operation.
+        self._policy.check_access(bank_id, "admin", context)
+
+        if self._wiki_store is None:
+            raise ConfigError(
+                "brain.export_okf_bundle() requires a WikiStore. Call brain.set_wiki_store(store) before exporting."
+            )
+
+        pages = await self._wiki_store.list_pages(bank_id, scope=scope, kind=kind)  # type: ignore[attr-defined]
+        result = export_wiki_bundle(
+            pages,
+            bank_id=bank_id,
+            path=path,
+            allowed_roots=allowed_roots,
+            allow_uncontained=allow_uncontained,
+        )
+        await self._hook_manager.fire(
+            "on_export",
+            bank_id=bank_id,
+            data={"format": "okf", "concept_count": result.concept_count, "path": path},
+        )
+        return result
+
     async def import_bank(
         self,
         bank_id: str,

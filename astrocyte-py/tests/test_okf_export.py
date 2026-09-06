@@ -250,3 +250,71 @@ class TestCrossLinks:
         page.cross_links = ["entity:alice"]
         text = render_concept(page, producer="p/1")
         assert "Original body text." in text and "## Related" in text
+
+
+class TestBrainExportOkfBundle:
+    """`Astrocyte.export_okf_bundle` — the wiring that makes the exporter usable."""
+
+    def _brain(self):
+        from astrocyte import Astrocyte
+        from astrocyte.testing.in_memory import InMemoryWikiStore
+
+        brain = Astrocyte.from_config_dict({"banks": {"eng": {}}})
+        store = InMemoryWikiStore()
+        brain.set_wiki_store(store)
+        return brain, store
+
+    async def test_requires_a_wiki_store(self, tmp_path):
+        from astrocyte import Astrocyte
+        from astrocyte.errors import ConfigError
+
+        brain = Astrocyte.from_config_dict({"banks": {"eng": {}}})
+        with pytest.raises(ConfigError, match="WikiStore"):
+            await brain.export_okf_bundle("eng", str(tmp_path / "b"), allowed_roots=[str(tmp_path)])
+
+    async def test_exports_pages_from_the_bank(self, tmp_path):
+        brain, store = self._brain()
+        await store.upsert_page(make_page("topic:incident-response"), "eng")
+        await store.upsert_page(make_page("entity:alice", kind="entity", title="Alice"), "eng")
+
+        result = await brain.export_okf_bundle("eng", str(tmp_path / "b"), allowed_roots=[str(tmp_path)])
+
+        assert result.concept_count == 2
+        root = tmp_path / "b"
+        assert (root / "topic/incident-response.md").exists()
+        assert (root / "entity/alice.md").exists()
+        assert (root / "index.md").exists()
+
+    async def test_kind_filter_narrows_the_bundle(self, tmp_path):
+        brain, store = self._brain()
+        await store.upsert_page(make_page("topic:a"), "eng")
+        await store.upsert_page(make_page("entity:alice", kind="entity"), "eng")
+
+        result = await brain.export_okf_bundle("eng", str(tmp_path / "b"), kind="entity", allowed_roots=[str(tmp_path)])
+
+        assert result.concept_count == 1
+        assert (tmp_path / "b" / "entity/alice.md").exists()
+        assert not (tmp_path / "b" / "topic/a.md").exists()
+
+    async def test_other_banks_are_not_exported(self, tmp_path):
+        brain, store = self._brain()
+        await store.upsert_page(make_page("topic:mine"), "eng")
+        await store.upsert_page(make_page("topic:theirs"), "other")
+
+        result = await brain.export_okf_bundle("eng", str(tmp_path / "b"), allowed_roots=[str(tmp_path)])
+
+        assert result.concept_count == 1
+        assert (tmp_path / "b" / "topic/mine.md").exists()
+        assert not (tmp_path / "b" / "topic/theirs.md").exists()
+
+    async def test_containment_is_enforced_through_the_brain(self, tmp_path):
+        brain, store = self._brain()
+        await store.upsert_page(make_page(), "eng")
+        with pytest.raises(ValueError):
+            await brain.export_okf_bundle("eng", str(tmp_path / ".." / "escape"), allowed_roots=[str(tmp_path)])
+
+    async def test_empty_bank_exports_an_empty_bundle(self, tmp_path):
+        brain, _ = self._brain()
+        result = await brain.export_okf_bundle("eng", str(tmp_path / "b"), allowed_roots=[str(tmp_path)])
+        assert result.concept_count == 0
+        assert (tmp_path / "b" / "index.md").exists()
