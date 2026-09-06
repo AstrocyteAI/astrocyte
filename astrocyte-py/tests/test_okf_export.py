@@ -464,3 +464,169 @@ class TestMemoryConcepts:
 
         files = {f.path: f.content for f in build_bundle([], bank_id="b", memories=[make_item()])}
         assert "stale_after" not in files["memory/experience/m1.md"]
+
+
+class TestActorMapping:
+    """SPEC 7: actor convention; SPEC 5.2/5.3: generated.by and trust tiers."""
+
+    @pytest.mark.parametrize(
+        ("principal", "expected"),
+        [
+            ("user:calvin", "human:calvin"),
+            ("service:nightly", "process:nightly"),
+            ("agent:support-bot-1", "agent:support-bot-1"),
+        ],
+    )
+    def test_principal_maps_to_okf_actor(self, principal, expected):
+        from astrocyte.okf import okf_actor
+
+        assert okf_actor(principal) == expected
+
+    @pytest.mark.parametrize("bad", [None, "", "   ", "noprefix", "user:", "  :  "])
+    def test_unmappable_principal_yields_none(self, bad):
+        # None means "fall back to the producer" rather than emit a bad actor.
+        from astrocyte.okf import okf_actor
+
+        assert okf_actor(bad) is None
+
+    def test_human_prefix_is_used_for_users(self):
+        # Consumers key trust off `human:` (SPEC 5.3), so a person must map to it.
+        from astrocyte.okf import okf_actor
+
+        assert okf_actor("user:calvin").startswith("human:")
+
+    def test_generated_by_credits_the_writing_actor(self):
+        from astrocyte.okf import build_memory_frontmatter
+
+        item = make_item()
+        item.metadata = {**(item.metadata or {}), "_actor": "user:calvin"}
+        fm = build_memory_frontmatter(item, producer="astrocyte/1.0")
+        assert fm["generated"]["by"] == "human:calvin"
+
+    def test_producer_is_used_when_no_actor_recorded(self):
+        from astrocyte.okf import build_memory_frontmatter
+
+        fm = build_memory_frontmatter(make_item(), producer="astrocyte/1.0")
+        assert fm["generated"]["by"] == "astrocyte/1.0"
+
+    @pytest.mark.parametrize("layer", ["observation", "model", "compiled"])
+    def test_derived_layers_are_credited_to_the_producer_not_the_human(self, layer):
+        # The pipeline wrote these words, not the caller who triggered the write.
+        from astrocyte.okf import build_memory_frontmatter
+
+        item = make_item(memory_layer=layer)
+        item.metadata = {**(item.metadata or {}), "_actor": "user:calvin"}
+        fm = build_memory_frontmatter(item, producer="astrocyte/1.0")
+        assert fm["generated"]["by"] == "astrocyte/1.0"
+
+    def test_raw_fact_layer_keeps_the_human(self):
+        from astrocyte.okf import build_memory_frontmatter
+
+        item = make_item(memory_layer="fact")
+        item.metadata = {**(item.metadata or {}), "_actor": "user:calvin"}
+        fm = build_memory_frontmatter(item, producer="astrocyte/1.0")
+        assert fm["generated"]["by"] == "human:calvin"
+
+
+class TestVerified:
+    """SPEC 5.2/5.3 — supported, but never fabricated."""
+
+    def test_absent_for_records_written_today(self):
+        from astrocyte.okf import build_memory_frontmatter, verified_for
+
+        assert verified_for(make_item()) is None
+        assert "verified" not in build_memory_frontmatter(make_item(), producer="p/1")
+
+    def test_events_flow_through_when_present(self):
+        from astrocyte.okf import build_memory_frontmatter
+
+        item = make_item()
+        item.metadata = {
+            **(item.metadata or {}),
+            "_verified": [{"by": "user:calvin", "at": "2026-09-07T10:00:00+00:00"}],
+        }
+        fm = build_memory_frontmatter(item, producer="p/1")
+        assert fm["verified"] == [{"by": "human:calvin", "at": "2026-09-07T10:00:00+00:00"}]
+
+    def test_bare_mapping_is_accepted_as_one_event(self):
+        # SPEC 5.2 permits a single verifier without the list dash.
+        from astrocyte.okf import verified_for
+
+        item = make_item()
+        item.metadata = {**(item.metadata or {}), "_verified": {"by": "user:x", "at": "2026-09-07T00:00:00+00:00"}}
+        assert verified_for(item) == [{"by": "human:x", "at": "2026-09-07T00:00:00+00:00"}]
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            [{"by": "user:calvin"}],
+            [{"at": "2026-09-07T00:00:00+00:00"}],
+            [{"by": "malformed", "at": "2026-09-07T00:00:00+00:00"}],
+            ["not-a-dict"],
+            "garbage",
+        ],
+    )
+    def test_incomplete_events_are_dropped_not_guessed(self, bad):
+        from astrocyte.okf import verified_for
+
+        item = make_item()
+        item.metadata = {**(item.metadata or {}), "_verified": bad}
+        assert verified_for(item) is None
+
+
+class TestActorEndToEnd:
+    """retain(context=...) -> persisted metadata -> OKF `generated.by`."""
+
+    async def _brain_with_vectors(self):
+        from astrocyte import Astrocyte
+        from astrocyte.pipeline.orchestrator import PipelineOrchestrator
+        from astrocyte.testing.in_memory import (
+            InMemoryVectorStore,
+            InMemoryWikiStore,
+            MockLLMProvider,
+        )
+
+        vs = InMemoryVectorStore()
+        brain = Astrocyte.from_config_dict({"banks": {"eng": {}}})
+        brain.set_pipeline(PipelineOrchestrator(vector_store=vs, llm_provider=MockLLMProvider()))
+        brain.set_wiki_store(InMemoryWikiStore())
+        return brain, vs
+
+    async def test_actor_is_persisted_on_retain(self):
+        from astrocyte.types import AstrocyteContext
+
+        brain, vs = await self._brain_with_vectors()
+        await brain.retain("Alice owns payments.", bank_id="eng", context=AstrocyteContext(principal="user:calvin"))
+        items = await vs.list_vectors("eng", offset=0, limit=10)
+        assert any((i.metadata or {}).get("_actor") == "user:calvin" for i in items)
+
+    async def test_no_actor_recorded_without_context(self):
+        brain, vs = await self._brain_with_vectors()
+        await brain.retain("No context here.", bank_id="eng")
+        items = await vs.list_vectors("eng", offset=0, limit=10)
+        assert all((i.metadata or {}).get("_actor") is None for i in items)
+
+    async def test_actor_reaches_the_exported_bundle(self, tmp_path):
+        from astrocyte.types import AstrocyteContext
+
+        brain, _ = await self._brain_with_vectors()
+        await brain.retain("Alice owns payments.", bank_id="eng", context=AstrocyteContext(principal="user:calvin"))
+        await brain.export_okf_bundle("eng", str(tmp_path / "b"), include_memories=True, allowed_roots=[str(tmp_path)])
+        written = list((tmp_path / "b" / "memory").rglob("*.md"))
+        assert written, "expected at least one memory concept"
+        assert any("by: human:calvin" in p.read_text() for p in written)
+
+    async def test_caller_supplied_actor_is_not_overwritten(self):
+        # An explicit _actor in metadata is the caller's assertion; setdefault
+        # must not clobber it with the request context.
+        from astrocyte.types import AstrocyteContext
+
+        brain, vs = await self._brain_with_vectors()
+        await brain.retain(
+            "x",
+            bank_id="eng",
+            metadata={"_actor": "service:importer"},
+            context=AstrocyteContext(principal="user:calvin"),
+        )
+        items = await vs.list_vectors("eng", offset=0, limit=10)
+        assert any((i.metadata or {}).get("_actor") == "service:importer" for i in items)

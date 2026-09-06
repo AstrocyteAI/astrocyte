@@ -463,18 +463,25 @@ class Astrocyte:
             # Access control
             self._policy.check_access(bank_id, "write", context)
 
+            # Identity spec §3 Gap 2: resolved actor flows into MIP so rules can
+            # branch on principal_type / principal_id / etc. Resolved once here,
+            # unconditionally, because it is also persisted below — the actor is
+            # the only record of *who* wrote a memory, and it was previously
+            # computed for routing and then dropped.
+            from astrocyte.identity import format_principal, resolve_actor
+
+            actor_identity = resolve_actor(context) if context else None
+            if actor_identity is not None:
+                # Stamped into metadata rather than a column: metadata is JSONB,
+                # so provenance-of-authorship needs no migration.
+                metadata = dict(metadata or {})
+                metadata.setdefault("_actor", format_principal(actor_identity))
+
             # MIP routing (before policy layer)
             mip_pipeline = None
             mip_rule_name = None
             if self._mip_router:
-                from astrocyte.identity import resolve_actor
                 from astrocyte.mip.rule_engine import RuleEngineInput
-
-                # Identity spec §3 Gap 2: resolved actor flows into MIP so
-                # rules can branch on principal_type / principal_id / etc.
-                # When no context is supplied (legacy callers), actor is
-                # None and principal_* match conditions simply never fire.
-                actor_identity = resolve_actor(context) if context else None
 
                 mip_input = RuleEngineInput(
                     content=content,

@@ -15,9 +15,11 @@ frontmatter key (SPEC 4.1, 11), so a sparse bundle is fully conformant, and
 consumers MUST tolerate absent optional families. Deliberate omissions:
 
 ``verified``
-    Astrocyte persists no verification events, so the key is omitted and
-    consumers derive the **unverified** tier (SPEC 5.3). Emitting anything
-    here would be inventing trust.
+    Astrocyte has no review workflow, so no record written today carries
+    verification events and consumers correctly derive the **unverified** tier
+    (SPEC 5.3). :func:`verified_for` reads ``metadata["_verified"]`` so the
+    export is complete the moment such a workflow exists — but nothing is
+    invented in the meantime.
 ``status``
     No lifecycle column exists on any record. Absent ``status`` already means
     ``stable`` (SPEC 5.4), which is accurate for a compiled page.
@@ -236,6 +238,65 @@ def stale_after_for(item: VectorItem, lifecycle: Any, *, now: datetime | None = 
     return (created + timedelta(days=days)).isoformat()
 
 
+# Memory layers whose text the pipeline synthesises rather than the caller
+# supplying it. `generated.by` records who produced the *content* (SPEC 5.2),
+# so these must be attributed to the producer even when a human triggered the
+# write — crediting a consolidated observation to `human:calvin` would claim a
+# person wrote words the LLM actually wrote.
+_DERIVED_LAYERS = frozenset({"observation", "model", "compiled"})
+
+# ActorIdentity.type -> OKF actor prefix (SPEC 7). Consumers key trust off the
+# `human:` prefix, so a real person must map to it and a machine must not.
+_ACTOR_TYPE_TO_OKF = {"user": "human", "service": "process", "agent": "agent"}
+
+
+def okf_actor(principal: str | None) -> str | None:
+    """Map an Astrocyte principal (``{type}:{id}``) to an OKF actor (SPEC 7).
+
+    ``user:`` becomes ``human:`` because that prefix is what consumers key trust
+    tiers off. ``service:`` becomes ``process:``. Anything unparseable returns
+    ``None`` so the caller falls back to the producer rather than emitting a
+    malformed actor.
+    """
+    raw = (principal or "").strip()
+    if not raw or ":" not in raw:
+        return None
+    kind, _, ident = raw.partition(":")
+    ident = ident.strip()
+    if not ident:
+        return None
+    return f"{_ACTOR_TYPE_TO_OKF.get(kind.strip(), kind.strip())}:{ident}"
+
+
+def verified_for(item: VectorItem) -> list[dict[str, str]] | None:
+    """Verification events for a memory, or ``None``.
+
+    OKF's ``verified`` is a list of ``{by, at}`` events (SPEC 5.2), and the
+    trust tier derives from it (SPEC 5.3). **Astrocyte has no review or
+    verification workflow**, so this returns ``None`` for every record written
+    today, and consumers correctly see the *unverified* tier.
+
+    The reader exists so that the export is complete the moment such a workflow
+    does: write ``metadata["_verified"]`` as a list of ``{"by": <principal>,
+    "at": <ISO 8601>}`` and it flows through. Entries missing either field, or
+    carrying an unmappable actor, are dropped rather than guessed at.
+    """
+    raw = (item.metadata or {}).get("_verified")
+    if isinstance(raw, dict):  # SPEC 5.2 allows a bare mapping for one verifier.
+        raw = [raw]
+    if not isinstance(raw, list):
+        return None
+    out: list[dict[str, str]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        by = okf_actor(str(entry.get("by", "")))
+        at = _iso(entry.get("at"))
+        if by and at:
+            out.append({"by": by, "at": at})
+    return out or None
+
+
 def memory_concept_path(item: VectorItem) -> str:
     """Bundle path for a memory concept.
 
@@ -268,8 +329,19 @@ def build_memory_frontmatter(
             }
         ]
 
+    # Attribute to the writing actor only where the caller supplied the text.
+    # Derived layers are the pipeline's own words (see _DERIVED_LAYERS).
+    actor = None
+    if str(item.memory_layer or "").strip() not in _DERIVED_LAYERS:
+        actor = okf_actor((item.metadata or {}).get("_actor"))
+    by = actor or producer
+
     at = _iso(item.retained_at)
-    fm["generated"] = {"by": producer, "at": at} if at else {"by": producer}
+    fm["generated"] = {"by": by, "at": at} if at else {"by": by}
+
+    verified = verified_for(item)
+    if verified:
+        fm["verified"] = verified
 
     if stale_after:
         fm["stale_after"] = stale_after
