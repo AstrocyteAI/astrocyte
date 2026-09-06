@@ -652,10 +652,86 @@ to bound the 9× swing with data instead of inference. Record the resulting
 
 | Item | Complexity | Value |
 |---|---|---|
-| OKF bundle **export** of wiki pages (frontmatter from type/tags/provenance; `log.md` from revisions; `index.md` from tree) | Low | Interop with Google toolchain; "OKF-conformant" positioning |
-| `stale_after` + `status` + human/machine trust tiers on wiki pages | Low | Governance/enterprise |
+| OKF export — see §6.1 phased plan below | Low (phase 1) → High (phase 3) | Interop; governance/enterprise |
 | `astrocyte-mcp` composed-context tool (single-call wiki page + top facts per entity, cursor pagination — OpenMetadata `get_asset_context` shape) | Med | MCP is the de-facto agent integration path |
 | OKF **import** | Med | DEFER: spec broke v0.1→v0.2 in 3 months; no third-party bundles exist yet |
+
+### 6.1 OKF v0.2 implementation — phased plan (scoped 2026-09-06)
+
+Spec read at `GoogleCloudPlatform/knowledge-catalog/okf/SPEC.md` (v0.2, 1,006 lines).
+Nothing OKF-related exists in the repo today — `okf` grep-matches this document and
+nothing else.
+
+**The governing fact: `type` is the only required frontmatter key.** A concept
+carrying just `type` is fully conformant (SPEC §4.1, §11), and consumers MUST NOT
+reject unknown types or missing optional families. So "OKF-conformant" is cheap;
+what costs is making the bundle *informative*. The three phases below are ordered
+by whether the source data exists, not by spec section.
+
+**Entry point is the wiki tier**, because OKF's unit is a markdown document with
+frontmatter and our wiki pages already are that.
+
+| OKF field | Astrocyte source | State |
+|---|---|---|
+| bundle root | `bank_id` | ✅ |
+| concept id (path) | `wiki_pages.slug` (UNIQUE per bank) | ✅ |
+| **`type`** (required) | `wiki_pages.kind` (`topic\|entity\|concept`) | ✅ |
+| `title` | `wiki_pages.title` | ✅ |
+| body | `wiki_revisions.markdown` | ✅ |
+| `log.md` (§9) | `wiki_revisions` history | ✅ |
+| `index.md` (§8) | page listing / section tree | ✅ |
+| `sources` (§5.1) | `wiki_revision_sources` | ⚠️ ids only |
+| `generated.at` (§5.2) | `created_at` / `updated_at` / `refreshed_at` | ✅ |
+| `description` | `wiki_revisions.summary` | ❌ dead column |
+| `tags` | `wiki_pages.tags` | ❌ dead column |
+| `generated.by` (§5.2) | `wiki_revisions.compiled_by` | ❌ stage name, not an actor |
+| `verified` (§5.2/5.3) | — | ❌ no source data |
+| `status` (§5.4) | — | ❌ no column |
+| `stale_after` (§5.5) | — | ❌ no column |
+
+**Phase 1 — wiki-page export (Low).** The structural half of the mapping is already
+satisfied. **Prerequisite, and the reason this is not merely a serializer:** four
+columns the mapping depends on are dead in the writer and must be fixed first, or we
+ship a conformant bundle with empty frontmatter —
+(a) `wiki_pages.tags` is hardcoded `NULL` on the PageIndex path
+(`pageindex_store.py` wiki upsert); (b) `wiki_revisions.summary` receives
+`page.title`, so `description` would duplicate `title`; (c) `compiled_by` is `NULL`
+(library path) or the literal `'section_compile'`; (d)
+`wiki_revision_sources.quote`/`relevance` are omitted from the INSERT. All four are
+cheap. Ship beside `portability.py`'s AMA exporter, not in place of it — AMA
+exports from `recall()` results and structurally cannot see wiki pages, mental
+models, or facts.
+
+**Phase 2 — lifecycle fields (Low).** Add `status` (`draft|stable|deprecated`,
+absent ⇒ `stable`) and `stale_after` (an **absolute instant**, not a TTL — SPEC
+§5.5). Good fit for `LifecycleManager.evaluate_memory_ttl()`, which today computes
+archive/delete/keep at read time from `LifecycleConfig` (default `enabled=False`)
+and never writes the verdict back. Note the `_obs_freshness` metadata key is
+vestigial — written `"fresh"` at both sites, never read, never set `"stale"`; do not
+build on it.
+
+**Phase 3 — trust (High; the only phase with real design work).** `generated.by`
+and the whole `verified` family have **no source data**, and the gap is structural
+rather than a missing column: no actor is persisted on any memory record;
+`ActorIdentity` / `AstrocyteContext.principal` exist and are shaped almost exactly
+like OKF actors (`human:alice`) but **cannot reach the write path** —
+`RetainRequest` has no actor field, `retain()` drops `context` after the access
+check, and `principal` appears nowhere under `pipeline/`. It does not reach
+`AuditEntry` either. Populating these today means inventing values. This phase is
+what actually unlocks the governance/enterprise story (trust tiers per SPEC §5.3:
+no `verified` ⇒ unverified; non-human verifier ⇒ machine-confirmed; `human:` ⇒
+human-reviewed) — and it is a prerequisite for §9.5's forgetting-policy inputs.
+
+**Separate the two goals that both want OKF.** *Interop export* (above) does not
+care about determinism and works today. ***Diff-based audit* (§9.8) does, and is
+blocked** — verified 2026-09-06: every primary key is a random UUID rather than
+content-derived (`uuid4()` for `pi_facts.id`, `uuid4().hex[:16]` for
+`astrocyte_vectors.id`), so `source_ids` provenance edges are non-reproducible
+across ingests even when text is identical; `astrocyte_pi_facts` has no
+`ON CONFLICT`, so re-ingesting a document **appends duplicates** rather than being
+idempotent; and the public `Astrocyte.compile()` path passes no `temperature` at
+all. Content-addressed ids are a larger change than the exporter itself — settle
+that before treating OKF as the audit substrate.
 
 ## 7. Cost/latency/accuracy tiering doctrine
 
@@ -714,12 +790,23 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
    already borrows its vocabulary, which also makes the export legible to anyone
    already using that spec.
 
-   **Open risk to settle before building:** whether a deterministic export is
-   actually achievable — LLM-generated summaries and embedding-driven ordering may
-   make two ingests of identical input produce non-identical trees, which would make
-   diffs noisy and defeat the purpose. Establish that first on a single bank; if
-   exports are not stable, this idea does not work as specified and should be
-   dropped rather than patched with normalization hacks.
+   **Risk resolved 2026-09-06 — it is worse than "noisy diffs", and it is not
+   primarily about LLM text.** The blocker is identity: every primary key is a
+   **random UUID, not content-derived** (`uuid4()` for `astrocyte_pi_facts.id`,
+   `uuid4().hex[:16]` for `astrocyte_vectors.id`), so the `source_ids` provenance
+   arrays on mental models and wiki revisions point at ids that change on every
+   ingest — provenance edges are non-reproducible **even when the text is
+   byte-identical**. Compounding it: `astrocyte_pi_facts` has no `ON CONFLICT`, so
+   re-ingesting a document appends duplicate rows rather than converging; the
+   "deterministic" logical ids (`mm:`/`pref:`/`obs:` slugs) are derived from
+   LLM-emitted titles and drift when the title does; and the public
+   `Astrocyte.compile()` path passes no `temperature` at all (most first-party
+   extractors do set 0.0).
+
+   **Consequence for sequencing:** content-addressed ids are a prerequisite, and
+   they are a larger change than the exporter. Do **not** start this as an export
+   task. The OKF *interop* export (§6.1 phase 1) is unaffected by any of this and
+   can proceed independently — only the diff/audit use needs stable identity.
 
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
