@@ -757,11 +757,20 @@ publishes `stale_after` tells a downstream consumer the shelf life of a concept
 *before* the deletion happens, which is the difference between an export that ages
 out silently and one that announces its own expiry.
 
-**Precondition:** this only becomes reachable once the OKF export covers
-memory-backed concepts. Phase 1 exports wiki pages only. So the ordering is:
-extend the exporter to memories/facts → `stale_after` comes along for free →
-`status` stays deferred until some signal actually exists (phase 3's actor work, or
-a supersedes relation, would supply one).
+**✅ DONE 2026-09-06** (`c233bee`). The exporter now covers memory-backed concepts
+(`export_okf_bundle(include_memories=True)`, under `memory/<fact_type>/`), and
+`stale_after` came along for free — **derived, with no column added**, exactly as
+scoped above. Implementation detail worth keeping: it reads
+`metadata["_created_at"]`, *not* the typed `VectorItem.retained_at`, because
+`run_lifecycle` keys off the former — publishing an expiry from the typed field
+would advertise a date we would not actually delete on. Memory export is **off by
+default**: it is one file per memory, so a large bank produces a very large bundle
+(`max_memories` bounds it). `occurred_at` is preserved as a producer extension key
+(SPEC §4.1), so bitemporality survives the projection rather than being flattened
+onto `generated.at`.
+
+`status` remains deferred — still no signal exists. Phase 3's actor work, or a
+supersedes relation, would supply one.
 
 **Phase 3 — trust (High; the only phase with real design work).** `generated.by`
 and the whole `verified` family have **no source data**, and the gap is structural
