@@ -772,17 +772,34 @@ onto `generated.at`.
 `status` remains deferred — still no signal exists. Phase 3's actor work, or a
 supersedes relation, would supply one.
 
-**Phase 3 — trust (High; the only phase with real design work).** `generated.by`
-and the whole `verified` family have **no source data**, and the gap is structural
-rather than a missing column: no actor is persisted on any memory record;
-`ActorIdentity` / `AstrocyteContext.principal` exist and are shaped almost exactly
-like OKF actors (`human:alice`) but **cannot reach the write path** —
-`RetainRequest` has no actor field, `retain()` drops `context` after the access
-check, and `principal` appears nowhere under `pipeline/`. It does not reach
-`AuditEntry` either. Populating these today means inventing values. This phase is
-what actually unlocks the governance/enterprise story (trust tiers per SPEC §5.3:
-no `verified` ⇒ unverified; non-human verifier ⇒ machine-confirmed; `human:` ⇒
-human-reviewed) — and it is a prerequisite for §9.5's forgetting-policy inputs.
+**Phase 3 — trust. ✅ 3a DONE 2026-09-06 (`66793c6`); 3b is not an engineering
+task.** Splitting it this way is the finding: only half of "trust" was plumbing.
+
+**3a — `generated.by`: done.** `retain()` already resolved an actor via
+`resolve_actor(context)` for MIP routing and then **discarded it**; it is now
+resolved unconditionally and stamped into `metadata["_actor"]` — JSONB, so no
+migration. `AstrocyteContext.principal` was already nearly OKF-shaped
+(`user:calvin`), so the mapping is small: `user:` → `human:` (the prefix consumers
+key trust off, SPEC §5.3), `service:` → `process:`, `agent:` passes through;
+anything unparseable falls back to the producer rather than emitting a malformed
+actor. **The real win is not the export:** nothing anywhere recorded who wrote a
+memory — `AuditEntry` has no actor field either — so this closes a provenance gap
+that existed independently of OKF.
+
+*Correctness nuance worth keeping:* derived layers (`observation`, `model`,
+`compiled`) stay credited to the producer even when a human triggered the write.
+`generated.by` records who produced the *content* (SPEC §5.2), and crediting a
+consolidated observation to `human:calvin` would claim a person wrote words the
+LLM actually wrote.
+
+**3b — `verified`: not blocked on plumbing, blocked on a product decision.** OKF's
+`verified` is a list of verification *events*, and **Astrocyte has no review or
+verification workflow at all** — there is nothing to record. So the field stays
+absent, and consumers correctly derive the *unverified* tier. `verified_for()`
+reads `metadata["_verified"]` (accepting SPEC §5.2's bare-mapping form, dropping
+incomplete entries rather than guessing), so the export is complete the moment such
+a workflow exists. **Building the workflow is a product question, not a phase of an
+export task** — treat it as such rather than as remaining OKF work.
 
 **Separate the two goals that both want OKF.** *Interop export* (above) does not
 care about determinism and works today. ***Diff-based audit* (§9.8) does, and is
