@@ -690,7 +690,7 @@ frontmatter and our wiki pages already are that.
 | `stale_after` (§5.5) | — | ❌ no column |
 
 **Phase 1 — wiki-page export. ✅ SHIPPED 2026-09-06** (`astrocyte/okf.py`,
-`tests/test_okf_export.py`, 37 tests). Built as a **pure projection**: it reads
+`brain.export_okf_bundle()`, `tests/test_okf_export.py`, 43 tests). Built as a **pure projection**: it reads
 `WikiPage` objects and writes a bundle, touching no schema and no write path.
 Verified conformant by an independent implementation — the `okf-agent-memory` Go
 validator reports *0 errors, 0 warnings, 0 broken links, 0 orphans* and reads every
@@ -716,6 +716,8 @@ contributing memories, or the body's first paragraph — remains available later
 without a migration or any ingest-path risk. Ships beside `portability.py`'s AMA
 exporter, which exports raw memories from `recall()` results and structurally cannot
 see wiki pages.
+
+**Entry point:** `await brain.export_okf_bundle(bank_id, path, kind=..., scope=...)` — same admin access check and path containment as `export_bank`. Verified end to end: a brain-produced bundle validates conformant and is searchable by the third-party OKF CLI, which is the interop claim actually being made.
 
 **Phase 2 — lifecycle fields (Low).** Add `status` (`draft|stable|deprecated`,
 absent ⇒ `stable`) and `stale_after` (an **absolute instant**, not a TTL — SPEC
