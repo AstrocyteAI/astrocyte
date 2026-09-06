@@ -2093,6 +2093,8 @@ class Astrocyte:
         *,
         scope: str | None = None,
         kind: str | None = None,
+        include_memories: bool = False,
+        max_memories: int | None = None,
         allowed_roots: list[str] | None = None,
         allow_uncontained: bool = False,
         context: AstrocyteContext | None = None,
@@ -2105,7 +2107,15 @@ class Astrocyte:
 
         Only fields Astrocyte actually persists are emitted — see
         :mod:`astrocyte.okf` for the deliberate omissions (``verified``,
-        ``status``, ``stale_after``), which are absent rather than invented.
+        ``status``), which are absent rather than invented.
+
+        ``include_memories`` additionally exports raw memories as concepts under
+        ``memory/``. This is off by default because it is one file per memory:
+        a large bank produces a very large bundle, so pair it with
+        ``max_memories`` when exploring. When lifecycle is enabled, each memory
+        carries a derived ``stale_after`` computed from the same
+        ``_created_at`` value that ``run_lifecycle`` would delete on, so a
+        consumer sees the shelf life before the deletion happens.
 
         ``allowed_roots`` / ``allow_uncontained`` behave as in
         :meth:`export_bank`: by default the export refuses to run unless
@@ -2126,10 +2136,32 @@ class Astrocyte:
             )
 
         pages = await self._wiki_store.list_pages(bank_id, scope=scope, kind=kind)  # type: ignore[attr-defined]
+
+        memories: list[Any] = []
+        if include_memories:
+            store = self._pipeline.vector_store if self._pipeline else None
+            if store is None or not hasattr(store, "list_vectors"):
+                raise ConfigError(
+                    "export_okf_bundle(include_memories=True) requires a pipeline with a "
+                    "vector store supporting list_vectors()."
+                )
+            offset = 0
+            while True:
+                batch = await store.list_vectors(bank_id, offset=offset, limit=200)
+                if not batch:
+                    break
+                memories.extend(batch)
+                offset += len(batch)
+                if max_memories is not None and len(memories) >= max_memories:
+                    memories = memories[:max_memories]
+                    break
+
         result = export_wiki_bundle(
             pages,
             bank_id=bank_id,
             path=path,
+            memories=memories or None,
+            lifecycle=self._config.lifecycle,
             allowed_roots=allowed_roots,
             allow_uncontained=allow_uncontained,
         )

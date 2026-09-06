@@ -18,9 +18,13 @@ consumers MUST tolerate absent optional families. Deliberate omissions:
     Astrocyte persists no verification events, so the key is omitted and
     consumers derive the **unverified** tier (SPEC 5.3). Emitting anything
     here would be inventing trust.
-``status`` / ``stale_after``
-    No lifecycle columns exist on wiki pages. Absent ``status`` already means
+``status``
+    No lifecycle column exists on any record. Absent ``status`` already means
     ``stable`` (SPEC 5.4), which is accurate for a compiled page.
+``stale_after``
+    Omitted for wiki pages, which no TTL governs. **Emitted for memories** when
+    lifecycle is enabled, derived from ``delete_after_days`` — see
+    :func:`stale_after_for`.
 ``description``
     ``WikiPage`` has no summary field; ``wiki_revisions.summary`` receives the
     title. Emitting it would duplicate ``title`` rather than describe the page.
@@ -30,7 +34,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -39,7 +43,7 @@ import yaml
 from .portability import _safe_resolve
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .types import WikiPage
+    from .types import VectorItem, WikiPage
 
 OKF_VERSION = "0.2"
 
@@ -166,6 +170,137 @@ def build_frontmatter(page: WikiPage, *, producer: str) -> dict[str, Any]:
     return fm
 
 
+def _lifecycle_created_at(item: VectorItem) -> datetime | None:
+    """The creation instant lifecycle actually uses.
+
+    ``run_lifecycle`` reads ``metadata["_created_at"]`` rather than the typed
+    ``VectorItem.retained_at``. A published ``stale_after`` is only honest if it
+    is computed from the same value that will drive the deletion, so this
+    deliberately mirrors that read — including its fallback to nothing when the
+    key is absent, which is exactly when lifecycle cannot age the row either.
+    """
+    meta = item.metadata or {}
+    raw = meta.get("_created_at")
+    if isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+    return None
+
+
+def _lifecycle_tags(item: VectorItem) -> list[str]:
+    """Tags as lifecycle sees them (``metadata["_tags"]``, comma-joined)."""
+    meta = item.metadata or {}
+    raw = meta.get("_tags")
+    if isinstance(raw, str) and raw.strip():
+        return [t.strip() for t in raw.split(",") if t.strip()]
+    return []
+
+
+def stale_after_for(item: VectorItem, lifecycle: Any, *, now: datetime | None = None) -> str | None:
+    """Absolute expiry instant for a memory, or ``None`` to omit the field.
+
+    OKF's ``stale_after`` is an absolute instant, not a TTL (SPEC 5.5), which
+    maps cleanly onto ``delete_after_days`` because that threshold is measured
+    from creation and therefore does not move.
+
+    Three rules keep the published value truthful:
+
+    - Only when lifecycle is **enabled**; otherwise no expiry is in force.
+    - From ``delete_after_days``, never ``archive_after_days`` — the latter is
+      measured from ``last_recalled_at`` and so shifts on every read, which is
+      not something that can be published as a fixed instant.
+    - Omitted for ``exempt_tags`` memories, which genuinely never expire.
+    """
+    del now  # Absolute; independent of when the export runs.
+    if lifecycle is None or not getattr(lifecycle, "enabled", False):
+        return None
+    ttl = getattr(lifecycle, "ttl", None)
+    if ttl is None:
+        return None
+
+    exempt = getattr(ttl, "exempt_tags", None) or []
+    if exempt and set(_lifecycle_tags(item)) & set(exempt):
+        return None
+
+    created = _lifecycle_created_at(item)
+    if created is None:
+        return None
+
+    days = getattr(ttl, "delete_after_days", None)
+    if not isinstance(days, int) or days <= 0:
+        return None
+    return (created + timedelta(days=days)).isoformat()
+
+
+def memory_concept_path(item: VectorItem) -> str:
+    """Bundle path for a memory concept.
+
+    Memories are flat and id-keyed, so the hierarchy comes from the kind of
+    memory rather than from the id, keeping ``memory/`` browsable.
+    """
+    group = str(item.fact_type or item.memory_layer or "memory").strip() or "memory"
+    return f"memory/{_slug_segment(group)}/{_slug_segment(item.id)}.md"
+
+
+def build_memory_frontmatter(
+    item: VectorItem,
+    *,
+    producer: str,
+    stale_after: str | None = None,
+) -> dict[str, Any]:
+    """Frontmatter for one memory concept."""
+    kind = str(item.fact_type or item.memory_layer or "memory").strip() or "memory"
+    fm: dict[str, Any] = {"type": kind.replace("_", " ").title()}
+
+    tags = [t for t in (item.tags or []) if str(t).strip()]
+    if tags:
+        fm["tags"] = tags
+
+    if item.chunk_id:
+        fm["sources"] = [
+            {
+                "id": str(item.chunk_id),
+                "resource": f"astrocyte://bank/{item.bank_id}/chunk/{item.chunk_id}",
+            }
+        ]
+
+    at = _iso(item.retained_at)
+    fm["generated"] = {"by": producer, "at": at} if at else {"by": producer}
+
+    if stale_after:
+        fm["stale_after"] = stale_after
+
+    # Valid time, distinct from `generated.at` (system time). OKF has no slot
+    # for the second axis, and producers MAY add keys (SPEC 4.1), so the
+    # bitemporality survives the projection instead of being flattened away.
+    occurred = _iso(item.occurred_at)
+    if occurred:
+        fm["occurred_at"] = occurred
+    if item.memory_layer:
+        fm["memory_layer"] = str(item.memory_layer)
+
+    return fm
+
+
+def render_memory(
+    item: VectorItem,
+    *,
+    producer: str,
+    stale_after: str | None = None,
+) -> str:
+    fm = yaml.safe_dump(
+        build_memory_frontmatter(item, producer=producer, stale_after=stale_after),
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+    ).strip()
+    return f"---\n{fm}\n---\n\n{(item.text or '').strip()}\n"
+
+
 def render_concept(page: WikiPage, *, producer: str) -> str:
     fm = yaml.safe_dump(
         build_frontmatter(page, producer=producer),
@@ -227,8 +362,15 @@ def build_bundle(
     *,
     bank_id: str,
     producer: str | None = None,
+    memories: list[VectorItem] | None = None,
+    lifecycle: Any = None,
 ) -> list[BundleFile]:
-    """Render a full bundle in memory. Pure — performs no I/O."""
+    """Render a full bundle in memory. Pure — performs no I/O.
+
+    ``memories`` are exported as concepts under ``memory/``. When ``lifecycle``
+    is supplied and enabled, each memory carries a derived ``stale_after``
+    (see :func:`stale_after_for`).
+    """
     if producer is None:
         producer = _default_producer()
 
@@ -251,6 +393,25 @@ def build_bundle(
         parent = str(Path(path).parent)
         parent = "" if parent == "." else parent
         title = (page.title or page.page_id or "untitled").strip()
+        dirs.setdefault(parent, []).append((title, Path(path).name))
+
+    for item in memories or []:
+        path = memory_concept_path(item)
+        if path in seen:
+            continue
+        seen.add(path)
+        files.append(
+            BundleFile(
+                path=path,
+                content=render_memory(
+                    item,
+                    producer=producer,
+                    stale_after=stale_after_for(item, lifecycle),
+                ),
+            )
+        )
+        parent = str(Path(path).parent)
+        title = (item.text or item.id).strip().splitlines()[0][:80] or item.id
         dirs.setdefault(parent, []).append((title, Path(path).name))
 
     # Subdirectory indexes, plus links from the root index into them.
@@ -293,6 +454,8 @@ def export_wiki_bundle(
     bank_id: str,
     path: str | Path,
     producer: str | None = None,
+    memories: list[VectorItem] | None = None,
+    lifecycle: Any = None,
     allowed_roots: list[str | Path] | None = None,
     allow_uncontained: bool = False,
 ) -> ExportResult:
@@ -306,7 +469,13 @@ def export_wiki_bundle(
         allowed_roots=allowed_roots,
         allow_uncontained=allow_uncontained,
     )
-    files = build_bundle(pages, bank_id=bank_id, producer=producer)
+    files = build_bundle(
+        pages,
+        bank_id=bank_id,
+        producer=producer,
+        memories=memories,
+        lifecycle=lifecycle,
+    )
 
     written: list[str] = []
     for item in files:

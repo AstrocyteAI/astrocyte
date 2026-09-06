@@ -318,3 +318,149 @@ class TestBrainExportOkfBundle:
         result = await brain.export_okf_bundle("eng", str(tmp_path / "b"), allowed_roots=[str(tmp_path)])
         assert result.concept_count == 0
         assert (tmp_path / "b" / "index.md").exists()
+
+
+def make_item(
+    mid="m1",
+    *,
+    text="Server went down at 2am.",
+    bank_id="bank-1",
+    fact_type="experience",
+    tags=None,
+    created_at="2026-01-01T00:00:00+00:00",
+    lifecycle_tags=None,
+    retained_at=datetime(2026, 9, 6, tzinfo=UTC),
+    occurred_at=None,
+    chunk_id=None,
+    memory_layer="fact",
+):
+    from astrocyte.types import VectorItem
+
+    meta = {}
+    if created_at:
+        meta["_created_at"] = created_at
+    if lifecycle_tags:
+        meta["_tags"] = ",".join(lifecycle_tags)
+    return VectorItem(
+        id=mid,
+        bank_id=bank_id,
+        vector=[0.0],
+        text=text,
+        metadata=meta or None,
+        tags=tags,
+        fact_type=fact_type,
+        occurred_at=occurred_at,
+        memory_layer=memory_layer,
+        retained_at=retained_at,
+        chunk_id=chunk_id,
+    )
+
+
+class _Ttl:
+    def __init__(self, delete_after_days=365, exempt_tags=None):
+        self.delete_after_days = delete_after_days
+        self.archive_after_days = 90
+        self.exempt_tags = exempt_tags
+
+
+class _Lifecycle:
+    def __init__(self, enabled=True, **kw):
+        self.enabled = enabled
+        self.ttl = _Ttl(**kw)
+
+
+class TestStaleAfter:
+    """SPEC 5.5: stale_after is an absolute instant, not a TTL."""
+
+    def test_derived_from_delete_threshold(self):
+        from astrocyte.okf import stale_after_for
+
+        got = stale_after_for(make_item(), _Lifecycle())
+        assert got is not None and got.startswith("2027-01-01")
+
+    def test_omitted_when_lifecycle_disabled(self):
+        from astrocyte.okf import stale_after_for
+
+        assert stale_after_for(make_item(), _Lifecycle(enabled=False)) is None
+
+    def test_omitted_for_exempt_tags(self):
+        from astrocyte.okf import stale_after_for
+
+        item = make_item(lifecycle_tags=["legal", "keep"])
+        assert stale_after_for(item, _Lifecycle(exempt_tags=["legal"])) is None
+
+    def test_omitted_when_creation_unknown(self):
+        from astrocyte.okf import stale_after_for
+
+        assert stale_after_for(make_item(created_at=None), _Lifecycle()) is None
+
+    def test_uses_lifecycle_created_at_not_retained_at(self):
+        # run_lifecycle keys off metadata["_created_at"]; publishing an expiry
+        # from retained_at would advertise a date we would not delete on.
+        from astrocyte.okf import stale_after_for
+
+        item = make_item(created_at="2020-06-15T00:00:00+00:00", retained_at=datetime(2026, 9, 6, tzinfo=UTC))
+        assert stale_after_for(item, _Lifecycle()).startswith("2021-06-15")
+
+    def test_malformed_created_at_is_not_fatal(self):
+        from astrocyte.okf import stale_after_for
+
+        assert stale_after_for(make_item(created_at="not-a-date"), _Lifecycle()) is None
+
+    def test_ignores_archive_threshold(self):
+        # archive_after_days moves with last_recalled_at, so it must not drive
+        # a published absolute instant.
+        from astrocyte.okf import stale_after_for
+
+        got = stale_after_for(make_item(), _Lifecycle(delete_after_days=365))
+        assert got.startswith("2027-01-01"), "must use delete (365d), not archive (90d)"
+
+
+class TestMemoryConcepts:
+    def test_memory_path_groups_by_fact_type(self):
+        from astrocyte.okf import memory_concept_path
+
+        assert memory_concept_path(make_item("m1", fact_type="experience")) == "memory/experience/m1.md"
+
+    def test_memory_path_falls_back_to_layer(self):
+        from astrocyte.okf import memory_concept_path
+
+        item = make_item("m2", fact_type=None, memory_layer="observation")
+        assert memory_concept_path(item) == "memory/observation/m2.md"
+
+    def test_type_derives_from_fact_type(self):
+        from astrocyte.okf import build_memory_frontmatter
+
+        fm = build_memory_frontmatter(make_item(fact_type="assistant_statement"), producer="p/1")
+        assert fm["type"] == "Assistant Statement"
+
+    def test_occurred_at_is_preserved_as_an_extension(self):
+        # Bitemporality: OKF has no second time axis, and producers MAY add keys.
+        from astrocyte.okf import build_memory_frontmatter
+
+        item = make_item(occurred_at=datetime(2026, 1, 2, tzinfo=UTC))
+        fm = build_memory_frontmatter(item, producer="p/1")
+        assert fm["occurred_at"].startswith("2026-01-02")
+        assert fm["generated"]["at"].startswith("2026-09-06"), "system time stays distinct"
+
+    def test_chunk_id_becomes_a_source(self):
+        from astrocyte.okf import build_memory_frontmatter
+
+        fm = build_memory_frontmatter(make_item(chunk_id="c9"), producer="p/1")
+        assert fm["sources"][0]["id"] == "c9"
+        assert fm["sources"][0]["resource"].endswith("/chunk/c9")
+
+    def test_memories_land_in_the_bundle_with_expiry(self):
+        from astrocyte.okf import build_bundle
+
+        files = {
+            f.path: f.content for f in build_bundle([], bank_id="b", memories=[make_item()], lifecycle=_Lifecycle())
+        }
+        assert "memory/experience/m1.md" in files
+        assert "stale_after: '2027-01-01" in files["memory/experience/m1.md"]
+
+    def test_no_expiry_emitted_without_lifecycle(self):
+        from astrocyte.okf import build_bundle
+
+        files = {f.path: f.content for f in build_bundle([], bank_id="b", memories=[make_item()])}
+        assert "stale_after" not in files["memory/experience/m1.md"]
