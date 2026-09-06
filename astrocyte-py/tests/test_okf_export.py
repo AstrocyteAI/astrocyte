@@ -1,0 +1,252 @@
+"""OKF v0.2 bundle export.
+
+Conformance points asserted here come from
+``GoogleCloudPlatform/knowledge-catalog/okf/SPEC.md`` v0.2, cited per test.
+The negative assertions matter as much as the positive ones: we deliberately
+omit ``verified`` / ``status`` / ``stale_after`` because Astrocyte persists no
+such data, and emitting them would fabricate trust and lifecycle signals.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+import yaml
+
+from astrocyte.okf import (
+    OKF_VERSION,
+    build_bundle,
+    build_frontmatter,
+    concept_path,
+    export_wiki_bundle,
+    render_concept,
+)
+from astrocyte.types import WikiPage
+
+
+def make_page(
+    page_id="topic:incident-response",
+    *,
+    kind="topic",
+    title="Incident Response",
+    content="# Incident Response\n\nEscalate within 15 minutes.",
+    tags=None,
+    source_ids=None,
+    revision=1,
+    bank_id="bank-1",
+    scope="ops",
+    revised_at=datetime(2026, 9, 6, 12, 30, tzinfo=UTC),
+) -> WikiPage:
+    return WikiPage(
+        page_id=page_id,
+        bank_id=bank_id,
+        kind=kind,
+        title=title,
+        content=content,
+        scope=scope,
+        source_ids=list(source_ids or []),
+        cross_links=[],
+        revision=revision,
+        revised_at=revised_at,
+        tags=tags,
+    )
+
+
+def split_frontmatter(text: str) -> tuple[dict, str]:
+    assert text.startswith("---\n"), "concept must open with a frontmatter fence"
+    _, fm, body = text.split("---\n", 2)
+    return yaml.safe_load(fm), body
+
+
+class TestConceptPath:
+    def test_namespaced_id_becomes_hierarchy(self):
+        assert concept_path(make_page("topic:incident-response")) == "topic/incident-response.md"
+        assert concept_path(make_page("entity:alice")) == "entity/alice.md"
+
+    def test_multi_segment_id_nests(self):
+        assert concept_path(make_page("obs:doc123:my-slug")) == "obs/doc123/my-slug.md"
+
+    def test_unnamespaced_id_sits_at_root(self):
+        assert concept_path(make_page("standalone")) == "standalone.md"
+
+    @pytest.mark.parametrize("hostile", ["../../etc/passwd", "..", "../..", "/etc/passwd"])
+    def test_traversal_is_neutralised(self, hostile):
+        path = concept_path(make_page(hostile))
+        assert ".." not in Path_parts(path)
+        assert not path.startswith("/")
+
+    @pytest.mark.parametrize("reserved", ["index", "log"])
+    def test_reserved_filenames_are_avoided(self, reserved):
+        # SPEC 3.1: index.md and log.md MUST NOT be concept documents.
+        assert concept_path(make_page(reserved)) != f"{reserved}.md"
+
+    def test_empty_id_still_yields_a_path(self):
+        assert concept_path(make_page("")).endswith(".md")
+
+
+def Path_parts(path: str) -> list[str]:
+    return path.split("/")
+
+
+class TestFrontmatter:
+    def test_type_is_always_present(self):
+        # SPEC 4.1: `type` is the only required key.
+        for kind, expected in [("topic", "Topic"), ("entity", "Entity"), ("concept", "Concept")]:
+            fm = build_frontmatter(make_page(kind=kind), producer="astrocyte/0.1")
+            assert fm["type"] == expected
+
+    def test_unknown_kind_falls_back_to_concept(self):
+        fm = build_frontmatter(make_page(kind="wat"), producer="astrocyte/0.1")
+        assert fm["type"] == "Concept"
+
+    def test_generated_carries_producer_and_timestamp(self):
+        # SPEC 5.2: `by` is REQUIRED within `generated`; SPEC 7: <producer>/<version>.
+        fm = build_frontmatter(make_page(), producer="astrocyte/0.15.1")
+        assert fm["generated"]["by"] == "astrocyte/0.15.1"
+        assert fm["generated"]["at"].startswith("2026-09-06T12:30")
+
+    def test_generated_omits_at_when_unknown_but_keeps_by(self):
+        # `generated` without `by` would be invalid, so `by` must survive alone.
+        fm = build_frontmatter(make_page(revised_at=None), producer="astrocyte/0.1")
+        assert fm["generated"] == {"by": "astrocyte/0.1"}
+
+    def test_sources_get_a_required_resource(self):
+        # SPEC 5.1: `resource` is REQUIRED within each sources entry.
+        fm = build_frontmatter(make_page(source_ids=["mem1", "mem2"]), producer="p/1")
+        assert [s["id"] for s in fm["sources"]] == ["mem1", "mem2"]
+        for entry in fm["sources"]:
+            assert entry["resource"].startswith("astrocyte://bank/bank-1/memory/")
+
+    def test_sources_omitted_when_empty(self):
+        assert "sources" not in build_frontmatter(make_page(), producer="p/1")
+
+    def test_tags_emitted_only_when_present(self):
+        assert "tags" not in build_frontmatter(make_page(tags=None), producer="p/1")
+        fm = build_frontmatter(make_page(tags=["ops", "runbook"]), producer="p/1")
+        assert fm["tags"] == ["ops", "runbook"]
+
+    @pytest.mark.parametrize("absent", ["verified", "status", "stale_after", "description"])
+    def test_unbacked_fields_are_never_invented(self, absent):
+        # Astrocyte persists no verification, lifecycle, or summary data.
+        # Absent `verified` => unverified tier (SPEC 5.3); absent `status`
+        # => stable (SPEC 5.4). Emitting placeholders would fabricate trust.
+        fm = build_frontmatter(make_page(tags=["x"], source_ids=["m1"]), producer="p/1")
+        assert absent not in fm
+
+
+class TestRenderConcept:
+    def test_roundtrips_as_yaml_plus_body(self):
+        text = render_concept(make_page(), producer="astrocyte/0.1")
+        fm, body = split_frontmatter(text)
+        assert fm["title"] == "Incident Response"
+        assert "Escalate within 15 minutes." in body
+
+    def test_yaml_special_characters_are_escaped(self):
+        page = make_page(title='Title: with "quotes" and #hash', content="body")
+        fm, _ = split_frontmatter(render_concept(page, producer="p/1"))
+        assert fm["title"] == 'Title: with "quotes" and #hash'
+
+
+class TestBundle:
+    def test_root_index_declares_okf_version(self):
+        # SPEC 8: only a root index may carry frontmatter, and only okf_version.
+        files = {f.path: f.content for f in build_bundle([make_page()], bank_id="bank-1")}
+        assert f"okf_version: {OKF_VERSION}" in files["index.md"]
+
+    def test_subdirectory_index_has_no_frontmatter(self):
+        files = {f.path: f.content for f in build_bundle([make_page()], bank_id="bank-1")}
+        assert not files["topic/index.md"].startswith("---")
+
+    def test_log_groups_by_iso_date_and_marks_creation(self):
+        # SPEC 9: date headings MUST be ISO 8601 YYYY-MM-DD.
+        pages = [
+            make_page("topic:a", revision=1),
+            make_page("topic:b", revision=3, revised_at=datetime(2026, 9, 4, tzinfo=UTC)),
+        ]
+        log = {f.path: f.content for f in build_bundle(pages, bank_id="b")}["log.md"]
+        assert "## 2026-09-06" in log and "## 2026-09-04" in log
+        assert log.index("2026-09-06") < log.index("2026-09-04"), "newest first"
+        assert "**Creation**" in log and "**Update**" in log
+
+    def test_colliding_slugs_do_not_overwrite(self):
+        pages = [make_page("topic:Alice", title="A"), make_page("topic:alice", title="B")]
+        files = build_bundle(pages, bank_id="b")
+        concepts = [f for f in files if f.path == "topic/alice.md"]
+        assert len(concepts) == 1
+        assert "title: A" in concepts[0].content, "first page wins; second is skipped"
+
+    def test_build_bundle_performs_no_io(self, tmp_path):
+        build_bundle([make_page()], bank_id="b")
+        assert list(tmp_path.iterdir()) == []
+
+
+class TestExport:
+    def test_writes_a_containable_bundle(self, tmp_path):
+        pages = [make_page("topic:incident-response"), make_page("entity:alice", kind="entity")]
+        result = export_wiki_bundle(pages, bank_id="bank-1", path=tmp_path / "bundle", allowed_roots=[tmp_path])
+        assert result.concept_count == 2
+        root = tmp_path / "bundle"
+        assert (root / "topic/incident-response.md").exists()
+        assert (root / "entity/alice.md").exists()
+        assert (root / "index.md").exists()
+        assert (root / "log.md").exists()
+
+    def test_refuses_to_escape_allowed_roots(self, tmp_path):
+        with pytest.raises(ValueError):
+            export_wiki_bundle(
+                [make_page()],
+                bank_id="b",
+                path=tmp_path / ".." / "escape",
+                allowed_roots=[tmp_path],
+            )
+
+    def test_hostile_page_id_stays_inside_the_bundle(self, tmp_path):
+        root = tmp_path / "bundle"
+        export_wiki_bundle(
+            [make_page("../../../../etc/passwd")],
+            bank_id="b",
+            path=root,
+            allowed_roots=[tmp_path],
+        )
+        written = [p for p in root.rglob("*.md")]
+        assert written, "expected the concept to be written somewhere inside the bundle"
+        for p in written:
+            assert p.resolve().is_relative_to(root.resolve())
+
+    def test_requires_containment_by_default(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("ASTROCYTE_PORTABILITY_ROOTS", raising=False)
+        with pytest.raises(ValueError):
+            export_wiki_bundle([make_page()], bank_id="b", path=tmp_path / "x")
+
+    def test_empty_bundle_still_emits_an_index(self, tmp_path):
+        result = export_wiki_bundle([], bank_id="empty", path=tmp_path / "b", allowed_roots=[tmp_path])
+        assert result.concept_count == 0
+        assert (tmp_path / "b" / "index.md").exists()
+        assert not (tmp_path / "b" / "log.md").exists()
+
+
+class TestCrossLinks:
+    """SPEC 6.1: the concept graph is markdown links in the body."""
+
+    def test_cross_links_render_as_bundle_relative_links(self):
+        page = make_page("topic:a")
+        page.cross_links = ["entity:alice", "topic:incident-response"]
+        text = render_concept(page, producer="p/1")
+        assert "## Related" in text
+        assert "(/entity/alice.md)" in text
+        assert "(/topic/incident-response.md)" in text
+
+    def test_no_related_section_without_links(self):
+        assert "## Related" not in render_concept(make_page(), producer="p/1")
+
+    def test_duplicate_targets_collapse(self):
+        page = make_page("topic:a")
+        page.cross_links = ["entity:alice", "entity:alice"]
+        assert render_concept(page, producer="p/1").count("(/entity/alice.md)") == 1
+
+    def test_body_is_preserved_alongside_links(self):
+        page = make_page("topic:a", content="Original body text.")
+        page.cross_links = ["entity:alice"]
+        text = render_concept(page, producer="p/1")
+        assert "Original body text." in text and "## Related" in text
