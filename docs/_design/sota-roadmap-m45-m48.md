@@ -652,7 +652,7 @@ to bound the 9× swing with data instead of inference. Record the resulting
 
 | Item | Complexity | Value |
 |---|---|---|
-| OKF export — see §6.1 phased plan below | Low (phase 1) → High (phase 3) | Interop; governance/enterprise |
+| OKF export — see §6.1 | **phase 1 ✅ shipped 2026-09-06**; phases 2-3 open (Low / High) | Interop; governance/enterprise |
 | `astrocyte-mcp` composed-context tool (single-call wiki page + top facts per entity, cursor pagination — OpenMetadata `get_asset_context` shape) | Med | MCP is the de-facto agent integration path |
 | OKF **import** | Med | DEFER: spec broke v0.1→v0.2 in 3 months; no third-party bundles exist yet |
 
@@ -689,18 +689,33 @@ frontmatter and our wiki pages already are that.
 | `status` (§5.4) | — | ❌ no column |
 | `stale_after` (§5.5) | — | ❌ no column |
 
-**Phase 1 — wiki-page export (Low).** The structural half of the mapping is already
-satisfied. **Prerequisite, and the reason this is not merely a serializer:** four
-columns the mapping depends on are dead in the writer and must be fixed first, or we
-ship a conformant bundle with empty frontmatter —
-(a) `wiki_pages.tags` is hardcoded `NULL` on the PageIndex path
-(`pageindex_store.py` wiki upsert); (b) `wiki_revisions.summary` receives
-`page.title`, so `description` would duplicate `title`; (c) `compiled_by` is `NULL`
-(library path) or the literal `'section_compile'`; (d)
-`wiki_revision_sources.quote`/`relevance` are omitted from the INSERT. All four are
-cheap. Ship beside `portability.py`'s AMA exporter, not in place of it — AMA
-exports from `recall()` results and structurally cannot see wiki pages, mental
-models, or facts.
+**Phase 1 — wiki-page export. ✅ SHIPPED 2026-09-06** (`astrocyte/okf.py`,
+`tests/test_okf_export.py`, 37 tests). Built as a **pure projection**: it reads
+`WikiPage` objects and writes a bundle, touching no schema and no write path.
+Verified conformant by an independent implementation — the `okf-agent-memory` Go
+validator reports *0 errors, 0 warnings, 0 broken links, 0 orphans* and reads every
+field back correctly. `page_id` namespaces (`topic:`/`entity:`/`obs:`) map onto the
+directory hierarchy for free, and `cross_links` become bundle-relative concept links
+(SPEC §6.1), which is what clears the orphan warnings.
+
+**Correction to this section's earlier claim that "all four [dead columns] are
+cheap" — that was wrong, and implementing it is how I found out.** Two of the four
+are not writer bugs at all: **`WikiPage` has no `summary` field**, so
+`wiki_revisions.summary` cannot be "fixed" in the writer — there is nothing to
+write, and a real `description` needs either an LLM call or a derivation rule; and
+`tags` is documented as "inherited from contributing memories" but
+`section_compile.py` passes `tags=None` at the *producer*, so the writer's hardcoded
+`NULL` is downstream of the actual gap. `compiled_by` is blocked on phase 3 (it
+wants an actor, and we persist none).
+
+**The design consequence is worth keeping:** none of that blocked the export,
+because enrichment belongs in the projection, not the write path. The exporter emits
+only fields with real data and omits the rest, which OKF explicitly permits (`type`
+is the sole required key). Deriving `tags`/`description` at export time — from
+contributing memories, or the body's first paragraph — remains available later
+without a migration or any ingest-path risk. Ships beside `portability.py`'s AMA
+exporter, which exports raw memories from `recall()` results and structurally cannot
+see wiki pages.
 
 **Phase 2 — lifecycle fields (Low).** Add `status` (`draft|stable|deprecated`,
 absent ⇒ `stable`) and `stale_after` (an **absolute instant**, not a TTL — SPEC
