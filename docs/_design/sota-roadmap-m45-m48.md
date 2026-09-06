@@ -172,8 +172,8 @@ differ (answerer, judge, embedder, concurrency). See `claude-native-ablation.md`
 
 One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means, M31-style gates:
 
-1. **bge-reranker-large** swap (M33 direction #1) — precision without pool inflation.
-2. **Entity-overlap boost** (M33 #2) — keyword signal without a 5th RRF sibling.
+1. ~~**bge-reranker-large** swap (M33 direction #1) — precision without pool inflation.~~ **RAN 2026-09-06 — REJECTED (§3c).** +4.3pp @ n=46, below the ship threshold, and the CPU rerank cost (27h wall; one question at 6h35m/100% CPU) is disqualifying under LAFS latency scoring. Precision did improve as predicted, but it traded away `single-session-assistant` (−25pp).
+2. **Entity-overlap boost** (M33 #2) — keyword signal without a 5th RRF sibling. **← next up.**
 3. **Extraction factoid fix** (M33 #3) — "I have a Y" discrete facts; targets SSU misses that were extraction failures.
 4. **Embedding gate**: (a) ✅ **PASSED 2026-09-03** — linear-CCA on (section, extracted-facts)
    pairs; (b) ✅ **RAN 2026-09-04** — BGE-M3 A/B, −2.1pp @ n=48, inside the noise band (§3b);
@@ -210,7 +210,7 @@ One variable per cycle, flags default OFF, n=90 LME + n=200 LoCoMo, 2-run means,
    before assuming a retrieval fix. Cheap, and it targets a measured regression rather than
    a hypothesised one.
 6. **Neighbor-episode context expansion** (NEW — MemMachine ablation evidence, arXiv:2604.04853): expand nucleus fact hits with adjacent-turn context from the same session before the answerer. Their ablation attributes +4.2 to retrieval-depth-style tuning; our section anchors (`document_id`,`line_num`) make this a cheap SQL join, not new infrastructure.
-7. **Rerank on/off latency frontier** (measurement, not a ship item): quantify the cross-encoder stage's accuracy-vs-latency contribution — under LAFS-style scoring (§0b.3) a stage that buys +1q for +2s may be net-negative on LME-V2 while positive on v1.
+7. **Rerank on/off latency frontier** (measurement, not a ship item): quantify the cross-encoder stage's accuracy-vs-latency contribution — under LAFS-style scoring (§0b.3) a stage that buys +1q for +2s may be net-negative on LME-V2 while positive on v1. **Priority raised 2026-09-06 — this is no longer hypothetical.** §3c supplies the first real data point: a 560M-param CPU cross-encoder bought +4.3pp for a 27h run and a 6h35m single-question pathology. Measure the frontier *before* the next rerank-touching item, and include a GPU-vs-CPU axis — the §3c result prices CPU inference, not the model.
 
 ### 3b. Embedding gate (b) — BGE-M3 A/B  [DONE — decision rule fired: drop (c)]
 
@@ -249,7 +249,7 @@ strength, not embedder choice.
 Ship gate per item (1-3, 5-6): ≥ +1σ over v015w on the target bench, no >1σ regression on the
 other.
 
-### 3c. M46 item 1 — bge-reranker-large A/B  [RETRYING 2026-09-05, first attempt failed]
+### 3c. M46 item 1 — bge-reranker-large A/B  [DONE 2026-09-06 — do not ship bge-large]
 
 One variable: the query-time cross-encoder. Embeddings stay at arm A
 (`bge-small-en-v1.5`). No new code — `ASTROCYTE_CROSS_ENCODER_MODEL=bge-large`
@@ -275,13 +275,63 @@ with `caffeinate -i`, nothing else contending for the CLI.
 
 | Arm | Config | Result |
 |---|---|---|
-| **A** (control) | MiniLM-L-6-v2 (default) + bge-small | `claude-native-r3`, LME **83.3%** @ n=48 |
-| **B** (treatment) | `bge-reranker-large` + bge-small | `rerank-bge-large-r1`, running (retry) |
+| **A** (control) | MiniLM-L-6-v2 (default) + bge-small | `claude-native-r3`, LME **82.6%** @ n=46 matched |
+| **B** (treatment) | `bge-reranker-large` + bge-small | `rerank-bge-large-r1`, LME **87.0%** @ n=46 matched |
+
+**Result: +4.3pp (mt_8192, n=46 matched).** The run reached 46/48 and then wedged
+on question 47 — see *Termination* below — so this is n=46, not the planned n=48.
+Arm A's full-48 figure is 83.3%; the 82.6% above is arm A restricted to the same
+46 questions, which is the correct comparison.
+
+| question type | A | B | delta | n |
+|---|---|---|---|---|
+| knowledge-update | 100% | 100% | +0pp | 8 |
+| multi-session | 88% | 100% | **+12pp** | 8 |
+| single-session-assistant | 100% | 75% | **−25pp** | 8 |
+| single-session-preference | 67% | 100% | **+33pp** | 6 |
+| single-session-user | 75% | 88% | **+12pp** | 8 |
+| temporal-reasoning | 62% | 62% | +0pp | 8 |
 
 **Decision rule** (same n=48 noise band as (b), mt_8192):
 - ≥ +5pp → reranker is a live lever; ship `bge-large` as the claude-native default and keep it for the next item.
 - **±3pp (noise band)** → reranker quality is not the binding constraint at this scale; keep MiniLM; proceed to item 2 (entity-overlap boost).
 - ≤ −5pp → MiniLM is already well-matched; document and stop.
+
+**Outcome: +4.3pp lands in the grey zone** — below the ≥+5pp ship threshold, above
+the tight noise band. **Decision: do not ship `bge-large` as the claude-native
+default; proceed to item 2 (entity-overlap boost).** Two findings drive that call
+past the bare average:
+
+1. **The accuracy change is a trade, not a lift.** bge-large wins every
+   retrieval-precision type (`multi-session` +12, `single-session-preference` +33,
+   `single-session-user` +12) and loses `single-session-assistant` by **25pp at
+   full n=8**. That is a coherent behavioural difference — a stronger cross-encoder
+   sharpening precision at the cost of assistant-utterance recall — not scatter.
+   Any future rerank work should treat `single-session-assistant` as the
+   regression to watch.
+2. **The latency cost is disqualifying on its own (the more consequential
+   finding).** bge-reranker-large is ~560M params running on CPU. The run took
+   **27h wall for 46 questions** against arm A's baseline, and terminal behaviour
+   was a single question consuming **6h35m at 100% CPU across 22 torch threads**.
+   Under §0b.3's LAFS-style scoring, where latency is a *scored* axis, +4.3pp
+   bought at this wall-clock is plausibly **net-negative on LME-V2** even where it
+   is positive on v1. This also supplies a real data point for §3 item 7 (rerank
+   on/off latency frontier): the frontier question is no longer hypothetical.
+
+**Termination (2026-09-06 09:30).** Killed deliberately at 46/48 after the process
+wedged for 6h35m on one question — alive, not deadlocked, pinned at 100% CPU in
+torch, no log output since 02:49. `SIGTERM` did not take (spinning inside torch,
+not servicing signals); `SIGKILL` was required. The two missing questions could
+move the average by at most ~±2pp and would not cross the +5pp threshold.
+
+**Two monitoring artifacts corrected here, so they are not repeated.** (i) A
+progress counter globbing the *parent* results directory counts the stale
+`longmemeval_results_*.json` from a previous attempt, inflating every reading by
+one — this produced a false "47/48" here and a false "49/48" on arm (b); count
+`predicted_*/` only. (ii) `pgrep -f 'claude -p'` matches the monitor's own shell,
+because the monitor's script text contains that literal — so "procs N" readings
+from such a monitor are unreliable; match `pgrep -x claude` or exclude the
+watcher's own PID.
 
 Do not compare this cell to the 74.4% gpt-4o-mini baseline — same caveat as §3b.
 
