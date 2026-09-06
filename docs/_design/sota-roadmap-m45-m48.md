@@ -652,7 +652,7 @@ to bound the 9× swing with data instead of inference. Record the resulting
 
 | Item | Complexity | Value |
 |---|---|---|
-| OKF export — see §6.1 | **phase 1 ✅ shipped 2026-09-06**; phases 2-3 open (Low / High) | Interop; governance/enterprise |
+| OKF export — see §6.1 | **phase 1 ✅ shipped**; phase 2 ✗ rejected as specified; phase 3 open (High) | Interop; governance/enterprise |
 | `astrocyte-mcp` composed-context tool (single-call wiki page + top facts per entity, cursor pagination — OpenMetadata `get_asset_context` shape) | Med | MCP is the de-facto agent integration path |
 | OKF **import** | Med | DEFER: spec broke v0.1→v0.2 in 3 months; no third-party bundles exist yet |
 
@@ -719,13 +719,49 @@ see wiki pages.
 
 **Entry point:** `await brain.export_okf_bundle(bank_id, path, kind=..., scope=...)` — same admin access check and path containment as `export_bank`. Verified end to end: a brain-produced bundle validates conformant and is searchable by the third-party OKF CLI, which is the interop claim actually being made.
 
-**Phase 2 — lifecycle fields (Low).** Add `status` (`draft|stable|deprecated`,
-absent ⇒ `stable`) and `stale_after` (an **absolute instant**, not a TTL — SPEC
-§5.5). Good fit for `LifecycleManager.evaluate_memory_ttl()`, which today computes
-archive/delete/keep at read time from `LifecycleConfig` (default `enabled=False`)
-and never writes the verdict back. Note the `_obs_freshness` metadata key is
-vestigial — written `"fresh"` at both sites, never read, never set `"stale"`; do not
-build on it.
+**Phase 2 — lifecycle fields. ✗ REJECTED AS SPECIFIED 2026-09-06 — do not add these
+columns to wiki pages.** The original plan ("add `status` + `stale_after`, Low") was
+written before checking what would ever *write* them. Nothing would, and shipping
+them would recreate precisely the dead-column problem that made phase 1 harder
+(§6.1 phase 1 correction). Worked through against the code:
+
+- **`status` on wiki pages has no writer and no observable value.** `deprecated`
+  ("kept for links and history; no longer current", SPEC §5.4) maps naturally to a
+  soft-deleted page — but `WikiStore.list_pages` filters `deleted_at IS NULL`, so a
+  deprecated page is *by construction* never in an export. `draft` vs `stable` has
+  no signal either: the field shaped for it, `wiki_pages.confidence`, is dead (0 on
+  the library path, hardcoded `1.0` on the PageIndex path). Absent `status` already
+  means `stable`, which is accurate for a compiled page — so the column would encode
+  nothing the omission doesn't.
+- **`stale_after` does not apply to wiki pages at all.** `brain.run_lifecycle()` is
+  real and wired (gated on `lifecycle.enabled`, default `False`), but it scans
+  **memories only** — zero wiki references in the scan. No TTL governs a wiki page,
+  so any `stale_after` we wrote onto one would be invented.
+- Do not build on `_obs_freshness`: written `"fresh"` at both sites, never read,
+  never set `"stale"`.
+
+**What is worth doing instead — and it needs no column.** For *memories*,
+`stale_after` is **fully derivable at export time**: `LifecycleTtlConfig` measures
+`delete_after_days` (default 365) from `created_at`, so
+`stale_after = created_at + delete_after_days` is exactly OKF's absolute instant
+(SPEC §5.5) computed from data already stored. Two rules keep it truthful:
+derive from the **delete** threshold, not `archive_after_days` (which is measured
+from `last_recalled_at` and therefore drifts on every read — not a stable published
+instant); and **omit the field entirely** for memories matching `exempt_tags`, since
+those genuinely never expire. Only emit it when `lifecycle.enabled`, because
+otherwise no expiry is in force.
+
+**This carries a real safety argument, not just conformance.** `run_lifecycle()`'s
+v1 treats "archive" as **delete** — there is no archive storage. A bundle that
+publishes `stale_after` tells a downstream consumer the shelf life of a concept
+*before* the deletion happens, which is the difference between an export that ages
+out silently and one that announces its own expiry.
+
+**Precondition:** this only becomes reachable once the OKF export covers
+memory-backed concepts. Phase 1 exports wiki pages only. So the ordering is:
+extend the exporter to memories/facts → `stale_after` comes along for free →
+`status` stays deferred until some signal actually exists (phase 3's actor work, or
+a supersedes relation, would supply one).
 
 **Phase 3 — trust (High; the only phase with real design work).** `generated.by`
 and the whole `verified` family have **no source data**, and the gap is structural
