@@ -652,7 +652,7 @@ to bound the 9× swing with data instead of inference. Record the resulting
 
 | Item | Complexity | Value |
 |---|---|---|
-| OKF export — see §6.1 | **phase 1 ✅ shipped**; phase 2 ✗ rejected as specified; phase 3 open (High) | Interop; governance/enterprise |
+| OKF export — see §6.1 | **✅ complete** (phase 1 shipped; 2 rejected-as-specified, `stale_after` derived instead; 3a shipped). 3b `verified` needs a review workflow — a product question, not export work. | Interop; governance/enterprise |
 | `astrocyte-mcp` composed-context tool (single-call wiki page + top facts per entity, cursor pagination — OpenMetadata `get_asset_context` shape) | Med | MCP is the de-facto agent integration path |
 | OKF **import** | Med | DEFER: spec broke v0.1→v0.2 in 3 months; no third-party bundles exist yet |
 
