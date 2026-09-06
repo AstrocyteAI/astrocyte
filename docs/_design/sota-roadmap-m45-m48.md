@@ -687,6 +687,40 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
 6. **Known gap**: LME-V2 is multimodal; the `caption_then_embed` path is spec'd but unexercised — first real test is the M47 #2 submission.
 7. **LLM-agnosticism extends to the evaluation path, not just the product** (added 2026-09-02). Third-party harnesses encode an OpenAI-shaped `/chat/completions` call as though it were a vendor dependency; it is a wire format. The rule: an external harness never dictates our provider — put a shim at the wire boundary and resolve the provider through `astrocyte.llm_providers`, the same names valid in `astrocyte.yaml`. Consequence: no benchmark, ours or anyone's, may be blocked on a specific vendor's credits, and every published number carries an explicit statement of which provider produced it. Fidelity caveat to state whenever we report shim-driven results: providers that cannot honour `temperature=0` (the Claude CLI has no temperature flag) give stable rather than bit-for-bit deterministic runs.
 
+8. **Memory as a reviewable artifact — git-native audit** (added 2026-09-06, from the
+   `okf-memory/okf-agent-memory` review). We have richer provenance than any
+   markdown-in-git system (`retained_at`/`occurred_at`, `sources`, trust tiers,
+   confidence), but **no story for inspecting or reviewing memory as a diff**.
+   OKF's one genuine advantage is affordance, not data model: `git diff` on
+   `knowledge/`, `git log` for who-changed-what-when, and agent memory edits landing
+   in a PR where a human approves them before they become durable.
+
+   **What this is worth.** Not benchmark score — it moves neither LME nor AML, and
+   must not compete with M46 items for bench cycles. It is an *enterprise-trust and
+   debuggability* lever: "show me exactly what your agent believes and when it
+   started believing it, as a reviewable changeset." That is a procurement question
+   we currently answer with a DB query, and a debugging workflow we currently do not
+   have at all — when a bench regresses on memory quality, we cannot diff the corpus
+   between two runs.
+
+   **Shape (unbuilt, deliberately minimal).** A projection, *not* a storage change:
+   Postgres stays the system of record. Export a bank to a deterministic,
+   diff-friendly tree (stable ordering, stable IDs, one file per fact/observation/
+   mental-model, frontmatter carrying the provenance we already store) and make it
+   round-trippable enough to compare two exports. Two immediate uses: (a) `astrocyte
+   diff <bank> <ref>` for bench forensics — what did ingest actually produce
+   differently between arm A and arm B; (b) optional commit-on-consolidate for teams
+   that want human review in the loop. OKF v0.2 is the obvious wire format given §6
+   already borrows its vocabulary, which also makes the export legible to anyone
+   already using that spec.
+
+   **Open risk to settle before building:** whether a deterministic export is
+   actually achievable — LLM-generated summaries and embedding-driven ordering may
+   make two ingests of identical input produce non-identical trees, which would make
+   diffs noisy and defeat the purpose. Establish that first on a single bank; if
+   exports are not stable, this idea does not work as specified and should be
+   dropped rather than patched with normalization hacks.
+
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
 1. ~~**A-H capability legend — GATES M46.**~~ **RESOLVED-AS-UNPUBLISHED 2026-09-03.** No public legend exists (search scope in §3). M46's gate is lifted to inference-only; the documented seven-capability list, the G1-G5 / F1 leaf corrections, and the empirical probe proposal are recorded in §3. Reopen only if an AML paper appears or they answer by email.
