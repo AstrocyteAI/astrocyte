@@ -212,6 +212,11 @@ mock = "astrocyte.testing.in_memory:MockLLMProvider"
 openai = "astrocyte.providers.openai:OpenAIProvider"
 claude_cli = "astrocyte.providers.claude_cli:ClaudeCliProvider"
 local_embeddings = "astrocyte.providers.local_embeddings:LocalEmbeddingsProvider"
+# Split backend: completion from one provider, embeddings from another.
+# Registered so it is expressible in astrocyte.yaml, not only in code.
+composite = "astrocyte.providers.composite:CompositeLLMProvider"
+# OpenAI-compatible local daemon; a preset over OpenAIProvider.
+ollama = "astrocyte.providers.ollama:OllamaProvider"
 
 [tool.hatch.version]
 source = "vcs"

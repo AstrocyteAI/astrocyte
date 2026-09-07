@@ -109,9 +109,10 @@ class TestSplitEmbeddingBackend:
         path = tmp_path / "c.yaml"
         path.write_text(
             "provider_tier: storage\nvector_store: in_memory\n"
-            # `mock` for both: this asserts the composition wiring, not any
-            # particular embedder (local_embeddings needs sentence-transformers).
-            "llm_provider: mock\nembedding_provider: mock\n"
+            # Two DIFFERENT names: the shared resolver deliberately does not
+            # compose a provider with itself, since that only adds indirection.
+            # claude_cli is the real motivating case — it cannot embed at all.
+            "llm_provider: claude_cli\nembedding_provider: mock\n"
         )
         pipeline = build_pipeline(load_config(str(path)))
         # PipelineOrchestrator wraps providers in _TrackingLLMProvider for

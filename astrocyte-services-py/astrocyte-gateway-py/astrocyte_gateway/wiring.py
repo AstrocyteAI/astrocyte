@@ -19,6 +19,7 @@ from astrocyte.provider import (
     VectorStore,
     WikiStore,
 )
+from astrocyte.wiring import resolve_llm_provider as _core_resolve_llm_provider
 
 T = TypeVar("T")
 
@@ -55,15 +56,14 @@ def resolve_vector_store(config: AstrocyteConfig) -> VectorStore:
 
 
 def resolve_llm_provider(config: AstrocyteConfig) -> LLMProvider:
-    name = config.llm_provider or os.environ.get("ASTROCYTE_LLM_PROVIDER") or "mock"
-    try:
-        cls = resolve_provider(name, "llm_providers")
-    except LookupError as e:
-        raise ConfigError(
-            f"LLM provider {name!r} not found. Install a provider package or use "
-            f"a 'package.module:ClassName' path. ({e})"
-        ) from e
-    return _instantiate(cls, _cfg_dict(config.llm_provider_config), f"llm_provider {name!r}")
+    """Delegates to :func:`astrocyte.wiring.resolve_llm_provider`.
+
+    Shared with the AML adapter so one `astrocyte.yaml` resolves identically in
+    every deployment. This previously had its own copy that ignored
+    ``embedding_provider``, so a split completion/embedding config worked in one
+    service and silently did nothing in another.
+    """
+    return _core_resolve_llm_provider(config)
 
 
 def resolve_graph_store(config: AstrocyteConfig) -> GraphStore | None:
