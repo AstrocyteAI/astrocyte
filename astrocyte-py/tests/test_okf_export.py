@@ -2,9 +2,12 @@
 
 Conformance points asserted here come from
 ``GoogleCloudPlatform/knowledge-catalog/okf/SPEC.md`` v0.2, cited per test.
-The negative assertions matter as much as the positive ones: we deliberately
-omit ``verified`` / ``status`` / ``stale_after`` because Astrocyte persists no
-such data, and emitting them would fabricate trust and lifecycle signals.
+The negative assertions matter as much as the positive ones. ``status`` is never
+emitted (no lifecycle column exists), and ``verified`` is absent for every record
+written today because Astrocyte has no review workflow — though
+:func:`~astrocyte.okf.verified_for` reads it when present. ``stale_after`` *is*
+emitted for memories, derived from lifecycle config rather than stored. The rule
+throughout: emit what is backed by data, omit the rest, invent nothing.
 """
 
 from __future__ import annotations
