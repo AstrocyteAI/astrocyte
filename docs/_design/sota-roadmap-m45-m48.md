@@ -873,6 +873,48 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
 6. **Known gap**: LME-V2 is multimodal; the `caption_then_embed` path is spec'd but unexercised — first real test is the M47 #2 submission.
 7. **LLM-agnosticism extends to the evaluation path, not just the product** (added 2026-09-02). Third-party harnesses encode an OpenAI-shaped `/chat/completions` call as though it were a vendor dependency; it is a wire format. The rule: an external harness never dictates our provider — put a shim at the wire boundary and resolve the provider through `astrocyte.llm_providers`, the same names valid in `astrocyte.yaml`. Consequence: no benchmark, ours or anyone's, may be blocked on a specific vendor's credits, and every published number carries an explicit statement of which provider produced it. Fidelity caveat to state whenever we report shim-driven results: providers that cannot honour `temperature=0` (the Claude CLI has no temperature flag) give stable rather than bit-for-bit deterministic runs.
 
+   **Hardened 2026-09-08 (`3dfe03d`) — the principle held, the plumbing had not.**
+   The SPI was fine; provider *wiring* had forked into three implementations
+   (gateway, AML adapter, bench harness) that disagreed. Only one honoured
+   `embedding_provider`, so **the same `astrocyte.yaml` produced a composite
+   provider in one service and a bare completion provider in another, silently** —
+   `retain()` would then fail at the embedding step against a provider that cannot
+   embed, with nothing indicating the configured embedder was never consulted. A
+   config key that parses and does nothing is worse than an unsupported one.
+
+   Fixed by promoting resolution into `astrocyte/wiring.py`; the gateway and the
+   AML adapter both delegate to it. **The guard that matters is the cross-path
+   test** (`tests/test_wiring_agnostic.py`): it asserts every wiring path resolves
+   the same config identically, and it must be run **in each service's own venv** —
+   written naively it skips everywhere (the service packages are not importable
+   from the core venv), and a skipped test guards nothing. Running it properly
+   immediately caught both service venvs carrying a stale `astrocyte` without the
+   new entry points — the same stale-install class as the `uv.lock` trap (§10.2).
+
+   Two registrations completed the surface: **`composite`** (split
+   completion/embedding is now expressible in YAML, not only in code — the case
+   that matters most when switching providers) and **`ollama`** (a preset over
+   `OpenAIProvider`; it always worked via a `base_url` override, but nothing said
+   so, and an undiscoverable capability is not one). Behavioural note: the resolver
+   **does not compose a provider with itself** — naming the same provider for both
+   roles returns it bare.
+
+   **Already present and larger than any of the above: `litellm`** (separate
+   `astrocyte-llm-litellm` package) routes to 100+ backends. Reach for it before
+   writing a new first-party provider.
+
+   **Local models are viable but not fast** (measured 2026-09-08, M4 Max):
+   `qwen3:8b` via Ollama runs the full path with zero code change and zero
+   subscription tokens, but throughput is **~0.14 calls/s and flat from concurrency
+   1 to 4** — `OLLAMA_NUM_PARALLEL=4` was verified live and changed nothing,
+   because a single 8B stream already saturates the GPU's compute bandwidth; extra
+   slots divide it rather than add. That is ~4x slower than the Claude CLI
+   (~12h vs ~3h for an n=90 ingest). Two gotchas before using it for ingest:
+   reasoning models leak their mode token into plain-text completions (`'OK /think'`),
+   which is the path every Add depends on; and a too-small `max_tokens` makes a
+   reasoning model return **empty** content, which silently invalidates any
+   benchmark that does not assert non-empty responses.
+
 8. **Memory as a reviewable artifact — git-native audit** (added 2026-09-06, from the
    `okf-memory/okf-agent-memory` review). We have richer provenance than any
    markdown-in-git system (`retained_at`/`occurred_at`, `sources`, trust tiers,
