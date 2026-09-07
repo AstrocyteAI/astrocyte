@@ -1,0 +1,55 @@
+# The documented AML entrypoint. From the repository root:
+#
+#   export OPENAI_API_KEY=sk-...
+#   docker compose -f astrocyte-services-py/astrocyte-aml-py/docker-compose.yml up --build
+#
+# Brings up Postgres (pgvector + pgvectorscale) and the Add/Search service on
+# :8080. Wait for the `adapter` container to report healthy before evaluating:
+# its /health builds the brain, so healthy means "/add will work", not merely
+# "the process is alive".
+
+services:
+  db:
+    build:
+      # Repo root, so the shared Postgres image definition is reachable.
+      context: ../..
+      dockerfile: docker/astrocyte-postgres/Dockerfile
+    environment:
+      POSTGRES_USER: astrocyte
+      POSTGRES_PASSWORD: astrocyte
+      POSTGRES_DB: astrocyte
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astrocyte -d astrocyte"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Not published by default: only the adapter needs it, and the evaluator
+    # talks to :8080. Add a ports: mapping if you want to inspect the DB.
+    volumes:
+      - aml-pgdata:/var/lib/postgresql/data
+
+  adapter:
+    build:
+      # Repo root: the adapter installs astrocyte from ../../astrocyte-py.
+      context: ../..
+      dockerfile: astrocyte-services-py/astrocyte-aml-py/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://astrocyte:astrocyte@db:5432/astrocyte
+      ASTROCYTE_PG_DSN: postgresql://astrocyte:astrocyte@db:5432/astrocyte
+      ASTROCYTE_CONFIG_PATH: /app/astrocyte.yaml
+      # Required: AML mandates gpt-4o-mini for Add and Search, and
+      # participants fund their own API spend.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY before starting}
+      # Optional shared secret. When set, the service requires it on every
+      # request via X-Api-Key or an Authorization: Bearer/Token header.
+      ASTROCYTE_AML_API_KEY: ${ASTROCYTE_AML_API_KEY:-}
+    ports:
+      # Host port is overridable: 8080 is a busy default on developer machines,
+      # and a collision silently routes probes to whatever else is listening.
+      - "${AML_HOST_PORT:-8080}:8080"
+
+volumes:
+  aml-pgdata:

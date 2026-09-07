@@ -1,0 +1,54 @@
+# Astrocyte configuration for an AML evaluation run.
+#
+# AML mandates gpt-4o-mini for BOTH Add and Search: "The model used by the
+# submitted memory system during both Add and Search must be gpt-4o-mini."
+# The platform separately owns the Answer and Judge models, so nothing here
+# configures those. Do not switch these providers for a submission run — the
+# mandate is a condition of entry, not a default.
+
+provider_tier: storage
+
+vector_store: postgres
+vector_store_config:
+  # text-embedding-3-small is 1536-dim; the schema must match exactly.
+  embedding_dimensions: 1536
+  bootstrap_schema: true
+
+# One provider serves both completion and embedding: OpenAIProvider implements
+# embed(), and `embedding_model` is a constructor argument. The top-level
+# `embedding_provider:` config key is NOT read on this wiring path — setting it
+# would look meaningful and do nothing, so both models are set here instead.
+llm_provider: openai
+llm_provider_config:
+  model: gpt-4o-mini
+  embedding_model: text-embedding-3-small
+
+# --- Cost-critical, pinned deliberately -------------------------------------
+# `parallel_chunks` turns one batched extraction call into one call per chunk
+# (~40 for a 2,000-word Add). On the full AML suite that is the difference
+# between roughly $230 and roughly $720 of gpt-4o-mini spend, and participants
+# fund their own Add/Search API costs. Leave this OFF unless a measured
+# accuracy gain justifies the ~3x. See sota-roadmap-m45-m48.md §4d.
+structured_fact_extraction:
+  enabled: true
+  parallel_chunks: false
+
+# Lifecycle stays off for an evaluation run: run_lifecycle() v1 treats
+# "archive" as delete, and nothing should be silently removing memories
+# mid-evaluation.
+lifecycle:
+  enabled: false
+
+# The platform reproduces submissions and may invalidate a materially
+# different score, so the run must not degrade silently into a partial state.
+escalation:
+  degraded_mode: error
+
+# The evaluator is the only caller; the shared secret (ASTROCYTE_AML_API_KEY)
+# is the access boundary, so per-bank grants add nothing here.
+access_control:
+  enabled: false
+
+barriers:
+  pii:
+    mode: disabled

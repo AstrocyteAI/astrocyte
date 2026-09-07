@@ -178,12 +178,13 @@ def create_app(brain: Any | None = None) -> FastAPI:
 
     async def _brain() -> Any:
         if app.state.brain is None:
-            from astrocyte import Astrocyte
+            # Must go through build_brain, not Astrocyte.from_config: the latter
+            # leaves `_pipeline` unset, so the service would start cleanly and
+            # then fail on the first /add with "No provider or pipeline
+            # configured". See astrocyte_aml.wiring.
+            from astrocyte_aml.wiring import build_brain
 
-            cfg = os.environ.get("ASTROCYTE_CONFIG_PATH")
-            app.state.brain = (
-                Astrocyte.from_config(cfg) if cfg else Astrocyte.from_config_dict({})
-            )
+            app.state.brain = build_brain(os.environ.get("ASTROCYTE_CONFIG_PATH"))
         return app.state.brain
 
     def _check_auth(request: Request) -> None:
@@ -205,6 +206,21 @@ def create_app(brain: Any | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, str]:
+        """Readiness, not liveness.
+
+        This deliberately constructs the brain rather than returning a static
+        ``ok``. Misconfiguration here (missing provider, unreachable database)
+        does not surface until the first ``/add``, so a static health check
+        would report a green service that fails on the evaluator's first
+        request. The brain is cached on ``app.state`` after the first call, so
+        this is cheap once warm.
+        """
+        try:
+            await _brain()
+        except Exception as exc:  # noqa: BLE001 — any failure means not ready
+            raise HTTPException(
+                status_code=503, detail=f"not ready: {type(exc).__name__}: {exc}"
+            ) from exc
         return {"status": "ok"}
 
     @app.post("/add", response_model=AddResponse)
