@@ -909,11 +909,27 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
    1 to 4** — `OLLAMA_NUM_PARALLEL=4` was verified live and changed nothing,
    because a single 8B stream already saturates the GPU's compute bandwidth; extra
    slots divide it rather than add. That is ~4x slower than the Claude CLI
-   (~12h vs ~3h for an n=90 ingest). Two gotchas before using it for ingest:
-   reasoning models leak their mode token into plain-text completions (`'OK /think'`),
-   which is the path every Add depends on; and a too-small `max_tokens` makes a
-   reasoning model return **empty** content, which silently invalidates any
-   benchmark that does not assert non-empty responses.
+   (~12h vs ~3h for an n=90 ingest). **Speed is the only real tradeoff** — see the
+   retraction below.
+
+   **Retracted 2026-09-08, same day: there is no `/think` contamination.** This
+   entry originally claimed reasoning models leak their mode token into the
+   plain-text completions every Add depends on. That was **wrong**, and asserted
+   from a single unrepresentative sample: `/think` appeared only on the contrived
+   prompt `"Reply with exactly: OK"` (it is Qwen3's soft-switch token, echoed when
+   told to reply with a literal string). Re-tested against the *real* call —
+   `observation.py`'s own `_SYSTEM_PROMPT` and `_build_user_prompt`, production
+   `max_tokens=512`, `temperature=0.0`, output fed through the real
+   `_parse_actions()` — output was clean and correctly parsed (167 chars, 2
+   actions, no `/think`) at 512, 1500 and 3000 max_tokens alike. Still unvalidated:
+   the other pipeline stages, and quality against Haiku; parsing is not accuracy.
+
+   **The one real gotcha stands, and it is a measurement trap, not a model flaw:**
+   a too-small `max_tokens` makes a reasoning model spend its whole budget on
+   thinking and return **empty** content — no error, no exception. Any benchmark
+   that does not assert non-empty responses will silently time empty completions
+   and report confident nonsense. That is exactly how the first throughput figure
+   for this entry was produced before it was caught.
 
 8. **Memory as a reviewable artifact — git-native audit** (added 2026-09-06, from the
    `okf-memory/okf-agent-memory` review). We have richer provenance than any
