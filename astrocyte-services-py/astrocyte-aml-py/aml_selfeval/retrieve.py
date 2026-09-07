@@ -230,8 +230,12 @@ async def run(args: argparse.Namespace) -> None:
     # newline-delimited JSON incrementally so a long run is resumable after a
     # crash. Retrieval is network-bound; the write is negligible beside it, and
     # an aiofiles dependency would buy nothing.
-    async with httpx.AsyncClient(timeout=args.timeout) as client, \
-            out.open("a" if args.resume else "w", encoding="utf-8") as handle:  # noqa: ASYNC230
+    # The file handle is a SYNCHRONOUS context manager, so it must not appear
+    # in the `async with`. Combining them is the exact defect we documented in
+    # AML's own shipped pipelines (§4b) — reproduced here, which is why this
+    # harness had never actually run end to end.
+    with out.open("a" if args.resume else "w", encoding="utf-8") as handle:  # noqa: ASYNC230
+      async with httpx.AsyncClient(timeout=args.timeout) as client:
 
         async def one(item: dict[str, Any]) -> dict[str, Any] | None:
             if item["id"] in done:
