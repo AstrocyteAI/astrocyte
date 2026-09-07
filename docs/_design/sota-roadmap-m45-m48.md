@@ -575,6 +575,37 @@ requests are **currently closed**. The GitHub repo has no CONTRIBUTING, `docs/`,
 `submissions/` dir, or template, and no PR-based submission path — the code route
 is documented *only* on the website.
 
+**✅ Entrypoint built 2026-09-07 (`93ecb37`)** — `astrocyte-services-py/astrocyte-aml-py/`
+now carries a `Dockerfile`, `docker-compose.yml`, a pinned `deploy/astrocyte.aml.yaml`,
+and `deploy/README.md`. The repo is already public, so the `maintainer_wrapped`
+prerequisites are satisfied. Verified end to end: the image builds from a clean
+context, the stack comes up healthy, and `/add` + `/search` execute the full
+retain/recall path, failing **only** on API-key auth under a dummy key. Postgres was
+checked *independently* of OpenAI (the 401 fires before any DB write, so it proved
+nothing on its own): schema bootstraps, `vector` extension present,
+`astrocyte_vectors.embedding` is `vector(1536)`.
+
+**The defect this surfaced is the part worth remembering.** `Astrocyte.from_config()`
+returns a brain with `_pipeline` unset — the gateway supplies its own wiring, and the
+adapter had none. So the service would have **started cleanly and failed on AML's
+first `/add`** with "No provider or pipeline configured". **All 70 adapter tests
+passed throughout, because every one of them injects a brain via
+`create_app(brain=...)` and never exercises the `ASTROCYTE_CONFIG_PATH` fallback the
+container actually uses.** Fixed with `astrocyte_aml/wiring.py` (resolves through the
+same SPI, no gateway dependency) plus 10 regression tests; `/health` now builds the
+brain, so unhealthy means "`/add` would fail" rather than "the process is dead".
+Generalisable lesson for anything we ship as a container: **a test suite that only
+covers the injected-dependency path cannot tell you the deployed path works.**
+
+Two smaller traps found the same way: the `[openai]` extra was missing (an
+`ImportError` that surfaces only when the brain builds, i.e. on the evaluator's first
+call), and an unrelated host process holding port 8080 made an external `curl` return
+`200 ok` while the container itself was answering `503` — so the host port is now
+overridable. Known limitation, documented rather than hidden: `bootstrap_schema: true`
+yields a working pgvector schema but **not** the pgvectorscale DiskANN indexes this
+project standardised on, which are migration-owned; retrieval is correct, but
+index-dependent latency will not match the benchmark configuration.
+
 **Responsiveness risk:** issue #13 reports two access-request submissions plus an
 email with no reply; #15 and #5 (both cycle-2 questions) are also unanswered.
 Budget for the possibility that pre-submission questions simply do not get
