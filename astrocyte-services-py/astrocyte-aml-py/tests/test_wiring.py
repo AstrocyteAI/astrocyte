@@ -95,3 +95,36 @@ class TestHealthReportsReadiness:
 
         with TestClient(create_app(brain=_Brain())) as client:
             assert client.get("/health").status_code == 200
+
+
+class TestSplitEmbeddingBackend:
+    """`embedding_provider` must be honoured, not silently ignored."""
+
+    def test_composes_when_a_separate_embedder_is_configured(self, tmp_path):
+        from astrocyte.providers.composite import CompositeLLMProvider
+
+        from astrocyte_aml.wiring import build_pipeline
+        from astrocyte.config import load_config
+
+        path = tmp_path / "c.yaml"
+        path.write_text(
+            "provider_tier: storage\nvector_store: in_memory\n"
+            # `mock` for both: this asserts the composition wiring, not any
+            # particular embedder (local_embeddings needs sentence-transformers).
+            "llm_provider: mock\nembedding_provider: mock\n"
+        )
+        pipeline = build_pipeline(load_config(str(path)))
+        # PipelineOrchestrator wraps providers in _TrackingLLMProvider for
+        # token accounting, so unwrap before checking what we actually built.
+        inner = getattr(pipeline.llm_provider, "_inner", pipeline.llm_provider)
+        assert isinstance(inner, CompositeLLMProvider)
+
+    def test_single_provider_is_left_alone(self, config_file):
+        from astrocyte.providers.composite import CompositeLLMProvider
+
+        from astrocyte_aml.wiring import build_pipeline
+        from astrocyte.config import load_config
+
+        pipeline = build_pipeline(load_config(config_file))
+        inner = getattr(pipeline.llm_provider, "_inner", pipeline.llm_provider)
+        assert not isinstance(inner, CompositeLLMProvider)

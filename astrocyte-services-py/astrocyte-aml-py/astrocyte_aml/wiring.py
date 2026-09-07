@@ -26,6 +26,7 @@ from astrocyte import Astrocyte, resolve_provider
 from astrocyte.config import AstrocyteConfig, load_config
 from astrocyte.errors import ConfigError
 from astrocyte.pipeline.orchestrator import PipelineOrchestrator
+from astrocyte.providers.composite import CompositeLLMProvider
 
 
 def _instantiate(name: str, group: str, cfg: dict[str, Any] | None) -> Any:
@@ -57,6 +58,20 @@ def build_pipeline(config: AstrocyteConfig) -> PipelineOrchestrator:
     llm = _instantiate(
         config.llm_provider, "llm_providers", _as_dict(config.llm_provider_config)
     )
+
+    # Optional split backend. Some completion providers cannot embed at all —
+    # ClaudeCliProvider raises NotImplementedError from embed() — so a config
+    # naming a separate `embedding_provider` is composed here rather than
+    # silently ignored. Without this the key parses and does nothing, which is
+    # worse than not supporting it: retain() would fail at the embedding step
+    # with no hint that the configured provider was never consulted.
+    if config.embedding_provider:
+        embedder = _instantiate(
+            config.embedding_provider,
+            "llm_providers",
+            _as_dict(config.embedding_provider_config),
+        )
+        llm = CompositeLLMProvider(completion_provider=llm, embedding_provider=embedder)
 
     # Same auto-wire as the gateway: PostgresStore satisfies DocumentStore via
     # its tsvector layer, so reusing it enables the keyword retrieval strategy
