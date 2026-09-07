@@ -403,6 +403,11 @@ class CompileEngine:
             messages,
             model=self._compile_model,
             max_tokens=2048,
+            # Pinned like every first-party extractor. The platform reproduces
+            # AML submissions and may invalidate a materially different score,
+            # so provider-default sampling is an avoidable reproducibility risk
+            # on the public compile path.
+            temperature=0.0,
         )
 
         if completion.usage:
@@ -443,7 +448,7 @@ class CompileEngine:
             Message(role="user", content=f"Texts:\n{snippets}"),
         ]
         try:
-            completion = await self._llm.complete(messages, max_tokens=20)
+            completion = await self._llm.complete(messages, max_tokens=20, temperature=0.0)
             label = completion.text.strip().lower().replace(" ", "-")[:50]
             return label or "general"
         except Exception:
