@@ -133,3 +133,38 @@ class TestInstantiateProvider:
     def test_missing_provider_produces_a_config_error_not_a_lookup_error(self):
         with pytest.raises(ConfigError):
             instantiate_provider("nope", "llm_providers")
+
+
+class TestLocalBackendTimeouts:
+    """Local inference needs a longer read timeout than a hosted API.
+
+    Regression: the Ollama self-eval hit 44 `APITimeoutError`s against
+    OpenAIProvider's hardcoded 90s read timeout — a value tuned for a hosted
+    API. The damage was silent: observation consolidation is fire-and-forget,
+    so `/add` kept returning 200 while memory quietly degraded.
+    """
+
+    def test_openai_keeps_its_hosted_default(self):
+        pytest.importorskip("openai")
+        import inspect
+
+        from astrocyte.providers.openai import OpenAIProvider
+
+        assert inspect.signature(OpenAIProvider.__init__).parameters["read_timeout"].default is None
+
+    def test_ollama_raises_the_timeout_for_local_inference(self):
+        pytest.importorskip("openai")
+        import inspect
+
+        from astrocyte.providers.ollama import OllamaProvider
+
+        default = inspect.signature(OllamaProvider.__init__).parameters["read_timeout"].default
+        assert default >= 300, "local backends need well over the hosted 90s default"
+
+    def test_timeout_reaches_the_http_client(self):
+        pytest.importorskip("openai")
+        from astrocyte.providers.ollama import OllamaProvider
+
+        p = OllamaProvider(model="qwen3:8b", read_timeout=123.0)
+        timeout = p._client._client.timeout
+        assert timeout.read == 123.0, f"read_timeout not applied: {timeout}"

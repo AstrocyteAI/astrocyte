@@ -30,6 +30,7 @@ class OllamaProvider(OpenAIProvider):
         embedding_model: str = "nomic-embed-text",
         base_url: str | None = None,
         api_key: str | None = None,
+        read_timeout: float = 600.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -38,5 +39,8 @@ class OllamaProvider(OpenAIProvider):
             base_url=base_url or os.environ.get("OLLAMA_BASE_URL") or DEFAULT_BASE_URL,
             # Ollama ignores the key; OpenAIProvider refuses to construct without one.
             api_key=api_key or os.environ.get("OLLAMA_API_KEY") or "ollama",
+            # Local inference is slow: OpenAIProvider's 90s default is tuned for a
+            # hosted API and times out mid-run on consumer hardware.
+            read_timeout=read_timeout,
             **kwargs,
         )

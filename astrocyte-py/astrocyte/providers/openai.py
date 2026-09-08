@@ -43,6 +43,7 @@ class OpenAIProvider:
         model: str = "gpt-4o-mini",
         embedding_model: str = "text-embedding-3-small",
         base_url: str | None = None,
+        read_timeout: float | None = None,
     ) -> None:
         try:
             import openai
@@ -83,7 +84,18 @@ class OpenAIProvider:
                 # OpenAI completions normally take 5-30s; 90s is generous
                 # while still failing fast on stuck streams. ``max_retries=3``
                 # below handles transient stalls.
-                timeout=httpx.Timeout(connect=5.0, read=90.0, write=90.0, pool=90.0),
+                # `read_timeout` exists for local backends: a hosted API answers
+                # in seconds, but a local model on consumer hardware — especially
+                # a reasoning model that thinks before emitting — routinely needs
+                # longer than 90s. Too short and calls fail as APITimeoutError
+                # mid-run; where the caller is fire-and-forget (observation
+                # consolidation) that degrades memory silently rather than erroring.
+                timeout=httpx.Timeout(
+                    connect=5.0,
+                    read=read_timeout or 90.0,
+                    write=read_timeout or 90.0,
+                    pool=read_timeout or 90.0,
+                ),
             )
         except ImportError:
             # h2 not installed — let the OpenAI SDK use its default HTTP/1.1

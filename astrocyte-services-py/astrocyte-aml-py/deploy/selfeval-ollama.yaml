@@ -1,0 +1,19 @@
+# Directional self-eval: local Ollama stack (zero subscription tokens), matching the arm A control
+# (bge-small embeddings) so the number is comparable to our LME trajectory.
+# NOT a submission config — AML mandates gpt-4o-mini (see deploy/astrocyte.aml.yaml).
+provider_tier: storage
+vector_store: in_memory
+llm_provider: ollama
+llm_provider_config:
+  model: qwen3:8b
+embedding_provider: local_embeddings
+embedding_provider_config:
+  model_name: BAAI/bge-small-en-v1.5
+  pad_to: 1536
+  # CPU, not MPS. sentence-transformers on Apple GPU is not safe under
+  # concurrent embed() calls: the adapter hard-crashed with a Metal assertion
+  # ("A command encoder is already encoding to this command buffer") once
+  # retrieve ran at concurrency 4. CPU is slower per call but survives.
+  device: cpu
+access_control:
+  enabled: false
