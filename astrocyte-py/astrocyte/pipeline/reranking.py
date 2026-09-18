@@ -7,6 +7,7 @@ Phase 2: cross-encoder or LLM-based reranking.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from string import punctuation
 from typing import TYPE_CHECKING
 
@@ -152,19 +153,19 @@ def basic_rerank(
 
     return sorted(
         (
-            ScoredItem(
-                id=item.id,
-                text=item.text,
+            # ``replace`` rather than a field-by-field rebuild: these
+            # transforms change only the score, and re-enumerating fields is
+            # how ``occurred_at`` was silently dropped here while
+            # ``retained_at`` survived — every recalled memory came back
+            # undated, which is unanswerable for temporal questions and wrong
+            # on the AML ``created_at`` contract. Enumerating fields means the
+            # next field added to ScoredItem gets dropped too.
+            replace(
+                item,
                 score=item.score
                 + len(query_terms & item_terms) * keyword_weight
                 + len(proper_nouns & item_terms) * proper_noun_weight
                 + _observation_proof_boost(item),
-                fact_type=item.fact_type,
-                metadata=item.metadata,
-                tags=item.tags,
-                memory_layer=item.memory_layer,
-                retained_at=item.retained_at,
-                chunk_id=getattr(item, "chunk_id", None),
             )
             for item, item_terms in item_terms_by_item
         ),
@@ -210,17 +211,7 @@ def cross_encoder_like_rerank(
                 score -= QUERY_NAME_MISS_PENALTY
 
         scored.append(
-            ScoredItem(
-                id=item.id,
-                text=item.text,
-                score=max(score, 0.0),
-                fact_type=item.fact_type,
-                metadata=item.metadata,
-                tags=item.tags,
-                memory_layer=item.memory_layer,
-                retained_at=item.retained_at,
-                chunk_id=getattr(item, "chunk_id", None),
-            )
+            replace(item, score=max(score, 0.0))
         )
 
     return sorted(scored, key=lambda x: x.score, reverse=True)
@@ -302,18 +293,7 @@ def apply_context_diversity(items: list[ScoredItem], query: str) -> list[ScoredI
             penalty = seen * SESSION_DIVERSITY_PENALTY
             session_counts[session] = seen + 1
         diversified.append(
-            ScoredItem(
-                id=item.id,
-                text=item.text,
-                score=max(item.score - penalty, 0.0),
-                fact_type=item.fact_type,
-                metadata=item.metadata,
-                tags=item.tags,
-                memory_layer=item.memory_layer,
-                occurred_at=item.occurred_at,
-                retained_at=item.retained_at,
-                chunk_id=getattr(item, "chunk_id", None),
-            )
+            replace(item, score=max(item.score - penalty, 0.0))
         )
     return sorted(diversified, key=lambda item: item.score, reverse=True)
 

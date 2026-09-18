@@ -562,6 +562,7 @@ class RecallStageMixin:
                 metadata=h.metadata,
                 tags=h.tags,
                 memory_layer="observation",
+                occurred_at=getattr(h, "occurred_at", None),
                 retained_at=getattr(h, "retained_at", None),
             )
             for h in hits
