@@ -49,6 +49,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from datetime import UTC, datetime
+
 import httpx
 
 # AML's formal evaluations request top_k=100; the adapter applies its own
@@ -60,6 +62,16 @@ AML_TOP_K = 100
 MAX_MESSAGES_PER_ADD = 20
 MAX_WORDS_PER_ADD = 2000
 
+# The server caps on CHARACTERS, not words: `max_content_length` defaults to
+# 50_000 (astrocyte/config.py) and is enforced in policy/barriers.py. Word
+# budgets do not bound characters — a batch of 2_000 long words rendered
+# 76_570 chars and came back as a hard 500, killing the whole item. The
+# headroom covers the adapter's own rendering overhead, which is applied
+# server-side and so is invisible to the byte count we compute here:
+# `**{role}** [{iso timestamp}]: ` plus a blank-line separator, ~45 chars per
+# message, up to MAX_MESSAGES_PER_ADD of them.
+MAX_CHARS_PER_ADD = 45_000
+
 
 # ── Dataset loaders ──────────────────────────────────────────────────────
 #
@@ -70,15 +82,50 @@ MAX_WORDS_PER_ADD = 2000
 # clbench, scriptmem, and beam, whose data they do not publish.
 
 
+def parse_lme_date(raw: str) -> int | None:
+    """``"2023/04/23 (Sun) 08:57"`` -> Unix milliseconds, or None.
+
+    LongMemEval stamps each haystack session with the date it occurred. The
+    weekday is redundant with the date, so it is parsed and discarded.
+    """
+    if not raw:
+        return None
+    for fmt in ("%Y/%m/%d (%a) %H:%M", "%Y/%m/%d (%a) %H:%M:%S", "%Y/%m/%d %H:%M"):
+        try:
+            return int(datetime.strptime(raw, fmt).replace(tzinfo=UTC).timestamp() * 1000)
+        except ValueError:
+            continue
+    return None
+
+
 def load_longmemeval(path: Path) -> list[dict[str, Any]]:
-    """LongMemEval-S: haystack_sessions + question + answer."""
+    """LongMemEval-S: haystack_sessions + question + answer.
+
+    ``haystack_dates`` is 1:1 with ``haystack_sessions`` and MUST be carried
+    through as a per-turn timestamp. Dropping it silently is not a partial
+    loss — it is disqualifying for a whole question type: without it every
+    memory is stamped with the ingest date, so all 1_500 retrieved memories
+    in a run share one date, and "how many days between X and Y" is
+    unanswerable by construction. That scored temporal-reasoning 0/5 and
+    looked like a retrieval failure rather than a harness defect.
+
+    The adapter already does the right thing with these (``render_conversation``
+    inlines the ISO stamp per turn, and ``occurred_at`` anchors the batch in
+    domain time); it was simply never given them.
+    """
     raw = json.loads(path.read_text(encoding="utf-8"))
     items: list[dict[str, Any]] = []
     for rec in raw:
         sessions: list[list[dict[str, Any]]] = []
-        for sess in rec.get("haystack_sessions", []):
+        dates = rec.get("haystack_dates") or []
+        for s_idx, sess in enumerate(rec.get("haystack_sessions", [])):
+            # One date per session; every turn in it inherits that stamp.
+            # Intra-session ordering is already carried by message order, so
+            # no synthetic per-turn offset is invented here.
+            stamp = parse_lme_date(dates[s_idx]) if s_idx < len(dates) else None
             turns = [
-                {"role": t.get("role", "user"), "content": t.get("content", "")}
+                {"role": t.get("role", "user"), "content": t.get("content", ""),
+                 "timestamp": stamp}
                 for t in sess
                 if t.get("content")
             ]
@@ -128,20 +175,59 @@ LOADERS = {"longmemeval": load_longmemeval, "locomo": load_locomo}
 # ── Add batching (mirrors the AML contract) ──────────────────────────────
 
 
+def split_oversized_turn(turn: dict[str, Any]) -> list[dict[str, Any]]:
+    """Split one turn whose content alone exceeds the server's character cap.
+
+    Batching at message boundaries cannot help here: a single message over the
+    cap is unsendable at any batch size, and the previous implementation always
+    admitted the first turn of a batch regardless of size, so such a turn went
+    out whole and 500'd. Splitting on whitespace keeps words intact; the pieces
+    keep the original role and timestamp so temporal anchoring survives.
+    """
+    content = str(turn.get("content", ""))
+    if len(content) <= MAX_CHARS_PER_ADD:
+        return [turn]
+    pieces: list[str] = []
+    buf: list[str] = []
+    size = 0
+    for word in content.split(" "):
+        # +1 for the space that will rejoin them.
+        if buf and size + len(word) + 1 > MAX_CHARS_PER_ADD:
+            pieces.append(" ".join(buf))
+            buf, size = [], 0
+        buf.append(word)
+        size += len(word) + 1
+    if buf:
+        pieces.append(" ".join(buf))
+    return [{**turn, "content": piece} for piece in pieces]
+
+
 def batch_messages(turns: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Split a session into Add-sized batches at message boundaries."""
+    """Split a session into Add-sized batches at message boundaries.
+
+    Bounded on three axes, because the server rejects on a different one than
+    the AML contract documents: message count and word count come from the
+    contract (20 messages / 2_000 words), character count from
+    ``max_content_length``. Exceeding the last is a 500 that aborts the item.
+    """
     batches: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     words = 0
-    for turn in turns:
-        n = len(str(turn.get("content", "")).split())
-        over_count = len(current) >= MAX_MESSAGES_PER_ADD
-        over_words = current and words + n > MAX_WORDS_PER_ADD
-        if over_count or over_words:
-            batches.append(current)
-            current, words = [], 0
-        current.append(turn)
-        words += n
+    chars = 0
+    for raw_turn in turns:
+        for turn in split_oversized_turn(raw_turn):
+            content = str(turn.get("content", ""))
+            n = len(content.split())
+            c = len(content)
+            over_count = len(current) >= MAX_MESSAGES_PER_ADD
+            over_words = current and words + n > MAX_WORDS_PER_ADD
+            over_chars = current and chars + c > MAX_CHARS_PER_ADD
+            if over_count or over_words or over_chars:
+                batches.append(current)
+                current, words, chars = [], 0, 0
+            current.append(turn)
+            words += n
+            chars += c
     if current:
         batches.append(current)
     return batches
@@ -245,7 +331,16 @@ async def run(args: argparse.Namespace) -> None:
                     await ingest_item(client, args.base_url, args.run_id, item)
                     hits = await search_item(client, args.base_url, args.run_id, item)
                 except Exception as exc:  # noqa: BLE001 — one bad item must not kill the run
-                    print(f"  !! {item['id']}: {exc}", file=sys.stderr)
+                    # Print the TYPE, not just str(exc). httpx's timeout
+                    # exceptions stringify to "", so the previous handler
+                    # rendered every client-side timeout as a bare "!! <id>: "
+                    # — which cost hours of misdiagnosis (we blamed the model,
+                    # then the machine's memory pressure; it was neither).
+                    detail = f"{type(exc).__module__}.{type(exc).__name__}: {exc}".rstrip(": ")
+                    resp = getattr(exc, "response", None)
+                    if resp is not None:
+                        detail += f" [status={resp.status_code} body={resp.text[:200]}]"
+                    print(f"  !! {item['id']}: {detail}", file=sys.stderr)
                     return None
                 return to_aml_record(item, hits)
 
