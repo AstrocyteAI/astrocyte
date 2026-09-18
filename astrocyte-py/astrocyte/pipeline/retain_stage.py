@@ -748,6 +748,34 @@ class RetainStageMixin:
         """
         if self._observation_consolidator is None or not memory_ids or not chunks:
             return
+
+        # Shed rather than queue when the backlog is saturated. See the
+        # ``max_pending_consolidations`` comment in the orchestrator: an
+        # unbounded backlog here starves foreground retain() through the
+        # provider's own concurrency limit, turning a best-effort background
+        # nicety into Add-path timeouts.
+        cap = getattr(self, "max_pending_consolidations", 0)
+        if cap and len(self._background_tasks) >= cap:
+            shed = getattr(self, "consolidations_shed", 0) + 1
+            self.consolidations_shed = shed
+            # Escalated to WARNING on a geometric backoff (1st, 10th, 100th, …).
+            # DEBUG was the wrong level: shedding means part of the observation
+            # layer is never built, so recall is quietly thinner than the
+            # operator thinks — a capacity signal, not a trace. It was invisible
+            # through an entire benchmark run because DEBUG was off, so we could
+            # not say afterwards how much derived memory the run had lost.
+            # Backoff rather than per-event: a saturated ingest would otherwise
+            # emit one line per Add.
+            digits = str(shed)
+            at_milestone = digits[0] == "1" and set(digits[1:]) <= {"0"}
+            if at_milestone:
+                _logger.warning(
+                    "Observation consolidation shed (%d so far): %d tasks pending, "
+                    "cap %d. Derived memory is incomplete for bank %s — raise "
+                    "max_pending_consolidations or reduce ingest concurrency.",
+                    shed, len(self._background_tasks), cap, bank_id,
+                )
+            return
         representative_vec = embeddings[0]
         consolidator = self._observation_consolidator
         first_chunk = chunks[0]

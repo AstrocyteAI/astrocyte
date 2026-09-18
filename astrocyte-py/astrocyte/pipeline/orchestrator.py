@@ -284,6 +284,7 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         wiki_confidence_threshold: float = 0.7,
         entity_resolver: EntityResolver | None = None,
         enable_observation_consolidation: bool = True,
+        max_pending_consolidations: int = 32,
         observation_weight: float = 0.0,
         observation_injection_weight: float = 1.5,
         multi_query_confidence_threshold: float = 0.72,
@@ -496,6 +497,27 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         else:
             self._observation_consolidator = None
         self._background_tasks: set[asyncio.Task[None]] = set()
+
+        # Ceiling on outstanding fire-and-forget consolidations.
+        #
+        # Without one, ``_consolidate_observations`` is an unbounded producer
+        # feeding a bounded consumer: every retain() spawns a task, each task
+        # calls ``llm_provider``, and providers bound their own concurrency
+        # (ClaudeCliProvider's semaphore defaults to 4). Under sustained Add
+        # load the queue grows without limit and *foreground* retain() calls
+        # starve behind it — measured at 421s of saturated backlog still
+        # draining after the client had disconnected, which surfaced as
+        # client-side ReadTimeouts on Add, not as any server-side error.
+        #
+        # Consolidation is best-effort by contract (the raw memories are
+        # already stored and searchable), so the correct response to
+        # saturation is to SHED, not to queue. Shedding keeps Add latency
+        # bounded; queueing trades it away for derived data nobody is waiting
+        # on. ``consolidations_shed`` makes the trade observable rather than
+        # silent — a persistently rising count means the deployment is
+        # under-provisioned for its ingest rate.
+        self.max_pending_consolidations: int = max_pending_consolidations
+        self.consolidations_shed: int = 0
 
         # Mental-model service — wires the agentic reflect loop to the
         # configured ``MentalModelStore`` (typically ``PostgresMentalModelStore``).
