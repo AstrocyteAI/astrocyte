@@ -673,6 +673,118 @@ the wrong path; (2) run it **twice**, once with `parallel_chunks` off and once o
 to bound the 9× swing with data instead of inference. Record the resulting
 `usage.phases.ingest.cost_usd` here and retire the estimate.
 
+### 4e. First statistically powered self-eval — n=250, LongMemEval-S (2026-09-19)
+
+**Result: 59.2–60.0% (150/250 and 148/250 across two independent judge passes),
+95% CI [53.8, 65.9].**
+
+This is the first number this project has produced that can support a decision.
+Everything before it was noise, and that is the finding, not a caveat.
+
+#### What changed: the instrument, not just the score
+
+Four defects were fixed first; three of them were silently invalidating every
+prior run (all committed — `1fc48f3`, `289dae8`, `fcb558b`):
+
+| # | defect | effect while live |
+|---|---|---|
+| 1 | unbounded `asyncio.create_task` consolidation backlog | foreground Add starved behind it; 421s of saturated backlog still draining after the client disconnected |
+| 2 | `batch_messages` bounded words, server rejects on characters | hard 500s, one item lost per occurrence |
+| 3 | `load_longmemeval` dropped `haystack_dates` | every memory stamped with the ingest date |
+| 4 | `basic_rerank`/`cross_encoder_like_rerank` rebuilt `ScoredItem` without `occurred_at` | **every recalled memory undated, on the default recall path**, regardless of what `retain()` was given |
+
+Defect 4 is the important one for the library, not just the harness: it is core
+recall, it affected every caller, and it hid because `MemoryHit` reads the field
+as `getattr(item, "occurred_at", None)` while `retained_at` *was* copied — so
+hits carried a plausible-looking date that was the ingest time. Fixed with
+`dataclasses.replace` so the next field added to `ScoredItem` cannot be dropped
+the same way.
+
+Effect, measured on the corpus: **0 → 12,500 `[occurred]` markers across 426
+distinct dates (2021-12-06 → 2024-02-20); `[recorded]` fallbacks 1,500 → 0.**
+
+#### Why n=250, and what n=30 was actually measuring
+
+Re-judging an *identical* retrieval file is the cheapest way to separate judge
+noise from system signal. Run it at both sizes and the reason the old numbers
+were unusable is immediate:
+
+| | n=30 | n=250 |
+|---|---|---|
+| per-item verdict flips | 17.0% | 8.8% |
+| **aggregate swing** | **3.33 pts** | **0.80 pts** |
+| 95% CI half-width | ±16.8 | **±6.1** |
+
+Judge noise does not disappear at n=250 — 22 of 250 items still flip — but the
+flips cancel, so sampling error dominates judge error. That is the regime a
+baseline needs. At n=30 the two were comparable, which is why a 3-point "change"
+there meant nothing. **Any future A/B on this harness runs at n≥250.**
+
+#### Per-type: only four of six are trustworthy
+
+| type | n | score | 95% CI | stable across passes |
+|---|---|---|---|---|
+| single-session-user | 33 | 84.8% | [69, 93] | yes |
+| knowledge-update | 41 | 80.5% | [66, 90] | yes |
+| single-session-assistant | 26 | 73.1% | [54, 86] | **no** |
+| temporal-reasoning | 61 | 50.8% | [39, 63] | yes |
+| multi-session | 72 | 50.0% | [39, 61] | yes |
+| single-session-preference | 17 | 17.6% | [6, 41] | **no** |
+
+**Where the score actually lives.** `multi-session` and `temporal-reasoning` are
+133 items each in the real 500-item distribution — **53% of the suite combined**
+— and both sit at a coin flip. They dominate the aggregate and they are the two
+categories with enough n to trust. Every other category is either already strong
+or too small to act on.
+
+**Temporal is now a reasoning gap, not a data gap.** Before fix 3/4 it scored
+0/5 because no memory had a date. With real dates it reaches 50.8% — dates were
+necessary but not sufficient. The residue is arithmetic and ordering over dates,
+which is a different problem from retrieving them.
+
+**`single-session-preference` is the one small-n signal worth believing**, at
+17.6% here and 0/5, 1/5 at n=30 — four runs agreeing. The judge transcripts give
+a concrete mechanism: gold answers *describe a preference* ("the user would
+prefer hotels with ocean views") while our answerer returns a generic
+recommendation, because the preference was never retrieved. Confirm at n≥250
+before spending on it.
+
+#### What this number is NOT
+
+**It is not comparable to InvMem's 45.06** (§4, §4a). That is a different system,
+scored on AML's platform with AML's private answerer and judge, aggregated over
+their six-benchmark suite. Ours is LongMemEval-S alone, answered and judged by
+`haiku` through `aml_selfeval.shim`. Three independent mismatches — system, judge,
+scope. "Beats #1 open source" is **not** supported by this run and must not be
+claimed from it. Standing rule (§9): never stack our numbers against
+differently-harnessed ones without saying so.
+
+What it *is*: a reproducible internal baseline with a known error bar, which is
+what makes the M46 items testable at all.
+
+#### The confound that makes 60% a floor
+
+Fix 1's instrumentation (now WARNING on a 1/10/100/1000 backoff) shows
+**~1,000+ consolidations shed per 50 items — roughly 30% of the observation
+layer never built** — on an idle machine at concurrency 4. This run was measured
+with a third of derived memory missing. Reducing shedding is therefore both a
+correctness item and the cheapest untested lever on the score.
+
+#### Reproducing
+
+Sample is `runs/lme_shuffled.json`, **seed 42**, first 250 of 500. The shuffle
+matters: the dataset is ordered by question type and `--limit` takes a prefix, so
+an unshuffled partial run returns a single type (an earlier chunk came back 100%
+`single-session-user`). Shuffled, any prefix is a valid random sample and the run
+degrades gracefully when quota runs out. Extending to the full 500 is
+`--limit 500 --resume` with no rework.
+
+Cost: ~6h15m retrieval + 2 judge passes, roughly one weekly Max allowance, on
+`claude_cli`/haiku. One rate-limit stall occurred and self-recovered — the
+circuit breaker paused ingest rather than storing degraded memories, which is
+the designed behaviour and why no data was corrupted.
+
+
 ## 5. M48 — Phase 3 (both sub-items gated)
 
 **M48a — reflect v3 (gate: M45 shows ≥8pp remaining headroom).** Termination architecture FIRST: forced candidate answer every iteration, hard 2-pass cap, no `done` tool reliance. Routed to TR/MS only via the shipped `_reflect_routing` signal. Validate as a bundle (M44 lesson).
@@ -975,6 +1087,40 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
    they are a larger change than the exporter. Do **not** start this as an export
    task. The OKF *interop* export (§6.1 phase 1) is unaffected by any of this and
    can proceed independently — only the diff/audit use needs stable identity.
+
+9. **Bench results carry an error bar or they are not results** (added 2026-09-19,
+   from §4e). Every self-eval number this project produced before n=250 was
+   within noise of every other one, and several hours went into interpreting
+   swings that a replicate pass showed were judge variance. The measurements:
+   re-judging an **identical** retrieval file moved the aggregate 3.33 pts at
+   n=30 (17.0% of items flipped verdict) versus 0.80 pts at n=250 (8.8% flipped).
+   Judge noise is roughly constant; what changes is whether it cancels.
+
+   **Rules, all cheap:**
+   - **n≥250 for any A/B** on this harness. Below that the CI half-width (±16.8
+     at n=30) exceeds every effect we are trying to detect. Detecting an 8-pt
+     difference at 80% power needs ~572/arm — so treat n=250 as the floor for
+     *describing* a system, and do not attempt fine-grained A/Bs at all without
+     a power calculation first.
+   - **Always run a replicate judge pass** on the same retrieval file. It costs
+     one extra pass and is the only thing that distinguishes system signal from
+     judge noise. Report the flip rate beside the score.
+   - **Per-type numbers need their own n.** At n=250 the two largest LME
+     categories (n=61, n=72) are stable across passes while n=17 and n=26 are
+     not. Quote a per-type figure only with its CI and its cross-pass stability.
+   - **Shuffle before sampling.** LME ships ordered by question type and `--limit`
+     takes a prefix, so an unshuffled partial run yields one type (observed:
+     a 50-item chunk that was 100% `single-session-user`). With a seeded shuffle
+     any prefix is a valid random sample, which also makes a long run degrade
+     gracefully when quota runs out instead of being all-or-nothing.
+
+   **The deeper consequence:** three of the four defects fixed in §4e were
+   invisible because the harness swallowed them — an error handler printing
+   `f"{exc}"` where httpx timeouts stringify to `""`, and a `getattr(item,
+   "occurred_at", None)` that cannot distinguish "absent" from "dropped".
+   Diagnostics that degrade silently do not merely cost debugging time; they
+   invalidate results while the suite stays green. Prefer a loud failure to a
+   defaulted one on any path that feeds a published number.
 
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
