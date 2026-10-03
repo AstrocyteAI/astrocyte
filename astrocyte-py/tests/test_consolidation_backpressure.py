@@ -38,57 +38,122 @@ def _spawn(pipeline: PipelineOrchestrator, n: int) -> None:
         )
 
 
-@pytest.fixture
-def pipeline():
+class _CountingConsolidator:
+    """Stub that records every run and the peak number running at once."""
+
+    def __init__(self) -> None:
+        self.runs = 0
+        self.running = 0
+        self.peak = 0
+
+    async def consolidate(self, **kwargs) -> None:
+        self.running += 1
+        self.peak = max(self.peak, self.running)
+        try:
+            await asyncio.sleep(0)
+            self.runs += 1
+        finally:
+            self.running -= 1
+
+
+def _make(**kw) -> PipelineOrchestrator:
     return PipelineOrchestrator(
-        vector_store=InMemoryVectorStore(),
-        llm_provider=MockLLMProvider(),
-        max_pending_consolidations=4,
+        vector_store=InMemoryVectorStore(), llm_provider=MockLLMProvider(), **kw
     )
 
 
-class TestBacklogIsBounded:
+async def _drain_all(p: PipelineOrchestrator) -> None:
+    """Await until nothing is in flight and nothing is deferred."""
+    for _ in range(10_000):
+        if not p._background_tasks and not p._deferred_consolidations:
+            return
+        await asyncio.gather(*list(p._background_tasks), return_exceptions=True)
+    raise AssertionError("backlog never drained")
+
+
+@pytest.fixture
+def pipeline():
+    return _make(max_pending_consolidations=4)
+
+
+class TestInFlightIsBounded:
+    """The original defect. Must hold under every tier."""
+
     async def test_pending_tasks_never_exceed_the_cap(self, pipeline):
-        """The core invariant. Without the cap this reaches 200."""
         _spawn(pipeline, 200)
         assert len(pipeline._background_tasks) <= 4
 
-    async def test_excess_is_shed_and_counted(self, pipeline):
-        """Shedding must be observable — a silent drop is its own bug."""
+    async def test_cap_holds_throughout_draining(self):
+        p = _make(max_pending_consolidations=4)
+        stub = _CountingConsolidator()
+        p._observation_consolidator = stub
+        _spawn(p, 200)
+        await _drain_all(p)
+        assert stub.peak <= 4, f"{stub.peak} consolidations ran at once (cap 4)"
+
+
+class TestOverflowIsDeferredNotDropped:
+    async def test_excess_goes_to_the_deferred_queue(self, pipeline):
         _spawn(pipeline, 200)
-        assert pipeline.consolidations_shed == 200 - len(pipeline._background_tasks)
+        assert len(pipeline._background_tasks) == 4
+        assert len(pipeline._deferred_consolidations) == 196
+        assert pipeline.consolidations_shed == 0
 
-    async def test_work_resumes_once_the_backlog_drains(self, pipeline):
-        """Shedding is backpressure, not a latch: capacity must come back."""
-        _spawn(pipeline, 200)
-        assert pipeline.consolidations_shed > 0
+    async def test_every_deferred_item_eventually_runs(self):
+        """The point of the change: under a burst, nothing is lost."""
+        p = _make(max_pending_consolidations=4)
+        stub = _CountingConsolidator()
+        p._observation_consolidator = stub
+        _spawn(p, 200)
+        await _drain_all(p)
+        assert stub.runs == 200, f"only {stub.runs}/200 consolidations ran"
+        assert p.consolidations_shed == 0
 
-        await asyncio.gather(*list(pipeline._background_tasks), return_exceptions=True)
-        assert not pipeline._background_tasks
+    async def test_deferred_queue_is_itself_bounded(self):
+        """An unbounded queue would only move the defect from tasks to memory."""
+        p = _make(max_pending_consolidations=4, max_deferred_consolidations=10)
+        _spawn(p, 200)
+        assert len(p._background_tasks) == 4
+        assert len(p._deferred_consolidations) == 10
+        assert p.consolidations_shed == 186
 
-        shed_before = pipeline.consolidations_shed
-        _spawn(pipeline, 1)
-        assert pipeline.consolidations_shed == shed_before, "should accept work again"
-        assert len(pipeline._background_tasks) == 1
+
+class TestShutdown:
+    async def test_shutdown_spawns_nothing_and_counts_the_undrained(self):
+        """A cancelled task's done-callback must not promote deferred work."""
+        p = _make(max_pending_consolidations=4)
+        _spawn(p, 50)
+        assert len(p._deferred_consolidations) == 46
+        await p.shutdown()
+        assert not p._background_tasks
+        assert not p._deferred_consolidations
+        assert p.consolidations_shed >= 46
 
 
-class TestDefaultsAndOptOut:
+class TestOptOuts:
+    async def test_zero_deferred_restores_shed_on_overflow(self):
+        p = _make(max_pending_consolidations=4, max_deferred_consolidations=0)
+        _spawn(p, 200)
+        assert p.consolidations_shed == 200 - len(p._background_tasks)
+
+    async def test_shed_mode_recovers_capacity_after_draining(self):
+        p = _make(max_pending_consolidations=4, max_deferred_consolidations=0)
+        _spawn(p, 200)
+        await asyncio.gather(*list(p._background_tasks), return_exceptions=True)
+        assert not p._background_tasks
+        before = p.consolidations_shed
+        _spawn(p, 1)
+        assert p.consolidations_shed == before, "should accept work again"
+
     async def test_default_cap_is_bounded(self):
-        """A deployment that configures nothing must still be protected."""
-        p = PipelineOrchestrator(
-            vector_store=InMemoryVectorStore(), llm_provider=MockLLMProvider()
-        )
+        p = _make()
         _spawn(p, 500)
         assert len(p._background_tasks) <= p.max_pending_consolidations
         assert p.max_pending_consolidations > 0, "default must not be unbounded"
+        assert p.max_deferred_consolidations > 0, "default defers overflow"
 
     async def test_zero_disables_the_ceiling(self):
-        """0 is the documented escape hatch — pinned so it stays deliberate."""
-        p = PipelineOrchestrator(
-            vector_store=InMemoryVectorStore(),
-            llm_provider=MockLLMProvider(),
-            max_pending_consolidations=0,
-        )
+        p = _make(max_pending_consolidations=0)
         _spawn(p, 50)
         assert len(p._background_tasks) == 50
         assert p.consolidations_shed == 0
