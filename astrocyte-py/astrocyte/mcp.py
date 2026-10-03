@@ -18,14 +18,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
 
 from astrocyte._astrocyte import Astrocyte
 from astrocyte._mcp_identity import JwtIdentityMiddleware, build_jwt_middleware
-from astrocyte.config import AstrocyteConfig, access_grants_for_astrocyte, load_config
+from astrocyte.config import AstrocyteConfig, load_config
 from astrocyte.types import AstrocyteContext
 
 logger = logging.getLogger("astrocyte.mcp")
@@ -41,6 +44,7 @@ def create_mcp_server(
     *,
     astrocyte_context: AstrocyteContext | None = None,
     jwt_middleware: JwtIdentityMiddleware | None = None,
+    default_bank_fallback: str | None = None,
 ) -> FastMCP:
     """Create a FastMCP server wired to an Astrocyte instance.
 
@@ -112,8 +116,11 @@ def create_mcp_server(
         # No middleware, no pre-bound ctx — fall through to static.
         return static_ctx
 
-    # Default bank
-    default_bank = mcp_cfg.default_bank_id
+    # Default bank. ``default_bank_fallback`` (the project bank, for a local
+    # stdio server) applies only when the config names none: without it a
+    # memory_retain that omits bank_id fails, and the agent's memories would
+    # never meet the ones its hooks capture.
+    default_bank = mcp_cfg.default_bank_id or default_bank_fallback
 
     _MAX_TAGS = 20
     _MAX_TAG_LENGTH = 255
@@ -1115,8 +1122,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--config",
-        required=True,
-        help="Path to astrocyte.yaml config file",
+        default=None,
+        help="Path to astrocyte.yaml (default: $ASTROCYTE_CONFIG, else ~/.config/astrocyte/astrocyte.yaml)",
     )
     parser.add_argument(
         "--transport",
@@ -1132,17 +1139,35 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Load config and create Astrocyte
-    config = load_config(args.config)
-    brain = Astrocyte(config)
+    from astrocyte.harness.paths import config_path
+    from astrocyte.wiring import build_astrocyte
 
-    # Wire access grants from config
-    grants = access_grants_for_astrocyte(config)
-    if grants:
-        brain.set_access_grants(grants)
+    path = Path(args.config).expanduser() if args.config else config_path()
+    if not path.is_file():
+        # MCP clients surface stderr when a server fails to start; make it
+        # actionable rather than a traceback.
+        print(
+            f"astrocyte-mcp: no config at {path}.\n"
+            "  Run `astrocyte setup` to create a local memory store and wire your agents,\n"
+            "  or pass --config /path/to/astrocyte.yaml.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
-    # Create MCP server
-    mcp = create_mcp_server(brain, config)
+    # Pipeline, stores and access grants, wired the same way as every other
+    # deployment (a bare Astrocyte(config) has no pipeline and stores nothing).
+    config = load_config(str(path))
+    brain = build_astrocyte(config)
+
+    # A stdio server is one process per agent session, launched in the
+    # session's directory, so that directory identifies the project. A shared
+    # SSE server's cwd identifies nothing, so it keeps requiring a bank.
+    fallback = None
+    if args.transport == "stdio":
+        from astrocyte.harness.project import project_bank
+
+        fallback = project_bank(os.getcwd())
+    mcp = create_mcp_server(brain, config, default_bank_fallback=fallback)
 
     # Run
     if args.transport == "stdio":
