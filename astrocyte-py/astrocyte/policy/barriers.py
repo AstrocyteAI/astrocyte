@@ -64,6 +64,58 @@ _PII_PATTERNS: dict[str, tuple[re.Pattern[str], str]] = {
     ),
 }
 
+
+# ---------------------------------------------------------------------------
+# Credentials — global
+#
+# Memory is replayed into future prompts, possibly for another agent and model
+# vendor than the one it was captured from: a key pasted into one session
+# would otherwise travel to every provider that later recalls it. Formats are
+# vendor prefixes or structural markers, chosen for precision — a false
+# positive costs a few characters of a memory, a miss leaks a credential.
+#
+# A pattern with a group named ``v`` redacts only that group, so
+# ``DB_PASSWORD=hunter2hunter2`` keeps its name and loses its value.
+# ---------------------------------------------------------------------------
+
+_SECRET = "[SECRET_REDACTED]"
+
+_SECRET_PATTERNS: dict[str, tuple[re.Pattern[str], str]] = {
+    "private_key": (
+        re.compile(
+            r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|\Z)",
+            re.DOTALL,
+        ),
+        _SECRET,
+    ),
+    # OpenAI (sk-, sk-proj-), Anthropic (sk-ant-), and other sk- style keys.
+    # A digit is required so hyphenated identifiers ("sk-learn-…") don't match.
+    "api_key": (re.compile(r"\bsk-(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,}"), _SECRET),
+    "aws_access_key": (re.compile(r"\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b"), _SECRET),
+    "github_token": (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})\b"), _SECRET),
+    "gitlab_token": (re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}"), _SECRET),
+    "slack_token": (re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"), _SECRET),
+    "stripe_key": (re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"), _SECRET),
+    "google_api_key": (re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"), _SECRET),
+    "huggingface_token": (re.compile(r"\bhf_[A-Za-z0-9]{30,}\b"), _SECRET),
+    "npm_token": (re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"), _SECRET),
+    "doppler_token": (re.compile(r"\bdp\.(?:st|pt|ct|sa|scim|audit)\.[A-Za-z0-9_\-.]{20,}"), _SECRET),
+    "jwt": (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"), _SECRET),
+    # scheme://user:PASSWORD@host
+    "url_password": (re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s:/@]+:(?P<v>[^\s@/]{3,})@"), _SECRET),
+    # NAME_KEY=value / "password": "value" — the value must look like a
+    # secret (12+ token characters mixing letters and digits), not a
+    # variable reference, a placeholder, a count or prose.
+    "credential_assignment": (
+        re.compile(
+            r"(?i)\b[A-Za-z0-9_]*(?:api[_-]?key|secret|token|passw(?:or)?d|pwd|access[_-]?key|private[_-]?key)"
+            r"[A-Za-z0-9_]*[\"']?\s*[:=]\s*[\"']?"
+            r"(?P<v>(?=[A-Za-z0-9_\-+/=.]*\d)(?=[A-Za-z0-9_\-+/=.]*[A-Za-z])[A-Za-z0-9_\-+/=.]{12,})"
+        ),
+        _SECRET,
+    ),
+}
+
 # ---------------------------------------------------------------------------
 # Country-specific patterns
 # ---------------------------------------------------------------------------
@@ -241,8 +293,8 @@ class PiiScanner:
         self.action = action  # "redact" | "reject" | "warn"
         self._type_overrides = type_overrides or {}
 
-        # Build pattern dict: global + country-specific
-        self._patterns = dict(_PII_PATTERNS)
+        # Build pattern dict: credentials + global + country-specific.
+        self._patterns = {**_SECRET_PATTERNS, **_PII_PATTERNS}
         if countries:
             for country in countries:
                 country_upper = country.upper()
@@ -298,7 +350,8 @@ class PiiScanner:
         matches: list[PiiMatch] = []
         for pii_type, (pattern, replacement) in self._patterns.items():
             for m in pattern.finditer(text):
-                matched_text = m.group()
+                start, end = m.span("v") if "v" in pattern.groupindex else m.span()
+                matched_text = text[start:end]
 
                 # Credit card: validate with Luhn
                 if pii_type == "credit_card" and not _luhn_check(matched_text):
@@ -311,14 +364,16 @@ class PiiScanner:
                 matches.append(
                     PiiMatch(
                         pii_type=pii_type,
-                        start=m.start(),
-                        end=m.end(),
+                        start=start,
+                        end=end,
                         matched_text=matched_text,
                         replacement=replacement,
                     )
                 )
 
-        return matches
+        # Overlapping spans would be spliced with stale offsets when redacted
+        # back to front, corrupting the text; keep the earliest, longest.
+        return self._merge_matches(matches, [])
 
     @staticmethod
     def _merge_matches(a: list[PiiMatch], b: list[PiiMatch]) -> list[PiiMatch]:
@@ -488,3 +543,23 @@ class MetadataSanitizer:
                 cleaned.pop(drop_key)
 
         return cleaned if cleaned else None, warnings
+
+
+def redact_secrets(text: str) -> str:
+    """Replace credentials (API keys, tokens, private keys, passwords) with
+    ``[SECRET_REDACTED]``, leaving all other text untouched.
+
+    For text that is written somewhere before the retain barrier sees it,
+    such as the automatic-memory capture spool.
+    """
+    spans: list[tuple[int, int]] = []
+    for pattern, _ in _SECRET_PATTERNS.values():
+        for m in pattern.finditer(text):
+            spans.append(m.span("v") if "v" in pattern.groupindex else m.span())
+    kept: list[tuple[int, int]] = []
+    for start, end in sorted(spans, key=lambda se: (se[0], -se[1])):  # earliest, then longest
+        if not kept or start >= kept[-1][1]:
+            kept.append((start, end))
+    for start, end in reversed(kept):
+        text = text[:start] + _SECRET + text[end:]
+    return text

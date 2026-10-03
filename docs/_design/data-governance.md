@@ -83,6 +83,10 @@ The PII barrier (introduced in `policy-layer.md` section 2.1) detects specific P
 | `medical_record` | LLM | Diagnosis, treatment, conditions |
 | `financial_account` | Regex | Bank account numbers, routing numbers |
 | `national_id` | Regex (country-specific) | NRIC (SG), Aadhaar (IN), etc. |
+| Credentials: `api_key`, `aws_access_key`, `github_token`, `gitlab_token`, `slack_token`, `stripe_key`, `google_api_key`, `huggingface_token`, `npm_token`, `doppler_token`, `jwt`, `private_key` | Regex on vendor prefixes and structural markers | `sk-…`, `AKIA…`, `ghp_…`, `-----BEGIN … PRIVATE KEY-----` |
+| `url_password`, `credential_assignment` | Regex; only the value is redacted | `postgres://app:•••@db`, `DB_PASSWORD=•••` (the value needs 12+ characters mixing letters and digits) |
+
+Credential types are on wherever the regex layer runs (every mode except `disabled`) and redact to `[SECRET_REDACTED]`. Memory is replayed into later prompts — possibly for another agent and model vendor than the one it was captured from — so a pasted key would otherwise travel to every provider that recalls it. Turn one off with a `type_overrides` entry (`{jwt: {action: warn}}`).
 
 ### 2.2 Detection modes
 
