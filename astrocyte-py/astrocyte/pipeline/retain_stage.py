@@ -749,33 +749,6 @@ class RetainStageMixin:
         if self._observation_consolidator is None or not memory_ids or not chunks:
             return
 
-        # Shed rather than queue when the backlog is saturated. See the
-        # ``max_pending_consolidations`` comment in the orchestrator: an
-        # unbounded backlog here starves foreground retain() through the
-        # provider's own concurrency limit, turning a best-effort background
-        # nicety into Add-path timeouts.
-        cap = getattr(self, "max_pending_consolidations", 0)
-        if cap and len(self._background_tasks) >= cap:
-            shed = getattr(self, "consolidations_shed", 0) + 1
-            self.consolidations_shed = shed
-            # Escalated to WARNING on a geometric backoff (1st, 10th, 100th, …).
-            # DEBUG was the wrong level: shedding means part of the observation
-            # layer is never built, so recall is quietly thinner than the
-            # operator thinks — a capacity signal, not a trace. It was invisible
-            # through an entire benchmark run because DEBUG was off, so we could
-            # not say afterwards how much derived memory the run had lost.
-            # Backoff rather than per-event: a saturated ingest would otherwise
-            # emit one line per Add.
-            digits = str(shed)
-            at_milestone = digits[0] == "1" and set(digits[1:]) <= {"0"}
-            if at_milestone:
-                _logger.warning(
-                    "Observation consolidation shed (%d so far): %d tasks pending, "
-                    "cap %d. Derived memory is incomplete for bank %s — raise "
-                    "max_pending_consolidations or reduce ingest concurrency.",
-                    shed, len(self._background_tasks), cap, bank_id,
-                )
-            return
         representative_vec = embeddings[0]
         consolidator = self._observation_consolidator
         first_chunk = chunks[0]
@@ -797,9 +770,84 @@ class RetainStageMixin:
             except Exception as exc:
                 _logger.warning("Observation consolidation task failed for bank %s: %s", bank_id, exc)
 
-        task = asyncio.create_task(_run_consolidation())
+        self._submit_consolidation(_run_consolidation, bank_id)
+
+    def _submit_consolidation(self, factory, bank_id: str) -> None:
+        """Run now, defer, or — only past both bounds — shed.
+
+        Three tiers, each bounded, because the original defect was an
+        *unbounded* backlog starving foreground retain() through the provider's
+        own concurrency limit:
+
+        1. **Run** while fewer than ``max_pending_consolidations`` are in flight.
+        2. **Defer** into a FIFO of at most ``max_deferred_consolidations``
+           zero-arg factories. Deferred entries hold no provider slot, so they
+           cannot starve foreground work; they start as in-flight tasks finish
+           (``_on_consolidation_done``). This replaces silently dropping the
+           overflow — the n=250 self-eval measured ~1,000+ sheds per 50 items,
+           roughly 30% of the observation layer never built.
+        3. **Shed** only when the deferred queue is also full.
+
+        What deferral does NOT fix: a *sustained* arrival rate above the
+        consolidation service rate. A finite queue absorbs a burst, but under
+        continuous saturated ingest it fills and tier 3 resumes at the old
+        rate. That case needs faster decisions or more provider concurrency;
+        rising ``consolidations_shed`` alongside a full queue is the signal.
+        """
+        cap = getattr(self, "max_pending_consolidations", 0)
+        if not cap or len(self._background_tasks) < cap:
+            self._start_consolidation(factory)
+            return
+
+        deferred = getattr(self, "_deferred_consolidations", None)
+        dcap = getattr(self, "max_deferred_consolidations", 0)
+        if deferred is not None and dcap and len(deferred) < dcap and not getattr(self, "_consolidation_closed", False):
+            deferred.append(factory)
+            self.consolidations_deferred = getattr(self, "consolidations_deferred", 0) + 1
+            return
+
+        shed = getattr(self, "consolidations_shed", 0) + 1
+        self.consolidations_shed = shed
+        # WARNING on a geometric backoff (1st, 10th, 100th, …). DEBUG was the
+        # wrong level: shedding means part of the observation layer is never
+        # built, so recall is quietly thinner than the operator thinks. It was
+        # invisible through an entire benchmark run while DEBUG was off.
+        digits = str(shed)
+        if digits[0] == "1" and set(digits[1:]) <= {"0"}:
+            _logger.warning(
+                "Observation consolidation shed (%d so far): %d in flight (cap %d), "
+                "%d deferred (cap %d). Derived memory is incomplete for bank %s — "
+                "ingest is outpacing consolidation; a full deferred queue means this "
+                "is sustained, not a burst.",
+                shed, len(self._background_tasks), cap,
+                len(deferred) if deferred is not None else 0, dcap, bank_id,
+            )
+
+    def _start_consolidation(self, factory) -> None:
+        task = asyncio.create_task(factory())
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._on_consolidation_done)
+
+    def _on_consolidation_done(self, task) -> None:
+        self._background_tasks.discard(task)
+        self._drain_deferred()
+
+    def _drain_deferred(self) -> None:
+        """Promote deferred work into freed in-flight slots, oldest first."""
+        # Defense in depth only. The load-bearing protection is the ORDER in
+        # ``PipelineOrchestrator.shutdown()`` — it closes and clears this queue
+        # before cancelling tasks, so by the time a cancelled task's callback
+        # lands here the queue is already empty (a negative control confirms
+        # removing that ordering spawns tasks mid-shutdown; removing this check
+        # alone does not). Kept so a future reordering fails safe.
+        if getattr(self, "_consolidation_closed", False):
+            return
+        deferred = getattr(self, "_deferred_consolidations", None)
+        if not deferred:
+            return
+        cap = getattr(self, "max_pending_consolidations", 0)
+        while deferred and (not cap or len(self._background_tasks) < cap):
+            self._start_consolidation(deferred.popleft())
 
     async def retain(self, request: RetainRequest) -> RetainResult:
         """Retain pipeline: normalize → chunk → extract entities → embed → store."""
@@ -883,6 +931,7 @@ class RetainStageMixin:
                 request.bank_id,
                 emb,
                 threshold_override=dedup_threshold_override,
+                text=chunks[i],  # enables the negation guard
             )
             if is_dup:
                 any_duplicate = True
@@ -1044,8 +1093,8 @@ class RetainStageMixin:
         )
 
         # 6. Update dedup cache with stored embeddings
-        for mem_id, emb in zip(memory_ids, embeddings):
-            self._dedup.add(request.bank_id, mem_id, emb)
+        for mem_id, emb, chunk in zip(memory_ids, embeddings, chunks):
+            self._dedup.add(request.bank_id, mem_id, emb, text=chunk)
 
         # 7. Observation consolidation — see _spawn_observation_consolidation.
         self._spawn_observation_consolidation(
@@ -1167,6 +1216,7 @@ class RetainStageMixin:
                     request.bank_id,
                     embedding,
                     threshold_override=dedup_threshold_override,
+                    text=chunks[chunk_index],
                 )
                 if is_dup:
                     any_duplicate = True
@@ -1331,8 +1381,8 @@ class RetainStageMixin:
             embeddings: list[list[float]] = record["embeddings"]
             chunks: list[str] = record["chunks"]
 
-            for mem_id, embedding in zip(memory_ids, embeddings, strict=False):
-                self._dedup.add(request.bank_id, mem_id, embedding)
+            for mem_id, embedding, chunk in zip(memory_ids, embeddings, chunks, strict=False):
+                self._dedup.add(request.bank_id, mem_id, embedding, text=chunk)
 
             self._spawn_observation_consolidation(
                 chunks=chunks,

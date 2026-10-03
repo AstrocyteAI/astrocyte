@@ -6,6 +6,7 @@ Async (coordinates I/O stages). See docs/_design/built-in-pipeline.md.
 from __future__ import annotations
 
 import asyncio
+import collections
 import inspect
 import logging
 import os
@@ -285,6 +286,7 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         entity_resolver: EntityResolver | None = None,
         enable_observation_consolidation: bool = True,
         max_pending_consolidations: int = 32,
+        max_deferred_consolidations: int = 1000,
         observation_weight: float = 0.0,
         observation_injection_weight: float = 1.5,
         multi_query_confidence_threshold: float = 0.72,
@@ -519,6 +521,17 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         self.max_pending_consolidations: int = max_pending_consolidations
         self.consolidations_shed: int = 0
 
+        # Overflow beyond the in-flight cap is deferred, not dropped (see
+        # ``RetainStageMixin._submit_consolidation``). Bounded on purpose — an
+        # unbounded queue would only move the original defect from task count
+        # to memory. Each entry holds one embedding and the first chunk's text;
+        # a 1536-dim vector as a Python float list is ~49 KB, so the default
+        # costs ~50 MB at worst. 0 restores shed-on-overflow.
+        self.max_deferred_consolidations: int = max_deferred_consolidations
+        self._deferred_consolidations: collections.deque = collections.deque()
+        self.consolidations_deferred: int = 0
+        self._consolidation_closed: bool = False
+
         # Mental-model service — wires the agentic reflect loop to the
         # configured ``MentalModelStore`` (typically ``PostgresMentalModelStore``).
         # ``None`` when no store is configured; ``set_mental_model_service``
@@ -585,6 +598,13 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
 
     async def shutdown(self) -> None:
         """Drain background work and close provider resources owned by the pipeline."""
+        # Close the deferred queue BEFORE cancelling: a cancelled task's done
+        # callback would otherwise promote deferred work into fresh tasks
+        # mid-shutdown. Undrained entries are counted as shed, not lost silently.
+        self._consolidation_closed = True
+        if self._deferred_consolidations:
+            self.consolidations_shed += len(self._deferred_consolidations)
+            self._deferred_consolidations.clear()
         if self._background_tasks:
             _, pending = await asyncio.wait(self._background_tasks, timeout=2.0)
             for task in pending:

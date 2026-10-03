@@ -785,6 +785,22 @@ circuit breaker paused ingest rather than storing degraded memories, which is
 the designed behaviour and why no data was corrupted.
 
 
+#### Pre-submission hardening — status (2026-10-03)
+
+The three items scoped after §4e, recorded honestly:
+
+| # | item | status |
+|---|---|---|
+| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
+| 2 | bound `OpenAIProvider` concurrency | **done.** `max_concurrency` / `ASTROCYTE_OPENAI_MAX_CONCURRENCY`, guarding `complete()` and `embed()`, opt-in. Negative control: `assert 20 <= 3`. |
+| 3 | `top_k` 50 vs 100 A/B | **not run** — rides on item 1. |
+
+Prerequisite worth recording: the local `atlas-postgres` is vanilla
+`postgres:18-alpine` with **no** `vector`/`vectorscale` extension, so item 1 must use
+the AML compose's own pgvectorscale image (port 8085; 8080 collides with
+`atlas-ser`). Dedup's negation guard (§9.10) also lands before item 1 runs, so item 1
+will measure it on `text-embedding-3-small` for the first time.
+
 ## 5. M48 — Phase 3 (both sub-items gated)
 
 **M48a — reflect v3 (gate: M45 shows ≥8pp remaining headroom).** Termination architecture FIRST: forced candidate answer every iteration, hard 2-pass cap, no `done` tool reliance. Routed to TR/MS only via the shipped `_reflect_routing` signal. Validate as a bundle (M44 lesson).
@@ -1121,6 +1137,172 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
    Diagnostics that degrade silently do not merely cost debugging time; they
    invalidate results while the suite stays green. Prefer a loud failure to a
    defaulted one on any path that feeds a published number.
+
+10. **Lessons from engrim — similarity is not a decision, and overflow is not loss**
+    (added 2026-10-03). [engrim](https://github.com/timgordontg/engrim) (~6.5k LOC
+    Python, MIT) is local-first SQLite episodic memory for coding agents, wired into
+    six harnesses via hooks and MCP. **It is not a retrieval competitor** — bm25 plus
+    brute-force Python cosine over every vector, RRF k=60, no benchmarks. Its
+    "105-session case study" is one user's anecdote and its "99% token cut" measures
+    compression, not retention: the same self-report caution as MemOS (§0b). What it
+    does have is unusual discipline about *never losing something silently*. Two of
+    its ideas exposed defects here; both are fixed.
+
+    **(a) Embedding similarity cannot see negation — implemented.** Measured with
+    bge-small: "The user is allergic to peanuts." vs "…is **not** allergic…" scores
+    **0.920**; "use Postgres" / "not use Postgres" 0.827; an unrelated control 0.396.
+    A reversal embeds as a near-duplicate. `DedupDetector` decided on cosine alone and
+    the default retain action *drops* the duplicate — so a correction could be
+    discarded as a repeat of the fact it corrects. It was not firing at the 0.95
+    default with bge-small, but by a **0.03 margin nobody had measured**, and it was
+    entirely unmeasured for `text-embedding-3-small` (the AML submission embedder),
+    under structured fact extraction (on in that config), which emits exactly the
+    short atomic facts where these pairs score highest.
+
+    Fix: veto a cosine match when the two texts' token *difference* contains a
+    negator. Adapted, not copied — engrim requires exact equality whenever either
+    side contains a negator, which suits its short curated records but would disable
+    dedup for our long conversation chunks, nearly all of which contain a "not".
+    "Differs by" targets the reversal and leaves timestamp-only re-ingest dedup
+    intact (pinned by a test). Antonyms ("enable"/"disable", 0.870) carry no negator
+    and are a documented, pinned gap. `negation_overrides` counts vetoes so the
+    effect is measurable. **Negative control:** with the veto removed, an end-to-end
+    `retain()` of the correction returns `stored=False, deduplicated=True, error='All
+    chunks are near-duplicates'` — the silent drop, through the public API.
+
+    Note the right design already existed one layer over: observation consolidation
+    uses similarity only to *select candidates*, then an LLM decides
+    create/update/delete with both texts in view. The defect was confined to the two
+    paths that *decide* on cosine alone — dedup (fixed) and the recall cache
+    (≥0.95, query-side; lower risk since a negated question usually shares its
+    answer, but unguarded).
+
+    **(b) Overflow is deferred, not dropped — implemented, with a stated limit.** The
+    §4e cap discarded consolidations past 32 in flight (~1,000+ per 50 items, ~30% of
+    the observation layer). Now three bounded tiers: run (≤ `max_pending_consolidations`),
+    defer into a FIFO (≤ `max_deferred_consolidations`, default 1000, ~50 MB worst
+    case), shed only when both are full. Deferred entries hold no provider slot, so
+    they cannot reintroduce foreground starvation; they start as in-flight tasks
+    finish. Shutdown closes and clears the queue *before* cancelling — negative
+    controls show that ordering is load-bearing (removing it spawns tasks
+    mid-shutdown), while the drain-side check is defense in depth only, and the code
+    says so.
+
+    **What deferral does not fix:** a *sustained* arrival rate above the
+    consolidation service rate. The n=250 run ingested continuously for 6h; a finite
+    queue fills in the first chunk and shedding resumes at the old rate. Deferral
+    converts *bursts* into latency. The sustained case needs faster decisions or more
+    provider concurrency — see §9.11, which ranks decision-model call sites with consolidation first. The
+    ~30% figure predates this change and has **not** been re-measured.
+
+    **Not implemented — worth doing:**
+    - **Calibrated, error-cost-justified thresholds.** Every engrim threshold ships
+      with the score bands behind it and is set by which error is worse ("a false
+      'safe to clear' costs more than a missed hit"). We carry ~7 bare numbers
+      (0.95, 0.8, 0.75, 0.72, 0.7, 0.2). The 0.95 dedup margin over negation pairs
+      was only measured during this review.
+    - **One function per judgment that several surfaces report.** engrim routes its
+      status bar, minder and `review` through a single `_is_captured` after two
+      surfaces disagreed (their #747). We learned this once — provider wiring forked
+      three ways (§9.7, `3dfe03d`) — but fixed the case, not the rule.
+    - **Lifecycle without erasure.** engrim's `status` (active/superseded/done) plus
+      `supersede`/`retire` verbs, never deleting. Our dedup `update` action is
+      unimplemented and OKF found `status` has no writer (§6.1).
+    - **Developer-experience gap.** engrim's moat is integration breadth: `engrim
+      setup` auto-detects six harnesses and `engrim doctor --fix` repairs stale hook
+      paths. Its "Enterprise" tier (in-VPC, org-wide semantic search, multi-tenant)
+      describes roughly what Astrocyte already is; what we lack is the
+      install-and-it-works path into coding agents.
+
+    **Already done:** engrim injects per-prompt memory into the user message, never
+    the system prompt, so provider prefix caches stay warm. `reflect()` already does
+    this — static system prompt, memories inside `<memories>` in the user turn.
+
+11. **Decision models (Jev, OpenJev, Laya) — where they fit, and why the accuracy
+    lever is decomposition, not substitution** (added 2026-10-03). A *decision
+    model* takes state plus typed questions and returns a typed answer with
+    calibrated probabilities (Choice / Score / yes-no) instead of generating text.
+    The three candidates, from primary sources on 2026-10-03:
+
+    | | Jev 1.13 (TypeSafe) | OpenJev | Laya (Convai) |
+    |---|---|---|---|
+    | Runs | hosted API only | self-hosted, 27B, one H100 FP8 | CPU / Apple GPU, 322–421M |
+    | **Licence** | commercial service | **CC-BY-NC-4.0 — non-commercial** | **Apache-2.0** |
+    | Cost | $0.042/Mtok input, output free | hardware | free |
+    | Latency (vendor) | 70–500 ms | ~80 ms short text, ~210 ms web | ~33 ms |
+    | Zero-shot accuracy | 85.4% (OpenJev's 10k set) | 84.0% (same set) | **weak — 0.362 base, 0.766 fine-tuned** |
+    | Context | 64k tokens | — | 1,024 default, ≤8,192 |
+    | Other | not fine-tunable; ZDR enterprise-only; rate limits "adjusting dynamically" (80 req/s) | Jev-compatible request shape; image input | Jev-compatible server mode (`LAYA_JEV_STRICT`); MCP, ONNX |
+
+    **OpenJev cannot be used in production** — Astrocyte is MIT and is consumed
+    commercially (HelloHQ). Research and benchmarks only. **Laya is the only
+    permissively licensed local option, but only after fine-tuning**; one cheap
+    label source is distilling our current LLM decisions. All accuracy figures are
+    vendor self-reports (§9 rule applies).
+
+    **The finding that reframes this: our weak categories are exactly the model's
+    documented weaknesses.** Jev's own known-limits page states it "does not count
+    reliably" and "reads dates as text, not as ordered quantities." Classifying
+    the n=250 questions (rough regex, so approximate):
+
+    | category | composition | score |
+    |---|---|---|
+    | multi-session (n=72) | **59 counting/aggregation** ("how many…") | 53% |
+    | temporal-reasoning (n=61) | **47 counting or date-arithmetic** | 50.8% |
+
+    These are 53% of LongMemEval and the two categories with enough n to trust
+    (§4e). Asking a decision model these questions *directly* would make them
+    worse. The vendor's own prescribed decomposition is the useful idea: **count
+    in code** over one yes/no judgment per retrieved candidate, and **extract date
+    components** (a Choice over months/days/years with an explicit "not stated"),
+    then do ordering and arithmetic in code — which §4e's `occurred_at` fix now
+    makes possible. That is a change to how `reflect()` answers, not a model swap.
+    **It is off-limits for the AML submission**: Search must return memories, not
+    answers (§9.2), and counting in Search would disguise an answer as a memory.
+
+    This corrects an earlier position in this session ("a decision model won't
+    move benchmark accuracy"). *Substituting* one for an LLM call still won't.
+    *Decomposing* the two dominant question types into judgment-plus-code might —
+    testable only at n≥250 (§9.9).
+
+    **Call sites, ranked by expected benefit:**
+
+    | # | site | decision | cost | latency | accuracy |
+    |---|---|---|---|---|---|
+    | 1 | `observation.py` consolidation | split decision from writing: model picks no-op / create / update(target); LLM writes text only when needed | large (no-ops skip the LLM) | large | indirect — less overflow shedding (§9.10b) |
+    | 2 | `signal_quality.py` dedup | yes/no "same fact?" on cosine ≥0.85 candidates; cosine selects, model decides | small | neutral | catches antonyms (§9.10a gap) and paraphrase duplicates |
+    | 3 | recall reranking / passage filtering | per-pair relevance; return judged-relevant memories, not a fixed 50 | moderate | +~100 ms | **direct lever** (TypeSafe cookbook: top-1 5%→18% on legal retrieval — their domain) |
+    | 4 | `query_analyzer.py` temporal scoping | extract date parts from the question; code resolves against question date | small | small | temporal category, per the docs' pattern |
+    | 5 | `reflect()` counting questions | yes/no per candidate, count in code | moderate | moderate | multi-session (82% counting) |
+    | 6 | `mip/intent.py` bank routing | Choice over banks (today: hand-parsed JSON + passthrough fallback) | small | large | removes parse failures; not on the LME path |
+    | 7 | entity resolution (0.8/0.75) | same entity? (TypeSafe entity-alignment cookbook) | small | moderate | modest |
+    | 8 | `llm_scanner.py`, `premise_verification.py`, `lint.py` | guardrail / premise / contradiction | small | large per retain | modest |
+
+    **Not a fit — anything that writes text:** `compile`, `section_compile`,
+    `reflect` synthesis, `query_rewrite`, `multi_query` sub-query writing, HyDE —
+    and structured fact extraction, which is where the measured **39 s/Add** goes
+    (§4e status). The one opening there is a *gate*: a yes/no "does this chunk
+    carry information about the user?" before extraction, skipping generic Q&A
+    filler. It can lose recall, so it must be A/B'd before it is trusted.
+
+    **Architecture:** one `DecisionProvider` SPI shaped like Jev's wire contract
+    (state + typed questions → typed answers + probabilities), with its own
+    `astrocyte.decision_providers` entry-point group. Laya's server and OpenJev
+    both expose Jev-compatible request shapes, so one SPI covers hosted Jev, local
+    Laya and an LLM-backed default built on `complete()` — nothing breaks without a
+    decision model, and model-agnosticism (§9.7) holds. Separating "decide" from
+    "generate" across the 45 `complete()` call sites is worth doing regardless.
+
+    **Measure before building:** (1) consolidation action mix — the share of
+    no-op/create/update/delete decides item 1's value; (2) dedup near-match rate in
+    the 0.85–0.95 band decides item 2's. **Constraints:** the AML Add/Search path
+    stays on gpt-4o-mini (mandated); hosted Jev sends memory content to a third
+    party (ZDR enterprise-only), which matters for privacy-sensitive deployments.
+
+    Sources: [docs.typesafe.ai/models](https://docs.typesafe.ai/models.md),
+    [Jev 1.13 known limits](https://docs.typesafe.ai/model-jaggedness/jev-1.13.md),
+    [OpenJev model card](https://huggingface.co/openjev/openjev),
+    [Laya](https://github.com/NandhaKishorM/laya).
 
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
