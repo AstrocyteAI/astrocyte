@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
-# Astrocyte plugin — session-start hook.
+# Astrocyte plugin — session-start check.
 #
-# v0.1.0 does the minimum: log to stderr that the plugin loaded, and
-# emit a hint to stdout if ASTROCYTE_CONFIG is unset (in which case
-# the MCP server would fail to start on first tool call).
-#
-# Future versions will additionally:
-#   - call ``astrocyte-mcp --probe`` to verify the bank is reachable
-#   - inject a one-line "context loaded" status with the current bank_id
-#   - pre-fetch recent memories for the configured default bank
+# The memory server is registered by `astrocyte setup`, not by this plugin
+# (one verified registration per agent, repairable by `astrocyte doctor
+# --fix`). This hook only makes a missing install visible at the moment it
+# matters, instead of the first memory tool call failing silently.
 #
 # Exit 0 always — a degraded hook must never block the session.
 
 set -u
 
-if [[ -z "${ASTROCYTE_CONFIG:-}" ]]; then
-    echo "  Astrocyte: ASTROCYTE_CONFIG env var unset — set it to your astrocyte.yaml path." >&2
-    echo "  Astrocyte: example: export ASTROCYTE_CONFIG=\$HOME/.config/astrocyte/astrocyte.yaml" >&2
+if ! command -v astrocyte >/dev/null 2>&1; then
+    echo "Astrocyte: not installed. Run: uv tool install 'astrocyte[local]' && astrocyte setup" >&2
+    exit 0
 fi
 
-# Probe ``uvx --from astrocyte-stack astrocyte-mcp --version`` would be ideal
-# but costs a cold cache hit (~3-5s). Defer to first tool use.
+config="${ASTROCYTE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/astrocyte/astrocyte.yaml}"
+if [[ ! -f "$config" ]]; then
+    echo "Astrocyte: installed but not set up. Run: astrocyte setup" >&2
+fi
 
 exit 0

@@ -20,12 +20,12 @@ metadata:
   author: AstrocyteAI
   version: "0.1.0"
   category: ai-memory
-  tags: "memory, agent-memory, self-hosted, postgres, section-recall, mcp"
+  tags: "memory, agent-memory, local-first, sqlite, section-recall, mcp"
 compatibility: >
-  Requires the astrocyte MCP server running locally
-  (``uvx --from astrocyte-stack astrocyte-mcp --config ./astrocyte.yaml``).
-  Backing Postgres + ``ASTROCYTE_CONFIG`` env var pointing at the YAML.
-  Astrocyte v0.13+ for full section-grain recall.
+  Requires the astrocyte MCP server, registered with this agent by
+  ``astrocyte setup`` (``uv tool install 'astrocyte[local]'`` first).
+  Verify with ``astrocyte doctor``. Works with the local SQLite store or a
+  self-hosted Postgres; v0.13+ for full section-grain recall.
 ---
 
 # Astrocyte Memory Protocol
