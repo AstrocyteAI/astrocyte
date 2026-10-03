@@ -138,7 +138,9 @@ def main() -> int:
         text = cfg.read_text()
         assert "vector_store: sqlite" in text and "embedding_provider: local_embeddings" in text, text
         wired = json.loads((home / ".cursor" / "mcp.json").read_text())["mcpServers"]["astrocyte"]
-        assert wired["command"] == str(python) and wired["args"][:3] == ["-I", "-m", "astrocyte.mcp"], wired
+        # Compare resolved paths: on macOS /tmp is a symlink to /private/tmp.
+        assert Path(wired["command"]).resolve() == python.resolve(), wired
+        assert wired["args"][:3] == ["-I", "-m", "astrocyte.mcp"], wired
 
         step("astrocyte doctor")
         # --skip-models: the completion probe would call OpenAI with the dummy key.
