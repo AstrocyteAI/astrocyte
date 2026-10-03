@@ -33,30 +33,9 @@ from astrocyte.types import (
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from astrocyte_postgres._vectors import parse_pgvector
+
 _VALID_LINK_TYPES = frozenset({"semantic_knn", "causal", "supersedes", "elaborates"})
-
-
-def _parse_pgvector(raw) -> list[float] | None:
-    """Parse a pgvector value back to a Python list[float].
-
-    The text protocol returns embeddings as strings like
-    ``"[0.1, -0.5, ...]"``. When ``psycopg-vector`` is registered the
-    adapter returns a numpy array directly; we coerce to plain list
-    either way to keep this module pgvector-binding-optional.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, list):
-        return [float(x) for x in raw]
-    if hasattr(raw, "tolist"):  # numpy array path (psycopg-vector)
-        return [float(x) for x in raw.tolist()]
-    if isinstance(raw, str):
-        s = raw.strip().lstrip("[").rstrip("]")
-        if not s:
-            return []
-        return [float(p.strip()) for p in s.split(",") if p.strip()]
-    # Unknown shape — fail loudly so we notice during dev.
-    raise TypeError(f"_parse_pgvector: unsupported {type(raw).__name__}")
 
 
 def _embedding_param(vec: list[float] | None) -> str | None:
@@ -1485,7 +1464,7 @@ class PostgresPageIndexStore:
                 rows = await cur.fetchall()
         out: list[PageIndexSection] = []
         for r in rows:
-            emb = _parse_pgvector(r[4])
+            emb = parse_pgvector(r[4])
             out.append(
                 PageIndexSection(
                     document_id=document_id,

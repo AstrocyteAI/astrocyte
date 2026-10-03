@@ -29,7 +29,9 @@ class TestResolveLlmProvider:
         cfg = load_config(write_config(tmp_path, "llm_provider: mock\n"))
         assert not isinstance(resolve_llm_provider(cfg), CompositeLLMProvider)
 
-    def test_separate_embedding_provider_composes(self, tmp_path):
+    def test_separate_embedding_provider_composes(self, tmp_path, monkeypatch):
+        # Constructing ClaudeCliProvider only locates the binary; CI has none.
+        monkeypatch.setenv("CLAUDE_CLI_BIN", "/usr/bin/true")
         cfg = load_config(write_config(tmp_path, "llm_provider: claude_cli\nembedding_provider: mock\n"))
         assert isinstance(resolve_llm_provider(cfg), CompositeLLMProvider)
 
@@ -42,6 +44,21 @@ class TestResolveLlmProvider:
         monkeypatch.delenv("ASTROCYTE_LLM_PROVIDER", raising=False)
         cfg = load_config(write_config(tmp_path, "vector_store: in_memory\n"))
         assert resolve_llm_provider(cfg) is not None
+
+    def test_implicit_mock_fallback_is_announced(self, tmp_path, monkeypatch, caplog):
+        """Mock embeddings make retains "succeed" and recall return noise; an
+        unconfigured provider must never be silent."""
+        monkeypatch.delenv("ASTROCYTE_LLM_PROVIDER", raising=False)
+        cfg = load_config(write_config(tmp_path, "vector_store: in_memory\n"))
+        with caplog.at_level("WARNING", logger="astrocyte.wiring"):
+            resolve_llm_provider(cfg)
+        assert "mock provider" in caplog.text
+
+    def test_explicit_mock_is_not_warned_about(self, tmp_path, caplog):
+        cfg = load_config(write_config(tmp_path, "llm_provider: mock\n"))
+        with caplog.at_level("WARNING", logger="astrocyte.wiring"):
+            resolve_llm_provider(cfg)
+        assert "mock provider" not in caplog.text
 
     def test_env_var_supplies_the_provider_when_config_omits_it(self, tmp_path, monkeypatch):
         monkeypatch.setenv("ASTROCYTE_LLM_PROVIDER", "mock")

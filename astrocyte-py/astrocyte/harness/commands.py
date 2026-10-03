@@ -1,0 +1,237 @@
+"""``astrocyte setup`` / ``uninstall`` / ``doctor`` command implementations."""
+
+from __future__ import annotations
+
+import json
+import sys
+from argparse import Namespace
+from pathlib import Path
+
+from .doctor import Check, apply_fixes, run_checks
+from .hosts import ALL_HOSTS, HookHost, Host, Outcome, host_by_key, hosts
+from .localconfig import SetupError, choose_providers, render_config, write_config
+from .paths import config_path, database_path
+from .server import handshake, hook_prefix, locate_mcp_server, server_spec
+
+HOST_KEYS = tuple(cls.key for cls in ALL_HOSTS)
+
+_MARK = {"ok": "✓", "warn": "!", "fail": "✗", "info": "·"}
+_OUTCOME_MARK = {
+    "installed": "✓", "updated": "✓", "unchanged": "✓", "removed": "✓", "absent": "·",
+    "planned": "→", "skipped": "·", "failed": "✗",
+}
+
+
+def _selected_hosts(args: Namespace) -> tuple[list[Host], bool]:
+    """Hosts named by flags, else every detected one. Returns (hosts, explicit)."""
+    named = [k for k in HOST_KEYS if getattr(args, k, False)]
+    if named:
+        return [host_by_key(k) for k in named], True
+    return [h for h in hosts() if h.detected()], False
+
+
+def _print_outcome(o: Outcome) -> None:
+    print(f"  {_OUTCOME_MARK[o.status]} {o.host:<12} {o.status:<9} {o.detail}")
+
+
+def cmd_setup(args: Namespace) -> int:
+    cfg_path = Path(args.config).expanduser() if args.config else config_path()
+    dry = args.dry_run
+
+    print("Astrocyte setup\n")
+    # 1. Config — the user's file once written; never overwritten.
+    if cfg_path.is_file():
+        print(f"  ✓ config       keeping existing {cfg_path}")
+    else:
+        try:
+            choice = choose_providers()
+        except SetupError as e:
+            print(f"  ✗ config       {e}", file=sys.stderr)
+            return 1
+        if dry:
+            print(f"  → config       would write {cfg_path}")
+        else:
+            write_config(cfg_path, render_config(choice, database_path()))
+            print(f"  ✓ config       wrote {cfg_path}")
+        print(f"                 completions: {choice.llm_why}")
+        if choice.embedding_why:
+            print(f"                 embeddings:  {choice.embedding_why}")
+        print(f"                 memories:    {database_path()}")
+
+    # 2. The server binary from *this* installation.
+    found = locate_mcp_server()
+    if found is None:
+        print("  ✗ server       astrocyte-mcp not found. Install with: uv tool install 'astrocyte[local]'",
+              file=sys.stderr)
+        return 1
+    if found.ephemeral:
+        print(f"  ! server       {found.command} is in a cache that may be pruned;\n"
+              "                 for a durable install run: uv tool install 'astrocyte[local]'")
+    spec = server_spec(found.command, cfg_path)
+
+    # 3. Prove the server starts before wiring anything to it.
+    if not dry and not args.no_verify:
+        result = handshake(spec)
+        if not result.ok:
+            print(f"  ✗ server       failed to start: {result.detail}\n"
+                  "                 nothing was wired. Fix the above, then re-run.", file=sys.stderr)
+            return 1
+        print(f"  ✓ server       starts and answers ({result.detail}, {result.seconds:.1f}s)")
+
+    # 4. Harnesses.
+    targets, explicit = _selected_hosts(args)
+    if not targets:
+        print("\n  No agent harnesses detected. Supported: " + ", ".join(c.label for c in ALL_HOSTS)
+              + ".\n  Install one, or name it explicitly, e.g. astrocyte setup --claude")
+        return 1
+    if not explicit:
+        print("\n  Detected: " + ", ".join(h.label for h in targets))
+    print()
+    outcomes = [h.install(spec, dry_run=dry) for h in targets]
+
+    # 5. Automatic memory (lifecycle hooks, where the harness has them).
+    hook_hosts = [h for h in targets if isinstance(h, HookHost)]
+    auto_memory = [] if args.no_hooks else hook_hosts
+    for h in hook_hosts:
+        if not args.no_hooks:
+            outcomes.append(h.install_hooks(hook_prefix(found.command), dry_run=dry))
+            continue
+        # --no-hooks turns automatic memory off, including a previous install.
+        outcome = h.uninstall_hooks(dry_run=dry)
+        if outcome.status != "absent":
+            outcomes.append(outcome)
+    for o in outcomes:
+        _print_outcome(o)
+
+    failed = [o for o in outcomes if o.status == "failed"]
+    if dry:
+        print("\nDry run — nothing was changed.")
+    elif failed:
+        print(f"\n{len(failed)} harness(es) could not be wired; see above. `astrocyte doctor` re-checks.")
+    else:
+        fresh = {o.host for o in outcomes if o.status in ("installed", "updated")}
+        notes = [h.next_step for h in targets if h.label in fresh and h.next_step]
+        notes += [h.hooks_next_step for h in hook_hosts if f"{h.label} hooks" in fresh and h.hooks_next_step]
+        if notes:
+            print("\nOne more step in some agents:")
+            for note in notes:
+                print(f"  • {note}")
+        if auto_memory:
+            names = " and ".join(h.label for h in auto_memory)
+            print(f"\nAutomatic memory is on in interactive {names} sessions, including ones already open:\n"
+                  "from their next turn, each turn is saved to that project's local memory and relevant\n"
+                  "memories are added to new prompts. Headless runs (`claude -p`, `codex exec`) are left alone.\n"
+                  "Pause with ASTROCYTE_HOOKS=off, or remove with: astrocyte setup --no-hooks")
+        print("\nDone. Start a new session in your agent to load the Astrocyte memory tools.\n"
+              "Verify any time with: astrocyte doctor")
+    return 1 if failed else 0
+
+
+def cmd_uninstall(args: Namespace) -> int:
+    targets, _ = _selected_hosts(args)
+    print("Removing Astrocyte from agent harnesses\n")
+    outcomes = [h.uninstall(dry_run=args.dry_run) for h in targets]
+    outcomes += [h.uninstall_hooks(dry_run=args.dry_run) for h in targets if isinstance(h, HookHost)]
+    for o in outcomes:
+        _print_outcome(o)
+    cfg_path = config_path()
+    print(f"\nYour config ({cfg_path}) and memories ({database_path()}) were left in place;\n"
+          "delete them yourself if you no longer want them.")
+    return 1 if any(o.status == "failed" for o in outcomes) else 0
+
+
+def _render(checks: list[Check]) -> None:
+    width = max(len(c.area) for c in checks)
+    for c in checks:
+        print(f"  {_MARK[c.level]} {c.area:<{width}}  {c.summary}")
+        if c.fix and c.level in ("fail", "warn"):
+            print(f"    {' ' * width}  fix: {c.fix}")
+
+
+def cmd_doctor(args: Namespace) -> int:
+    cfg_path = Path(args.config).expanduser() if args.config else config_path()
+    checks = run_checks(cfg_path, model_probes=not args.skip_models)
+    repaired: list[str] = []
+    if args.fix and any(c.fixable for c in checks):
+        repaired = apply_fixes(cfg_path, checks)
+        checks = run_checks(cfg_path, model_probes=not args.skip_models)
+
+    failures = [c for c in checks if c.level == "fail"]
+    if args.json:
+        print(json.dumps({"ok": not failures, "checks": [c.as_dict() for c in checks], "repaired": repaired},
+                         indent=2))
+        return 1 if failures else 0
+
+    print("Astrocyte doctor\n")
+    if repaired:
+        print("Repaired:")
+        for line in repaired:
+            print(f"  ✓ {line}")
+        print()
+    _render(checks)
+    if failures:
+        fixable = any(c.fixable for c in failures)
+        hint = " Run `astrocyte doctor --fix` to repair what it can." if fixable and not args.fix else ""
+        print(f"\n{len(failures)} problem(s).{hint}")
+        return 1
+    print("\nAll good.")
+    return 0
+
+
+def register(sub) -> None:
+    """Add setup / uninstall / doctor to the ``astrocyte`` CLI."""
+
+    def host_flags(p) -> None:
+        for cls in ALL_HOSTS:
+            p.add_argument(f"--{cls.key}", action="store_true", help=f"only {cls.label}")
+        p.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
+
+    setup = sub.add_parser(
+        "setup",
+        help="Create a local memory store and wire it into your coding agents",
+        description="Writes ~/.config/astrocyte/astrocyte.yaml (if absent), verifies the MCP server starts, "
+        "then registers it with every detected agent harness (or only those named).",
+    )
+    host_flags(setup)
+    setup.add_argument("--config", help="config path (default: ~/.config/astrocyte/astrocyte.yaml)")
+    setup.add_argument("--no-verify", action="store_true", help="skip the server start-up check")
+    setup.add_argument("--no-hooks", action="store_true",
+                       help="don't enable automatic memory (Claude Code / Codex capture + recall hooks); "
+                       "removes them if present")
+    setup.set_defaults(func=cmd_setup)
+
+    hook = sub.add_parser("hook", help="(called by agent hooks) automatic memory for one lifecycle event")
+    hook.add_argument("event", choices=["session-start", "prompt", "stop"])
+    hook.add_argument("--host", choices=["claude", "codex"], default="claude", help="the agent firing the hook")
+    hook.set_defaults(func=lambda a: _run_hook(a.event, a.host))
+
+    agentd = sub.add_parser("agentd", help="(started on demand) keep memory warm for agent hooks")
+    agentd.add_argument("--config", help="config path (default: ~/.config/astrocyte/astrocyte.yaml)")
+    agentd.set_defaults(func=lambda a: _run_agentd(a.config))
+
+    uninstall = sub.add_parser("uninstall", help="Remove Astrocyte from agent harnesses (keeps your memories)")
+    host_flags(uninstall)
+    uninstall.set_defaults(func=cmd_uninstall)
+
+    doctor = sub.add_parser("doctor", help="Check the local install end to end; --fix repairs it")
+    doctor.add_argument("--fix", action="store_true", help="repair a missing config and broken harness entries")
+    doctor.add_argument("--json", action="store_true", help="machine-readable output")
+    doctor.add_argument("--skip-models", action="store_true", help="skip the embedding/completion probes")
+    doctor.add_argument("--config", help="config path (default: ~/.config/astrocyte/astrocyte.yaml)")
+    doctor.set_defaults(func=cmd_doctor)
+
+    from .memories import register as register_memory
+
+    register_memory(sub)
+
+
+def _run_hook(event: str, host: str) -> int:
+    from .hooks import main
+
+    return main(event, host)
+
+
+def _run_agentd(config: str | None) -> int:
+    from .agentd import run
+
+    return run(Path(config).expanduser() if config else config_path())

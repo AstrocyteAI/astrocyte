@@ -1,6 +1,10 @@
-"""Astrocyte CLI — operator tooling for MIP configs.
+"""Astrocyte CLI — local setup and operator tooling.
 
 Commands:
+    astrocyte setup [--claude ...]       Create a local memory store and wire it into coding agents.
+    astrocyte doctor [--fix]             Check the local install end to end; repair what it can.
+    astrocyte uninstall [--claude ...]   Remove Astrocyte from agent harnesses (keeps memories).
+    astrocyte memory [search|forget|banks]  See, search and remove what agents remember (this project).
     astrocyte mip lint <path>            Validate a mip.yaml, printing errors and warnings.
     astrocyte mip explain <path> ...     Show which rule fires for a hypothetical input.
 
@@ -211,6 +215,9 @@ def _build_parser() -> argparse.ArgumentParser:
     explain.add_argument("--pii-detected", action="store_true", help="Mark PII as already detected")
     explain.set_defaults(func=_cmd_mip_explain)
 
+    from astrocyte.harness.commands import register as register_harness_commands
+
+    register_harness_commands(sub)
     return parser
 
 

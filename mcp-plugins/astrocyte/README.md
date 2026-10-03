@@ -1,6 +1,25 @@
 # Astrocyte plugin for Claude Code, Cursor, and Codex
 
-Self-hosted agent memory wired into your AI coding agent in three lines. Backed by your own Postgres — no remote service, no API key, your data never leaves your infrastructure.
+Persistent memory for your coding agent that stays on your machine: one local
+SQLite file, local embeddings, no server to run and no API key.
+
+## Install — two commands
+
+```bash
+uv tool install 'astrocyte[local]'
+astrocyte setup
+```
+
+`astrocyte setup` creates `~/.config/astrocyte/astrocyte.yaml`, proves the
+memory server starts, then registers it with every agent it finds — Claude
+Code, Codex CLI, Cursor, Gemini CLI, Windsurf, and Copilot CLI — and verifies
+each registration took effect. Run it again any time; it only changes what is
+out of date. Check everything end to end with `astrocyte doctor`, and repair a
+moved install with `astrocyte doctor --fix`.
+
+This plugin is optional on top of that: it adds the `astrocyte-memory` skill
+(when to recall, what to retain) and a session check that tells you if
+Astrocyte isn't installed or set up yet.
 
 ## What you get
 
@@ -17,83 +36,27 @@ Self-hosted agent memory wired into your AI coding agent in three lines. Backed 
 
 Plus admin tools (`memory_lifecycle`, `memory_bank_health`, legal-hold) when `expose_admin: true` in your config.
 
-## Prerequisites
+## Install the plugin (optional)
 
-1. **A running Astrocyte stack.** Easiest:
-   ```bash
-   pip install astrocyte-stack    # installs astrocyte + astrocyte-postgres
-   ```
-   For the full quick-start (Postgres setup, config file), see <https://AstrocyteAI.github.io/astrocyte/end-user/quick-start/>.
+**Claude Code:**
 
-2. **`uv` installed.** The plugin's MCP config calls `uvx --from astrocyte-stack astrocyte-mcp`, which uses `uv`'s ephemeral-tool runner.
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-
-3. **An `astrocyte.yaml`** in a known location. Default convention:
-   ```bash
-   mkdir -p ~/.config/astrocyte
-   # Drop your config there:
-   curl -L https://AstrocyteAI.github.io/astrocyte/config.example.yaml > ~/.config/astrocyte/astrocyte.yaml
-   export ASTROCYTE_CONFIG=$HOME/.config/astrocyte/astrocyte.yaml
-   ```
-   Add the `export` line to your shell rc so the env var is set for editors started from a fresh terminal.
-
-## Install — Claude Code
-
-The Astrocyte repository ships a plugin marketplace at its root. From inside Claude Code:
-
-```bash
+```
 /plugin marketplace add AstrocyteAI/astrocyte
 /plugin install astrocyte
 ```
 
-That wires the MCP server, registers the `astrocyte-memory` skill, and runs the `SessionStart` hook. Restart Claude Code to pick up the new tools.
+**Cursor / Codex:** copy this directory into `~/.cursor/plugins/astrocyte` or
+`~/.codex/plugins/astrocyte`.
 
-Verify:
-```bash
-/mcp                       # ← astrocyte should be listed
-```
-Then ask Claude to recall something to confirm the round-trip:
-> "Recall what we know about my coding preferences."
+## Why the plugin doesn't launch the server
 
-## Install — Cursor
-
-Cursor reads `.cursor-plugin/plugin.json` directly. Drop the plugin somewhere Cursor can see it:
-
-```bash
-mkdir -p ~/.cursor/plugins
-git clone https://github.com/AstrocyteAI/astrocyte.git --depth 1 /tmp/astrocyte
-cp -r /tmp/astrocyte/mcp-plugins/astrocyte ~/.cursor/plugins/astrocyte
-```
-
-Cursor picks it up on next start. The MCP server config lives in `.cursor-mcp.json` and uses the same `uvx --from astrocyte-stack astrocyte-mcp` invocation.
-
-## Install — Codex
-
-Same shape as Cursor; Codex reads `.codex-plugin/plugin.json`:
-
-```bash
-mkdir -p ~/.codex/plugins
-git clone https://github.com/AstrocyteAI/astrocyte.git --depth 1 /tmp/astrocyte
-cp -r /tmp/astrocyte/mcp-plugins/astrocyte ~/.codex/plugins/astrocyte
-```
-
-The `interface` block in `.codex-plugin/plugin.json` populates the Codex marketplace listing (displayName, capabilities, default prompts, brand color).
-
-## How the MCP server is launched
-
-All three editor configs (`.mcp.json` / `.cursor-mcp.json` / `.codex-mcp.json`) point at the same command:
-
-```
-uvx --from astrocyte-stack astrocyte-mcp --config $ASTROCYTE_CONFIG
-```
-
-- `uvx` runs the published `astrocyte-stack` package in an ephemeral venv.
-- `astrocyte-mcp` is the console script wired in `astrocyte-py/pyproject.toml`.
-- `$ASTROCYTE_CONFIG` points at your YAML; the env var is the contract between this plugin and your local stack.
-
-This means **no Python install on your machine is necessary** beyond `uv` itself — `uvx` handles the rest. First call cold-starts ~3-5s while `uv` downloads the wheels; subsequent calls hit the local cache.
+Earlier versions registered the server from each plugin manifest via
+`uvx --from astrocyte-stack astrocyte-mcp`. That crashed on first use
+(`astrocyte-stack` did not include the MCP dependency), depended on an
+`ASTROCYTE_CONFIG` variable most shells never set, and — alongside
+`astrocyte setup` — would register a second, duplicate server. Registration
+now has one owner: `astrocyte setup` writes a single entry per agent with
+absolute paths, verifies it, and `astrocyte doctor --fix` repairs it.
 
 ## What's in this plugin
 
@@ -102,36 +65,32 @@ mcp-plugins/astrocyte/
 ├── .claude-plugin/plugin.json     # Claude Code manifest
 ├── .cursor-plugin/plugin.json     # Cursor manifest
 ├── .codex-plugin/plugin.json      # Codex manifest (+ marketplace interface block)
-├── .mcp.json                      # Claude Code MCP wiring
-├── .cursor-mcp.json               # Cursor MCP wiring
-├── .codex-mcp.json                # Codex MCP wiring
-├── hooks/hooks.json               # SessionStart hook (minimal in v0.1)
-├── scripts/on_session_start.sh    # The session-start probe
+├── hooks/hooks.json               # SessionStart hook
+├── scripts/on_session_start.sh    # Reports a missing install or setup; never blocks
 ├── skills/astrocyte-memory/
 │   └── SKILL.md                   # When to recall, when to retain — the protocol
 ├── logo.svg                       # Astrocyte mark
 └── README.md                      # This file
 ```
 
-## v0.1.0 scope and the v0.2.0 path
+## Automatic memory
 
-What's in this release:
+In Claude Code and Codex, `astrocyte setup` also turns on automatic memory for interactive
+sessions (headless `claude -p` / `codex exec` runs are left alone): each finished turn of a conversation is saved to the project's local memory, and memories
+relevant to a new prompt are added to the agent's context — only when they are
+genuinely similar, never twice in one session. Nothing leaves your machine.
+Pause it with `ASTROCYTE_HOOKS=off`; remove it with `astrocyte setup --no-hooks`.
+In Codex, trust the three astrocyte hooks once with `/hooks`.
 
-- **Three editor manifests** — Claude Code, Cursor, Codex.
-- **MCP server wiring** — points each editor at local `astrocyte-mcp` via `uvx`.
-- **Memory protocol skill** — `astrocyte-memory` SKILL.md teaching the agent when to call which tool.
-- **Minimal SessionStart hook** — confirms the plugin loaded + warns if `ASTROCYTE_CONFIG` is unset.
-
-What's deferred to v0.2.0:
-
-- **Auto-capture hooks** (`UserPromptSubmit`, `Stop`, `PreCompact`). Capturing every turn into memory needs a streaming `/retain` endpoint that doesn't block on an LLM round-trip per call — that lives on the Astrocyte roadmap. v0.1.0 is explicit-retain only (the skill teaches when to call `memory_retain`).
-- **`@astrocyte/mcp` npm wrapper.** Once we see demand from users without `uv` installed.
+`astrocyte memory` lists what is remembered about the current project; `astrocyte memory search`,
+`astrocyte memory forget <id>` (erases from disk) and `astrocyte memory banks` cover the rest.
 
 ## Updating
 
 ```bash
-/plugin update astrocyte           # Claude Code
-# For Cursor / Codex, re-pull the repo and re-copy the plugin dir.
+uv tool upgrade astrocyte          # the memory server and CLI
+astrocyte doctor --fix             # re-point agents if the install moved
+/plugin update astrocyte           # this plugin, in Claude Code
 ```
 
 ## Reporting issues

@@ -171,18 +171,32 @@ class Astrocyte:
 
     @classmethod
     def from_config(cls, path: str | Path) -> "Astrocyte":
-        """Create an Astrocyte instance from a YAML config file."""
-        config = load_config(path)
-        return cls(config)
+        """Create a ready-to-use Astrocyte from a YAML config file.
+
+        When the config names a ``vector_store``, the storage pipeline and
+        every configured store are wired, so ``retain``/``recall`` work
+        immediately. (Previously this returned an unwired instance whose first
+        ``retain`` raised "No provider or pipeline configured" — the documented
+        hello-world did not run.) Configs without a vector store are returned
+        unwired, for callers that attach an engine or pipeline themselves.
+        """
+        return cls._from_loaded_config(load_config(path))
 
     @classmethod
     def from_config_dict(cls, data: dict[str, str | int | float | bool | None | dict | list]) -> "Astrocyte":
-        """Create an Astrocyte instance from a config dictionary (for testing)."""
+        """Create an Astrocyte from a config dictionary; wired like :meth:`from_config`."""
         from astrocyte.config import _dict_to_config, validate_astrocyte_config
 
         config = _dict_to_config(data)
         validate_astrocyte_config(config)
-        return cls(config)
+        return cls._from_loaded_config(config)
+
+    @classmethod
+    def _from_loaded_config(cls, config: AstrocyteConfig) -> "Astrocyte":
+        from astrocyte.wiring import wants_storage_pipeline, wire_astrocyte
+
+        brain = cls(config)
+        return wire_astrocyte(brain, config) if wants_storage_pipeline(config) else brain
 
     def set_engine_provider(self, provider: EngineProvider) -> None:
         """Set the engine provider (for programmatic setup)."""

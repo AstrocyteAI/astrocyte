@@ -1,7 +1,7 @@
 {
   "name": "astrocyte",
-  "version": "0.1.0",
-  "description": "Self-hosted agent memory for Cursor. Adds retain / recall / reflect / forget / compile tools backed by a local astrocyte-mcp server. Section-grain recall, multi-bank, full lifecycle controls.",
+  "version": "0.2.0",
+  "description": "Persistent memory for Cursor. Adds the astrocyte-memory skill. The memory server itself is registered by `astrocyte setup`.",
   "author": {
     "name": "Astrocyte",
     "email": "linchuan.cheng@gmail.com"
@@ -14,10 +14,9 @@
     "astrocyte",
     "memory",
     "mcp",
-    "self-hosted",
-    "postgres",
-    "section-recall"
+    "section-recall",
+    "local-first",
+    "sqlite"
   ],
-  "skills": "./skills/",
-  "mcpServers": "./.cursor-mcp.json"
+  "skills": "./skills/"
 }

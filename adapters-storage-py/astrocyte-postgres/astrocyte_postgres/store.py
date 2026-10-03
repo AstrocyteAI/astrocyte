@@ -37,6 +37,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from psycopg_pool import AsyncConnectionPool
 
+from astrocyte_postgres._vectors import parse_pgvector
+
 _TABLE_SAFE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
@@ -795,7 +797,7 @@ class PostgresStore:
                 VectorItem(
                     id=row["id"],
                     bank_id=row["bank_id"],
-                    vector=list(row["embedding"]),
+                    vector=parse_pgvector(row["embedding"]),
                     text=row["text"],
                     metadata=md,
                     tags=list(row["tags"]) if row["tags"] else None,
@@ -863,7 +865,7 @@ class PostgresStore:
                 VectorItem(
                     id=row["id"],
                     bank_id=row["bank_id"],
-                    vector=list(row["embedding"]),
+                    vector=parse_pgvector(row["embedding"]),
                     text=row["text"],
                     metadata=md,
                     tags=list(row["tags"]) if row["tags"] else None,

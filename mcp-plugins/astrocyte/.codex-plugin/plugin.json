@@ -1,7 +1,7 @@
 {
   "name": "astrocyte",
-  "version": "0.1.0",
-  "description": "Self-hosted agent memory for Codex. Adds retain / recall / reflect / forget / compile tools backed by a local astrocyte-mcp server.",
+  "version": "0.2.0",
+  "description": "Persistent memory for Codex. Adds the astrocyte-memory skill. The memory server itself is registered by `astrocyte setup`.",
   "author": {
     "name": "Astrocyte",
     "email": "linchuan.cheng@gmail.com"
@@ -10,11 +10,10 @@
   "repository": "https://github.com/AstrocyteAI/astrocyte",
   "license": "Apache-2.0",
   "skills": "./skills/",
-  "mcpServers": "./.codex-mcp.json",
   "interface": {
     "displayName": "Astrocyte",
     "shortDescription": "Self-hosted persistent memory for AI coding workflows",
-    "longDescription": "Astrocyte gives Codex long-term memory backed by your own Postgres. Store decisions, user preferences, project context, conversational history. Section-grain recall keeps conversation structure intact across long histories; multi-bank isolation lets one Codex instance serve many projects without leakage. Self-hosted — your data stays in your infrastructure.",
+    "longDescription": "Astrocyte gives Codex long-term memory that stays on your machine: one local SQLite file, local embeddings, no server and no API key. Store decisions, preferences and project context; recall them in any later session. Install with `uv tool install 'astrocyte[local]'` then `astrocyte setup`.",
     "developerName": "Astrocyte",
     "category": "Productivity",
     "capabilities": [
@@ -26,8 +25,8 @@
     "termsOfServiceURL": "https://github.com/AstrocyteAI/astrocyte/blob/main/LICENSE",
     "defaultPrompt": [
       "Recall what we decided about the auth flow last week",
-      "Remember that I prefer pgvectorscale over HNSW for vector indexes",
-      "What do we know about the M9 PageIndex migration?"
+      "Remember that deploys are frozen on Fridays",
+      "What do we know about why we chose SQLite here?"
     ],
     "brandColor": "#7C3AED",
     "logo": "./logo.svg"

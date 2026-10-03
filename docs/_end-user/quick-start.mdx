@@ -14,6 +14,39 @@ import LibraryQuickStart from "../../../components/LibraryQuickStart.mdx";
 
 Get **Astrocyte** running — pick the deployment model that fits your stack and follow the commands.
 
+## Fastest path: memory for your coding agent
+
+Give Claude Code, Codex CLI, Cursor, Gemini CLI, Windsurf, or Copilot CLI
+persistent memory in two commands — no database or server, and no new API key (fact
+extraction uses your Claude Code login, or `OPENAI_API_KEY` if Claude Code isn't installed):
+
+```bash
+uv tool install 'astrocyte[local]'
+astrocyte setup
+```
+
+`astrocyte setup` keeps memories in one local SQLite file, extracts facts with
+the `claude` CLI when it is on your PATH (otherwise `OPENAI_API_KEY`), embeds
+with a local model, proves the memory server starts, and then registers it with
+every agent it finds — verifying each registration took effect.
+`astrocyte doctor` checks the whole chain end to end; `astrocyte doctor --fix`
+repairs it after an upgrade or a moved install.
+
+In Claude Code and Codex, setup also turns on **automatic memory** for interactive sessions
+(headless `claude -p` / `codex exec` runs — scripts, benchmarks — are left alone): each finished turn is
+saved to the project's local memory, and genuinely relevant memories are added
+to new prompts — so the agent knows what was decided last week without being
+asked to look. Conversations are stored only on your machine. Pause with
+`ASTROCYTE_HOOKS=off`; turn off with `astrocyte setup --no-hooks`. Codex runs new hooks only
+once you trust them: run `/hooks` in Codex after setup.
+
+See what your agents remember about the project you're in with `astrocyte memory`;
+`astrocyte memory search "…"` shows what a prompt would recall, and
+`astrocyte memory forget <id>` erases a memory from disk (`--all --yes` for the whole project).
+
+The rest of this page covers embedding Astrocyte in your own application or
+running it as a shared service.
+
 ## Prerequisites
 
 - **Python 3.11+** (library and standalone gateway)
@@ -196,18 +229,17 @@ vars_for_prompt = await memory.load_memory_variables({})
 ```python
 # Run the Astrocyte MCP server — agents connect via MCP protocol
 from astrocyte import Astrocyte
-from astrocyte.config import load_config
 from astrocyte.mcp import create_mcp_server
 
-config = load_config("astrocyte.yaml")
-brain = Astrocyte(config)
-server = create_mcp_server(brain, config)
+brain = Astrocyte.from_config("astrocyte.yaml")  # wires the pipeline + stores
+server = create_mcp_server(brain, brain.config)
 ```
 
-The CLI form is usually simpler for local agents:
+For a coding agent on your own machine, `astrocyte setup` (above) registers the
+server for you. To run it by hand:
 
 ```bash
-astrocyte-mcp --config astrocyte.yaml
+astrocyte-mcp --config astrocyte.yaml   # --config defaults to ~/.config/astrocyte/astrocyte.yaml
 ```
 
 Exposes `memory_retain`, `memory_recall`, `memory_reflect`, and optionally `memory_forget`, graph, compile, and admin tools depending on `mcp:` configuration.

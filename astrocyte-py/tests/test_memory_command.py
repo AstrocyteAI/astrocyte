@@ -1,0 +1,204 @@
+"""``astrocyte memory`` — inspect and remove captured memories per project."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import subprocess
+from argparse import Namespace
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("astrocyte_sqlite")
+
+from astrocyte.cli import main as cli_main  # noqa: E402
+from astrocyte.harness.memories import open_local  # noqa: E402
+from astrocyte.harness.project import project_bank  # noqa: E402
+
+
+@pytest.fixture
+def local(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    cfg = home / ".config" / "astrocyte" / "astrocyte.yaml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(
+        "provider_tier: storage\nvector_store: sqlite\n"
+        f"vector_store_config:\n  path: {tmp_path / 'mem.db'}\n"
+        "llm_provider: mock\nbarriers:\n  pii:\n    mode: disabled\n"
+    )
+    repo, other = tmp_path / "payments", tmp_path / "web"
+    for d in (repo, other):
+        d.mkdir()
+        subprocess.run(["git", "-C", str(d), "init", "-q"], check=True)
+    monkeypatch.chdir(repo)
+    return Namespace(cfg=cfg, repo=repo, other=other, bank=project_bank(str(repo)))
+
+
+def retain(cfg: Path, bank: str, *texts: str) -> None:
+    async def go():
+        pipeline, brain = open_local(cfg)
+        for t in texts:
+            await brain.retain(t, bank_id=bank, metadata={"source": "codex"})
+        await pipeline.vector_store.close()
+
+    asyncio.run(go())
+
+
+def run(capsys, *argv: str) -> tuple[int, str, str]:
+    code = cli_main(["memory", *argv])
+    out = capsys.readouterr()
+    return code, out.out, out.err
+
+
+def ids(capsys) -> list[str]:
+    _, out, _ = run(capsys, "--json")
+    return [m["id"] for m in json.loads(out)]
+
+
+def test_lists_this_projects_memories_only(local, capsys):
+    retain(local.cfg, local.bank, "Deploys happen on Tuesdays.")
+    retain(local.cfg, project_bank(str(local.other)), "The web app uses Svelte.")
+    code, out, _ = run(capsys)
+    assert code == 0 and local.bank in out and "Tuesdays" in out and "Svelte" not in out
+    assert "codex" in out, "the capturing agent is shown"
+    code, out, _ = run(capsys, "list", "--project", str(local.other))
+    assert "Svelte" in out and "Tuesdays" not in out
+
+
+def test_search_finds_by_meaning_of_the_query(local, capsys):
+    retain(local.cfg, local.bank, "Deploys happen on Tuesdays.", "The cache TTL is five minutes.")
+    code, out, _ = run(capsys, "search", "cache TTL", "--json")
+    hits = json.loads(out)
+    assert code == 0 and hits and "cache TTL" in hits[0]["text"]
+
+
+def test_forget_by_unique_prefix(local, capsys):
+    retain(local.cfg, local.bank, "Deploys happen on Tuesdays.", "The cache TTL is five minutes.")
+    before = ids(capsys)
+    code, out, _ = run(capsys, "forget", before[0][:8])
+    assert code == 0 and "Removed 1 memory" in out
+    assert ids(capsys) == before[1:]
+
+
+@pytest.mark.parametrize("prefix,code,message", [("ab", 2, "at least 4"), ("zzzzzzzz", 1, "no memory")])
+def test_forget_refuses_what_it_cannot_pin_down(local, capsys, prefix, code, message):
+    retain(local.cfg, local.bank, "Deploys happen on Tuesdays.")
+    got, _, err = run(capsys, "forget", prefix)
+    assert got == code and message in err
+    assert len(ids(capsys)) == 1
+
+
+def test_forget_all_needs_yes(local, capsys):
+    retain(local.cfg, local.bank, "Deploys happen on Tuesdays.", "The cache TTL is five minutes.")
+    code, _, err = run(capsys, "forget", "--all")
+    assert code == 1 and "--yes" in err and len(ids(capsys)) == 2
+    code, out, _ = run(capsys, "forget", "--all", "--yes")
+    assert code == 0 and ids(capsys) == []
+
+
+def test_banks_marks_the_current_project(local, capsys):
+    retain(local.cfg, local.bank, "Deploys happen on Tuesdays.")
+    retain(local.cfg, project_bank(str(local.other)), "The web app uses Svelte.")
+    code, out, _ = run(capsys, "banks")
+    assert code == 0
+    marked = [line for line in out.splitlines() if line.strip().startswith("→")]
+    assert len(marked) == 1 and local.bank in marked[0]
+
+
+def test_not_set_up_is_a_clear_message(local, capsys):
+    local.cfg.unlink()
+    code, _, err = run(capsys)
+    assert code == 2 and "astrocyte setup" in err
+
+
+def test_forget_erases_the_text_from_the_database_files(local, capsys, tmp_path):
+    """Core forget is a soft delete; a removed key must not stay on disk."""
+    secret = "the staging password is Kestrel-Opal-Fjord"
+    retain(local.cfg, local.bank, secret, "Deploys happen on Tuesdays.")
+    # Lowercased: the full-text index holds the words as lowercase tokens.
+    on_disk = lambda: any(w in b"".join(f.read_bytes() for f in tmp_path.glob("mem.db*")).lower()  # noqa: E731
+                          for w in (b"kestrel", b"fjord"))
+    assert on_disk()
+    target = next(i for i in json.loads(run(capsys, "--json")[1]) if "Kestrel" in i["text"])
+    code, out, _ = run(capsys, "forget", target["id"][:8])
+    assert code == 0 and "Erased from disk" in out
+    assert not on_disk(), "no copy in the db, its WAL, or the FTS index"
+    assert len(ids(capsys)) == 1
+
+
+def test_empty_project_and_search_misses_are_plain_messages(local, capsys):
+    assert "No memories in" in run(capsys)[1]
+    assert "Nothing in" in run(capsys, "search", "anything at all")[1]
+    assert run(capsys, "search", "anything", "--json")[1].strip() == "[]"
+    code, out, _ = run(capsys, "forget", "--all")
+    assert code == 0 and "No memories in" in out
+
+
+def test_human_search_output_shows_id_and_text(local, capsys):
+    retain(local.cfg, local.bank, "The cache TTL is five minutes.")
+    code, out, _ = run(capsys, "search", "cache TTL")
+    assert code == 0 and "cache TTL" in out and ids(capsys)[0][:8] in out
+
+
+def test_list_limit_says_more_may_exist(local, capsys):
+    retain(local.cfg, local.bank, "one fact here", "two fact here", "three fact here")
+    code, out, _ = run(capsys, "list", "-n", "2")
+    assert "2 most recent" in out and len([ln for ln in out.splitlines() if ln.startswith("  ")]) == 2
+
+
+def test_forget_needs_ids_or_all(local, capsys):
+    code, _, err = run(capsys, "forget")
+    assert code == 2 and "--all" in err
+
+
+def test_forget_refuses_an_ambiguous_prefix(local, capsys, monkeypatch):
+    from astrocyte.harness import memories
+
+    retain(local.cfg, local.bank, "one fact here", "two fact here")
+    real = memories._all_items
+
+    async def twins(store, bank):  # two ids sharing a prefix, as UUIDs can
+        items = await real(store, bank)
+        for n, item in enumerate(items):
+            item.id = f"dup0{n}{item.id}"
+        return items
+
+    monkeypatch.setattr(memories, "_all_items", twins)
+    code, _, err = run(capsys, "forget", "dup0")
+    assert code == 1 and "matches 2 memories" in err
+    assert len(ids(capsys)) == 2
+
+
+def test_banks_json_and_empty(local, capsys):
+    assert "No memories yet" in run(capsys, "banks")[1]
+    retain(local.cfg, local.bank, "Deploys happen on Tuesdays.")
+    [row] = json.loads(run(capsys, "banks", "--json")[1])
+    assert row["bank"] == local.bank and row["memories"] == 1 and row["newest"]
+
+
+def test_stores_without_enumeration_or_purge_say_what_they_can_do(local, capsys):
+    """A server-backed store (no list_banks / purge) still lists and forgets;
+    it says that forgotten memories are kept for history."""
+    local.cfg.write_text("provider_tier: storage\nvector_store: in_memory\nllm_provider: mock\n"
+                         "barriers:\n  pii:\n    mode: disabled\n")
+    code, _, err = run(capsys, "banks")
+    assert code == 2 and "can't enumerate banks" in err
+    # in_memory doesn't persist across commands, so forget within one brain:
+    import asyncio as aio
+    from argparse import Namespace as NS
+
+    from astrocyte.harness import memories
+
+    async def go():
+        pipeline, brain = memories.open_local(local.cfg)
+        await brain.retain("Deploys happen on Tuesdays.", bank_id=local.bank)
+        listed = await pipeline.vector_store.list_vectors(local.bank)
+        args = NS(bank=local.bank, project=None, ids=[listed[0].id[:8]], all=False, yes=False)
+        return await memories._forget(args, pipeline, brain)
+
+    assert aio.run(go()) == 0
+    assert "keeps forgotten memories for history" in capsys.readouterr().out

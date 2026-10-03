@@ -177,6 +177,8 @@ Safety controls applied on every retain operation.
 | `patterns` | list\[dict\] \| null | `null` | Custom regex patterns: `[{type: "custom_id", pattern: "\\d{8}"}]` |
 | `type_overrides` | dict \| null | `null` | Override action per PII type: `{credit_card: {action: reject}}` |
 
+Built-in types include credentials (API keys and tokens from common vendors, JWTs, private keys, URL and `NAME_PASSWORD=` values), redacted to `[SECRET_REDACTED]` by default; see the data-governance design for the full list.
+
 ```yaml
 barriers:
   pii:

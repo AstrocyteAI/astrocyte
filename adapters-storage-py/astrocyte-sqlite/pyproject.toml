@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astrocyte-sqlite"
+dynamic = ["version"]
+description = "SQLite adapter for Astrocyte (vector + document stores in one local file; zero infrastructure)"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "astrocyte>=0.15.0,<2",
+    # Exact cosine over float32 BLOBs. Deliberately NOT sqlite-vec: loading a
+    # native extension needs sqlite3.enable_load_extension, which some Python
+    # builds omit — the install failure this adapter exists to eliminate.
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.2",
+    # MCP-server integration tests drive the real astrocyte-mcp.
+    "astrocyte[mcp]",
+    # tests/test_parity_postgres.py runs PostgresStore as the reference.
+    "astrocyte-postgres",
+]
+
+# One class satisfies both protocols, mirroring PostgresStore, so the
+# pipeline's DocumentStore auto-wire (hasattr(vector_store, "search_fulltext"))
+# enables the keyword retrieval leg with no extra config.
+[project.entry-points."astrocyte.vector_stores"]
+sqlite = "astrocyte_sqlite.store:SqliteStore"
+
+[project.entry-points."astrocyte.document_stores"]
+sqlite = "astrocyte_sqlite.store:SqliteStore"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }  # Git root is two levels up
+
+[tool.hatch.build.targets.wheel]
+packages = ["astrocyte_sqlite"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]
+
+[tool.uv.sources]
+astrocyte = { path = "../../astrocyte-py", editable = true }
+astrocyte-postgres = { path = "../astrocyte-postgres", editable = true }

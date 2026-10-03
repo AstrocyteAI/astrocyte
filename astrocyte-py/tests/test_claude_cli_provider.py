@@ -209,3 +209,44 @@ class TestProviderDefaults:
         assert p._sem._value == 4, "concurrency must default to the tested value"
         assert p._rate_limit_backoff >= 60.0, "throttle backoff must be minutes-scale"
         assert p._breaker._threshold == 5
+
+
+class TestHermeticCalls:
+    """Provider calls are an LLM used as an API. They must not load the
+    user's MCP servers (that changes the prompt) or run their hooks — the
+    first real install captured the daemon's own internal prompts through
+    Astrocyte's hooks, which triggered more provider calls."""
+
+    @pytest.mark.asyncio
+    async def test_calls_disable_hooks_and_user_mcp_servers(self, tmp_path):
+        import os
+        import stat
+        import sys
+
+        from astrocyte.providers.claude_cli import ClaudeCliProvider
+
+        record = tmp_path / "call.json"
+        fake = tmp_path / "claude"
+        fake.write_text(
+            f"#!{sys.executable}\n"
+            "import json, os, sys\n"
+            "sys.stdin.read()\n"
+            f"json.dump({{'argv': sys.argv[1:], 'hooks_env': os.environ.get('ASTROCYTE_HOOKS'),"
+            f" 'api_key': os.environ.get('ANTHROPIC_API_KEY')}}, open({str(record)!r}, 'w'))\n"
+            "print('OK')\n"
+        )
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        os.environ["ANTHROPIC_API_KEY"] = "sk-should-not-leak"
+        try:
+            reply = await ClaudeCliProvider(model="haiku", binary=str(fake)).complete(
+                [Message(role="user", content="hi")]
+            )
+        finally:
+            del os.environ["ANTHROPIC_API_KEY"]
+        call = json.loads(record.read_text())
+        assert reply.text.strip() == "OK"
+        assert "--strict-mcp-config" in call["argv"]
+        settings = json.loads(call["argv"][call["argv"].index("--settings") + 1])
+        assert settings == {"disableAllHooks": True}
+        assert call["hooks_env"] == "off", "Astrocyte's own hooks stay off even if settings are ignored"
+        assert call["api_key"] is None

@@ -251,6 +251,11 @@ class _CircuitBreaker:
             self._consecutive = 0
 
 
+#: Isolate provider calls from the user's Claude Code configuration: no MCP
+#: servers (--strict-mcp-config with none given) and no hooks.
+HERMETIC_ARGS: tuple[str, ...] = ("--strict-mcp-config", "--settings", '{"disableAllHooks": true}')
+
+
 class ClaudeCliProvider:
     """LLMProvider whose ``complete()`` shells out to the Claude Code CLI."""
 
@@ -331,6 +336,12 @@ class ClaudeCliProvider:
 
         prompt = _render_prompt(messages, response_format)
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        # This is an LLM used as an API: it must not run the user's hooks or
+        # load their MCP servers. Without this, every call loaded whatever MCP
+        # servers the user had registered (changing the prompt) and ran their
+        # hooks — including Astrocyte's own capture hooks, which then captured
+        # the daemon's internal prompts and triggered more calls (observed).
+        env["ASTROCYTE_HOOKS"] = "off"
 
         last_error: str = ""
         rate_limited = False
@@ -347,6 +358,7 @@ class ClaudeCliProvider:
                         "--model", self._model,
                         "--output-format", "text",
                         "--max-turns", "1",
+                        *HERMETIC_ARGS,
                         stdin=asyncio.subprocess.PIPE,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
