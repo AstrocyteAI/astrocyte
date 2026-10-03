@@ -253,16 +253,19 @@ class _CircuitBreaker:
 
 #: Isolate provider calls from the user's Claude Code configuration: no MCP
 #: servers (--strict-mcp-config with none given) and no hooks.
-#:
-#: ``--tools ""`` disables Claude Code's built-in tools. This provider never
+HERMETIC_ARGS: tuple[str, ...] = ("--strict-mcp-config", "--settings", '{"disableAllHooks": true}')
+
+#: Disable Claude Code's built-in tools. Separate from HERMETIC_ARGS on
+#: purpose: that public constant shipped in 0.16.0 and means "isolate from the
+#: USER's Claude Code config" (MCP servers, hooks); changing its value is a
+#: breaking change under the additive-first API policy (griffe). Built-in tools
+#: are Claude Code's own defaults, a different concern. This provider never
 #: uses them (``complete(tools=...)`` raises NotImplementedError), yet their
 #: definitions were ~26,500 of the ~33,000 input tokens on every call
 #: (measured 2026-10-03: 33,142 -> 6,676 with the flag), and a model that
 #: tried one hit ``--max-turns 1`` and failed with "Reached max turns (1)"
 #: (observed in a benchmark run).
-HERMETIC_ARGS: tuple[str, ...] = (
-    "--strict-mcp-config", "--settings", '{"disableAllHooks": true}', "--tools", "",
-)
+_BUILTIN_TOOLS_OFF: tuple[str, ...] = ("--tools", "")
 
 
 class ClaudeCliProvider:
@@ -385,6 +388,7 @@ class ClaudeCliProvider:
                         "--output-format", "text",
                         "--max-turns", "1",
                         *HERMETIC_ARGS,
+                        *_BUILTIN_TOOLS_OFF,
                         stdin=asyncio.subprocess.PIPE,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
