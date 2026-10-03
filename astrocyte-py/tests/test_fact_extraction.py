@@ -132,17 +132,33 @@ class TestExtractFactsVerbatim:
 
     @pytest.mark.asyncio
     async def test_handles_llm_returning_fewer_facts_than_chunks(self):
-        """When the LLM emits fewer entries than chunks, the trailing
-        chunks get empty-metadata facts (chunk text preserved)."""
-        llm = _ScriptedLLM('{"facts": [{"who": "Alice"}]}')  # only 1 entry
+        """Fewer entries than chunks, and no chunk_index to say which.
+
+        This used to assert the lone entry belongs to chunk 0 — i.e. that the
+        model only ever drops entries off the END. A paired experiment on real
+        LongMemEval batches (2026-10-03) showed mid-list skips are common, so
+        that assumption silently shifted later chunks onto their neighbours'
+        metadata. With no index the entry cannot be placed, so no chunk gets
+        it (see align_verbatim_metadata). Chunk text is always preserved.
+        """
+        llm = _ScriptedLLM('{"facts": [{"who": "Alice"}]}')  # only 1 entry, no index
         chunks = ["A", "B", "C"]
 
         facts = await extract_facts_verbatim(chunks, llm)
 
         assert len(facts) == 3, "One fact per chunk regardless of LLM output length"
-        assert facts[0].who == "Alice"
-        assert facts[1].who == "N/A"
-        assert facts[2].who == "N/A"
+        assert [f.who for f in facts] == ["N/A", "N/A", "N/A"]
+        assert [f.what for f in facts] == chunks
+
+    @pytest.mark.asyncio
+    async def test_fewer_facts_with_chunk_index_are_placed_correctly(self):
+        """Same short response, but indexed: the entry lands where it says."""
+        llm = _ScriptedLLM('{"facts": [{"chunk_index": 2, "who": "Alice"}]}')
+        chunks = ["A", "B", "C"]
+
+        facts = await extract_facts_verbatim(chunks, llm)
+
+        assert [f.who for f in facts] == ["N/A", "N/A", "Alice"]
         assert [f.what for f in facts] == chunks
 
     @pytest.mark.asyncio

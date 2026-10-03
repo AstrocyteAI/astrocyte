@@ -114,6 +114,8 @@ text verbatim. Your job is to produce per-chunk metadata.
 Output a JSON object: {"facts": [...]}. The facts list MUST be the \
 same length as the input chunks list, in the same order. For each \
 chunk, produce ONE entry with:
+- "chunk_index" (integer): the [index] of the chunk this entry \
+describes, copied exactly from the input.
 - "when" (string, default "N/A"): natural-language time expression \
 present in this chunk; "N/A" otherwise.
 - "where" (string, default "N/A"): location.
@@ -128,7 +130,8 @@ absolute date when possible; null otherwise.
 PRODUCT, CONCEPT, OTHER.
 
 Rules:
-1. Output exactly one entry per input chunk, in the same order.
+1. Output exactly one entry per input chunk, in the same order, each \
+tagged with its chunk_index. Never merge or skip chunks.
 2. Don't invent. Use "N/A" / null / [] for absent metadata.
 3. Output JSON only.
 """
@@ -161,6 +164,7 @@ _VERBATIM_JSON_SCHEMA: dict = {
                     "type": "object",
                     "additionalProperties": False,
                     "required": [
+                        "chunk_index",
                         "when",
                         "where",
                         "who",
@@ -171,6 +175,7 @@ _VERBATIM_JSON_SCHEMA: dict = {
                         "entities",
                     ],
                     "properties": {
+                        "chunk_index": {"type": "integer"},
                         "when": {"type": "string"},
                         "where": {"type": "string"},
                         "who": {"type": "string"},
@@ -226,7 +231,7 @@ def _build_verbatim_user_prompt(
             snippet = snippet[:797] + "..."
         lines.append(f"[{i}] {snippet}")
     lines.append("")
-    lines.append("Per-chunk metadata (JSON, same order, same length):")
+    lines.append("Per-chunk metadata (JSON, one entry per chunk, each with its chunk_index):")
     return "\n".join(lines)
 
 
@@ -626,6 +631,95 @@ def _parse_iso_datetime(value) -> datetime | None:
 # ---------------------------------------------------------------------------
 
 
+#: Running alignment counters for verbatim extraction, so the rate of
+#: dropped or misplaced metadata is observable instead of silent.
+VERBATIM_ALIGNMENT: dict[str, int] = {
+    "calls": 0, "exact": 0, "keyed": 0, "positional": 0,
+    "dropped_unlocatable": 0, "unmatched_chunks": 0,
+    "duplicate_indices": 0, "invalid_indices": 0,
+}
+
+
+def _as_index(value) -> int | None:
+    """An integer chunk index, or None. Rejects bools (an int subclass)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def align_verbatim_metadata(raw_metadata: list, n_chunks: int) -> list[dict]:
+    """Map the model's metadata entries onto chunks, never onto the wrong one.
+
+    The old join paired entries with chunks by list position. That is only
+    correct when the model returns exactly one entry per chunk in order. A
+    paired thinking on/off experiment (18 real LongMemEval batches, 2026-10-03)
+    found the length was wrong in 25% of calls with extended thinking on and
+    69% with it off; entity grounding in the positional chunk fell from 87.6%
+    to 74.2% (63.2% in the second half of each list) — the signature of one
+    skipped or merged entry shifting every later chunk onto its neighbour's
+    dates and entities, silently.
+
+    Join rules, in order:
+
+    1. Entries carry ``chunk_index`` -> join on it. An entry with a missing,
+       out-of-range or duplicate index is discarded; its chunk gets no
+       metadata rather than someone else's.
+    2. No entry carries an index (an older prompt or a provider that ignored
+       it) and the count matches exactly -> positional join, which is safe at
+       an exact length.
+    3. No indices and the count is wrong -> no metadata for any chunk. The
+       point where positions diverged cannot be located, and absent metadata
+       is recoverable while misattributed metadata is not.
+
+    Returns a list of length ``n_chunks``; unmatched chunks get ``{}``.
+    """
+    VERBATIM_ALIGNMENT["calls"] += 1
+    entries = [e for e in raw_metadata if isinstance(e, dict)]
+    aligned: list[dict] = [{} for _ in range(n_chunks)]
+
+    mode = "dropped"
+    if any("chunk_index" in e for e in entries):
+        mode = "keyed"
+        VERBATIM_ALIGNMENT["keyed"] += 1
+        taken: set[int] = set()
+        for e in entries:
+            idx = _as_index(e.get("chunk_index"))
+            if idx is None or not (0 <= idx < n_chunks):
+                VERBATIM_ALIGNMENT["invalid_indices"] += 1
+                continue
+            if idx in taken:
+                VERBATIM_ALIGNMENT["duplicate_indices"] += 1
+                continue
+            taken.add(idx)
+            aligned[idx] = e
+    elif len(entries) == n_chunks:
+        mode = "positional"
+        VERBATIM_ALIGNMENT["positional"] += 1
+        aligned = list(entries)
+    else:
+        VERBATIM_ALIGNMENT["dropped_unlocatable"] += 1
+        _logger.info(
+            "fact_extraction (verbatim): %d entries for %d chunks and no chunk_index; "
+            "dropping metadata rather than risk misattribution",
+            len(entries), n_chunks,
+        )
+
+    unmatched = sum(1 for a in aligned if not a)
+    VERBATIM_ALIGNMENT["unmatched_chunks"] += unmatched
+    if unmatched == 0:
+        VERBATIM_ALIGNMENT["exact"] += 1
+    elif mode == "keyed":
+        _logger.info(
+            "fact_extraction (verbatim): %d of %d chunks have no matching metadata entry",
+            unmatched, n_chunks,
+        )
+    return aligned
+
+
 async def extract_facts_verbatim(
     chunk_texts: list[str],
     llm_provider,
@@ -711,14 +805,13 @@ async def extract_facts_verbatim(
         _logger.warning("fact_extraction (verbatim): 'facts' is not a list")
         return []
 
+    aligned = align_verbatim_metadata(raw_metadata, len(chunk_texts))
     out: list[ExtractedFact] = []
     for idx, chunk in enumerate(chunk_texts):
-        # Pull the matching metadata entry by index. When the LLM
-        # returned fewer entries than chunks, the trailing chunks get
-        # bare metadata-less ExtractedFacts (still preserves chunk text).
-        raw = raw_metadata[idx] if idx < len(raw_metadata) else {}
-        if not isinstance(raw, dict):
-            raw = {}
+        # Metadata is joined by the echoed chunk_index, not list position
+        # (see align_verbatim_metadata). Unmatched chunks still keep their
+        # text; they just carry no metadata.
+        raw = aligned[idx]
 
         # Entities
         entities: list[FactEntity] = []
