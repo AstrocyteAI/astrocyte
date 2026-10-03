@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **astrocyte-postgres: fresh installs on pgvector-python 0.5 crashed in `list_vectors` / `list_recent_vectors`** with `TypeError: 'Vector' object is not iterable`. pgvector 0.5.0 (2026-07-06) loads registered `vector` columns as `pgvector.Vector` (not iterable; `.to_list()`) instead of a numpy array, and the store converted them with `list(...)`. The `pgvector>=0.4` requirement has no upper bound, so a fresh install resolved 0.5.0 while the repo's lockfiles (pinned to 0.4.2) hid it from dev, CI and bench. Embeddings now decode through one helper (`astrocyte_postgres._vectors.parse_pgvector`) that accepts `Vector`, numpy arrays, sequences and the text form, and always returns plain `float`s. Side fix: on a brand-new database the pool's first connections open before the `vector` extension exists, skip type registration, and get the text form back, which `list(...)` turned into a list of characters. Verified on pgvector-python 0.4.2 and 0.5.0, including a negative control.
+
 ### Local install for coding agents — `astrocyte setup` / `doctor`
 
 Two commands give Claude Code, Codex CLI, Cursor, Gemini CLI, Windsurf and Copilot CLI persistent memory with no database or server, using the Claude Code login (or `OPENAI_API_KEY`) and a local embedding model: `uv tool install 'astrocyte[local]'` then `astrocyte setup`.

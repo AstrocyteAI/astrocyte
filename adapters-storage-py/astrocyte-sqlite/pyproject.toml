@@ -54,13 +54,6 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "W", "F", "I"]
 
-[tool.uv]
-# The parity reference must run on the pgvector the rest of the monorepo locks
-# (0.4.2). pgvector 0.5 decodes vectors as non-iterable objects and crashes
-# PostgresStore.list_vectors / list_recent_vectors; relax this once
-# astrocyte-postgres handles both.
-constraint-dependencies = ["pgvector<0.5"]
-
 [tool.uv.sources]
 astrocyte = { path = "../../astrocyte-py", editable = true }
 astrocyte-postgres = { path = "../astrocyte-postgres", editable = true }

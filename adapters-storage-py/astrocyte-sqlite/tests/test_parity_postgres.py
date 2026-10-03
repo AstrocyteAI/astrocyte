@@ -45,8 +45,9 @@ async def pg_dsn() -> str:
     # As in a deployment, where migrations create the extension first. On a
     # fresh database PostgresStore's own bootstrap opens its pool before
     # creating it, so its first connections never register the vector type
-    # and return embeddings as text (a PostgresStore bug, fixed separately
-    # by decoding that form). This suite compares semantics, not that race.
+    # and return embeddings as text (PostgresStore now decodes that form;
+    # see astrocyte_postgres._vectors). This suite compares semantics, not
+    # that race.
     conn = await psycopg.AsyncConnection.connect(dsn)
     async with conn:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")

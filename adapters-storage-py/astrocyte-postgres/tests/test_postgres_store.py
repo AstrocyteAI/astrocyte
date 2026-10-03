@@ -29,6 +29,15 @@ class TestStoreVectors:
         assert items[0].text == "hello world"
         assert items[0].bank_id == "bank-1"
 
+    async def test_vector_round_trips_as_floats(self, store: PostgresStore):
+        # Regression: the loaded column is a numpy array (pgvector 0.4), a
+        # non-iterable pgvector.Vector (0.5), or text when the connection
+        # never registered the type — list(...) broke on the last two.
+        await store.store_vectors([make_item("v1", vector=[0.25, 0.5, 0.75])])
+        for items in (await store.list_vectors("bank-1"), await store.list_recent_vectors("bank-1")):
+            assert items[0].vector == pytest.approx([0.25, 0.5, 0.75])
+            assert all(type(x) is float for x in items[0].vector)
+
     async def test_store_multiple_items(self, store: PostgresStore):
         items = [make_item(f"v{i}") for i in range(3)]
         ids = await store.store_vectors(items)
