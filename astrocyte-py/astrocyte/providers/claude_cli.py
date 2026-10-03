@@ -253,7 +253,16 @@ class _CircuitBreaker:
 
 #: Isolate provider calls from the user's Claude Code configuration: no MCP
 #: servers (--strict-mcp-config with none given) and no hooks.
-HERMETIC_ARGS: tuple[str, ...] = ("--strict-mcp-config", "--settings", '{"disableAllHooks": true}')
+#:
+#: ``--tools ""`` disables Claude Code's built-in tools. This provider never
+#: uses them (``complete(tools=...)`` raises NotImplementedError), yet their
+#: definitions were ~26,500 of the ~33,000 input tokens on every call
+#: (measured 2026-10-03: 33,142 -> 6,676 with the flag), and a model that
+#: tried one hit ``--max-turns 1`` and failed with "Reached max turns (1)"
+#: (observed in a benchmark run).
+HERMETIC_ARGS: tuple[str, ...] = (
+    "--strict-mcp-config", "--settings", '{"disableAllHooks": true}', "--tools", "",
+)
 
 
 class ClaudeCliProvider:
@@ -270,6 +279,7 @@ class ClaudeCliProvider:
         max_retries: int = 4,
         max_concurrency: int | None = None,
         rate_limit_backoff: float | None = None,
+        max_thinking_tokens: int | None = None,
     ) -> None:
         resolved = binary or os.environ.get("CLAUDE_CLI_BIN") or shutil.which("claude")
         if not resolved:
@@ -290,6 +300,20 @@ class ClaudeCliProvider:
             os.environ.get("ASTROCYTE_CLAUDE_CLI_MAX_CONCURRENCY", "4")
         )
         self._sem = asyncio.Semaphore(max(1, conc))
+        # Extended-thinking budget passed to the CLI as MAX_THINKING_TOKENS.
+        # ``None`` leaves Claude Code's default (thinking ON); ``0`` turns it
+        # off. Measured on structured extraction (18 real LongMemEval batches,
+        # 2026-10-03): ~85% of output tokens were hidden thinking; with it off
+        # a call took 31 s instead of 68 s with 55% fewer output tokens, and —
+        # once metadata was joined by chunk_index — no alignment or entity-
+        # grounding penalty. Default unchanged because that evidence covers
+        # extraction, not reflect/synthesis quality.
+        if max_thinking_tokens is None:
+            env_budget = os.environ.get("ASTROCYTE_CLAUDE_CLI_MAX_THINKING_TOKENS")
+            max_thinking_tokens = int(env_budget) if env_budget not in (None, "") else None
+        if max_thinking_tokens is not None and max_thinking_tokens < 0:
+            raise ValueError(f"max_thinking_tokens must be >= 0, got {max_thinking_tokens}")
+        self._max_thinking_tokens = max_thinking_tokens
         # Private empty cwd: print-mode runs must not pick up any project's
         # CLAUDE.md context.
         self._cwd = tempfile.mkdtemp(prefix="astrocyte-claude-cli-")
@@ -342,6 +366,8 @@ class ClaudeCliProvider:
         # hooks — including Astrocyte's own capture hooks, which then captured
         # the daemon's internal prompts and triggered more calls (observed).
         env["ASTROCYTE_HOOKS"] = "off"
+        if self._max_thinking_tokens is not None:
+            env["MAX_THINKING_TOKENS"] = str(self._max_thinking_tokens)
 
         last_error: str = ""
         rate_limited = False
