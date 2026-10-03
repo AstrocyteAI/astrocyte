@@ -7,14 +7,18 @@ on:
     tags:
       - "v*"
 
-# Reusable workflows cannot request broader permissions than the caller grants.
-# Child workflows need OIDC + attestations (PyPI Trusted Publishing, provenance) and
-# packages:write for GHCR (gateway image).
+# Reusable workflows cannot request broader permissions than the caller grants;
+# a child that asks for more fails the WHOLE release at startup, before any job
+# runs (v0.16.0's first tag: the gateway image's Trivy SARIF upload needs
+# security-events:write). Child workflows need OIDC + attestations (PyPI Trusted
+# Publishing, provenance), packages:write for GHCR, and security-events:write
+# for the gateway image scan.
 permissions:
   contents: read
   id-token: write
   attestations: write
   packages: write
+  security-events: write
 
 jobs:
   publish-astrocyte:
@@ -73,5 +77,6 @@ jobs:
       id-token: write
       attestations: write
       packages: write
+      security-events: write
     uses: ./.github/workflows/publish-astrocyte-gateway-py-image.yml
     secrets: inherit
