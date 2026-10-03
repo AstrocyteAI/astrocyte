@@ -17,6 +17,7 @@ Usage programmatically:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import ClassVar
@@ -44,6 +45,7 @@ class OpenAIProvider:
         embedding_model: str = "text-embedding-3-small",
         base_url: str | None = None,
         read_timeout: float | None = None,
+        max_concurrency: int | None = None,
     ) -> None:
         try:
             import openai
@@ -112,6 +114,26 @@ class OpenAIProvider:
             client_kwargs["http_client"] = http_client
 
         self._client = openai.AsyncOpenAI(**client_kwargs)
+
+        # Ceiling on in-flight API calls. Without one this provider is an
+        # unbounded fan-out: Astrocyte's retain path spawns background
+        # consolidation per call, and while that backlog is now capped
+        # (``max_pending_consolidations``), the cap bounds *pending tasks*, not
+        # concurrent HTTP requests — every admitted task can be in flight at
+        # once, alongside foreground traffic. Against a provider that bills and
+        # rate-limits per request, that turns a load spike into 429s during the
+        # exact sustained-ingest window an evaluator applies.
+        #
+        # Deliberately opt-in via config rather than a low default: the SDK
+        # already multiplexes over HTTP/2 and a tight default would throttle
+        # healthy deployments. ``None``/0 preserves today's unbounded
+        # behaviour.
+        conc = max_concurrency if max_concurrency is not None else int(
+            os.environ.get("ASTROCYTE_OPENAI_MAX_CONCURRENCY", "0")
+        )
+        self._sem: asyncio.Semaphore | None = (
+            asyncio.Semaphore(conc) if conc and conc > 0 else None
+        )
         self._model = model
         self._embedding_model = embedding_model
 
@@ -175,7 +197,11 @@ class OpenAIProvider:
             else:
                 kwargs["tool_choice"] = "auto"
 
-        response = await self._client.chat.completions.create(**kwargs)
+        if self._sem is not None:
+            async with self._sem:
+                response = await self._client.chat.completions.create(**kwargs)
+        else:
+            response = await self._client.chat.completions.create(**kwargs)
 
         choice = response.choices[0]
         usage = None
@@ -229,10 +255,17 @@ class OpenAIProvider:
         max_chars = 28_000
         safe_texts = [_sanitize_text(t)[:max_chars] for t in texts]
 
-        response = await self._client.embeddings.create(
-            model=use_model,
-            input=safe_texts,
-        )
+        if self._sem is not None:
+            async with self._sem:
+                response = await self._client.embeddings.create(
+                    model=use_model,
+                    input=safe_texts,
+                )
+        else:
+            response = await self._client.embeddings.create(
+                model=use_model,
+                input=safe_texts,
+            )
 
         # Sort by index to guarantee order matches input
         sorted_data = sorted(response.data, key=lambda d: d.index)
