@@ -791,7 +791,7 @@ The three items scoped after §4e, recorded honestly:
 
 | # | item | status |
 |---|---|---|
-| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **not run.** The compose stack built and reached DB-healthy, then the session ended; containers exited. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. |
+| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
 | 2 | bound `OpenAIProvider` concurrency | **done.** `max_concurrency` / `ASTROCYTE_OPENAI_MAX_CONCURRENCY`, guarding `complete()` and `embed()`, opt-in. Negative control: `assert 20 <= 3`. |
 | 3 | `top_k` 50 vs 100 A/B | **not run** — rides on item 1. |
 
@@ -1192,7 +1192,7 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     consolidation service rate. The n=250 run ingested continuously for 6h; a finite
     queue fills in the first chunk and shedding resumes at the old rate. Deferral
     converts *bursts* into latency. The sustained case needs faster decisions or more
-    provider concurrency — the §9 Jev argument, now with a concrete mechanism. The
+    provider concurrency — see §9.11, which ranks decision-model call sites with consolidation first. The
     ~30% figure predates this change and has **not** been re-measured.
 
     **Not implemented — worth doing:**
@@ -1217,6 +1217,92 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     **Already done:** engrim injects per-prompt memory into the user message, never
     the system prompt, so provider prefix caches stay warm. `reflect()` already does
     this — static system prompt, memories inside `<memories>` in the user turn.
+
+11. **Decision models (Jev, OpenJev, Laya) — where they fit, and why the accuracy
+    lever is decomposition, not substitution** (added 2026-10-03). A *decision
+    model* takes state plus typed questions and returns a typed answer with
+    calibrated probabilities (Choice / Score / yes-no) instead of generating text.
+    The three candidates, from primary sources on 2026-10-03:
+
+    | | Jev 1.13 (TypeSafe) | OpenJev | Laya (Convai) |
+    |---|---|---|---|
+    | Runs | hosted API only | self-hosted, 27B, one H100 FP8 | CPU / Apple GPU, 322–421M |
+    | **Licence** | commercial service | **CC-BY-NC-4.0 — non-commercial** | **Apache-2.0** |
+    | Cost | $0.042/Mtok input, output free | hardware | free |
+    | Latency (vendor) | 70–500 ms | ~80 ms short text, ~210 ms web | ~33 ms |
+    | Zero-shot accuracy | 85.4% (OpenJev's 10k set) | 84.0% (same set) | **weak — 0.362 base, 0.766 fine-tuned** |
+    | Context | 64k tokens | — | 1,024 default, ≤8,192 |
+    | Other | not fine-tunable; ZDR enterprise-only; rate limits "adjusting dynamically" (80 req/s) | Jev-compatible request shape; image input | Jev-compatible server mode (`LAYA_JEV_STRICT`); MCP, ONNX |
+
+    **OpenJev cannot be used in production** — Astrocyte is MIT and is consumed
+    commercially (HelloHQ). Research and benchmarks only. **Laya is the only
+    permissively licensed local option, but only after fine-tuning**; one cheap
+    label source is distilling our current LLM decisions. All accuracy figures are
+    vendor self-reports (§9 rule applies).
+
+    **The finding that reframes this: our weak categories are exactly the model's
+    documented weaknesses.** Jev's own known-limits page states it "does not count
+    reliably" and "reads dates as text, not as ordered quantities." Classifying
+    the n=250 questions (rough regex, so approximate):
+
+    | category | composition | score |
+    |---|---|---|
+    | multi-session (n=72) | **59 counting/aggregation** ("how many…") | 53% |
+    | temporal-reasoning (n=61) | **47 counting or date-arithmetic** | 50.8% |
+
+    These are 53% of LongMemEval and the two categories with enough n to trust
+    (§4e). Asking a decision model these questions *directly* would make them
+    worse. The vendor's own prescribed decomposition is the useful idea: **count
+    in code** over one yes/no judgment per retrieved candidate, and **extract date
+    components** (a Choice over months/days/years with an explicit "not stated"),
+    then do ordering and arithmetic in code — which §4e's `occurred_at` fix now
+    makes possible. That is a change to how `reflect()` answers, not a model swap.
+    **It is off-limits for the AML submission**: Search must return memories, not
+    answers (§9.2), and counting in Search would disguise an answer as a memory.
+
+    This corrects an earlier position in this session ("a decision model won't
+    move benchmark accuracy"). *Substituting* one for an LLM call still won't.
+    *Decomposing* the two dominant question types into judgment-plus-code might —
+    testable only at n≥250 (§9.9).
+
+    **Call sites, ranked by expected benefit:**
+
+    | # | site | decision | cost | latency | accuracy |
+    |---|---|---|---|---|---|
+    | 1 | `observation.py` consolidation | split decision from writing: model picks no-op / create / update(target); LLM writes text only when needed | large (no-ops skip the LLM) | large | indirect — less overflow shedding (§9.10b) |
+    | 2 | `signal_quality.py` dedup | yes/no "same fact?" on cosine ≥0.85 candidates; cosine selects, model decides | small | neutral | catches antonyms (§9.10a gap) and paraphrase duplicates |
+    | 3 | recall reranking / passage filtering | per-pair relevance; return judged-relevant memories, not a fixed 50 | moderate | +~100 ms | **direct lever** (TypeSafe cookbook: top-1 5%→18% on legal retrieval — their domain) |
+    | 4 | `query_analyzer.py` temporal scoping | extract date parts from the question; code resolves against question date | small | small | temporal category, per the docs' pattern |
+    | 5 | `reflect()` counting questions | yes/no per candidate, count in code | moderate | moderate | multi-session (82% counting) |
+    | 6 | `mip/intent.py` bank routing | Choice over banks (today: hand-parsed JSON + passthrough fallback) | small | large | removes parse failures; not on the LME path |
+    | 7 | entity resolution (0.8/0.75) | same entity? (TypeSafe entity-alignment cookbook) | small | moderate | modest |
+    | 8 | `llm_scanner.py`, `premise_verification.py`, `lint.py` | guardrail / premise / contradiction | small | large per retain | modest |
+
+    **Not a fit — anything that writes text:** `compile`, `section_compile`,
+    `reflect` synthesis, `query_rewrite`, `multi_query` sub-query writing, HyDE —
+    and structured fact extraction, which is where the measured **39 s/Add** goes
+    (§4e status). The one opening there is a *gate*: a yes/no "does this chunk
+    carry information about the user?" before extraction, skipping generic Q&A
+    filler. It can lose recall, so it must be A/B'd before it is trusted.
+
+    **Architecture:** one `DecisionProvider` SPI shaped like Jev's wire contract
+    (state + typed questions → typed answers + probabilities), with its own
+    `astrocyte.decision_providers` entry-point group. Laya's server and OpenJev
+    both expose Jev-compatible request shapes, so one SPI covers hosted Jev, local
+    Laya and an LLM-backed default built on `complete()` — nothing breaks without a
+    decision model, and model-agnosticism (§9.7) holds. Separating "decide" from
+    "generate" across the 45 `complete()` call sites is worth doing regardless.
+
+    **Measure before building:** (1) consolidation action mix — the share of
+    no-op/create/update/delete decides item 1's value; (2) dedup near-match rate in
+    the 0.85–0.95 band decides item 2's. **Constraints:** the AML Add/Search path
+    stays on gpt-4o-mini (mandated); hosted Jev sends memory content to a third
+    party (ZDR enterprise-only), which matters for privacy-sensitive deployments.
+
+    Sources: [docs.typesafe.ai/models](https://docs.typesafe.ai/models.md),
+    [Jev 1.13 known limits](https://docs.typesafe.ai/model-jaggedness/jev-1.13.md),
+    [OpenJev model card](https://huggingface.co/openjev/openjev),
+    [Laya](https://github.com/NandhaKishorM/laya).
 
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
