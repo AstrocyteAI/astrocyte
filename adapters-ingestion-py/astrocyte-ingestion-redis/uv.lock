@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 
 [[package]]
@@ -54,20 +54,25 @@ requires-dist = [
     { name = "astrocyte-postgres", marker = "extra == 'postgres'", editable = "../../adapters-storage-py/astrocyte-postgres" },
     { name = "astrocyte-qdrant", marker = "extra == 'all'", editable = "../../adapters-storage-py/astrocyte-qdrant" },
     { name = "astrocyte-qdrant", marker = "extra == 'qdrant'", editable = "../../adapters-storage-py/astrocyte-qdrant" },
+    { name = "astrocyte-sqlite", marker = "extra == 'local'", editable = "../../adapters-storage-py/astrocyte-sqlite" },
+    { name = "astrocyte-sqlite", marker = "extra == 'sqlite'", editable = "../../adapters-storage-py/astrocyte-sqlite" },
     { name = "dateparser", marker = "extra == 'bench'", specifier = ">=1.2" },
     { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'bench'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'gateway'", specifier = ">=0.115" },
+    { name = "fastembed", marker = "extra == 'local'", specifier = ">=0.5" },
     { name = "fastmcp", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "fastmcp", marker = "extra == 'bench'", specifier = ">=3.0" },
     { name = "fastmcp", marker = "extra == 'dev'", specifier = ">=3.0" },
+    { name = "fastmcp", marker = "extra == 'local'", specifier = ">=3.0" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.0" },
     { name = "h2", specifier = ">=4.3.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "openai", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "openai", marker = "extra == 'bench'", specifier = ">=1.0" },
     { name = "openai", marker = "extra == 'dev'", specifier = ">=1.0" },
+    { name = "openai", marker = "extra == 'local'", specifier = ">=1.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
     { name = "opentelemetry-api", marker = "extra == 'all'", specifier = ">=1.20" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.20" },
@@ -106,7 +111,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'dev'", specifier = ">=0.30" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'gateway'", specifier = ">=0.30" },
 ]
-provides-extras = ["all", "bench", "default", "dev", "documents", "elasticsearch", "eval", "gateway", "github", "kafka", "mcp", "neo4j", "openai", "otel", "poll", "postgres", "prometheus", "qdrant", "redis", "rerank", "s3-ingest", "stream", "tavus", "worker"]
+provides-extras = ["all", "bench", "default", "dev", "documents", "elasticsearch", "eval", "gateway", "github", "kafka", "local", "mcp", "neo4j", "openai", "otel", "poll", "postgres", "prometheus", "qdrant", "redis", "rerank", "s3-ingest", "sqlite", "stream", "tavus", "worker"]
 
 [[package]]
 name = "astrocyte-ingestion-redis"

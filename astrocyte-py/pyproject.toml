@@ -92,6 +92,8 @@ worker = [
 # Use these for thin installs (e.g. ``pip install astrocyte[postgres]``).
 # ---------------------------------------------------------------------------
 postgres = ["astrocyte-postgres>=0.8.0,<2"]
+# Zero-infrastructure storage: one SQLite file, no server.
+sqlite = ["astrocyte-sqlite>=0.15.2,<2"]
 qdrant = ["astrocyte-qdrant>=0.1.0,<1"]
 neo4j = ["astrocyte-neo4j>=0.1.0,<1"]
 elasticsearch = ["astrocyte-elasticsearch>=0.1.0,<1"]
@@ -124,6 +126,13 @@ tavus = ["astrocyte-integration-tavus>=0.1.0,<1"]
 # (or ``pip install astrocyte-stack``) gives you the Postgres-backed brain that
 # the quick-start assumes.
 default = ["astrocyte[postgres]"]
+# Everything a coding agent needs on one machine, with no server: SQLite
+# storage, the MCP server, and local embeddings via fastembed (ONNX, ~143 MB)
+# rather than sentence-transformers (torch, ~800 MB+). Completions come from
+# the Claude Code CLI or, when OPENAI_API_KEY is set, OpenAI — so the SDK is
+# included (~5 MB): `astrocyte setup` may choose either, and a config naming
+# a provider that isn't installed would wire a server that cannot start.
+local = ["astrocyte[sqlite,mcp,openai]", "fastembed>=0.5"]
 
 # ``stream`` / ``poll`` aliases retained for back-compat with docs and
 # pre-0.14 installs. New code should prefer the narrow per-adapter extras.
@@ -233,6 +242,7 @@ packages = ["astrocyte"]
 # a published version on PyPI, otherwise lockfile generation fails.
 [tool.uv.sources]
 astrocyte-postgres = { path = "../adapters-storage-py/astrocyte-postgres", editable = true }
+astrocyte-sqlite = { path = "../adapters-storage-py/astrocyte-sqlite", editable = true }
 astrocyte-qdrant = { path = "../adapters-storage-py/astrocyte-qdrant", editable = true }
 astrocyte-neo4j = { path = "../adapters-storage-py/astrocyte-neo4j", editable = true }
 astrocyte-elasticsearch = { path = "../adapters-storage-py/astrocyte-elasticsearch", editable = true }

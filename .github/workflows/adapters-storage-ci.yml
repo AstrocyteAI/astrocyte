@@ -93,6 +93,51 @@ jobs:
           uv sync --extra dev
           uv run pytest tests -v --override-ini="addopts="
 
+  sqlite:
+    # Zero-infrastructure store. Its parity suite runs identical randomised
+    # operations against PostgresStore and fails on any divergence in results,
+    # ordering, scores or errors — Postgres is the contract — so it needs a
+    # pgvector service. Every other test runs on the SQLite file alone.
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: parity
+          POSTGRES_DB: parity
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # Deliberately not DATABASE_URL: parity runs must never be pointed at a
+      # real database by an ambient variable.
+      ASTROCYTE_PARITY_PG_DSN: postgresql://postgres:parity@localhost:5432/parity
+      ASTROCYTE_PARITY_SEEDS: "20"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: astrocyte-sqlite
+        working-directory: adapters-storage-py/astrocyte-sqlite
+        run: |
+          uv sync --extra dev
+          uv run pytest tests -v --override-ini="addopts="
+
   # adapters-age removed in M9 (ADR-008): Apache AGE is no longer a supported
   # graph backend. The astrocyte-age package + its CI job + its publish workflow
   # were all deleted. See adapters-storage-py/astrocyte-postgres/migrations/016_drop_age.sql

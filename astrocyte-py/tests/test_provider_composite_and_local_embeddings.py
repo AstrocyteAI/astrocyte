@@ -96,7 +96,36 @@ def stub_sentence_transformers(monkeypatch):
         mod = types.ModuleType("sentence_transformers")
         mod.SentenceTransformer = _FakeModel
         monkeypatch.setitem(sys.modules, "sentence_transformers", mod)
+        # backend="auto" prefers fastembed; hide any real install so these
+        # tests exercise the sentence-transformers path deterministically.
+        monkeypatch.setitem(sys.modules, "fastembed", None)
         return mod
+
+    return _install
+
+
+@pytest.fixture
+def stub_fastembed(monkeypatch):
+    """Install a fake ``fastembed`` module returning un-normalised vectors."""
+
+    def _install(dim: int = 384):
+        class _FakeTextEmbedding:
+            instances: list[_FakeTextEmbedding] = []
+
+            def __init__(self, model_name, cache_dir=None, **kwargs):
+                self.model_name, self.cache_dir = model_name, cache_dir
+                _FakeTextEmbedding.instances.append(self)
+
+            def embed(self, texts, batch_size=None):
+                for i, _ in enumerate(texts):
+                    v = [0.0] * dim
+                    v[i % dim] = 3.0  # deliberately not unit length
+                    yield v
+
+        mod = types.ModuleType("fastembed")
+        mod.TextEmbedding = _FakeTextEmbedding
+        monkeypatch.setitem(sys.modules, "fastembed", mod)
+        return _FakeTextEmbedding
 
     return _install
 
@@ -215,6 +244,16 @@ class TestLocalEmbeddings:
         assert len(vecs[0]) == 384
 
     @pytest.mark.asyncio
+    async def test_pad_to_zero_returns_native_dim(self, stub_sentence_transformers):
+        """YAML can't pass None through config_kwargs (None is dropped as
+        "unset"), so 0 must also mean native width."""
+        stub_sentence_transformers(dim=384)
+        from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
+
+        vecs = await LocalEmbeddingsProvider(pad_to=0).embed(["a"])
+        assert len(vecs[0]) == 384
+
+    @pytest.mark.asyncio
     async def test_oversized_model_raises_instead_of_truncating(self, stub_sentence_transformers):
         """Silent truncation would change geometry — must fail loudly."""
         stub_sentence_transformers(dim=2048)
@@ -283,8 +322,83 @@ class TestLocalEmbeddings:
             await LocalEmbeddingsProvider().complete([Message(role="user", content="hi")])
 
     def test_missing_sentence_transformers_gives_actionable_error(self, monkeypatch):
+        # Neither backend: with fastembed installed (astrocyte[local]) "auto"
+        # would otherwise pick it and never raise.
         monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+        monkeypatch.setitem(sys.modules, "fastembed", None)
         from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
 
         with pytest.raises(ImportError, match="sentence-transformers"):
             LocalEmbeddingsProvider()
+
+
+class TestLocalEmbeddingsBackends:
+    """fastembed (no torch) is preferred; both backends must yield the same
+    contract: normalised, padded, cached in a durable location."""
+
+    @pytest.mark.asyncio
+    async def test_auto_prefers_fastembed_when_both_are_installed(self, stub_sentence_transformers, stub_fastembed):
+        stub_sentence_transformers(dim=384)
+        stub_fastembed(dim=384)
+        from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
+
+        assert LocalEmbeddingsProvider().backend == "fastembed"
+
+    @pytest.mark.asyncio
+    async def test_auto_falls_back_to_sentence_transformers(self, stub_sentence_transformers):
+        stub_sentence_transformers(dim=384)
+        from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
+
+        assert LocalEmbeddingsProvider().backend == "sentence-transformers"
+
+    @pytest.mark.asyncio
+    async def test_fastembed_vectors_are_normalised_and_padded(self, stub_fastembed):
+        stub_fastembed(dim=384)
+        from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
+
+        a, b = await LocalEmbeddingsProvider().embed(["a", "b"])
+        assert len(a) == 1536 and a[384:] == [0.0] * (1536 - 384)
+        assert math.isclose(math.sqrt(sum(x * x for x in a)), 1.0, rel_tol=1e-6)
+        assert math.isclose(sum(x * y for x, y in zip(a, b)), 0.0, abs_tol=1e-9)
+
+    @pytest.mark.asyncio
+    async def test_fastembed_cache_avoids_the_temp_dir(self, stub_fastembed, monkeypatch, tmp_path):
+        """fastembed's default cache lives under the system temp dir, which is
+        cleared periodically — silently re-downloading the model."""
+        fake = stub_fastembed(dim=8)
+        monkeypatch.delenv("FASTEMBED_CACHE_PATH", raising=False)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
+
+        await LocalEmbeddingsProvider(pad_to=None).embed(["a"])
+        assert fake.instances[-1].cache_dir == str(tmp_path / "astrocyte" / "fastembed")
+
+    @pytest.mark.asyncio
+    async def test_fastembed_cache_honours_operator_override(self, stub_fastembed, monkeypatch, tmp_path):
+        fake = stub_fastembed(dim=8)
+        monkeypatch.setenv("FASTEMBED_CACHE_PATH", str(tmp_path / "mine"))
+        from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
+
+        await LocalEmbeddingsProvider(pad_to=None).embed(["a"])
+        assert fake.instances[-1].cache_dir == str(tmp_path / "mine")
+
+    def test_explicit_backend_that_is_missing_names_the_package(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "fastembed", None)
+        from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
+
+        with pytest.raises(ImportError, match="pip install fastembed"):
+            LocalEmbeddingsProvider(backend="fastembed")
+
+    def test_no_backend_installed_points_at_the_light_extra(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "fastembed", None)
+        monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+        from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
+
+        with pytest.raises(ImportError, match=r"astrocyte\[local\]"):
+            LocalEmbeddingsProvider()
+
+    def test_unknown_backend_is_rejected(self):
+        from astrocyte.providers.local_embeddings import LocalEmbeddingsProvider
+
+        with pytest.raises(ValueError, match="backend must be"):
+            LocalEmbeddingsProvider(backend="onnx")
