@@ -791,7 +791,7 @@ The three items scoped after §4e, recorded honestly:
 
 | # | item | status |
 |---|---|---|
-| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
+| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h (a real-size batch measured 64 s/Add; cause and fix in §9.12). **In flight:** n=50 shuffled on `claude -p` with this architecture, started 2026-10-03 — pinned to frozen `8f13e2f`, so it measures *pre-fix* behaviour (positional join, thinking on); ETA ~03:00 UTC 2026-10-04. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
 | 2 | bound `OpenAIProvider` concurrency | **done.** `max_concurrency` / `ASTROCYTE_OPENAI_MAX_CONCURRENCY`, guarding `complete()` and `embed()`, opt-in. Negative control: `assert 20 <= 3`. |
 | 3 | `top_k` 50 vs 100 A/B | **not run** — rides on item 1. |
 
@@ -1303,6 +1303,81 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     [Jev 1.13 known limits](https://docs.typesafe.ai/model-jaggedness/jev-1.13.md),
     [OpenJev model card](https://huggingface.co/openjev/openjev),
     [Laya](https://github.com/NandhaKishorM/laya).
+
+12. **Why an Add took 64 s, and what switching thinking off actually does**
+    (added 2026-10-03). Investigated while benchmarking the submission
+    architecture on `claude -p` (§4e status). Every layer was measured, not
+    inferred — two plausible stories (several sequential calls; CLI start-up
+    cost) were wrong.
+
+    **Where the time goes.** On a real 1,703-word batch an Add took 64 s:
+    **91% in one structured-extraction call**, ~9% embedding (cold model
+    load), 0.1 s pgvectorscale insert. And **~85% of that call's output was
+    hidden extended thinking** — Claude Code turns it on by default and the
+    provider never turned it off: 13,651 output tokens for ~2,100 tokens of
+    visible JSON. `MAX_THINKING_TOKENS=0` took the call from 88 s to ~20 s.
+
+    **Harness overhead is tokens, not time.** Every call also carried
+    ~33,000 input tokens of Claude Code harness. Breakdown, measured on a
+    trivial prompt: **built-in tool definitions ~26,500**, default system
+    prompt ~6,500, user MCP servers negligible. `eb4fbea` removed MCP servers
+    and hooks; `--tools ""` (this change) removes the tool definitions:
+    33,142 → 6,676 tokens per call. Replacing the system prompt would reach
+    174 tokens but is **not done** — its effect on output quality is
+    unmeasured. None of this changed latency by more than a second or two.
+
+    **What extraction produces.** In `verbatim` mode the model never rewrites
+    text — the chunk is stored word for word and the model emits per-chunk
+    *metadata* (`when/where/who/why`, `fact_type`, entities,
+    `occurred_start/end`). So thinking cannot lose evidence; it can only
+    change metadata.
+
+    **The bug the experiment exposed (fixed, `9e6d0d2`).** Metadata entries
+    were joined to chunks **by list position with no length check**. One
+    skipped or merged entry mid-list shifted every later chunk onto its
+    neighbour's dates and entities, silently. Paired experiment, 18 real
+    batches × 2 runs × thinking on/off:
+
+    | | thinking on | thinking off |
+    |---|---|---|
+    | one entry per chunk — positional join | 27/36 | **11/36** |
+    | entities in own chunk — positional join | 87.6% | **74.2%** (63.2% in each list's second half) |
+    | one entry per chunk — **chunk_index join** | **36/36** | **36/36** |
+    | entities in own chunk — **chunk_index join** | 88.8% | **91.8%** |
+    | median call / output tokens (fixed) | 68 s / 9,317 | **31 s / 4,195** |
+
+    Asking the model to echo `chunk_index` fixed alignment *at the source*;
+    the keyed join is the safety net (an unplaceable entry now gives its chunk
+    no metadata instead of another chunk's). **The bug was live with thinking
+    on too** — a quarter of calls in production, and in every benchmark run
+    to date, including the §4e baseline and the in-flight pg50 run.
+
+    **Consequence of thinking off, with the fix in place: no measured
+    alignment or grounding penalty; 2.2× faster; 55% fewer output tokens.**
+    Not measured: correctness of dates and `fact_type` (no automatic ground
+    truth), downstream benchmark accuracy, and gpt-4o-mini — which does not
+    think, so the submission needs this re-checked once the OpenAI account
+    has credits (§4e item 1). `claude_cli` now accepts `max_thinking_tokens`
+    (YAML, or `ASTROCYTE_CLAUDE_CLI_MAX_THINKING_TOKENS`); the default is
+    unchanged because the evidence covers extraction, not reflect/synthesis.
+    **Set `max_thinking_tokens: 0` in benchmark configs.**
+
+    **Benchmark isolation — three collisions with concurrent work in one
+    day**, each silently damaging the run, each fixed by isolation rather
+    than coordination:
+    1. *Live edits to the Postgres store* the adapter imports from the working
+       tree, picked up on every per-chunk adapter restart → **run pinned to a
+       frozen worktree** of a pushed commit via `PYTHONPATH`.
+    2. *A half-wired `astrocyte hook`* in `~/.claude` that the CLI didn't yet
+       support blocked `claude -p` prompts mid-run → **provider calls ignore
+       user hooks** (`eb4fbea`). A *working* hook would have been worse:
+       silent context injection into extraction prompts.
+    3. *The benchmark's Postgres stopped* (`Exited (0)`) by compose commands
+       sharing the project name → **benchmark DB on its own compose project
+       and port**.
+    Rule: a benchmark runs on frozen code, its own infrastructure, and a
+    hermetic provider. Anything it shares with ongoing development is a way
+    for that work to invalidate it without an error.
 
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
