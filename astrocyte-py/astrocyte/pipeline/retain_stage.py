@@ -883,6 +883,7 @@ class RetainStageMixin:
                 request.bank_id,
                 emb,
                 threshold_override=dedup_threshold_override,
+                text=chunks[i],  # enables the negation guard
             )
             if is_dup:
                 any_duplicate = True
@@ -1044,8 +1045,8 @@ class RetainStageMixin:
         )
 
         # 6. Update dedup cache with stored embeddings
-        for mem_id, emb in zip(memory_ids, embeddings):
-            self._dedup.add(request.bank_id, mem_id, emb)
+        for mem_id, emb, chunk in zip(memory_ids, embeddings, chunks):
+            self._dedup.add(request.bank_id, mem_id, emb, text=chunk)
 
         # 7. Observation consolidation — see _spawn_observation_consolidation.
         self._spawn_observation_consolidation(
@@ -1167,6 +1168,7 @@ class RetainStageMixin:
                     request.bank_id,
                     embedding,
                     threshold_override=dedup_threshold_override,
+                    text=chunks[chunk_index],
                 )
                 if is_dup:
                     any_duplicate = True
@@ -1331,8 +1333,8 @@ class RetainStageMixin:
             embeddings: list[list[float]] = record["embeddings"]
             chunks: list[str] = record["chunks"]
 
-            for mem_id, embedding in zip(memory_ids, embeddings, strict=False):
-                self._dedup.add(request.bank_id, mem_id, embedding)
+            for mem_id, embedding, chunk in zip(memory_ids, embeddings, chunks, strict=False):
+                self._dedup.add(request.bank_id, mem_id, embedding, text=chunk)
 
             self._spawn_observation_consolidation(
                 chunks=chunks,
