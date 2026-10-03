@@ -69,7 +69,7 @@ class TestBuildBrain:
     def test_unknown_provider_name_surfaces_as_an_error(self, tmp_path):
         path = tmp_path / "c.yaml"
         path.write_text("provider_tier: storage\nvector_store: nope-not-real\nllm_provider: mock\n")
-        with pytest.raises(Exception):
+        with pytest.raises(ConfigError, match="nope-not-real"):
             build_brain(str(path))
 
 
@@ -100,11 +100,13 @@ class TestHealthReportsReadiness:
 class TestSplitEmbeddingBackend:
     """`embedding_provider` must be honoured, not silently ignored."""
 
-    def test_composes_when_a_separate_embedder_is_configured(self, tmp_path):
+    def test_composes_when_a_separate_embedder_is_configured(self, tmp_path, monkeypatch):
+        # Constructing ClaudeCliProvider only locates the binary; CI has none.
+        monkeypatch.setenv("CLAUDE_CLI_BIN", "/usr/bin/true")
+        from astrocyte.config import load_config
         from astrocyte.providers.composite import CompositeLLMProvider
 
         from astrocyte_aml.wiring import build_pipeline
-        from astrocyte.config import load_config
 
         path = tmp_path / "c.yaml"
         path.write_text(
@@ -121,10 +123,10 @@ class TestSplitEmbeddingBackend:
         assert isinstance(inner, CompositeLLMProvider)
 
     def test_single_provider_is_left_alone(self, config_file):
+        from astrocyte.config import load_config
         from astrocyte.providers.composite import CompositeLLMProvider
 
         from astrocyte_aml.wiring import build_pipeline
-        from astrocyte.config import load_config
 
         pipeline = build_pipeline(load_config(config_file))
         inner = getattr(pipeline.llm_provider, "_inner", pipeline.llm_provider)

@@ -217,7 +217,7 @@ def create_app(brain: Any | None = None) -> FastAPI:
         """
         try:
             await _brain()
-        except Exception as exc:  # noqa: BLE001 — any failure means not ready
+        except Exception as exc:  # any failure means not ready
             raise HTTPException(
                 status_code=503, detail=f"not ready: {type(exc).__name__}: {exc}"
             ) from exc

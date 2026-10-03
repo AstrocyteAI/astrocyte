@@ -29,7 +29,9 @@ class TestResolveLlmProvider:
         cfg = load_config(write_config(tmp_path, "llm_provider: mock\n"))
         assert not isinstance(resolve_llm_provider(cfg), CompositeLLMProvider)
 
-    def test_separate_embedding_provider_composes(self, tmp_path):
+    def test_separate_embedding_provider_composes(self, tmp_path, monkeypatch):
+        # Constructing ClaudeCliProvider only locates the binary; CI has none.
+        monkeypatch.setenv("CLAUDE_CLI_BIN", "/usr/bin/true")
         cfg = load_config(write_config(tmp_path, "llm_provider: claude_cli\nembedding_provider: mock\n"))
         assert isinstance(resolve_llm_provider(cfg), CompositeLLMProvider)
 
