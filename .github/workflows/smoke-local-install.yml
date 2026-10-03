@@ -1,0 +1,94 @@
+# The quick-start path for coding agents, from a user's point of view:
+# `uv tool install 'astrocyte[local]'`, `astrocyte setup`, `doctor`, `memory`.
+# Unit tests run from a checkout and cannot see packaging defects — a module
+# or extra missing from the wheel, a config naming a provider the install
+# lacks (both found this way). See astrocyte-py/scripts/smoke_local_install.py.
+#
+# On changes: wheels built from the checkout. On a release tag: the version
+# just published to PyPI, exactly as a new user gets it, embedding model and
+# an MCP round trip included.
+name: Smoke test local install
+
+on:
+  pull_request:
+    paths:
+      - "astrocyte-py/**"
+      - "adapters-storage-py/astrocyte-sqlite/**"
+      - ".github/workflows/smoke-local-install.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "astrocyte-py/**"
+      - "adapters-storage-py/astrocyte-sqlite/**"
+      - ".github/workflows/smoke-local-install.yml"
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      pypi_version:
+        description: "Smoke-test this published version instead of the checkout (e.g. 0.16.0)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS (where most coding agents run) on release tags; Linux always.
+        os: ${{ fromJSON(github.ref_type == 'tag' && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "latest"
+
+      - name: Resolve what to install
+        id: target
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.pypi_version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "$REF_TYPE" = "tag" ]; then
+            echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tags publish astrocyte and astrocyte-sqlite in separate workflows;
+      # wait until both versions are installable rather than racing them.
+      - name: Wait for both packages on PyPI
+        if: steps.target.outputs.version != ''
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          for _ in $(seq 1 60); do
+            ok=1
+            for pkg in astrocyte astrocyte-sqlite; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$pkg/$VERSION/json")
+              [ "$code" = "200" ] || ok=0
+            done
+            [ "$ok" = 1 ] && exit 0
+            sleep 30
+          done
+          echo "astrocyte / astrocyte-sqlite $VERSION not on PyPI after 30 minutes" >&2
+          exit 1
+
+      - name: Smoke test (published version)
+        if: steps.target.outputs.version != ''
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        # UV_REFRESH: uv's cache may hold a "not found" from moments ago.
+        run: UV_REFRESH=1 python3 astrocyte-py/scripts/smoke_local_install.py --pypi "$VERSION" --with-models
+
+      - name: Smoke test (wheels from this checkout)
+        if: steps.target.outputs.version == ''
+        run: python3 astrocyte-py/scripts/smoke_local_install.py --build

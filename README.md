@@ -10,6 +10,15 @@
 
 **Astrocyte** is an open-source **memory framework** for AI systems. It sits between agents (or applications) and memory storage, and aims to give you a **production-shaped memory layer**: retrieval, governance, observability, and pluggable backends, with a **stable contract** you can implement twice (Python and Rust) without changing integrations.
 
+**Give your coding agent memory** (Claude Code, Codex, Cursor, Gemini CLI, Windsurf, Copilot CLI) — no database or server; it uses your Claude Code login (or `OPENAI_API_KEY`) and a local embedding model:
+
+```bash
+uv tool install 'astrocyte[local]'
+astrocyte setup
+```
+
+See the [quick start](docs/_end-user/quick-start.mdx) for what `setup` does and how to inspect or remove memories.
+
 ## Neuroscience inspiration
 
 In the brain, **neurons** are the fast signaling substrate for perception, action, and learning. **Astrocytes** are glial cells that were once treated as passive support; contemporary work casts them as **active partners** in circuit function: they help regulate the **extracellular milieu** (for example ion and neurotransmitter clearance), participate in the **tripartite synapse** alongside pre- and postsynaptic elements, link activity to **metabolism and blood flow**, and take part in **pruning**, repair, and barrier-like interfaces. They operate on **slower, integrative timescales** than spike-driven signaling, shaping the conditions under which neurons operate.

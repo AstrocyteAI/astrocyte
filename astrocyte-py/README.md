@@ -22,7 +22,30 @@ Astrocyte gives AI agents **persistent memory** — store what matters, retrieve
 - **18 framework integrations:** LangGraph, CrewAI, OpenAI, Claude Agent SDK, Google ADK, AutoGen, and more
 - **MCP server:** Any MCP-capable agent (Claude Code, Cursor, Windsurf) gets memory with zero code
 
-## Quick start
+## Memory for your coding agent
+
+Two commands give Claude Code, Codex, Cursor, Gemini CLI, Windsurf and Copilot CLI
+persistent memory — no database or server; it uses your Claude Code login (or
+`OPENAI_API_KEY`) for fact extraction and a local embedding model:
+
+```bash
+uv tool install 'astrocyte[local]'
+astrocyte setup
+```
+
+`setup` stores memories in one local SQLite file, embeds them with a local model,
+and wires the MCP server into every agent it finds. In Claude Code and Codex it also
+turns on **automatic memory**: each finished turn is saved to that project's memory,
+and relevant memories are added to new prompts. Credentials are redacted before
+anything is stored.
+
+```bash
+astrocyte doctor          # check everything end to end (--fix repairs it)
+astrocyte memory          # what is remembered about the project you're in
+astrocyte memory forget <id>
+```
+
+## Quick start (library)
 
 ```bash
 pip install astrocyte
@@ -70,7 +93,8 @@ Astrocyte works with every major agent framework through thin middleware — one
 
 ## MCP server
 
-Any MCP-capable agent gets memory with zero code integration:
+Any MCP-capable agent gets memory with zero code integration. `astrocyte setup`
+registers it for you; to wire one by hand:
 
 ```json
 {
