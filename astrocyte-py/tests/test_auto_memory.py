@@ -831,6 +831,77 @@ class TestHooks:
 
 
 
+def _tool(name: str, **inp) -> dict:
+    return {"type": "tool_use", "id": f"t-{name}", "name": name, "input": inp}
+
+
+class TestTouchedFiles:
+    """A captured turn records which files it read or edited (paths, never contents)."""
+
+    def test_file_tools_are_recorded_once_in_order(self, tmp_path):
+        t = tmp_path / "t.jsonl"
+        t.write_text(
+            human("fix the retry test")
+            + assistant(_tool("Read", file_path="/repo/src/retry.py"), _tool("Bash", command="pytest -q"))
+            + assistant(_tool("Edit", file_path="/repo/src/retry.py", old_string="a", new_string="b"),
+                        _tool("NotebookEdit", notebook_path="/repo/nb/analysis.ipynb"))
+            + assistant(_tool("Write", file_path="/repo/tests/test_retry.py", content="SECRET-CONTENT"),
+                        sidechain=False)
+            + assistant(_tool("Read", file_path="/repo/elsewhere.py"), sidechain=True)
+            + assistant(text("Fixed: the backoff reset was off by one.")),
+            newline="\n",
+        )
+        [turn], _ = read_new_turns(t)
+        assert turn.files == ["/repo/src/retry.py", "/repo/nb/analysis.ipynb", "/repo/tests/test_retry.py"]
+        assert "SECRET-CONTENT" not in turn.render(), "paths only, never what was written"
+
+    def test_a_turn_without_file_tools_has_none(self, tmp_path):
+        t = tmp_path / "t.jsonl"
+        t.write_text(human("deploy day?") + assistant(text("Tuesdays.")), newline="\n")
+        [turn], _ = read_new_turns(t)
+        assert turn.files == []
+
+    def test_stop_spools_paths_relative_to_the_project(self, env, tmp_path, monkeypatch):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
+        monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        git(repo, "init", "-q")
+        t = tmp_path / "t.jsonl"
+        t.write_text(human("why does retry fail?")
+                     + assistant(_tool("Read", file_path=str(repo / "src" / "retry.py")),
+                                 _tool("Read", file_path=str(tmp_path / "outside.txt")))
+                     + assistant(text("Off by one.")), newline="\n")
+        hooks.run("stop", json.dumps({"transcript_path": str(t), "session_id": "s1", "cwd": str(repo)}))
+        [spooled] = list((env.state / "spool").glob("*.json"))
+        files = json.loads(spooled.read_text())["turns"][0]["files"]
+        assert files[0] == "src/retry.py", "inside the project: relative, so every clone names it alike"
+        assert files[1] == Path(tmp_path / "outside.txt").as_posix(), "outside it: the path as the agent gave it"
+
+    def test_shown_paths_are_capped(self, tmp_path):
+        many = [f"/r/f{i:03d}.py" for i in range(50)]
+        assert len(hooks._shown_paths(many, None)) == hooks.MAX_TOUCHED_FILES
+        long = ["/r/" + "x" * 900, "/r/" + "y" * 900]
+        assert len(hooks._shown_paths(long, None)) == 1, "the character budget holds"
+        assert hooks._project_root_of({}) is None and hooks._project_root_of({"cwd": 3}) is None
+
+    def test_drain_stores_them_on_the_memory(self, env, daemon):
+        agentd.spool_capture("proj", "s1", "claude-code", [
+            {"content": "**user**: q\n\n**assistant**: a", "started_at": None, "files": ["src/a.py", "src/b.py"]},
+            {"content": "**user**: q2\n\n**assistant**: a2", "started_at": None}])
+        stored = []
+
+        async def keep(content, **kw):
+            from astrocyte.types import RetainResult
+
+            stored.append(kw["metadata"])
+            return RetainResult(stored=True, memory_id="m")
+
+        daemon.brain.retain = keep
+        assert asyncio.run(daemon.drain()) == 2
+        assert stored[0]["files"] == "src/a.py\nsrc/b.py" and "files" not in stored[1]
+
+
 class TestSessionStartHook:
     def test_boots_the_daemon_and_injects_the_project_summary(self, env, capsys, monkeypatch):
         seen = {}

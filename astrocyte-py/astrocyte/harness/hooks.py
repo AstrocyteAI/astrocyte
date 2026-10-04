@@ -48,7 +48,7 @@ from astrocyte.policy.barriers import redact_secrets
 
 from . import agentd
 from .paths import config_path, state_dir
-from .project import project_bank
+from .project import project_bank, project_root
 from .transcript import Turn, antigravity_prompt, read_new_turns
 
 SESSION_START_WAIT = 8.0  # cold start incl. model load measured at ~1.5 s
@@ -391,6 +391,36 @@ def _turn_from_payload(payload: dict, session: str) -> TurnSource:
     return [Turn(user=str(kept.get("prompt") or ""), assistant=[answer], started_at=started)], commit
 
 
+# Kept on each captured memory: enough to tie a turn to its code, small
+# enough for the metadata limit (4 KB).
+MAX_TOUCHED_FILES = 20
+MAX_TOUCHED_CHARS = 1_500
+
+
+def _project_root_of(payload: dict) -> Path | None:
+    cwd = payload.get("cwd")
+    return project_root(cwd) if isinstance(cwd, str) and cwd else None
+
+
+def _shown_paths(files: list[str], root: Path | None) -> list[str]:
+    """Touched files, relative to the project where they're inside it (so a
+    teammate's clone at another path names them the same), capped."""
+    shown, used = [], 0
+    for raw in files[:MAX_TOUCHED_FILES]:
+        path = Path(raw)
+        if root is not None:
+            try:
+                path = path.resolve().relative_to(root.resolve())
+            except (ValueError, OSError):
+                path = Path(raw)  # outside the project: as the agent gave it
+        text = path.as_posix()
+        if used + len(text) + 1 > MAX_TOUCHED_CHARS:
+            break
+        shown.append(text)
+        used += len(text) + 1
+    return shown
+
+
 def _stop(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
     if not agentd.supported() or dialect.turn_source is None:
         return  # without a daemon to drain it, the spool would only grow
@@ -401,9 +431,11 @@ def _stop(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -
     if turns:
         # Scrubbed before it touches disk: the retain barrier redacts again,
         # but the spool is plaintext and outlives a crashed daemon.
+        root = _project_root_of(payload)
         agentd.spool_capture(
             bank, session, dialect.source,
-            [{"content": redact_secrets(t.render()), "started_at": t.started_at.isoformat() if t.started_at else None}
+            [{"content": redact_secrets(t.render()), "started_at": t.started_at.isoformat() if t.started_at else None,
+              "files": _shown_paths(t.files, root)}
              for t in turns],
         )
     commit()
