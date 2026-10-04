@@ -1,6 +1,6 @@
 # Team memory
 
-Status: **accepted** (October 2026; decisions in §9). Not implemented yet; G1 first.
+Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth) implemented; G2 onward not yet.
 
 A developer's coding agents already remember a project locally: one SQLite file, per-project banks, automatic capture and recall. Team memory shares a project's memory with the people working on it, through an Astrocyte gateway the team runs. A decision Alice's agent saved on Monday is recalled by Bob's agent on Tuesday, attributed to her. Nothing changes on the hot path: hooks and the MCP server still read and write only the local store.
 
@@ -101,10 +101,14 @@ The gateway's auth is not ready for teams, and this is the first thing to fix (�
 
 | Today | Problem for a team | Change |
 |---|---|---|
-| `api_key` mode: one shared key; the principal comes from the client's `X-Astrocyte-Principal` header | Anyone with the key can act as anyone | **Per-user tokens:** `astrocyte-gateway token create --principal user:alice --banks 'project:*'` mints a token stored hashed and bound to a principal and its grants. OIDC (`jwt_oidc`) remains the option for teams with an identity provider |
+| `api_key` mode: one shared key; the principal comes from the client's `X-Astrocyte-Principal` header | Anyone with the key can act as anyone | **Per-user tokens** (`ASTROCYTE_AUTH_MODE=token`): `python -m astrocyte_gateway.tokens create --principal user:alice --banks 'project:*' --groups team:api` mints a token stored hashed and bound to a principal and its grants; the principal header is ignored. OIDC (`jwt_oidc`) remains the option for teams with an identity provider |
 | Grants match a bank exactly or `*` | Can't grant `project:*` without granting everything | Prefix and glob matching in grants (`project:*`), plus a `team:<name>` group of principals |
 | `_actor` is stamped with `setdefault`, so a client-supplied `_actor` wins | Provenance can be forged | The gateway always stamps `_actor` from the authenticated principal and ignores the client's |
 | `/v1/import` bypasses PII, validation and `_actor` | — | The sync push path goes through the full policy layer, like `/v1/retain` |
+
+**How a token's grants combine with config `access_grants`** (decided in G1): they are **added** for the token's principal and never remove anything. Effective permissions on a bank are the union of the principal's config grants, the config grants to its `team:` groups, and the token's own grants. So a team is usually configured once (`project:* → team:api: [read, write]`) and each token only names its person and groups; a restricted token (read-only CI) comes from keeping that principal's config grants narrow. Patterns are fnmatch, case-sensitive: `project:*` matches `project:api-1a2b3c`, not `projectx`. Detail: `access-control.md` §1.3 and §1.5.
+
+`_actor` is stamped by the core: with a context present it overwrites the client's value; without one (library imports) a caller's `_actor` is kept, and the gateway drops it from anonymous HTTP requests.
 
 Locally, the token is stored in the OS keychain where `keyring` is available, else in `harnesses.json`'s sibling `team.json` (0600). It is never written into agent configs.
 
