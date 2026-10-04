@@ -209,6 +209,19 @@ class TestAstrocyteAnalyticsIntegration:
         assert 0.0 <= health.score <= 1.0
         assert health.status in ("healthy", "warning", "unhealthy")
 
+    def test_bank_health_counts_every_stored_memory(self) -> None:
+        # Regression: the count came from list_vectors(limit=0), which
+        # returns no rows, so memory_count was always 0.
+        brain = self._make_brain()
+
+        async def fill() -> None:
+            for i in range(250):
+                await brain.retain(f"Distinct fact {i}: item-{i:04d} in drawer {i * 7}", bank_id="b1")
+
+        asyncio.run(fill())
+        health = asyncio.run(brain.bank_health("b1"))
+        assert health.metrics["memory_count"] == 250.0
+
     def test_all_bank_health_api(self) -> None:
         brain = self._make_brain()
         asyncio.run(brain.retain("a", bank_id="b1"))

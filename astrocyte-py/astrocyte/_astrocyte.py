@@ -2075,18 +2075,29 @@ class Astrocyte:
 
         Uses in-memory operation counters collected since process start.
         Optionally enriches with memory count from the vector store.
+
+        The VectorStore SPI has no count method, so the count pages
+        through ``list_vectors``: cost grows with bank size.
         """
         counters = self._analytics.get_counters(bank_id)
         memory_count = 0
         if self._pipeline and self._pipeline.vector_store:
+            store = self._pipeline.vector_store
             try:
-                items = await self._pipeline.vector_store.list_vectors(bank_id, limit=0)
-                memory_count = len(items)
+                batch = 1000
+                offset = 0
+                while True:
+                    page = await store.list_vectors(bank_id, offset=offset, limit=batch)
+                    memory_count += len(page)
+                    offset += len(page)
+                    if len(page) < batch:
+                        break
             except Exception:
                 logger.debug(
-                    "list_vectors(limit=0) failed or unsupported; bank_health memory_count=0",
+                    "list_vectors failed or unsupported; bank_health memory_count=0",
                     exc_info=True,
                 )
+                memory_count = 0
         return compute_bank_health(bank_id, counters, memory_count)
 
     async def all_bank_health(self) -> list["BankHealth"]:
@@ -2124,14 +2135,30 @@ class Astrocyte:
         export refuses to run — set ``ASTROCYTE_PORTABILITY_ROOTS``,
         pass ``allowed_roots=[<dir>]``, or set ``allow_uncontained=True``.
 
+        Memories are enumerated with the pipeline vector store's paged
+        ``list_vectors`` whenever retain writes there (a pipeline and no
+        engine provider), so every live memory is exported. Engine
+        providers expose no listing API; for them the export falls back
+        to one capped ``query="*"`` recall, which is incomplete for banks
+        larger than one batch (a warning is logged).
+
         Returns the number of memories exported.
         """
         from astrocyte.portability import export_bank as _export
 
         self._policy.check_access(bank_id, "admin", context)
 
+        # Retain only lands in the pipeline's vector store when no engine
+        # provider is set (see ProviderDispatcher.retain).
+        list_fn = None
+        if self._dispatcher.engine_provider is None and self._pipeline is not None:
+            store = self._pipeline.vector_store
+            if store is not None and hasattr(store, "list_vectors"):
+                list_fn = store.list_vectors
+
         count = await _export(
             recall_fn=self._dispatcher.recall,
+            list_fn=list_fn,
             bank_id=bank_id,
             path=path,
             provider_name=self._provider_name,

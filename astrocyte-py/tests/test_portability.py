@@ -7,13 +7,14 @@ import pytest
 
 from astrocyte._astrocyte import Astrocyte
 from astrocyte.config import AstrocyteConfig
+from astrocyte.pipeline.orchestrator import PipelineOrchestrator
 from astrocyte.portability import (
     AMA_VERSION,
     ImportResult,
     iter_ama_memories,
     read_ama_header,
 )
-from astrocyte.testing.in_memory import InMemoryEngineProvider
+from astrocyte.testing.in_memory import InMemoryEngineProvider, InMemoryVectorStore, MockLLMProvider
 
 
 @pytest.fixture(autouse=True)
@@ -148,6 +149,41 @@ class TestExportImportRoundTrip:
         # Verify imported memories are recallable
         recall_result = await brain_b.recall("Python", bank_id="target")
         assert len(recall_result.hits) >= 1
+
+    async def test_pipeline_export_includes_every_memory_beyond_one_batch(self, tmp_path: Path):
+        # Regression: export used to page a relevance-ranked query="*"
+        # recall without an offset, so a bank larger than one batch (100)
+        # came out truncated to a single page with no error.
+        config = AstrocyteConfig()
+        config.barriers.pii.mode = "disabled"
+        brain = Astrocyte(config)
+        store = InMemoryVectorStore()
+        brain.set_pipeline(PipelineOrchestrator(vector_store=store, llm_provider=MockLLMProvider()))
+
+        total = 250
+        for i in range(total):
+            await brain.retain(f"Distinct fact number {i}: item-{i:04d} lives in drawer {i * 7}", bank_id="big")
+        stored_ids = {item.id for item in await store.list_vectors("big", offset=0, limit=10_000)}
+        assert len(stored_ids) == total
+
+        export_path = tmp_path / "big.ama.jsonl"
+        exported = await brain.export_bank("big", str(export_path))
+
+        records = iter_ama_memories(export_path)
+        assert exported == total
+        assert read_ama_header(export_path).memory_count == total
+        assert {m.id for m in records} == stored_ids
+        assert len(records) == total
+
+    async def test_listing_that_ignores_offset_fails_loudly(self, tmp_path: Path):
+        from astrocyte.portability import export_bank
+        from astrocyte.types import VectorItem
+
+        async def stuck_list(bank_id: str, offset: int, limit: int) -> list[VectorItem]:
+            return [VectorItem(id=f"m{i}", bank_id=bank_id, vector=[0.0], text=f"t{i}") for i in range(limit)]
+
+        with pytest.raises(RuntimeError, match="pagination is not stable"):
+            await export_bank(None, "b", tmp_path / "x.ama.jsonl", list_fn=stuck_list, batch_size=10)
 
     async def test_import_preserves_tags(self, tmp_path: Path):
         brain_a, _ = _make_brain()
