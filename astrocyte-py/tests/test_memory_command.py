@@ -282,6 +282,43 @@ def test_import_is_a_sync_of_each_file(local, capsys):
     assert "Thursdays" in texts and "Tuesdays" not in texts
 
 
+def test_importing_many_short_sections_is_not_flagged_as_a_noisy_bank(local, capsys, caplog):
+    """Noisy-bank detection is for agents; the user's own bulk import of short
+    doc sections must not print a noisy-bank warning at them."""
+    docs = local.repo / "docs"
+    docs.mkdir()
+    for i in range(30):
+        (docs / f"t{i}.md").write_text(f"# Topic {i}\n\n## Rule A{i}\n\nUse tabs.\n\n## Rule B{i}\n\nNo force-push.\n")
+    with caplog.at_level("INFO", logger="astrocyte"):
+        code, out, err = run(capsys, "import", "docs")
+    assert code == 0 and "Added" in out
+    assert "noisy_bank" not in err and "noisy_bank" not in caplog.text
+
+
+def test_the_daemon_keeps_noisy_bank_detection(local):
+    pipeline, brain = open_local(local.cfg)
+    try:
+        assert brain._policy.check_noisy_bank(local.bank) is not None
+    finally:
+        asyncio.run(pipeline.vector_store.close())
+    pipeline, brain = open_local(local.cfg, noisy_bank_detection=False)
+    try:
+        assert brain._policy.check_noisy_bank(local.bank) is None
+    finally:
+        asyncio.run(pipeline.vector_store.close())
+
+
+def test_user_commands_turn_off_noisy_bank_detection_for_bank_overrides_too(local):
+    local.cfg.write_text(
+        local.cfg.read_text() + "banks:\n  b1:\n    signal_quality:\n      noisy_bank:\n        action: reject\n"
+    )
+    pipeline, brain = open_local(local.cfg, noisy_bank_detection=False)
+    try:
+        assert brain._policy.check_noisy_bank("b1") is None
+    finally:
+        asyncio.run(pipeline.vector_store.close())
+
+
 def test_import_dry_run_changes_nothing(local, capsys):
     (local.repo / "AGENTS.md").write_text(GUIDE)
     code, out, _ = run(capsys, "import", "AGENTS.md", "--dry-run")

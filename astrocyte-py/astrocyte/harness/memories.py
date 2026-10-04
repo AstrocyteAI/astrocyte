@@ -36,14 +36,25 @@ SEARCH_DEFAULT = 8
 MIN_PREFIX = 4  # shortest id prefix `forget` accepts
 
 
-def open_local(cfg_path: Path) -> tuple[Any, Any]:
+def open_local(cfg_path: Path, *, noisy_bank_detection: bool = True) -> tuple[Any, Any]:
     """``(pipeline, brain)`` for the local config, wired the way the agent
-    daemon needs it: no LLM call on recall, none in the background."""
+    daemon needs it: no LLM call on recall, none in the background.
+
+    ``noisy_bank_detection=False`` is for the user's own commands: noisy-bank
+    detection guards against an *agent* writing junk or looping, and a bulk
+    ``astrocyte memory import`` of short doc sections is neither — flagging
+    it would only print a warning at the person who asked for the import.
+    """
     from astrocyte import Astrocyte
     from astrocyte.config import load_config
     from astrocyte.wiring import build_pipeline
 
     config = load_config(str(cfg_path))
+    if not noisy_bank_detection:
+        config.signal_quality.noisy_bank.enabled = False
+        for bank in (config.banks or {}).values():
+            if bank.signal_quality is not None:
+                bank.signal_quality.noisy_bank.enabled = False
     # Recall-time query expansion calls the LLM (5–9 s via a CLI provider).
     # Observation consolidation issues an LLM call per retained memory in the
     # background — on a CLI provider, the user's subscription.
@@ -389,7 +400,7 @@ def run(args: Namespace) -> int:
     if not cfg.is_file():
         print(f"No Astrocyte config at {cfg}. Run: astrocyte setup", file=sys.stderr)
         return 2
-    pipeline, brain = open_local(cfg)
+    pipeline, brain = open_local(cfg, noisy_bank_detection=False)
 
     async def go() -> int:
         try:
