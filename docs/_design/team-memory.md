@@ -1,6 +1,6 @@
 # Team memory
 
-Status: **proposed** (October 2026). Nothing here is implemented yet.
+Status: **accepted** (October 2026; decisions in §9). Not implemented yet; G1 first.
 
 A developer's coding agents already remember a project locally: one SQLite file, per-project banks, automatic capture and recall. Team memory shares a project's memory with the people working on it, through an Astrocyte gateway the team runs. A decision Alice's agent saved on Monday is recalled by Bob's agent on Tuesday, attributed to her. Nothing changes on the hot path: hooks and the MCP server still read and write only the local store.
 
@@ -151,9 +151,9 @@ Client:
 - a push made offline is queued and drains later;
 - a forged `_actor` is ignored.
 
-## 9. Open questions
+## 9. Decisions (2026-10-04)
 
-1. **Captured turns:** off by default (recommended), or on with a preview?
-2. **Auth for small teams:** per-user gateway tokens (G1, recommended), or require OIDC from day one?
-3. **Granularity:** a whole project bank (recommended), or per-memory opt-in only?
-4. **Leaving a team:** purge teammates' memories by default (recommended), or keep them as a read-only snapshot?
+1. **Captured turns stay local by default.** A project opts in with `team.share_captured: true`; single turns can be shared with `astrocyte memory share <id>`.
+2. **Auth: per-user gateway tokens** (G1) for teams without an identity provider; OIDC remains supported for those with one.
+3. **Granularity: the whole project bank**, with per-memory `private` / `unshare` as the exception.
+4. **Leaving a team purges teammates' memories** from the local mirror by default; `--keep-mirror` keeps them.

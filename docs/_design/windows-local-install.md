@@ -1,6 +1,6 @@
 # Automatic memory on Windows
 
-Status: **proposed** (October 2026). Nothing here is implemented yet.
+Status: **accepted** (October 2026; decisions in §7). Not implemented yet; W1 first.
 
 On Windows, `astrocyte setup` registers the MCP server, but automatic memory does nothing. The hooks are installed, yet the agent daemon they talk to needs Unix domain sockets (`agentd.supported()` is false on Windows), so nothing is captured and nothing is recalled. `astrocyte doctor` says so. This design makes the hook path work on Windows. Every part can be tested on GitHub's `windows-latest` runners, except one: which shell each agent uses to run a hook. That is called out as needing a Windows user (§4).
 
@@ -82,17 +82,19 @@ For Copilot, setup writes this same string into both `bash` and `powershell`.
 
 ## 6. Plan (PRs, in order)
 
+Since #105 (v0.18.0), CI runs `astrocyte-py`, `astrocyte-sqlite` and the install smoke test on `windows-latest` for every change. Tests that need what this design adds are marked in `tests/platform_compat.py` (`needs_unix_socket`, `posix_shell`) and skip on Windows; each PR below removes the marks it makes obsolete.
+
 | PR | Content | Proven by |
 |---|---|---|
-| **W1** | Transport interface; TCP + token transport; `msvcrt` lock; Windows spawn flags; Windows paths; `supported()` true on Windows | Unit tests on Linux/macOS with the TCP transport forced; harness tests on a new `windows-latest` job (test fixtures stop assuming `/tmp` and `AF_UNIX`) |
+| **W1** | Transport interface; TCP + token transport; `msvcrt` lock; Windows spawn flags; Windows paths; `supported()` true on Windows | Unit tests on Linux/macOS with the TCP transport forced; on the `windows-latest` CI job (#105), the tests now marked `needs_unix_socket` run instead of skipping |
 | **W2** | `psutil` ancestry on Windows; UTF-8 stdio; `os.replace` retry | `windows-latest`: a headless parent (`python -c` posing as `claude -p`) is detected |
 | **W3** | Shell-agnostic hook commands; Copilot `powershell` field; hook `ping`; doctor runs registered commands through each shell | `windows-latest`: setup in a scratch profile, then each registered command through cmd/pwsh/bash, then the capture → recall round trip |
-| **W4** | Smoke test (`smoke_local_install.py`) on `windows-latest` for PRs and release tags; quick-start docs; the per-agent verification checklist | A release tag runs the published wheel on Windows |
+| **W4** | Smoke test extended to automatic memory (hooks + daemon) on Windows; quick-start docs; the per-agent verification checklist | The smoke test already runs on Windows for PRs and release tags (#105); W4 adds the capture → recall round trip to it |
 
 The full test suite does not need to run on Windows: only the harness, the SQLite adapter and the smoke test. A Windows job costs about twice a Linux one.
 
-## 7. Open questions
+## 7. Decisions (2026-10-04)
 
-1. **`psutil` as a Windows-only dependency** (recommended), or ctypes `NtQueryInformationProcess` with no dependency, which is more code and more ways to break?
-2. **Who does the one-time per-agent check?** It needs someone with Windows and accounts for Claude Code, Codex and Antigravity.
-3. **WSL:** an agent running inside WSL is Linux and already works. Do we document that as the recommended Windows path until W1–W4 land?
+1. **`psutil` as a Windows-only dependency** for process ancestry.
+2. **The one-time per-agent check on Windows is still unassigned.** Until someone with Windows and agent accounts runs it, each agent's row in §4 stays "not verified", and the docs say so.
+3. **WSL is the recommended Windows path** in the docs until W1–W4 land: an agent running inside WSL is Linux, and automatic memory works there today.
