@@ -36,6 +36,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -408,7 +409,10 @@ def spool_capture(bank: str, session_id: str, source: str, turns: list[dict]) ->
     """Durably queue turns for the daemon (atomic rename, 0600)."""
     d = spool_dir()
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path = d / f"{time.time_ns()}-{os.getpid()}.json"
+    # Time first so the drain keeps order; the random tail because a coarse
+    # clock (Windows: ~15 ms) gives two captures in one tick the same name,
+    # and the second would replace the first.
+    path = d / f"{time.time_ns()}-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
     tmp = path.with_suffix(".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:

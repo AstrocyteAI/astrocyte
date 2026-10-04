@@ -331,6 +331,15 @@ class TestSpool:
         hits = asyncio.run(daemon.brain.recall("staging", bank_id="proj")).hits
         assert any("Fly.io" in h.text for h in hits)
 
+    def test_captures_in_one_clock_tick_do_not_replace_each_other(self, env, daemon, monkeypatch):
+        """Windows CI: time_ns() ticks coarsely, two captures got one file
+        name, and the second replaced the first (3 turns lost)."""
+        monkeypatch.setattr(agentd.time, "time_ns", lambda: 1_791_100_000_000_000_000)
+        a = agentd.spool_capture("proj", "s1", "codex", [{"content": "first batch", "started_at": None}])
+        b = agentd.spool_capture("proj", "s2", "codex", [{"content": "second batch", "started_at": None}])
+        assert a != b and a.exists() and b.exists()
+        assert asyncio.run(daemon.drain()) == 2
+
     def test_a_failed_retain_keeps_the_remaining_turns(self, env, daemon, monkeypatch):
         path = agentd.spool_capture("proj", "s1", "claude-code", [
             {"content": "turn one", "started_at": None}, {"content": "turn two", "started_at": None}])
