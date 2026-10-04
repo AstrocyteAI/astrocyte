@@ -902,6 +902,99 @@ class TestTouchedFiles:
         assert stored[0]["files"] == "src/a.py\nsrc/b.py" and "files" not in stored[1]
 
 
+class TestFileRecall:
+    """Opt-in: after Claude Code reads or edits a file, memories of earlier
+    turns that touched it are added next to the tool result."""
+
+    def _payload(self, env, path: str, session: str = "s2") -> str:
+        return json.dumps({"session_id": session, "cwd": str(env.home), "tool_name": "Read",
+                           "tool_input": {"file_path": path}})
+
+    def test_the_hook_asks_the_daemon_and_emits_post_tool_use(self, env, monkeypatch, capsys):
+        calls = []
+
+        def fake_request(op, payload=None, **kw):
+            calls.append((op, payload))
+            return {"context": "Earlier sessions that touched src/a.py (Astrocyte):\n- Q: x → A: y"}
+
+        monkeypatch.setattr(agentd, "request", fake_request)
+        monkeypatch.setattr(sys, "stdin", io.StringIO(self._payload(env, str(env.home / "src" / "a.py"))))
+        assert hooks.main("file", "claude") == 0
+        out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+        assert out["hookEventName"] == "PostToolUse" and "src/a.py" in out["additionalContext"]
+        assert calls == [("file", {"bank": project_bank(str(env.home)), "session_id": "s2", "path": "src/a.py"})]
+
+    @pytest.mark.parametrize("host", ["codex", "antigravity", "copilot"])
+    def test_only_claude_code_for_now(self, env, monkeypatch, capsys, host):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: pytest.fail("asked the daemon"))
+        hooks.run("file", self._payload(env, "/x.py"), host)
+
+    @pytest.mark.parametrize("tool_input", [None, {}, {"file_path": ""}, {"file_path": 3}, "nope"])
+    def test_without_a_path_it_does_nothing(self, env, monkeypatch, tool_input):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: pytest.fail("asked the daemon"))
+        hooks.run("file", json.dumps({"session_id": "s", "cwd": str(env.home), "tool_input": tool_input}), "claude")
+
+    def test_an_unreachable_daemon_is_started_for_next_time(self, env, monkeypatch, capsys):
+        spawned = []
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
+        monkeypatch.setattr(agentd, "spawn", lambda cfg: spawned.append(cfg))
+        hooks.run("file", self._payload(env, "/x.py"), "claude")
+        assert spawned and capsys.readouterr().out == ""
+
+    def test_notebook_edits_count(self, env, monkeypatch):
+        calls = []
+        monkeypatch.setattr(agentd, "request", lambda op, payload=None, **k: calls.append(payload) or {"context": ""})
+        hooks.run("file", json.dumps({"session_id": "s", "cwd": str(env.home),
+                                      "tool_input": {"notebook_path": str(env.home / "nb.ipynb")}}), "claude")
+        assert calls[0]["path"] == "nb.ipynb"
+
+
+class TestDaemonFileOp:
+    def _seed(self, env, tmp_path):
+        d = _sqlite_daemon(env, tmp_path)
+        agentd.spool_capture("proj", "s1", "claude-code", [
+            {**_turn("old runbook?", "Superseded by the new one.", "2026-09-20T10:00:00+00:00"),
+             "files": ["docs/runbook.md"]},
+            {**_turn("why does retry fail?", "Off by one in the backoff.", "2026-10-01T10:00:00+00:00"),
+             "files": ["src/retry.py", "tests/test_retry.py"]},
+            {**_turn("deploy day?", "Tuesdays.", "2026-10-01T10:05:00+00:00"), "files": ["docs/deploy.md"]},
+            {**_turn("retry again?", "Jitter added.", "2026-10-02T09:00:00+00:00"), "files": ["src/retry.py"]},
+        ])
+        asyncio.run(d.drain())
+        return d
+
+    def test_turns_that_touched_the_file_newest_first(self, env, tmp_path):
+        d = self._seed(env, tmp_path)
+        ctx = asyncio.run(d.op_file({"bank": "proj", "session_id": "s2", "path": "src/retry.py"}))["context"]
+        assert ctx.startswith("Earlier sessions that touched src/retry.py")
+        assert ctx.index("Jitter") < ctx.index("Off by one") and "Tuesdays" not in ctx
+
+    def test_each_file_once_per_session_and_nothing_twice(self, env, tmp_path):
+        d = self._seed(env, tmp_path)
+        req = {"bank": "proj", "session_id": "s2", "path": "src/retry.py"}
+        assert asyncio.run(d.op_file(req))["context"]
+        assert asyncio.run(d.op_file(req))["context"] == "", "the same file again in the session"
+        other = asyncio.run(d.op_file({**req, "path": "tests/test_retry.py"}))["context"]
+        assert other == "", "its only turn is already in context"
+        assert asyncio.run(d.op_file({**req, "session_id": "s3"}))["context"], "a new session asks afresh"
+
+    def test_compaction_forgets_what_was_offered(self, env, tmp_path):
+        """After a compaction the earlier injections are gone from context, so
+        files may be answered again; turns the new session summary re-shows
+        count as in context once more and are not repeated."""
+        d = self._seed(env, tmp_path)
+        req = {"bank": "proj", "session_id": "s2", "path": "docs/runbook.md"}
+        assert asyncio.run(d.op_file(req))["context"]
+        assert d.files_offered["s2"] == {"docs/runbook.md"}
+        boot = asyncio.run(d.op_boot({"bank": "proj", "session_id": "s2", "source": "compact"}))["context"]
+        assert "s2" not in d.files_offered and "old runbook?" in boot
+        assert asyncio.run(d.op_file(req))["context"] == "", "the summary just showed it"
+
+    def test_an_untouched_file_has_nothing(self, env, tmp_path):
+        d = self._seed(env, tmp_path)
+        assert asyncio.run(d.op_file({"bank": "proj", "session_id": "s2", "path": "src/other.py"}))["context"] == ""
+
+
 class TestSessionStartHook:
     def test_boots_the_daemon_and_injects_the_project_summary(self, env, capsys, monkeypatch):
         seen = {}

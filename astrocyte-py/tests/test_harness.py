@@ -285,7 +285,8 @@ MINIMAL = "vector_store: in_memory\nllm_provider: mock\nbarriers:\n  pii:\n    m
 
 def _ns(**kw) -> Namespace:
     base = {k: False for k in ("claude", "codex", "cursor", "gemini", "windsurf", "copilot", "antigravity")}
-    base.update(dry_run=False, no_verify=False, no_hooks=False, config=None, fix=False, json=False, skip_models=True)
+    base.update(dry_run=False, no_verify=False, no_hooks=False, config=None, fix=False, json=False, skip_models=True,
+                file_recall=False, no_file_recall=False)
     base.update(kw)
     return Namespace(**base)
 
@@ -645,6 +646,46 @@ def test_probe_needs_the_pong(monkeypatch):
     runs = f"{sys.executable.replace(chr(92), '/')} -c print(1)" if WINDOWS else f"'{sys.executable}' -c 'print(1)'"
     assert _probe(runs, shell) == "exit 0: 1"
     assert _probe("x", ["/no/such/shell"]).startswith("FileNotFoundError")
+
+
+# ── opt-in file recall (Claude Code) ────────────────────────────────────
+
+
+def test_file_recall_installs_a_post_tool_use_hook_with_its_matcher(home):
+    host, cli = ClaudeCodeHost(), "/opt/astro/bin/python -I -m astrocyte.cli"
+    assert host.install_hooks(cli).status == "installed"
+    assert host.file_recall_command() is None, "off unless asked for"
+    assert host.install_hooks(cli, file_recall=True).status == "updated"
+    [group] = json.loads(host.hooks_file().read_text())["hooks"]["PostToolUse"]
+    assert group["matcher"] == "Read|Edit|Write|NotebookEdit"
+    assert group["hooks"][0]["command"] == f"{cli} hook file"
+    assert host.install_hooks(cli, file_recall=True).status == "unchanged"
+    assert host.install_hooks(cli).status == "updated", "switching it off removes it"
+    assert host.file_recall_command() is None and all(host.hook_commands().values())
+    host.install_hooks(cli, file_recall=True)
+    assert host.uninstall_hooks().status == "removed" and host.file_recall_command() is None
+
+
+def test_setup_file_recall_is_opt_in_and_remembered(wired_home, capsys):
+    cmd_setup(_ns())
+    assert ClaudeCodeHost().file_recall_command() is None
+    cmd_setup(_ns(claude=True, file_recall=True))
+    assert "after it reads or edits a file" in capsys.readouterr().out
+    assert ClaudeCodeHost().file_recall_command() is not None
+    cmd_setup(_ns())
+    assert ClaudeCodeHost().file_recall_command() is not None, "a plain setup keeps the choice"
+    checks = {c.area: c for c in run_checks(_cfg(wired_home), model_probes=False)}
+    assert checks["Claude Code hooks"].summary.startswith("automatic memory on, with file recall")
+    cmd_setup(_ns(no_file_recall=True))
+    assert ClaudeCodeHost().file_recall_command() is None
+
+
+def test_file_recall_is_ignored_where_the_harness_has_no_file_hook(wired_home):
+    install_cli(wired_home, "codex")
+    (wired_home / ".codex").mkdir()
+    cmd_setup(_ns(file_recall=True))
+    assert all(CodexHost().hook_commands().values()), "codex hooks installed as usual"
+    assert ClaudeCodeHost().file_recall_command() is not None
 
 
 def test_every_host_class_is_registered():

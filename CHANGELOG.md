@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - **Antigravity turns record the files they read or edited too.** Antigravity logs tool calls on its reply steps (`tool_calls`, argument values JSON-encoded, measured on agy 1.2); capture now keeps the paths of `view_file` (`AbsolutePath`) and `write_to_file`, `replace_file_content`, `multi_replace_file_content` (`TargetFile`), relative to the workspace (`workspacePaths`). The file-tool names and arguments come from Antigravity's hook documentation: no file-tool call has been recorded on this machine yet (agy returns 403 for the account's project).
+- **File recall in Claude Code (opt-in).** `astrocyte setup --claude --file-recall` adds a `PostToolUse` hook on `Read|Edit|Write|NotebookEdit`: after the agent reads or edits a file, up to three earlier captured turns that touched it (from their recorded `files`) are added next to the tool result, newest first. Each file is answered once per session, turns already in context are skipped, and a compaction resets both. Off by default because it runs a hook process on every file read; remembered like the other setup choices (`--no-file-recall` turns it off); `astrocyte doctor` says when it is on. The first working piece of recall anchored to the file the agent opens; the per-prompt hook stays the default.
 
 ## [0.19.0] — 2026-10-04 — automatic memory on native Windows; gateway tokens and team-sync endpoints; provenance kept
 
