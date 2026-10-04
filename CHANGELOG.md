@@ -4,14 +4,25 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-10-05 — file recall; concurrent proxy recall; an SBOM for every gateway image
+
+Design and direction: `docs/_design/federated-sources.md` (F0, F0b delivered), `docs/_design/anchored-documents.md` (P0: a documents-only baseline and a staleness benchmark in `astrocyte-aml-py`, which is not published), and the roadmap's decision to keep structured extraction on now that its metadata is stored.
+
 ### Added
 
 - **Antigravity turns record the files they read or edited too.** Antigravity logs tool calls on its reply steps (`tool_calls`, argument values JSON-encoded, measured on agy 1.2); capture now keeps the paths of `view_file` (`AbsolutePath`) and `write_to_file`, `replace_file_content`, `multi_replace_file_content` (`TargetFile`), relative to the workspace (`workspacePaths`). The file-tool names and arguments come from Antigravity's hook documentation: no file-tool call has been recorded on this machine yet (agy returns 403 for the account's project).
 - **File recall in Claude Code (opt-in).** `astrocyte setup --claude --file-recall` adds a `PostToolUse` hook on `Read|Edit|Write|NotebookEdit`: after the agent reads or edits a file, up to three earlier captured turns that touched it (from their recorded `files`) are added next to the tool result, newest first. Each file is answered once per session, turns already in context are skipped, and a compaction resets both. Off by default because it runs a hook process on every file read; remembered like the other setup choices (`--no-file-recall` turns it off); `astrocyte doctor` says when it is on. The first working piece of recall anchored to the file the agent opens; the per-prompt hook stays the default.
+- **Proxy recall hits carry dates and provenance.** A remote source's `occurred_at`, `retained_at` (or `updated_at`), `url`, `version`/`etag`, `author` and `anchor` now reach the hit's metadata; before, every federated hit arrived undated and unanchored. Reserved keys can't be spoofed through a source's own metadata. A hit without a score keeps its neutral placeholder (fusion ranks by position) but is flagged `_score_missing` rather than passing as a measurement.
+
+### Changed
+
+- **Proxy sources are queried concurrently under one deadline.** They ran one after another with 15 s each, so a recall paid the sum of every remote call. They now run concurrently, and whatever has answered within `ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS` (default 0.8 s) is fused; a per-source `recall_timeout_seconds` can only shorten it. **A source that used to answer in more than 0.8 s now misses the first recall of a query:** it keeps running in the background (up to ten deadlines) and its answer serves the next recall of the same query once, within 60 s. Raise the deadline if your sources are slower. A source that fails or misses the deadline 3 times in a row is skipped for 60 s; a late answer doesn't reset that count. Hits keep config order. `astrocyte_proxy_recall_duration_seconds` now observes errors and deadline misses too, so its tail shows slow sources, and `astrocyte_proxy_recall_total` gains the statuses `timeout`, `skipped` and `late_cache`.
 
 ### Fixed
 
 - **Each platform's gateway image gets its own SBOM.** Syft was given the multi-arch index and inventoried only the runner's amd64 image, so the indexes of v0.17.0 through v0.19.0 carry an amd64-only SPDX SBOM and their arm64 images have none. Each platform image is now inventoried by its own digest and its SBOM attested to that digest (checked to describe it before attesting); the index keeps the build provenance but no SBOM. Verify with `gh attestation verify oci://…@<platform digest> --predicate-type https://spdx.dev/Document/v2.3` or `cosign download attestation --platform linux/arm64 --predicate-type https://spdx.dev/Document/v2.3 …:<tag>` (see the gateway's `RELEASE.md`). The tags move only after every platform's SBOM is attested.
+- **A consolidation answer followed by prose is kept.** The parser sliced from the first `[` to the last `]`, so a fenced answer followed by prose containing a bracket failed with "Extra data" and the consolidation result was dropped (many times per benchmark run). The first complete JSON value is decoded and what follows is ignored.
+- **The `claude_cli` provider no longer loses prompts.** `claude -p` waits 3 s for stdin and then fails with "Input must be provided"; any event-loop stall between spawn and the pipe write lost that race, about once per benchmark chunk, and each failure fed the rate-limit breaker. The prompt is now handed over as an unlinked temporary file, readable in full at exec.
 
 ## [0.19.0] — 2026-10-04 — automatic memory on native Windows; gateway tokens and team-sync endpoints; provenance kept
 
