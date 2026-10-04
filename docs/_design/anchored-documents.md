@@ -315,6 +315,38 @@ All phases depend on the prerequisite in §0: extracted metadata must survive
 P1 delivers the largest change in behaviour and reuses the most existing
 parts, so it goes first after the baseline.
 
+**P0 status (2026-10-04): both runnable, first numbers in.**
+- *Documents-only baseline:* `astrocyte_aml/docs_baseline.py`. Operator
+  Memory's model as a separate system on the AML Add/Search contract, so it
+  runs through the same harness, items, and judge as the Astrocyte arms, with
+  the same LLM provider configuration. Message timestamps are "now" for each
+  message, matching the reference date Astrocyte's extraction is given; a
+  document is never overwritten unread.
+- *Staleness benchmark:* `aml_selfeval/staleness.py`. A git repository of
+  configuration facts is stated in conversation, then half the files change
+  silently in a second commit. Scoring is deterministic, by exact value match:
+  changed facts are stale-unflagged, flagged, current, or missing; unchanged
+  facts measure recall. Systems receive the repository path and HEAD, so an
+  anchored system can check them.
+- *First run* (24 facts, seed 42, Claude Haiku via `claude -p` for both
+  systems, Astrocyte with structured extraction off; 12 facts per group, so
+  directional only):
+
+  | | changed facts served stale, unflagged | changed facts missing | unchanged facts recalled |
+  |---|---|---|---|
+  | Astrocyte (no anchors) | 10/12 (83%, CI 55–95%) | 2/12 | 10/12 (83%, CI 55–95%) |
+  | Documents only | 6/12 (50%, CI 25–75%) | 6/12 | 5/12 (42%, CI 19–68%) |
+
+  Neither system flags a stale fact or knows a new value, which is the
+  expected baseline without anchors. The documents-only system looks less
+  stale only because it **lost information**: its brain ended as one
+  986-character document holding 12 of the 24 facts it was told. A re-run
+  after ruling out an unread overwrite in the baseline gave the same result,
+  so the loss is the rewrite itself, not the harness. That is critique 7
+  ("an LLM rewrite loses information silently"), measured once, on one model.
+  The P1 exit criterion is now concrete: drive *stale, unflagged* toward zero
+  while holding unchanged-fact recall.
+
 ## 11. Open questions and risks
 
 - **Claim granularity.** Sentences are too fine to maintain, pages too coarse

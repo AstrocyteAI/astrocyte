@@ -1465,6 +1465,18 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     hermetic provider. Anything it shares with ongoing development is a way
     for that work to invalidate it without an error.
 
+    **A fourth leak, found 2026-10-04:** uvicorn inserts its `--app-dir`
+    (default: the current directory) at the front of `sys.path`. Launched from
+    the main checkout's `astrocyte-aml-py/`, the adapter package
+    `astrocyte_aml` loaded from the main checkout whatever `PYTHONPATH` or
+    `PYTHONSAFEPATH` said; the core packages were pinned correctly. A pin
+    check with plain `python -c` cannot see this. It affected the pg50,
+    pg50fix, and sfeoff/sfefix runs, in every case identically across the
+    arms of a comparison, so the paired results stand; only the adapter
+    layer, which differs by the idempotent-retry fix, was unpinned. Fix: pass
+    `--app-dir <pinned worktree>` and verify the pin the way the server
+    imports, not the way a one-liner does.
+
 13. **"Agents don't need memory, they need documentation" — what the critique gets
     right** (added 2026-10-04). Kevin Liao's
     [essay](https://liao.gg/blog/agents-dont-need-memory) (2026-10-03) argues that
