@@ -554,7 +554,8 @@ def test_windows_hook_commands_mean_the_same_in_every_shell():
 
     assert hook_prefix(r"C:\Users\alice\AppData\Roaming\uv\tools\astrocyte\Scripts\python.exe", windows=True) == (
         "C:/Users/alice/AppData/Roaming/uv/tools/astrocyte/Scripts/python.exe -I -m astrocyte.cli")
-    assert hook_prefix("/opt/py 3/bin/python") == "'/opt/py 3/bin/python' -I -m astrocyte.cli", "POSIX: quoted"
+    assert hook_prefix("/opt/py 3/bin/python", windows=False) == "'/opt/py 3/bin/python' -I -m astrocyte.cli", (
+        "POSIX: quoted")
 
 
 def test_windows_paths_with_spaces_use_the_short_name(monkeypatch):
@@ -613,8 +614,9 @@ def test_probe_needs_the_pong(monkeypatch):
     from astrocyte.harness.doctor import _probe, _probe_shells
 
     name, shell = _probe_shells()[0]
-    assert _probe(f'"{sys.executable}" -c "print(1)"' if WINDOWS else f"'{sys.executable}' -c 'print(1)'",
-                  shell) == "exit 0: 1"
+    # Unquoted on Windows, like the hook commands themselves (cmd mangles escaped quotes).
+    runs = f"{sys.executable.replace(chr(92), '/')} -c print(1)" if WINDOWS else f"'{sys.executable}' -c 'print(1)'"
+    assert _probe(runs, shell) == "exit 0: 1"
     assert _probe("x", ["/no/such/shell"]).startswith("FileNotFoundError")
 
 

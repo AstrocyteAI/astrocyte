@@ -1254,7 +1254,7 @@ class TestClaudeHookInstall:
         from astrocyte.harness.server import hook_prefix
 
         host = ClaudeCodeHost()
-        host.install_hooks(hook_prefix("/Users/Jane Doe/tools/bin/python"))
+        host.install_hooks(hook_prefix("/Users/Jane Doe/tools/bin/python", windows=False))
         assert host.hook_commands()["Stop"] == "'/Users/Jane Doe/tools/bin/python' -I -m astrocyte.cli hook stop"
 
     def test_uninstall_removes_only_ours(self, env):
@@ -1541,6 +1541,9 @@ class TestCopilotHooks:
         assert not (env.state / "spool").exists()
 
     def test_node_launched_copilot_print_mode_is_headless(self, monkeypatch):
+        # The ps-based walker, faked below; on Windows headless_session would
+        # otherwise ask psutil (covered by TestWindowsAncestry).
+        monkeypatch.setattr(hooks, "_windows_ancestor_args", hooks._posix_ancestor_args)
         def fake_run(argv, **kw):
             table = {100: "50 /bin/sh -c hook", 50: "1 /opt/homebrew/bin/node /opt/lib/node_modules/@github/copilot/index.js -p hi"}
             return subprocess.CompletedProcess(argv, 0, stdout=table.get(int(argv[-1]), ""), stderr="")
