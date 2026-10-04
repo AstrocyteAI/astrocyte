@@ -117,10 +117,16 @@ def cmd_setup(args: Namespace) -> int:
             for note in notes:
                 print(f"  • {note}")
         if auto_memory:
-            names = " and ".join(h.label for h in auto_memory)
-            print(f"\nAutomatic memory is on in interactive {names} sessions, including ones already open:\n"
-                  "from their next turn, each turn is saved to that project's local memory and relevant\n"
-                  "memories are added to new prompts. Headless runs (`claude -p`, `codex exec`) are left alone.\n"
+            capture = [h.label for h in auto_memory if h.captures_turns]
+            recall_only = [h.label for h in auto_memory if not h.captures_turns]
+            print("\nAutomatic memory is on in interactive sessions, including ones already open.")
+            if capture:
+                print(f"  {_join(capture)}: each finished turn is saved to that project's local memory,\n"
+                      "  and relevant memories are added to new prompts.")
+            if recall_only:
+                print(f"  {_join(recall_only)}: relevant memories (saved by your other agents) are added to\n"
+                      "  new prompts; its own turns are not saved yet.")
+            print("Headless runs (`claude -p`, `codex exec`, `agy -p`, `copilot -p`) are left alone.\n"
                   "Pause with ASTROCYTE_HOOKS=off, or remove with: astrocyte setup --no-hooks")
         print("\nDone. Start a new session in your agent to load the Astrocyte memory tools.\n"
               "Verify any time with: astrocyte doctor")
@@ -202,7 +208,8 @@ def register(sub) -> None:
 
     hook = sub.add_parser("hook", help="(called by agent hooks) automatic memory for one lifecycle event")
     hook.add_argument("event", choices=["session-start", "prompt", "stop"])
-    hook.add_argument("--host", choices=["claude", "codex"], default="claude", help="the agent firing the hook")
+    hook.add_argument("--host", choices=["claude", "codex", "antigravity", "copilot"], default="claude",
+                      help="the agent firing the hook")
     hook.set_defaults(func=lambda a: _run_hook(a.event, a.host))
 
     agentd = sub.add_parser("agentd", help="(started on demand) keep memory warm for agent hooks")
@@ -235,3 +242,7 @@ def _run_agentd(config: str | None) -> int:
     from .agentd import run
 
     return run(Path(config).expanduser() if config else config_path())
+
+
+def _join(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]

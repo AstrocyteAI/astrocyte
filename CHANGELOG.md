@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Automatic memory in Antigravity**, the app and the `agy` CLI. `astrocyte setup` registers the MCP server in `~/.gemini/config/mcp_config.json` and adds one named `astrocyte` entry to `~/.gemini/config/hooks.json`, beside the user's own. Antigravity has no prompt-submitted event, so its `PreInvocation` hook (before every model call) reads the newest user message from the conversation transcript and acts once per message: the project summary on a conversation's first call, then gated recall, injected as an ephemeral message. `Stop` captures the finished turn from the transcript (`USER_INPUT` / `PLANNER_RESPONSE` steps; injected memories are separate steps, never re-captured). `agy -p` counts as headless. Verified on agy 1.2: both hooks fire and a seeded memory was injected into a real conversation; the model's use of it is unverified here (the account's Gemini project returns 403).
+- **Copilot CLI recall**: `~/.copilot/hooks/astrocyte.json` adds the project summary at session start and recalls on each prompt, so Copilot sessions see what Claude Code, Codex and Antigravity saved. Its own turns are not captured yet (the stop hook's transcript format is unverified), and setup says so. Built from GitHub's hooks reference; not exercised against a live Copilot CLI. `copilot -p` counts as headless, including when it runs under `node`.
+
 ## [0.16.0] — 2026-10-03 — local install for coding agents
 
 ### Fixed

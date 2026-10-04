@@ -1,4 +1,6 @@
-"""Turn a Claude Code transcript (JSONL) into conversation turns to capture.
+"""Turn an agent transcript (JSONL) into conversation turns to capture.
+
+Claude Code's format is described first; Antigravity's further down.
 
 What is kept, per the transcript structure measured on Claude Code 2.1:
 
@@ -89,7 +91,36 @@ def _assistant_text(line: dict) -> list[str]:
     return [b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip()]
 
 
-def read_new_turns(path: str | Path, offset: int = 0) -> tuple[list[Turn], int]:
+# ── Antigravity (transcript.jsonl under brain/<conversation>/) ───────────
+#
+# Steps, measured on agy 1.2 and the Antigravity app: the user's message is a
+# USER_INPUT step whose content wraps the text in <USER_REQUEST> (followed by
+# <ADDITIONAL_METADATA> the app adds); replies are PLANNER_RESPONSE steps with
+# string content (tool-calling ones have none). Context our hooks inject is an
+# EPHEMERAL_MESSAGE step, so it is never re-captured.
+
+_USER_REQUEST = re.compile(r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", re.DOTALL)
+
+
+def antigravity_prompt(line: dict) -> str | None:
+    if line.get("type") != "USER_INPUT" or line.get("source") not in (None, "USER_EXPLICIT"):
+        return None
+    content = line.get("content")
+    if not isinstance(content, str):
+        return None
+    m = _USER_REQUEST.search(content)
+    text = (m.group(1) if m else content).strip()
+    return text or None
+
+
+def _antigravity_reply(line: dict) -> list[str]:
+    if line.get("type") != "PLANNER_RESPONSE":
+        return []
+    content = line.get("content")
+    return [content] if isinstance(content, str) and content.strip() else []
+
+
+def read_new_turns(path: str | Path, offset: int = 0, *, antigravity: bool = False) -> tuple[list[Turn], int]:
     """Complete turns after ``offset``, and the offset to resume from."""
     p = Path(path)
     try:
@@ -118,14 +149,15 @@ def read_new_turns(path: str | Path, offset: int = 0) -> tuple[list[Turn], int]:
             continue
         if not isinstance(line, dict):
             continue
-        prompt = _human_prompt(line)
+        prompt = antigravity_prompt(line) if antigravity else _human_prompt(line)
         if prompt is not None:
             if current is not None and current.assistant:
                 turns.append(current)
                 resume = line_start
-            current, current_start = Turn(user=prompt, started_at=_parse_time(line.get("timestamp"))), line_start
+            when = line.get("created_at") if antigravity else line.get("timestamp")
+            current, current_start = Turn(user=prompt, started_at=_parse_time(when)), line_start
             continue
-        texts = _assistant_text(line)
+        texts = _antigravity_reply(line) if antigravity else _assistant_text(line)
         if texts and current is not None:
             current.assistant.extend(texts)
         if current is None:

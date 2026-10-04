@@ -34,8 +34,8 @@ astrocyte setup
 ```
 
 `setup` stores memories in one local SQLite file, embeds them with a local model,
-and wires the MCP server into every agent it finds. In Claude Code and Codex it also
-turns on **automatic memory**: each finished turn is saved to that project's memory,
+and wires the MCP server into every agent it finds. In Claude Code, Codex and Antigravity
+it also turns on **automatic memory** (Copilot CLI recalls what the others saved): each finished turn is saved to that project's memory,
 and relevant memories are added to new prompts. Credentials are redacted before
 anything is stored.
 

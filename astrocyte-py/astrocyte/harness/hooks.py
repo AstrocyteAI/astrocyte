@@ -49,7 +49,7 @@ from astrocyte.policy.barriers import redact_secrets
 from . import agentd
 from .paths import config_path, state_dir
 from .project import project_bank
-from .transcript import Turn, read_new_turns
+from .transcript import Turn, antigravity_prompt, read_new_turns
 
 SESSION_START_WAIT = 8.0  # cold start incl. model load measured at ~1.5 s
 PROMPT_DEADLINE = 2.5  # the user is waiting; warm recall measured at ~10 ms
@@ -101,21 +101,51 @@ def _codex_headless(argv: list[str]) -> bool:
     return False
 
 
+def _print_flag_headless(argv: list[str]) -> bool:
+    """agy and copilot: -p / --print / --prompt run one prompt and exit."""
+    return any(a in ("-p", "--print", "--prompt") for a in argv[1:])
+
+
+def _claude_emit(event: str, context: str) -> None:
+    if context:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}}))
+
+
+def _copilot_emit(_event: str, context: str) -> None:
+    if context:
+        print(json.dumps({"additionalContext": context}))
+
+
+def _antigravity_emit(_event: str, context: str) -> None:
+    if context:  # main() prints {} when nothing was emitted
+        print(json.dumps({"injectSteps": [{"ephemeralMessage": context}]}))
+
+
 @dataclass(frozen=True)
 class Dialect:
-    """How one harness speaks the shared hook contract."""
+    """How one harness speaks the hook contract."""
 
     source: str  # recorded on every captured memory
     binary: str  # process name of the agent, found above the hook
     headless: Callable[[list[str]], bool]  # agent argv → runs non-interactively?
-    # Where the finished turn comes from at Stop: Claude Code's transcript,
-    # or the payload itself (the prompt kept from UserPromptSubmit).
-    turn_from_payload: bool
+    # Where the finished turn comes from at Stop: "transcript" (read
+    # incrementally), "payload" (the reply in the Stop payload, the prompt
+    # kept from the prompt hook), or None (this agent's hooks don't capture).
+    turn_source: str | None
+    emit: Callable[[str, str], None] = _claude_emit
+    # Antigravity has no prompt-submitted event: its PreInvocation hook runs
+    # before every model call and carries no prompt, so the prompt is read
+    # from the transcript and recall runs once per new user message.
+    prompt_from_transcript: bool = False
+    antigravity_transcript: bool = False
 
 
 DIALECTS: dict[str, Dialect] = {
-    "claude": Dialect("claude-code", "claude", _claude_headless, turn_from_payload=False),
-    "codex": Dialect("codex", "codex", _codex_headless, turn_from_payload=True),
+    "claude": Dialect("claude-code", "claude", _claude_headless, turn_source="transcript"),
+    "codex": Dialect("codex", "codex", _codex_headless, turn_source="payload"),
+    "antigravity": Dialect("antigravity", "agy", _print_flag_headless, turn_source="transcript",
+                           emit=_antigravity_emit, prompt_from_transcript=True, antigravity_transcript=True),
+    "copilot": Dialect("copilot", "copilot", _print_flag_headless, turn_source=None, emit=_copilot_emit),
 }
 
 
@@ -142,6 +172,9 @@ def _agent_ancestor_args(binary: str, max_depth: int = 5) -> list[str] | None:
         argv = args.split()
         if argv and binary in Path(argv[0]).name.lower():
             return argv
+        # Node CLIs (copilot) run as `node /path/to/copilot …`.
+        if len(argv) > 1 and Path(argv[0]).name.startswith("node") and binary in Path(argv[1]).name.lower():
+            return argv[1:]
         try:
             pid = int(ppid)
         except ValueError:
@@ -151,7 +184,8 @@ def _agent_ancestor_args(binary: str, max_depth: int = 5) -> list[str] | None:
 
 def headless_session(dialect: str = "claude") -> bool:
     """Is the agent session running non-interactively (``claude -p``,
-    ``codex exec``)?"""
+    ``codex exec``, ``agy -p``, ``copilot -p``)? The Antigravity app runs
+    no ``agy`` process, so its sessions are interactive."""
     d = DIALECTS[dialect]
     argv = _agent_ancestor_args(d.binary)
     return bool(argv) and d.headless(argv)
@@ -161,11 +195,6 @@ def _provider_scratch(cwd: str) -> bool:
     """Provider subprocesses run in a private ``astrocyte-claude-cli-*`` temp
     dir. Older provider code didn't disable hooks, so recognise it directly."""
     return Path(cwd).name.startswith("astrocyte-claude-cli-")
-
-
-def _emit(event: str, context: str) -> None:
-    if context:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}}))
 
 
 def _session_file(session_id: str, suffix: str = "") -> Path:
@@ -184,12 +213,62 @@ def _session_start(payload: dict, cfg: Path, bank: str, session: str, dialect: D
     reply = agentd.request(
         "boot", {"bank": bank, "session_id": session, "source": payload.get("source")}, timeout=5
     )
-    _emit("SessionStart", (reply or {}).get("context", ""))
+    dialect.emit("SessionStart", (reply or {}).get("context", ""))
+
+
+def _latest_user_message(transcript: object) -> tuple[int | None, str]:
+    """The last user message in an Antigravity transcript, with its step index."""
+    if not isinstance(transcript, str) or not transcript:
+        return None, ""
+    step, text = None, ""
+    try:
+        with open(transcript, encoding="utf-8") as fh:
+            for raw in fh:
+                try:
+                    line = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(line, dict) and (prompt := antigravity_prompt(line)) is not None:
+                    step, text = line.get("step_index"), prompt
+    except OSError:
+        return None, ""
+    return step, text
+
+
+def _prompt_from_transcript(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
+    """Antigravity: PreInvocation runs before every model call of a turn, so
+    act once per new user message; and since there is no session-start event,
+    the project summary rides on a conversation's first model call."""
+    step, prompt = _latest_user_message(payload.get("transcriptPath") or payload.get("transcript_path"))
+    if step is None:
+        return
+    marker = _session_file(session, ".asked")
+    try:
+        first_sight = False
+        if json.loads(marker.read_text()).get("step") == step:
+            return  # a later model call in the same turn
+    except (OSError, ValueError, AttributeError):
+        first_sight = True
+    _write_state(marker, {"step": step})
+    parts: list[str] = []
+    if first_sight and agentd.ensure_running(cfg, wait=SESSION_START_WAIT):
+        boot = agentd.request("boot", {"bank": bank, "session_id": session}, timeout=5)
+        parts.append((boot or {}).get("context", ""))
+    if worth_recalling(prompt):
+        reply = agentd.request("recall", {"bank": bank, "session_id": session, "prompt": prompt},
+                               timeout=PROMPT_DEADLINE)
+        if reply is None:
+            agentd.spawn(cfg)
+        else:
+            parts.append(reply.get("context", ""))
+    dialect.emit("UserPromptSubmit", "\n\n".join(p for p in parts if p))
 
 
 def _prompt(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
+    if dialect.prompt_from_transcript:
+        return _prompt_from_transcript(payload, cfg, bank, session, dialect)
     prompt = payload.get("prompt") or ""
-    if dialect.turn_from_payload and prompt.strip() and agentd.supported():
+    if dialect.turn_source == "payload" and prompt.strip() and agentd.supported():
         # Kept for Stop, which reports only the reply. Every prompt, even
         # one too slight to recall against: it is still half of a turn.
         _write_state(_session_file(session, ".prompt"),
@@ -200,7 +279,7 @@ def _prompt(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect)
     if reply is None:
         agentd.spawn(cfg)  # warm for the next prompt; never make this one wait
         return
-    _emit("UserPromptSubmit", reply.get("context", ""))
+    dialect.emit("UserPromptSubmit", reply.get("context", ""))
 
 
 def _noop() -> None:
@@ -213,8 +292,8 @@ def _noop() -> None:
 TurnSource = tuple[list[Turn], Callable[[], None]]
 
 
-def _turns_from_transcript(payload: dict, session: str) -> TurnSource:
-    transcript = payload.get("transcript_path")
+def _turns_from_transcript(payload: dict, session: str, *, antigravity: bool = False) -> TurnSource:
+    transcript = payload.get("transcript_path") or payload.get("transcriptPath")
     if not transcript:
         return [], _noop
     marker = _session_file(session)
@@ -223,7 +302,7 @@ def _turns_from_transcript(payload: dict, session: str) -> TurnSource:
         first_sight = False
     except (OSError, ValueError, KeyError, TypeError):
         offset, first_sight = 0, True
-    turns, resume = read_new_turns(transcript, offset)
+    turns, resume = read_new_turns(transcript, offset, antigravity=antigravity)
     if first_sight:
         # A session we have never seen — already running when the hooks were
         # installed (Claude Code hot-reloads settings), or resumed from before
@@ -256,10 +335,12 @@ def _turn_from_payload(payload: dict, session: str) -> TurnSource:
 
 
 def _stop(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
-    if not agentd.supported():
+    if not agentd.supported() or dialect.turn_source is None:
         return  # without a daemon to drain it, the spool would only grow
-    source = _turn_from_payload if dialect.turn_from_payload else _turns_from_transcript
-    turns, commit = source(payload, session)
+    if dialect.turn_source == "payload":
+        turns, commit = _turn_from_payload(payload, session)
+    else:
+        turns, commit = _turns_from_transcript(payload, session, antigravity=dialect.antigravity_transcript)
     if turns:
         # Scrubbed before it touches disk: the retain barrier redacts again,
         # but the spool is plaintext and outlives a crashed daemon.
@@ -291,10 +372,13 @@ def run(event: str, stdin_text: str, host: str = "claude") -> int:
         cfg = config_path()
         if not cfg.is_file():
             return 0  # not set up: stay out of the way
-        cwd = str(payload.get("cwd") or os.getcwd())
+        workspaces = payload.get("workspacePaths")
+        cwd = str(payload.get("cwd") or (workspaces[0] if isinstance(workspaces, list) and workspaces else "")
+                  or os.getcwd())
         if _provider_scratch(cwd) or (mode != "all" and headless_session(host)):
             return 0
-        session = str(payload.get("session_id") or "unknown")
+        session = str(payload.get("session_id") or payload.get("sessionId") or payload.get("conversationId")
+                      or "unknown")
         bank = project_bank(cwd)
         handler(payload, cfg, bank, session, dialect)
     except Exception:  # noqa: BLE001 — a hook must never break the agent
@@ -317,4 +401,15 @@ def run(event: str, stdin_text: str, host: str = "claude") -> int:
 
 
 def main(event: str, host: str = "claude") -> int:
+    if host == "antigravity":
+        # Antigravity parses every hook's stdout as JSON: say "nothing" with {}
+        # whenever the hook had nothing to add (or stayed out of the way).
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = run(event, sys.stdin.read() if not sys.stdin.isatty() else "", host)
+        print(out.getvalue().strip() or "{}")
+        return code
     return run(event, sys.stdin.read() if not sys.stdin.isatty() else "", host)
