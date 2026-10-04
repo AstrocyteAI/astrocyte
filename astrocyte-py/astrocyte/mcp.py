@@ -38,6 +38,28 @@ logger = logging.getLogger("astrocyte.mcp")
 # ---------------------------------------------------------------------------
 
 
+def server_instructions(mcp_cfg) -> str:
+    """What the agent is told this server offers — only tools it registers.
+
+    It used to advertise memory_reflect and memory_forget unconditionally, so
+    with the defaults (forget hidden) an agent asked to forget something went
+    looking for a tool that does not exist.
+    """
+    uses = ["memory_retain to store information", "memory_recall to search memories"]
+    if mcp_cfg.expose_reflect:
+        uses.append("memory_reflect to synthesize answers")
+    if mcp_cfg.expose_forget:
+        uses.append("memory_forget to remove memories")
+    text = "Astrocyte memory server. Use " + ", ".join(uses[:-1]) + ", and " + uses[-1] + "."
+    if not mcp_cfg.expose_forget:
+        text += (
+            " This server cannot delete memories. If the user asks to remove one, find it with "
+            "memory_recall and give them its memory_id; on a local install they remove it with "
+            "`astrocyte memory forget <memory_id> --bank <bank_id>`, which erases it from disk."
+        )
+    return text
+
+
 def create_mcp_server(
     brain: Astrocyte,
     config: AstrocyteConfig,
@@ -70,14 +92,7 @@ def create_mcp_server(
     """
 
     mcp_cfg = config.mcp
-    mcp = FastMCP(
-        name="astrocyte-memory",
-        instructions=(
-            "Astrocyte memory server. Use memory_retain to store information, "
-            "memory_recall to search memories, memory_reflect to synthesize answers, "
-            "and memory_forget to remove memories."
-        ),
-    )
+    mcp = FastMCP(name="astrocyte-memory", instructions=server_instructions(mcp_cfg))
 
     # Static context — still built for the pre-middleware path (legacy
     # deployments that don't enable JWT middleware). When middleware is
