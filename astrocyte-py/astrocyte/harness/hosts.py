@@ -816,17 +816,19 @@ class CopilotHost(_OwnHookFile, _JsonHost):
         return {"type": "local", "command": spec.command, "args": list(spec.args), "tools": ["*"]}
 
 
-ALL_HOSTS: tuple[type[Host], ...] = (
-    ClaudeCodeHost, CodexHost, CursorHost, GeminiHost, WindsurfHost, CopilotHost, AntigravityHost,
-)
+ALL_HOSTS: tuple[type[Host], ...] = (ClaudeCodeHost, CodexHost, CursorHost, GeminiHost, WindsurfHost, CopilotHost)
+
+# Every harness setup supports. ALL_HOSTS keeps its v0.16.0 value (it is part
+# of the public API); hosts added since are appended here.
+SUPPORTED_HOSTS: tuple[type[Host], ...] = (*ALL_HOSTS, AntigravityHost)
 
 
 def hosts() -> list[Host]:
-    return [cls() for cls in ALL_HOSTS]
+    return [cls() for cls in SUPPORTED_HOSTS]
 
 
 def host_by_key(key: str) -> Host:
     for h in hosts():
         if h.key == key:
             return h
-    raise KeyError(f"unknown harness {key!r}; expected one of {[c.key for c in ALL_HOSTS]}")
+    raise KeyError(f"unknown harness {key!r}; expected one of {[c.key for c in SUPPORTED_HOSTS]}")

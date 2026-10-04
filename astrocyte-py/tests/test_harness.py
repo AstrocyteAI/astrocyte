@@ -425,7 +425,7 @@ def test_doctor_reports_and_repairs_hooks_from_a_moved_install(wired_home, capsy
 
 
 def test_every_host_class_is_registered():
-    assert {c.key for c in hosts_mod.ALL_HOSTS} == {"claude", "codex", "cursor", "gemini", "windsurf", "copilot", "antigravity"}
+    assert {c.key for c in hosts_mod.SUPPORTED_HOSTS} == {"claude", "codex", "cursor", "gemini", "windsurf", "copilot", "antigravity"}
 
 
 

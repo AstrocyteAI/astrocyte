@@ -128,25 +128,45 @@ class Dialect:
     source: str  # recorded on every captured memory
     binary: str  # process name of the agent, found above the hook
     headless: Callable[[list[str]], bool]  # agent argv → runs non-interactively?
-    # Where the finished turn comes from at Stop: "transcript" (read
-    # incrementally), "payload" (the reply in the Stop payload, the prompt
-    # kept from the prompt hook), or None (this agent's hooks don't capture).
-    turn_source: str | None
+    # Where the finished turn comes from at Stop: Claude Code's transcript,
+    # or the payload itself (the prompt kept from UserPromptSubmit).
+    turn_from_payload: bool
     emit: Callable[[str, str], None] = _claude_emit
     # Antigravity has no prompt-submitted event: its PreInvocation hook runs
     # before every model call and carries no prompt, so the prompt is read
     # from the transcript and recall runs once per new user message.
     prompt_from_transcript: bool = False
     antigravity_transcript: bool = False
+    captures_turns: bool = True  # False: this agent's hooks only recall
+
+    @property
+    def turn_source(self) -> str | None:
+        """"payload", "transcript", or None when turns aren't captured."""
+        if not self.captures_turns:
+            return None
+        return "payload" if self.turn_from_payload else "transcript"
 
 
 DIALECTS: dict[str, Dialect] = {
-    "claude": Dialect("claude-code", "claude", _claude_headless, turn_source="transcript"),
-    "codex": Dialect("codex", "codex", _codex_headless, turn_source="payload"),
-    "antigravity": Dialect("antigravity", "agy", _print_flag_headless, turn_source="transcript",
-                           emit=_antigravity_emit, prompt_from_transcript=True, antigravity_transcript=True),
-    "copilot": Dialect("copilot", "copilot", _print_flag_headless, turn_source=None, emit=_copilot_emit),
+    "claude": Dialect("claude-code", "claude", _claude_headless, turn_from_payload=False),
+    "codex": Dialect("codex", "codex", _codex_headless, turn_from_payload=True),
 }
+
+# Added after v0.16.0. Kept out of DIALECTS, whose released value is part of
+# the public API; look dialects up with dialect_for().
+ANTIGRAVITY_DIALECT = Dialect(
+    "antigravity", "agy", _print_flag_headless, turn_from_payload=False,
+    emit=_antigravity_emit, prompt_from_transcript=True, antigravity_transcript=True,
+)
+COPILOT_DIALECT = Dialect(
+    "copilot", "copilot", _print_flag_headless, turn_from_payload=False, emit=_copilot_emit, captures_turns=False,
+)
+_MORE_DIALECTS = {"antigravity": ANTIGRAVITY_DIALECT, "copilot": COPILOT_DIALECT}
+
+
+def dialect_for(host: str) -> Dialect | None:
+    """The hook dialect of ``host`` (``astrocyte hook --host``), if known."""
+    return DIALECTS.get(host) or _MORE_DIALECTS.get(host)
 
 
 def _agent_ancestor_args(binary: str, max_depth: int = 5) -> list[str] | None:
@@ -186,7 +206,9 @@ def headless_session(dialect: str = "claude") -> bool:
     """Is the agent session running non-interactively (``claude -p``,
     ``codex exec``, ``agy -p``, ``copilot -p``)? The Antigravity app runs
     no ``agy`` process, so its sessions are interactive."""
-    d = DIALECTS[dialect]
+    d = dialect_for(dialect)
+    if d is None:
+        return False
     argv = _agent_ancestor_args(d.binary)
     return bool(argv) and d.headless(argv)
 
@@ -362,7 +384,7 @@ def run(event: str, stdin_text: str, host: str = "claude") -> int:
     if mode in ("0", "off", "false", "no"):
         return 0
     handler = _HANDLERS.get(event)
-    dialect = DIALECTS.get(host)
+    dialect = dialect_for(host)
     if handler is None or dialect is None:
         return 0
     try:

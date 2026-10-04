@@ -8,12 +8,13 @@ from argparse import Namespace
 from pathlib import Path
 
 from .doctor import Check, apply_fixes, run_checks
-from .hosts import ALL_HOSTS, HookHost, Host, Outcome, host_by_key, hosts
+from .hosts import ALL_HOSTS, SUPPORTED_HOSTS, HookHost, Host, Outcome, host_by_key, hosts
 from .localconfig import SetupError, choose_providers, render_config, write_config
 from .paths import config_path, database_path
 from .server import handshake, hook_prefix, locate_mcp_server, server_spec
 
-HOST_KEYS = tuple(cls.key for cls in ALL_HOSTS)
+HOST_KEYS = tuple(cls.key for cls in ALL_HOSTS)  # v0.16.0's value: part of the public API
+SUPPORTED_HOST_KEYS = tuple(cls.key for cls in SUPPORTED_HOSTS)
 
 _MARK = {"ok": "✓", "warn": "!", "fail": "✗", "info": "·"}
 _OUTCOME_MARK = {
@@ -24,7 +25,7 @@ _OUTCOME_MARK = {
 
 def _selected_hosts(args: Namespace) -> tuple[list[Host], bool]:
     """Hosts named by flags, else every detected one. Returns (hosts, explicit)."""
-    named = [k for k in HOST_KEYS if getattr(args, k, False)]
+    named = [k for k in SUPPORTED_HOST_KEYS if getattr(args, k, False)]
     if named:
         return [host_by_key(k) for k in named], True
     return [h for h in hosts() if h.detected()], False
@@ -81,7 +82,7 @@ def cmd_setup(args: Namespace) -> int:
     # 4. Harnesses.
     targets, explicit = _selected_hosts(args)
     if not targets:
-        print("\n  No agent harnesses detected. Supported: " + ", ".join(c.label for c in ALL_HOSTS)
+        print("\n  No agent harnesses detected. Supported: " + ", ".join(c.label for c in SUPPORTED_HOSTS)
               + ".\n  Install one, or name it explicitly, e.g. astrocyte setup --claude")
         return 1
     if not explicit:
@@ -188,7 +189,7 @@ def register(sub) -> None:
     """Add setup / uninstall / doctor to the ``astrocyte`` CLI."""
 
     def host_flags(p) -> None:
-        for cls in ALL_HOSTS:
+        for cls in SUPPORTED_HOSTS:
             p.add_argument(f"--{cls.key}", action="store_true", help=f"only {cls.label}")
         p.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
 

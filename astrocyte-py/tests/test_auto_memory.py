@@ -1144,7 +1144,7 @@ class TestAntigravityHooks:
         (["agy", "--print", "hi"], True),
     ])
     def test_agy_print_mode_is_headless(self, argv, headless):
-        assert hooks.DIALECTS["antigravity"].headless(argv) is headless
+        assert hooks.dialect_for("antigravity").headless(argv) is headless
 
 
 class TestCopilotHooks:
