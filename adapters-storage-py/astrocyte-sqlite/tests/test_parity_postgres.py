@@ -193,6 +193,82 @@ async def test_randomised_operation_sequences_match(stores, seed):
             assert await lite.get_document(probe.id, bank) == await pg.get_document(probe.id, bank)
 
 
+def _changes(changes: list[Any]) -> list[tuple]:
+    """Change-feed entries, compared exactly — except ``changed_at`` where a
+    store stamped it with its own clock: a tombstone (forget time) and a row
+    overwritten after it was first stored (restore time). Their order still
+    has to match."""
+    return [
+        (c.id, c.bank_id, True, None)
+        if c.deleted
+        else (
+            c.id,
+            c.bank_id,
+            False,
+            (
+                c.changed_at if c.changed_at == c.retained_at else "overwritten",
+                c.text,
+                c.metadata,
+                c.tags,
+                c.fact_type,
+                c.occurred_at,
+                c.memory_layer,
+                c.retained_at,
+            ),
+        )
+        for c in changes
+    ]
+
+
+async def _page_all(store, bank: str, limit: int, after=None) -> list[Any]:
+    seen: list[Any] = []
+    while page := await store.list_changes(bank, after=after, limit=limit):
+        seen += page
+        after = (page[-1].changed_at, page[-1].id)
+    return seen
+
+
+@pytest.mark.parametrize("seed", range(int(os.environ.get("ASTROCYTE_PARITY_SEEDS", "6"))))
+async def test_change_feed_matches(stores, seed):
+    """list_changes: same entries, same (changed_at, id) order, same paging —
+    including ties on changed_at broken by ids that collate differently under
+    a locale than byte-wise (mixed case, ``_``, ``-``)."""
+    rng = random.Random(1000 + seed)
+    pg, lite = stores
+    items = await _seed(stores, rng, 40)
+    tie = _when(rng)
+    tied = []
+    for item_id in ("Zeta", "alpha", "_under", "-dash", "B-2", "b_1", "a1B2", "A1b2"):
+        item = _item(rng, item_id=item_id)
+        item.retained_at = tie
+        tied.append(item)
+    assert await pg.store_vectors(tied) == await lite.store_vectors(tied)
+    items += tied
+
+    for _ in range(3):
+        victims = rng.sample(items, 6)
+        for bank in BANKS:
+            ids = [v.id for v in victims]
+            assert await pg.delete(ids, bank) == await lite.delete(ids, bank)
+    resurrected = [_item(rng, item_id=v.id) for v in rng.sample(items, 4)]
+    assert await pg.store_vectors(resurrected) == await lite.store_vectors(resurrected)
+
+    for bank in BANKS:
+        pg_all = await pg.list_changes(bank, limit=1000)
+        lite_all = await lite.list_changes(bank, limit=1000)
+        assert _changes(lite_all) == _changes(pg_all)
+        assert len(pg_all) == len({c.id for c in pg_all})  # one entry per row
+        for limit in (1, 3, 17):
+            assert _changes(await _page_all(lite, bank, limit)) == _changes(pg_all)
+            assert _changes(await _page_all(pg, bank, limit)) == _changes(pg_all)
+        # Resuming from the position of any entry both stores stamped alike.
+        for start in rng.sample([c for c in pg_all if not c.deleted and c.changed_at == c.retained_at], 5):
+            after = (start.changed_at, start.id)
+            assert _changes(await lite.list_changes(bank, after=after, limit=7)) == _changes(
+                await pg.list_changes(bank, after=after, limit=7)
+            )
+
+
 async def test_scores_are_clamped_identically(stores):
     pg, lite = stores
     # Explicit retained_at: each store would otherwise stamp its own "now".

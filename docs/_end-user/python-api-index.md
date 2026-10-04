@@ -14,7 +14,7 @@ the docs, and the surface itself is pinned by
 gate. For usage-oriented documentation see the
 [Memory API reference](memory-api-reference/).
 
-## Classes & types (62)
+## Classes & types (64)
 
 | Name | Summary |
 |---|---|
@@ -55,6 +55,8 @@ gate. For usage-oriented documentation see the
 | `LifecycleRunResult` | LifecycleRunResult(archived_count: 'int', deleted_count: 'int', skipped_count: 'int', actions: 'list[LifecycleAction]') |
 | `LLMCapabilities` | LLMCapabilities(supports_multimodal_completion: 'bool' = False, modalities_supported: 'tuple[str, ...] \| None' = None, supports_multimodal_embedding: 'bool' = False, supports_batch_embed: 'bool' = True) |
 | `LLMProvider` | SPI for LLM access needed by the Astrocyte core pipeline |
+| `MemoryChange` | One entry in a bank's change feed (team memory sync, ``VectorStore.list_changes``) |
+| `MemoryChangePage` | A page of :class:`MemoryChange` entries from ``Astrocyte.list_changes`` |
 | `MemoryEntityAssociation` | MemoryEntityAssociation(memory_id: 'str', entity_id: 'str') |
 | `MemoryHit` | MemoryHit(text: 'str', score: 'float', fact_type: 'str \| None' = None, metadata: 'Metadata \| None' = None, tags: 'list[str] \| None' = None, occurred_at: 'datetime \| None' = None, source: 'str \| None' = None, memory_id: 'str \| None' = None, bank_id: 'str \| None' = None, memory_layer: 'str \| None' = None, utility_score: 'float \| None' = None, retained_at: 'datetime \| None' = None, chunk_id: 'str \| None' = None) |
 | `MemoryUsage` | MemoryUsage(memory_id: 'str', text: 'str', recall_count: 'int', last_recalled_at: 'datetime') |

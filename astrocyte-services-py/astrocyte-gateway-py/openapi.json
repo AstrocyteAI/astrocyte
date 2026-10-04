@@ -197,6 +197,147 @@
         "title": "BankHealth",
         "type": "object"
       },
+      "ChangeEntry": {
+        "description": "One change-feed entry. A tombstone (``deleted: true``) has only ``id``,\n``deleted`` and ``changed_at``; a live row has the full record.",
+        "properties": {
+          "changed_at": {
+            "format": "date-time",
+            "title": "Changed At",
+            "type": "string"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "fact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Type"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "memory_layer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Layer"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "retained_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retained At"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "id",
+          "deleted",
+          "changed_at"
+        ],
+        "title": "ChangeEntry",
+        "type": "object"
+      },
+      "ChangesResponse": {
+        "description": "``GET /v1/banks/{bank_id}/changes``: a page of the change feed.",
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeEntry"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "changes",
+          "has_more"
+        ],
+        "title": "ChangesResponse",
+        "type": "object"
+      },
       "CompileBody": {
         "properties": {
           "bank_id": {
@@ -3117,6 +3258,133 @@
           }
         },
         "summary": "Audit"
+      }
+    },
+    "/v1/banks/{bank_id}/changes": {
+      "get": {
+        "description": "Changes feed of a bank: every change to a synced memory, in order (team memory G3).\n\nReturns up to ``limit`` changes (default 100; clamped into 1\u20131000)\nstrictly after ``cursor``, ordered by ``(changed_at, id)``, where\n``changed_at`` is a memory's last change to any synced field (stored,\nrewritten, forgotten). A live entry carries the memory's current\nvalues, so a later change reappears as an upsert of the same id. Omit ``cursor`` to start from the beginning; pass\n``next_cursor`` back to resume without gaps or repeats. ``has_more``\nsays more changes are already waiting. A tombstone is\n``{\"id\", \"deleted\": true, \"changed_at\"}``. Changes younger than\n``ASTROCYTE_CHANGES_SETTLE_SECONDS`` (default 5) are served on a later\ncall, so a write still committing can't be skipped. Requires ``read``\non the bank; an invalid cursor is 400; 501 when the vector store has\nno change feed.",
+        "operationId": "list_changes_v1_banks__bank_id__changes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bank_id",
+            "required": true,
+            "schema": {
+              "title": "Bank Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Api-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Astrocyte-Principal",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Astrocyte-Principal"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangesResponse",
+                  "additionalProperties": true,
+                  "title": "Response List Changes V1 Banks  Bank Id  Changes Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Unprocessable (e.g. feature not configured)"
+          }
+        },
+        "summary": "List Changes"
       }
     },
     "/v1/compile": {

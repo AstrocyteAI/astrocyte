@@ -103,6 +103,16 @@ class VectorHit:
     memory_layer: str | None = None        # "fact", "observation", "model"
 ```
 
+**Optional methods.** These are not part of the protocol, so a store without them still passes `isinstance(store, VectorStore)`; Astrocyte probes for them with `getattr` and falls back, or reports the capability as unsupported, when they are missing:
+
+| Method | Used by | Without it |
+|---|---|---|
+| `list_recent_vectors(bank_id, limit, filters)` | Recency retrieval | Scans `list_vectors` |
+| `get_by_chunk_ids(chunk_ids, bank_id)` | Chunk expansion at recall | No expansion |
+| `list_changes(bank_id, *, after, limit) -> list[MemoryChange]` | Team-memory change feed (`Astrocyte.list_changes`, `GET /v1/banks/{bank_id}/changes`) | `CapabilityNotSupported` (HTTP 501) |
+
+`list_changes` is the changes feed: **every change to a synced row, in `(changed_at, id)` order**. It returns live rows with their current values **and** forgotten rows (tombstones: `MemoryChange.deleted` is true and only `id`, `bank_id` and `changed_at` are set). `changed_at` is the row's last change to any synced field, so a store must set it on every write that changes a row: an insert takes `retained_at`; an overwrite, restore or field update takes the time of the change; a forget takes the time of the forget. Rows that predate the column backfill as `max(retained_at, forgotten_at)`. `after` is a `(changed_at, id)` position and only entries strictly after it are returned, so paging by the last entry's position never skips or repeats a row, even when many rows share one `changed_at`. Ids compare byte-wise (Postgres: `COLLATE "C"`). A store must soft-delete (or remember tombstones) to implement it: a row that is erased outright can't be reported as forgotten. `PostgresStore` and `SqliteStore` keep a `changed_at` column (Postgres: migration 039, read through a `COALESCE` expression index so old rows need no rewrite), and `InMemoryVectorStore` remembers tombstones beside its hard deletes. See `team-memory.md` §8.
+
 ### 1.3 GraphStore protocol (optional for Tier 1)
 
 Adds entity-link storage and graph traversal. When present, the pipeline uses it for entity extraction results and graph-based retrieval.

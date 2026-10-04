@@ -1,6 +1,6 @@
 # Team memory
 
-Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth) implemented; G2 onward not yet.
+Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth) and G3 (changes feed) implemented; G2 and the rest not yet.
 
 A developer's coding agents already remember a project locally: one SQLite file, per-project banks, automatic capture and recall. Team memory shares a project's memory with the people working on it, through an Astrocyte gateway the team runs. A decision Alice's agent saved on Monday is recalled by Bob's agent on Tuesday, attributed to her. Nothing changes on the hot path: hooks and the MCP server still read and write only the local store.
 
@@ -137,8 +137,18 @@ Gateway (server side; each is useful on its own):
 |---|---|
 | **G1** | Per-user tokens bound to principal + grants; glob/prefix grants; `team:` groups; authoritative `_actor` stamping |
 | **G2** | `POST /v1/banks/{bank}/sync/push`: batch upsert with client ids through the policy layer; no re-chunking; per-record `stored \| duplicate_of \| rejected` |
-| **G3** | `GET /v1/banks/{bank}/changes?cursor=&limit=`: upserts and tombstones in order. Stores gain a `changed_at` column (`max(retained_at, forgotten_at)`) and an index on `(bank_id, changed_at, id)` |
+| **G3** (implemented) | `GET /v1/banks/{bank}/changes?cursor=&limit=`: upserts and tombstones in order. Stores gain a `changed_at` column (last change to any synced field; backfilled as `max(retained_at, forgotten_at)`) and an index on `(bank_id, changed_at, id)` |
 | **G4** | Persisted legal holds; forget by `_actor` (DSAR) |
+
+**G3 as built.** `Astrocyte.list_changes(bank_id, cursor=, limit=, settle_seconds=)` over an optional `VectorStore.list_changes(bank_id, *, after, limit)`; the gateway serves it at `GET /v1/banks/{bank_id}/changes` (needs `read`; 501 when the store has no feed). Decisions the plan left open:
+
+- **The changes feed is every change to a synced row, in `(changed_at, id)` order** — not only stores and forgets. Synced records will later carry claim status, trust and "may be stale" flags that change after the record is saved, so `changed_at` is the row's **last change to any synced field**, and a live entry carries the row's current values: a later status change reaches mirrors as an upsert of the same id. Every store sets `changed_at` on every write that changes a row: an insert takes the row's `retained_at`; an overwrite through `store_vectors` (a restore of a forgotten id, or a metadata rewrite that keeps the old `retained_at`, as the temporal-normalisation task does today) takes the time of the write; a forget takes the time of the forget. There is no other update path in the stores today; **any future one (status, trust, staleness) must bump `changed_at` too**, or mirrors never see the change.
+- **Postgres backfill without a rewrite.** Migration 039 adds `changed_at` as a NULL column (catalog-only) and indexes `(bank_id, COALESCE(changed_at, GREATEST(retained_at, forgotten_at)), id COLLATE "C")`; the store reads `changed_at` through that exact expression. Rows written before the migration therefore read as `max(retained_at, forgotten_at)`, the backfill value, until their next write sets the column. An `UPDATE` backfill would write a new version of every row into the DiskANN index, and a generated column would rewrite the table under an exclusive lock and rebuild every index. SQLite adds the column and backfills it on open (local stores are small); the in-memory store tracks it and remembers tombstones beside its hard deletes.
+- **Ids order byte-wise** (`COLLATE "C"` on Postgres, `BINARY` in SQLite), so the order and the cursor don't depend on the database locale, and SQLite and Postgres agree (the parity suite checks mixed-case and `_`/`-` ids).
+- **Cursor.** URL-safe base64 of `{"changed_at", "id"}`, opaque to clients; one the server can't parse is a 400 (`InvalidCursor`). A page returns `next_cursor` (the position after its last change, or the request's own cursor when empty, so a caught-up client keeps its place) and `has_more`.
+- **Tombstones carry nothing but `id`, `deleted` and `changed_at`**, so a forgotten memory's text never leaves the gateway again. A live entry includes `memory_layer` as well as the planned fields, so a client can tell server-side observations and mental models from teammates' memories (whether mirrors should pull those is for C1/C2).
+- **Settle window.** `changed_at` is stamped just before a write commits, so with concurrent writers a slow commit could land behind a cursor that already moved past it, and that row would never be pulled. The gateway holds back changes younger than `ASTROCYTE_CHANGES_SETTLE_SECONDS` (default 5 s; the library default is 0). This assumes commits take less than the window and that the gateway hosts' clocks agree; a feed that needs a hard guarantee would order by a commit-time sequence instead.
+- **Retention of tombstones.** Soft-deleted rows (and so tombstones) are kept indefinitely today; nothing purges them on the gateway. If a purge is added, a mirror whose cursor is older than the purge horizon must re-sync from scratch. The local SQLite store's `astrocyte memory forget` purges rows outright and so leaves no tombstone, which is fine: it doesn't serve a feed.
 
 Client:
 
