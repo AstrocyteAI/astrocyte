@@ -2,6 +2,8 @@
 # The image is pushed by digest only, attested and scanned, and receives its
 # version / latest tags last — so a failing vulnerability gate leaves the
 # published tags untouched (v0.16.0's image was tagged before its scan failed).
+# Each platform image is scanned on its own: Trivy given the multi-arch index
+# scans only the runner's platform, which let arm64-only CVEs through.
 # Gateway test gate lives in `gateway-publish-test-gate.yml` (shared with `ci.yml`).
 #
 # Invoked by `release.yml` after PyPI publishes (`publish.yml` → `publish-astrocyte-postgres.yml`).
@@ -30,6 +32,8 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
+  # Platforms to build; the scan job checks the pushed index has exactly these.
+  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
   test-astrocyte-py:
@@ -115,8 +119,12 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-      security-events: write  # upload Trivy SARIF to the Security tab
     runs-on: ubuntu-latest
+    outputs:
+      image: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py
+      tag: ${{ steps.meta.outputs.tag }}
+      digest: ${{ steps.push.outputs.digest }}
+      platform_images: ${{ steps.platforms.outputs.images }}
     steps:
       - uses: actions/checkout@v7
 
@@ -158,7 +166,7 @@ jobs:
         with:
           context: .
           file: astrocyte-services-py/astrocyte-gateway-py/Dockerfile.release
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.PLATFORMS }}
           outputs: type=image,name=ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py,push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -193,17 +201,60 @@ jobs:
           sbom-path: sbom.spdx.json
           push-to-registry: true
 
-      # Vulnerability scan. SARIF always uploads to the Security tab for
-      # visibility; the gate below fails the release only on FIXABLE
-      # CRITICAL/HIGH findings (ignore-unfixed) so a base-image CVE with no
-      # patch yet does not block shipping. Tune severity / drop the gate step
-      # if this proves too strict for a given release cadence.
+      # One entry per platform image in the pushed index, for the scan matrix.
+      # Buildx's own attestation manifests (platform unknown/unknown) are skipped.
+      - name: List per-platform images
+        id: platforms
+        env:
+          IMAGE: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          images="$(docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" | jq -c '
+            [.manifests[] | select(.platform.os != "unknown")
+             | (.platform | "\(.os)/\(.architecture)" + (if .variant then "/\(.variant)" else "" end)) as $p
+             | {platform: $p, slug: ($p | gsub("/"; "-")), digest}]')"
+          want="$(jq -cn --arg p "${PLATFORMS}" '$p | split(",") | sort')"
+          got="$(jq -c '[.[].platform] | sort' <<<"${images}")"
+          if [ "${want}" != "${got}" ]; then
+            echo "::error::Pushed index has platforms ${got}, expected ${want}"
+            exit 1
+          fi
+          echo "${images}" | jq .
+          echo "images=${images}" >> "$GITHUB_OUTPUT"
+
+  # Vulnerability scan, one job per platform image (by its own digest, so
+  # Trivy can't resolve the index to just the runner's platform). SARIF always
+  # uploads to the Security tab for visibility; the gate fails the release only
+  # on FIXABLE CRITICAL/HIGH findings (ignore-unfixed) so a base-image CVE with
+  # no patch yet does not block shipping.
+  scan:
+    name: Scan ${{ matrix.platform }}
+    needs:
+      - build-and-push
+    permissions:
+      contents: read
+      packages: read
+      security-events: write  # upload Trivy SARIF to the Security tab
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.build-and-push.outputs.platform_images) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Scan image (Trivy → SARIF)
-        if: always()
         # SHA-pinned (GHSA-69fq-xp46-6x23: trivy-action version tags were hijacked)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
-          image-ref: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py@${{ steps.push.outputs.digest }}
+          image-ref: ${{ needs.build-and-push.outputs.image }}@${{ matrix.digest }}
           format: sarif
           output: trivy.sarif
           severity: CRITICAL,HIGH
@@ -214,26 +265,46 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy.sarif
-          category: trivy-image
+          category: trivy-image-${{ matrix.slug }}
 
       - name: Fail on fixable CRITICAL/HIGH vulnerabilities
         # SHA-pinned (GHSA-69fq-xp46-6x23: trivy-action version tags were hijacked)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
-          image-ref: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py@${{ steps.push.outputs.digest }}
+          image-ref: ${{ needs.build-and-push.outputs.image }}@${{ matrix.digest }}
           format: table
           exit-code: "1"
           severity: CRITICAL,HIGH
           ignore-unfixed: true
 
-      # Only a scanned, attested image gets the tags users pull. imagetools
-      # copies the multi-arch index as is, so the digest (and its
-      # attestations) is exactly what was scanned.
+  # Only a scanned, attested image gets the tags users pull — and only once
+  # every platform's scan passed. imagetools copies the multi-arch index as
+  # is, so the digest (and its attestations) is exactly what was scanned.
+  tag:
+    name: Tag the scanned image
+    needs:
+      - build-and-push
+      - scan
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Tag the scanned image
         env:
-          IMAGE: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py
-          TAG: ${{ steps.meta.outputs.tag }}
-          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          TAG: ${{ needs.build-and-push.outputs.tag }}
+          DIGEST: ${{ needs.build-and-push.outputs.digest }}
           # Unset (release.yml's call) means true.
           TAG_LATEST: ${{ inputs.tag_latest }}
         run: |

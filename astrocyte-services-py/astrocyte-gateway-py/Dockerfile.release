@@ -9,9 +9,18 @@
 # point PYTHONPATH at the copied tree. The builder's Python must match it
 # (native wheels are per-version). Debian 13: the debian12 image still ships
 # Python 3.11, OpenSSL, krb5 and expat with fixed HIGH CVEs unapplied, which
-# blocked v0.16.0 and v0.17.0 at the image scan. All native deps ride in self-contained
-# manylinux wheels (psycopg[binary] bundles libpq/libssl; uvicorn[standard]'s
-# uvloop/httptools are static), so no system libraries are required at runtime.
+# blocked v0.16.0 and v0.17.0 at the image scan.
+#
+# psycopg uses its C implementation (psycopg-c) built against Debian 13's libpq,
+# not psycopg[binary]: that wheel bundles libpq's dependencies from its build
+# distro and never picks up Debian fixes: pcre2 and OpenSSL 1.1.1 from
+# AlmaLinux 8 on aarch64 (fixable CRITICALs that failed the arm64 scan), and
+# end-of-life CentOS 7 libraries on x86_64, which Trivy has no advisories for.
+# astrocyte-postgres and the gateway still declare psycopg[binary], so pip
+# installs it and the builder deletes it afterwards. libpq5 and the packages it
+# needs that distroless lacks are copied in from Debian, with their dpkg
+# records, so scanners see them like any other OS package. Other native deps
+# ride in self-contained wheels (uvicorn[standard]'s uvloop/httptools are static).
 #
 # Build from repo root:
 #
@@ -27,6 +36,32 @@
 # releases, ``astrocyte-pgvector`` is on PyPI but not ``astrocyte-postgres``;
 # this Dockerfile only supports v0.11.0+ release builds.
 
+FROM gcr.io/distroless/python3-debian13:nonroot AS runtime-base
+
+# libpq5 plus every package in its dependency closure that the runtime image
+# doesn't already have, unpacked into /rootfs. Each package's control file goes
+# to /rootfs/var/lib/dpkg/status.d/ — the layout distroless itself uses — so
+# Trivy and Syft inventory these libraries instead of treating them as opaque.
+FROM debian:trixie-slim AS runtime-libs
+COPY --from=runtime-base /var/lib/dpkg/status.d /distroless-status.d
+WORKDIR /debs
+RUN apt-get update \
+    && apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts \
+        --no-breaks --no-replaces --no-enhances libpq5 \
+        | grep '^[a-z0-9]' | sort -u > closure \
+    && ls /distroless-status.d | grep -v '\.md5sums$' | sed 's/:.*//' | sort -u > present \
+    && comm -23 closure present > needed \
+    && grep -qx libpq5 needed \
+    && apt-get download $(cat needed) \
+    && mkdir -p /rootfs/var/lib/dpkg/status.d \
+    && for deb in *.deb; do \
+        pkg="$(dpkg-deb -f "$deb" Package)"; \
+        dpkg-deb -x "$deb" /rootfs; \
+        dpkg-deb -f "$deb" > "/rootfs/var/lib/dpkg/status.d/${pkg}"; \
+    done \
+    && echo "Adding to runtime: $(tr '\n' ' ' < needed)"
+
+# Debian 13 too, so libpq-dev here matches the libpq5 copied into the runtime.
 FROM python:3.13-slim AS builder
 
 ARG ASTROCYTE_VERSION
@@ -41,23 +76,36 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 RUN test -n "${ASTROCYTE_VERSION}" || (echo "ASTROCYTE_VERSION is required (PEP 440 version, e.g. 0.15.1)" >&2; exit 1)
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install everything into a self-contained tree at /install. Order the source
 # package last so its pinned deps resolve against the already-installed exact
-# astrocyte/astrocyte-postgres versions.
+# astrocyte/astrocyte-postgres versions. psycopg[c] pins psycopg-c to the
+# resolved psycopg version and compiles it against libpq-dev; psycopg[binary]
+# (pulled in by the packages' own requirements) is then removed so only the C
+# implementation remains.
 RUN python -m pip install --upgrade pip \
     && pip install --target=/install \
         "astrocyte==${ASTROCYTE_VERSION}" \
         "astrocyte-postgres==${ASTROCYTE_VERSION}" \
+        "psycopg[c]" \
         /build/astrocyte-gateway-py \
-    && rm -rf /build
+    && rm -rf /build /install/psycopg_binary /install/psycopg_binary-*.dist-info /install/psycopg_binary.libs
 
-FROM gcr.io/distroless/python3-debian13:nonroot
+FROM runtime-base
 
+COPY --from=runtime-libs /rootfs/ /
 COPY --from=builder /install /app
 ENV PYTHONPATH=/app \
     PYTHONDONTWRITEBYTECODE=1 \
     ASTROCYTE_HOST=0.0.0.0 \
     ASTROCYTE_PORT=8080
+
+# No shell here, so exec form. Fails the build if libpq or any library it links
+# is missing from the runtime, or if psycopg would fall back to another implementation.
+RUN ["python3", "-c", "import psycopg; assert psycopg.pq.__impl__ == 'c', psycopg.pq.__impl__; print('libpq', psycopg.pq.version())"]
 
 EXPOSE 8080
 
