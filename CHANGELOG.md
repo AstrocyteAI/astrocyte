@@ -27,6 +27,7 @@ Upgrade note: `signal_quality.dedup` and per-bank `homeostasis` / `barriers` / `
 
 ### Security
 
+- **Dependency sweep.** Every `uv.lock` (16) refreshed for the packages behind GitHub's open Dependabot alerts — `anyio` (critical), `PyJWT` (critical), `urllib3`, `pypdf`, `virtualenv`, `soupsieve` and `litellm` — clearing all 142 Python alerts. Lockfiles only; no `pyproject.toml` range changed, so installs from PyPI are unaffected except where they resolve to the same new versions. The gateway image is built from its lockfile and picks these up.
 - **The local memory store is private to its owner.** SQLite files were created with the umask — on most systems readable by every account on the machine — and they hold conversations. `astrocyte-sqlite` now creates the database 0600 (its -wal/-shm files follow) and the directory 0700; `astrocyte doctor` reports a store others can read and `--fix` (or re-running `setup`) tightens it. A database in a directory of your choosing keeps that directory's permissions. Exports are written 0600 too.
 
 ## [0.16.0] — 2026-10-03 — local install for coding agents
