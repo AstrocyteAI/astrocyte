@@ -882,10 +882,66 @@ Two consequences outside the benchmark:
   container restart mid-run would still duplicate. A durable check against the
   store (content hash per bank, or the stored `aml_request_id`) is a follow-up.
 - Dedup that cannot see the store does not survive a restart. Same follow-up.
+  **Resolved:** retain consults the vector store when the in-memory cache misses
+  (`1c97dd3`, #93, in v0.18.0), so a restarted process no longer stores a
+  duplicate of a chunk the bank already holds.
 
 **What remains open:** the actual submission models (gpt-4o-mini +
 text-embedding-3-small) are still unmeasured — the OpenAI-credit blocker in item
 1 above.
+
+#### Structured extraction on vs off, with its metadata persisted (2026-10-05)
+
+**A finding first.** On 2026-10-04 we found that `retain()` had **never** stored
+structured extraction's per-chunk metadata: the fact type, event time, and
+when/where/who were computed by a paid LLM call and discarded, keeping only the
+chunk text and entities, since extraction was introduced (2026-05-02). Every
+"extraction on" number before `057ac2a`, including pg50 and pg50fix above,
+measured extraction **without** its metadata. Fixed in `057ac2a` (in v0.19.0):
+each chunk's fields reach its row through dedup; an extracted `occurred_start`
+becomes `occurred_at`, with the request time kept as `_mentioned_at`.
+
+**The measurement.** Same 50 seed-42 items, same frozen judge (two passes),
+code `78eed43` (identical to `057ac2a`), Postgres with `bootstrap_schema`,
+`claude -p` haiku with thinking off, bge-small. Two arms differing **only** in
+`structured_fact_extraction.enabled`, run back to back on fresh infrastructure.
+No item failed in either arm.
+
+| | pass 1 | pass 2 |
+|---|---|---|
+| baseline (in-memory, extraction off; for context) | 60.0% | 56.0% |
+| pg50fix (extraction on, metadata discarded) | 62.0% | 58.0% |
+| **extraction off** | **58.0%** | **56.0%** |
+| **extraction on, metadata persisted** | **64.0%** | **64.0%** |
+
+| paired difference (judge passes averaged) | pts | 95% bootstrap CI | McNemar (pass 1) |
+|---|---|---|---|
+| **on − off** (the submission decision) | **+7.0** | **[0.0, +15.0]** | 2 vs 5 discordant, p = 0.45 |
+| on, metadata persisted − on, metadata discarded | +4.0 | [−1.0, +9.0] | 2 vs 3, p = 1.0 |
+| off − baseline | −1.0 | [−8.0, +5.0] | 3 vs 2, p = 1.0 |
+
+**Reading.** Extraction on is ahead of off in both judge passes, and the
+disagreements split 5 to 2 in its favour, but the interval's lower end sits at
+zero: **suggestive, not significant at n=50.** Persisting the metadata alone
+is within noise. Storage is not the driver: extraction off on Postgres is level
+with the in-memory baseline. Per type (directional only): preference 0 → 2/5
+and multi-session 9 → 10/18 gained; temporal reasoning did not move (5/9 in
+both arms), despite event times now being stored. The extraction-on arm's judge
+flipped 6 answers between passes against 1 for extraction off, so judge noise
+is higher there.
+
+**Decision for the submission: keep structured extraction on.** The evidence
+leans that way and none points the other way; the cost is affordable at about
+$230 of gpt-4o-mini for the suite against about $30 with it off (§4d), plus
+slower Adds. The submission pins v0.19.0, which contains `057ac2a`. An n=250
+rerun of both arms would settle significance; it is not worth the quota unless
+the cost difference matters.
+
+**Caveats.** The adapter layer (`astrocyte_aml`) loaded from the main checkout
+rather than the pinned worktree in both arms (uvicorn's `--app-dir`, §9 item 12),
+identically, so the pair stands; the measured change is in the pinned core. The
+judge ran hooks-off here, unlike the earlier runs' judge, so comparisons with
+the baseline and pg50fix carry that asterisk; the on-vs-off pair does not.
 
 ## 5. M48 — Phase 3 (both sub-items gated)
 
@@ -1613,8 +1669,9 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
        2026-10-04: the fact type, event time, and when/where/who were computed
        and discarded on the main retain path since extraction was introduced.
        Everything below depends on dates and sources surviving storage.
-       **Fixed in `057ac2a`**; the paired measurement of extraction on vs off
-       is running.
+       **Fixed in `057ac2a`** (in v0.19.0). Measured 2026-10-05: extraction on
+       with its metadata beats extraction off by +7.0 pts, CI [0, +15], n=50;
+       suggestive, not significant. Kept on for the submission (§4e).
     2. *Metadata parity for federated hits* (federated-sources F0b):
        `_row_to_hit` drops dates and provenance and invents a 0.5 score.
        **Done 2026-10-04**; the 0.5 turned out never to rank anything and is
