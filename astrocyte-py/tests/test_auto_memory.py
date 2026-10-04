@@ -115,7 +115,7 @@ class TestTranscriptEdges:
 
     def _read(self, tmp_path, body: str, offset: int = 0):
         t = tmp_path / "t.jsonl"
-        t.write_text(body)
+        t.write_text(body, newline="\n")
         return read_new_turns(t, offset)
 
     def test_prompts_typed_as_text_blocks_count_tool_results_do_not(self, tmp_path):
@@ -162,7 +162,7 @@ class TestTranscriptEdges:
         turns, resume = self._read(tmp_path, body)
         assert [t.user for t in turns] == ["first"]
         later = body + assistant(text("two"))
-        (tmp_path / "t.jsonl").write_text(later)
+        (tmp_path / "t.jsonl").write_text(later, newline="\n")
         turns, _ = read_new_turns(tmp_path / "t.jsonl", resume)
         assert [(t.user, t.assistant) for t in turns] == [("second", ["two"])]
 
@@ -184,7 +184,8 @@ class TestTranscript:
             + assistant(text("subagent chatter"), sidechain=True)
             + _line(type="attachment", attachment={"type": "hook_success", "content": "Possibly relevant memories"})
             + _line(type="user", message={"content": "<task-notification>done</task-notification>"},
-                    origin={"kind": "task-notification"})
+                    origin={"kind": "task-notification"}),
+            newline="\n",
         )
         turns, offset = read_new_turns(t)
         assert len(turns) == 1
@@ -197,7 +198,7 @@ class TestTranscript:
 
     def test_incremental_reads_never_duplicate_or_lose_a_turn(self, tmp_path):
         t = tmp_path / "t.jsonl"
-        t.write_text(human("first question") + assistant(text("first answer")))
+        t.write_text(human("first question") + assistant(text("first answer")), newline="\n")
         turns, off = read_new_turns(t)
         assert [x.user for x in turns] == ["first question"]
         with t.open("a") as fh:
@@ -213,19 +214,19 @@ class TestTranscript:
     def test_half_written_last_line_is_left_for_next_time(self, tmp_path):
         t = tmp_path / "t.jsonl"
         full = human("q") + assistant(text("a"))
-        t.write_text(full + '{"type": "user", "mess')
+        t.write_text(full + '{"type": "user", "mess', newline="\n")
         turns, off = read_new_turns(t)
         assert len(turns) == 1 and off == len(full.encode())
 
     def test_long_messages_are_clipped(self, tmp_path):
         t = tmp_path / "t.jsonl"
-        t.write_text(human("x" * 50_000) + assistant(text("ok")))
+        t.write_text(human("x" * 50_000) + assistant(text("ok")), newline="\n")
         [turn] = read_new_turns(t)[0]
         assert len(turn.render()) < MAX_USER_CHARS + 200
 
     def test_a_rewritten_transcript_restarts_from_the_top(self, tmp_path):
         t = tmp_path / "t.jsonl"
-        t.write_text(human("q") + assistant(text("a")))
+        t.write_text(human("q") + assistant(text("a")), newline="\n")
         assert len(read_new_turns(t, offset=10_000)[0]) == 1
 
 
@@ -663,7 +664,7 @@ class TestHooks:
         monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
         monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
         t = tmp_path / "t.jsonl"
-        t.write_text(human("what's our deploy day?") + assistant(text("Tuesdays.")))
+        t.write_text(human("what's our deploy day?") + assistant(text("Tuesdays.")), newline="\n")
         payload = json.dumps({"transcript_path": str(t), "session_id": "s1", "cwd": str(env.home)})
         hooks.run("stop", payload)
         hooks.run("stop", payload)  # nothing new
@@ -886,7 +887,7 @@ class TestStaysOutOfAutomation:
         hot-reloads settings) had its whole history captured in one burst."""
         self._spy(monkeypatch)
         t = tmp_path / "t.jsonl"
-        t.write_text("".join(human(f"q{i}") + assistant(text(f"a{i}")) for i in range(40)))
+        t.write_text("".join(human(f"q{i}") + assistant(text(f"a{i}")) for i in range(40)), newline="\n")
         hooks.run("stop", json.dumps({"transcript_path": str(t), "session_id": "old", "cwd": str(env.home)}))
         [spooled] = list((env.state / "spool").glob("*.json"))
         turns = json.loads(spooled.read_text())["turns"]
@@ -961,7 +962,7 @@ def test_daemon_never_issues_background_llm_calls(env):
 def test_stop_does_not_spool_where_no_daemon_can_drain_it(env, tmp_path, monkeypatch):
     monkeypatch.setattr(agentd, "supported", lambda: False)
     t = tmp_path / "t.jsonl"
-    t.write_text(human("q") + assistant(text("a")))
+    t.write_text(human("q") + assistant(text("a")), newline="\n")
     hooks.run("stop", json.dumps({"transcript_path": str(t), "session_id": "s", "cwd": str(env.home)}))
     assert not (env.state / "spool").exists()
 
@@ -1198,7 +1199,8 @@ class TestAntigravityTranscript:
             + _agy_step(1, "EPHEMERAL_MESSAGE", "Possibly relevant memories: …", source="SYSTEM_SDK")
             + _agy_step(2, "PLANNER_RESPONSE", None, tool_calls=[{"name": "find_by_name"}])
             + _agy_step(3, "GENERIC", "The command exited with code 0.")
-            + _agy_step(4, "PLANNER_RESPONSE", "Tuesdays.")
+            + _agy_step(4, "PLANNER_RESPONSE", "Tuesdays."),
+            newline="\n",
         )
         [turn], resume = read_new_turns(t, antigravity=True)
         assert turn.user == "what is our deploy day?" and turn.assistant == ["Tuesdays."]
@@ -1231,7 +1233,7 @@ class TestAntigravityHooks:
         calls = []
         self._wire(monkeypatch, calls)
         t = tmp_path / "transcript.jsonl"
-        t.write_text(_agy_user(0, "why is staging failing today?"))
+        t.write_text(_agy_user(0, "why is staging failing today?"), newline="\n")
         out = self._run(monkeypatch, capsys, "prompt", self._payload(env, t))
         assert out == {"injectSteps": [{"ephemeralMessage": "[boot]\n\n[recall]"}]} and calls == ["boot", "recall"]
         # PreInvocation fires before every model call of the turn: act once.
@@ -1249,7 +1251,7 @@ class TestAntigravityHooks:
         monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
         monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
         t = tmp_path / "transcript.jsonl"
-        t.write_text(_agy_user(0, "what is our deploy day?") + _agy_step(1, "PLANNER_RESPONSE", "Tuesdays."))
+        t.write_text(_agy_user(0, "what is our deploy day?") + _agy_step(1, "PLANNER_RESPONSE", "Tuesdays."), newline="\n")
         hooks.run("stop", self._payload(env, t), "antigravity")
         [spooled] = list((env.state / "spool").glob("*.json"))
         batch = json.loads(spooled.read_text())

@@ -48,7 +48,8 @@ def step(title: str) -> None:
 
 def run(argv: list[str], *, env: dict[str, str] | None = None, cwd: Path | None = None, check: bool = True,
         stdin: str | None = None) -> subprocess.CompletedProcess:
-    proc = subprocess.run(argv, env=env, cwd=cwd, input=stdin, capture_output=True, text=True, timeout=900)
+    proc = subprocess.run(argv, env=env, cwd=cwd, input=stdin, capture_output=True, text=True, timeout=900,
+                          encoding="utf-8", errors="replace")
     out = (proc.stdout + proc.stderr).strip()
     if out:
         print("   " + out.replace("\n", "\n   "))
@@ -91,6 +92,9 @@ print("retained via MCP")
 
 
 def main() -> int:
+    if WINDOWS:  # piped output there is cp1252, which has no ─ or ✓
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--build", action="store_true", help="build wheels from this checkout and install those")

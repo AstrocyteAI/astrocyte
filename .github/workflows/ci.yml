@@ -83,8 +83,11 @@ jobs:
           uv sync --extra dev
           if [ "${{ matrix.python-version }}" = "3.12" ] && [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             uv run python -m pytest --cov=astrocyte --cov-report=json:coverage.json --cov-report=html:htmlcov --cov-report=term
-          else
+          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             uv run python -m pytest
+          else
+            # Report every platform failure in one run, not just the first (-x).
+            uv run python -m pytest --maxfail=100
           fi
 
       - name: Generate coverage badge JSON
