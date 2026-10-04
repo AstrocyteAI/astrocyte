@@ -19,8 +19,8 @@ where it came from and whether it is still true.
 
 ## 0. Decisions (2026-10-04)
 
-Committed publicly in Calvin's reply to the essay, "Agents Need Documents They
-Can Check" (calvinx.com, publishing 2026-10-04), whose "What this means for Astrocyte"
+Committed publicly in Calvin's reply to the essay,
+["Agents Need Documents They Can Check"](https://calvinx.com/blog/2026-Oct-04/agents-need-documents-they-can-check) (2026-10-04), whose "What this means for Astrocyte"
 section states the direction below. Nothing in it is built yet; it follows the
 AML cycle 2 work.
 

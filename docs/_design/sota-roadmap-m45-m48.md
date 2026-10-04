@@ -8,6 +8,7 @@ topic: design
 
 **Status:** PROPOSED (2026-09-01; revised same day after the AI-memory landscape survey — see §0b; revised 2026-09-02 with the local self-evaluation harness — see §4b, §9.7)
 **Predecessor:** v0.15.1 (cycle `v015w` ship-floor: LME 74.4% @ mt_8192 n=90; LoCoMo 84.5% n=200 / 82.1% n=1540)
+**Objective (north star, 2026-10-04):** wherever you use AI, Astrocyte captures and checks what it learns, under your organisation's rules — see [`design-principles.md`](design-principles.md) §0. The benchmark goal below serves it.
 **Goal:** credible SOTA positioning across the matched-harness leaderboards (AML, LongMemEval-V2, AMA-Bench, MemoryArena), with an explicit cost/latency/accuracy tiering doctrine.
 **Hard date:** AML submission cycle 2 opens **2026-09-20** (§4).
 **Implementation status:** the AML adapter + self-eval harness described in §4/§4b live on branch **`feat/aml-adapter`** (worktree `astrocyte-wt-aml`, HEAD `fd979d2`) — **not merged to `main`**, so they are invisible from a default checkout. 68 tests pass, CI-gated. Everything else in this doc is proposal.
@@ -1572,8 +1573,8 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     docs-augmented evaluation in the design measures it.
 
 15. **Direction committed publicly — documents people can check** (added
-    2026-10-04). Calvin's reply to the essay in item 13, "Agents Need Documents
-    They Can Check" (calvinx.com, publishing 2026-10-04), states Astrocyte's direction in
+    2026-10-04). Calvin's reply to the essay in item 13,
+    ["Agents Need Documents They Can Check"](https://calvinx.com/blog/2026-Oct-04/agents-need-documents-they-can-check), states Astrocyte's direction in
     public. The eight decisions are recorded in
     [`anchored-documents.md`](anchored-documents.md) §0; in short:
     Astrocyte is the evidence layer behind documents, not a rival to them; the
@@ -1613,6 +1614,32 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     8. *A fourth "federated" arm* in the anchored-documents §9 evaluation
        (documents only, memory only, hybrid, federated), with latency p50/p95
        alongside accuracy and confidence intervals.
+
+16. **Gaps between today and the objective** (added 2026-10-04). The
+    objective in [`design-principles.md`](design-principles.md) §0 is
+    vendor-neutral and organisation-aware: Astrocyte present in every AI tool,
+    with the same governance everywhere. Four gaps stand between today and it.
+    - **Capture differs by tool.** Claude Code (and Codex) have lifecycle hooks,
+      so capture is automatic. Over MCP alone, something is stored only when the
+      model chooses to call the tool. Consumer apps without hooks are reachable
+      only through the gateway, the LiteLLM adapter, or the LLM-wrapper
+      integration acting as an API proxy. Automatic capture everywhere needs a
+      **capture route per tool type**, and a statement of which tools get which.
+    - **One identity across tools.** The same person in Claude and ChatGPT must
+      map to one identity and the same team grants, ideally through company SSO.
+      Team memory G1 (per-user gateway tokens, glob and team grants, `#108`,
+      merged 2026-10-04) is the foundation; identity design lives in
+      [`identity-and-external-policy.md`](identity-and-external-policy.md).
+    - **Governance that travels with the documents.** Team and permission rules
+      must also hold for pages written back into a repository or Confluence, not
+      only inside Astrocyte's store: a page derived from a restricted bank must
+      not be proposed into a space with wider access
+      ([`anchored-documents.md`](anchored-documents.md) §7,
+      [`federated-sources.md`](federated-sources.md) §6).
+    - **Provenance end to end.** Dates, sources, and anchors must survive
+      `retain()` (fixed in `057ac2a`), the gateway, and federated or RAG results
+      (federated-sources F0b). Results from systems teams already run are
+      evidence with sources, never raw text handed to the agent.
 
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
