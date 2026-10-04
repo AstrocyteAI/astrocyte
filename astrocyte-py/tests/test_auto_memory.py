@@ -1254,6 +1254,71 @@ class TestCodexHooks:
         [batch] = self._spooled(env)
         assert batch["turns"][0]["started_at"] is None and "Migrated." in batch["turns"][0]["content"]
 
+    # As codex-cli 0.160 sends it after a successful apply_patch (observed).
+    PATCH = "*** Begin Patch\n*** Add File: b.txt\n+two\n*** Update File: src/a.py\n@@\n+x = 1\n*** End Patch\n"
+
+    def _edited(self, base: dict, patch: str) -> str:
+        return json.dumps({**base, "hook_event_name": "PostToolUse", "tool_name": "apply_patch",
+                           "tool_input": {"command": patch}, "tool_response": "Exit code: 0"})
+
+    def test_a_turn_keeps_the_files_its_patches_changed(self, env, monkeypatch, capsys):
+        self._capture(monkeypatch)
+        base = {"session_id": "c1", "cwd": str(env.home)}
+        hooks.run("prompt", json.dumps({**base, "prompt": "add the retry"}), "codex")
+        hooks.run("edit", self._edited(base, self.PATCH), "codex")
+        hooks.run("edit", self._edited(base, "*** Begin Patch\n*** Update File: src/a.py\n*** End Patch\n"),
+                  "codex")
+        assert capsys.readouterr().out == "", "the edit hook adds nothing to the model's context"
+        hooks.run("stop", json.dumps({**base, "last_assistant_message": "Added."}), "codex")
+        [batch] = self._spooled(env)
+        assert batch["turns"][0]["files"] == ["b.txt", "src/a.py"], "relative to the project, once each"
+        assert not list((env.state / "sessions").glob("*.files.json")), "taken with the turn"
+
+    def test_an_unfinished_turns_edits_are_not_kept_for_the_next(self, env, monkeypatch):
+        self._capture(monkeypatch)
+        base = {"session_id": "c1", "cwd": str(env.home)}
+        hooks.run("prompt", json.dumps({**base, "prompt": "add the retry"}), "codex")
+        hooks.run("edit", self._edited(base, self.PATCH), "codex")
+        # Interrupted: no Stop. The next turn edits nothing.
+        hooks.run("prompt", json.dumps({**base, "prompt": "explain the backoff instead"}), "codex")
+        hooks.run("stop", json.dumps({**base, "last_assistant_message": "It doubles."}), "codex")
+        [batch] = self._spooled(env)
+        assert batch["turns"][0]["files"] == []
+
+    def test_a_moved_file_counts_both_names_and_absolute_paths_stay(self, env, monkeypatch):
+        self._capture(monkeypatch)
+        base = {"session_id": "c1", "cwd": str(env.home)}
+        outside = (env.home.parent / "elsewhere.txt").as_posix()
+        patch = (f"*** Begin Patch\n*** Update File: old.py\n*** Move to: new.py\n"
+                 f"*** Delete File: {outside}\n*** End Patch\n")
+        hooks.run("prompt", json.dumps({**base, "prompt": "rename it"}), "codex")
+        hooks.run("edit", self._edited(base, patch), "codex")
+        hooks.run("stop", json.dumps({**base, "last_assistant_message": "Renamed."}), "codex")
+        [batch] = self._spooled(env)
+        assert batch["turns"][0]["files"] == ["old.py", "new.py", Path(outside).as_posix()]
+
+    @pytest.mark.parametrize("payload", [
+        {"tool_name": "exec_command", "tool_input": {"command": "sed -n 1,20p a.py"}},
+        {"tool_name": "apply_patch", "tool_input": {"command": "not a patch"}},
+        {"tool_name": "apply_patch", "tool_input": "*** Update File: a.py"},
+        {"tool_name": "apply_patch"},
+    ])
+    def test_anything_but_a_patch_naming_files_is_ignored(self, env, monkeypatch, payload):
+        self._capture(monkeypatch)
+        hooks.run("edit", json.dumps({"session_id": "c1", "cwd": str(env.home), **payload}), "codex")
+        assert not (env.state / "sessions").exists() or not list((env.state / "sessions").glob("*.files.json"))
+
+    def test_other_hosts_record_no_edits(self, env, monkeypatch):
+        """Claude Code and Antigravity name their files in the transcript."""
+        self._capture(monkeypatch)
+        hooks.run("edit", self._edited({"session_id": "c1", "cwd": str(env.home)}, self.PATCH), "claude")
+        assert not (env.state / "sessions").exists() or not list((env.state / "sessions").glob("*.files.json"))
+
+    def test_patch_paths(self):
+        assert hooks.patch_paths(self.PATCH) == ["b.txt", "src/a.py"]
+        assert hooks.patch_paths("*** Update File: a b.py  \n*** Update File: a b.py\n") == ["a b.py"]
+        assert hooks.patch_paths("+*** Update File: inside/the/content.py\n") == []
+
     def test_unknown_host_is_ignored(self, env, monkeypatch, capsys):
         monkeypatch.setattr(agentd, "request", lambda *a, **k: pytest.fail("unknown host reached the daemon"))
         assert hooks.run("prompt", json.dumps({"prompt": "why is staging failing"}), "nope") == 0
@@ -1458,6 +1523,7 @@ class TestCodexHookInstall:
     WANT = {
         "SessionStart": f"{CLI} hook session-start --host codex",
         "UserPromptSubmit": f"{CLI} hook prompt --host codex",
+        "PostToolUse": f"{CLI} hook edit --host codex",
         "Stop": f"{CLI} hook stop --host codex",
     }
 
@@ -1477,6 +1543,7 @@ class TestCodexHookInstall:
         assert data["model"] == "gpt-5.5" and data["mcp_servers"]["other"]["command"] == "/bin/other"
         assert [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]] == [
             "'/bin/other' hook-augment", self.WANT["SessionStart"]]
+        assert [g.get("matcher") for g in data["hooks"]["PostToolUse"]] == ["apply_patch"], "edits only"
         assert host.install_hooks(CLI).status == "unchanged"
         assert host.uninstall_hooks().status == "removed"
         assert host.config_file().read_text() == self.THEIRS, "uninstall restores the file byte for byte"
@@ -1512,7 +1579,10 @@ class TestCodexHookInstall:
         hooks_json.write_text(json.dumps({"hooks": {"SessionStart": [mine]}}))
         assert host.install_hooks(CLI).status == "installed"
         assert host.hooks_file() == hooks_json and not host.config_file().exists()
-        assert mine in json.loads(hooks_json.read_text())["hooks"]["SessionStart"]
+        installed = json.loads(hooks_json.read_text())["hooks"]
+        assert mine in installed["SessionStart"]
+        assert [g.get("matcher") for g in installed["PostToolUse"]] == ["apply_patch"]
+        assert host.install_hooks(CLI).status == "unchanged"
         host.uninstall_hooks()
         assert json.loads(hooks_json.read_text()) == {"hooks": {"SessionStart": [mine]}}
 
@@ -1527,6 +1597,21 @@ class TestCodexHookInstall:
         assert host.install_hooks(CLI).status == "updated"
         assert not hooks_json.exists(), "the file only ever held ours"
         assert host.hook_commands() == self.WANT
+
+    def test_an_install_from_before_the_edit_hook_gains_it(self, env):
+        host = CodexHost()
+        host.config_file().parent.mkdir(parents=True)
+        host.config_file().write_text('model = "o3"\n')
+        host.install_hooks(CLI)
+        earlier = {**self.WANT}
+        del earlier["PostToolUse"]
+        text = host.config_file().read_text()
+        start = text.index("\n[[hooks.PostToolUse]]")
+        host.config_file().write_text(text[:start] + text[text.index("\n[[hooks.Stop]]"):])
+        assert host.hook_commands() == {**earlier, "PostToolUse": None}
+        assert host.install_hooks(CLI).status == "updated"
+        assert host.hook_commands() == self.WANT
+        assert host.config_file().read_text().count(">>> astrocyte") == 1
 
     def test_refuses_an_edit_it_cannot_verify(self, env):
         """Events written as inline arrays can't take an appended table."""

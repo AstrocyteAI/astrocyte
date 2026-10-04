@@ -49,7 +49,8 @@ a Windows machine, so WSL remains the recommended way to get automatic memory th
 
 **File recall (opt-in, Claude Code):** `astrocyte setup --claude --file-recall` also adds, after the agent
 reads or edits a file, the memories of earlier turns that touched that file (captured turns record the files
-they read or edited). Each file is answered once per session. It runs a hook on every file read, so it is off
+they read or edited; Codex turns record only the files they edited, since Codex reads files through shell
+commands). Each file is answered once per session. It runs a hook on every file read, so it is off
 unless you turn it on; `--no-file-recall` turns it off again.
 
 Setup remembers what you switch off: after `astrocyte uninstall --claude` or

@@ -309,7 +309,7 @@ def register(sub) -> None:
     setup.set_defaults(func=cmd_setup)
 
     hook = sub.add_parser("hook", help="(called by agent hooks) automatic memory for one lifecycle event")
-    hook.add_argument("event", choices=["session-start", "prompt", "stop", "file"])
+    hook.add_argument("event", choices=["session-start", "prompt", "stop", "file", "edit"])
     hook.add_argument("--host", choices=["claude", "codex", "antigravity", "copilot"], default="claude",
                       help="the agent firing the hook")
     hook.set_defaults(func=lambda a: _run_hook(a.event, a.host))

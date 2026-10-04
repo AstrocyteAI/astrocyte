@@ -8,6 +8,10 @@
                    trivial prompt never reaches the daemon at all.
 ``stop``           Spools the turn that just finished (~0.35 s; synchronous,
                    because headless `claude -p` kills background hooks).
+``edit``           Codex: notes the files an ``apply_patch`` changed, for
+                   the turn ``stop`` captures.
+``file``           Claude Code, opt-in: memories of earlier turns that
+                   touched the file the agent just read or edited.
 =================  ======================================================
 
 Claude Code and Codex fire these under the same event names with the same
@@ -330,6 +334,7 @@ def _prompt(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect)
         # one too slight to recall against: it is still half of a turn.
         _write_state(_session_file(session, ".prompt"),
                      {"prompt": redact_secrets(prompt), "at": datetime.now(timezone.utc).isoformat()})
+        _session_file(session, ".files").unlink(missing_ok=True)  # an unfinished turn's edits
     if not worth_recalling(prompt):
         return
     reply = agentd.request("recall", {"bank": bank, "session_id": session, "prompt": prompt}, timeout=PROMPT_DEADLINE)
@@ -373,9 +378,11 @@ def _turns_from_transcript(payload: dict, session: str, *, antigravity: bool = F
 
 def _turn_from_payload(payload: dict, session: str) -> TurnSource:
     pending = _session_file(session, ".prompt")
+    edited = _session_file(session, ".files")
 
     def commit() -> None:
         pending.unlink(missing_ok=True)
+        edited.unlink(missing_ok=True)
 
     try:
         kept = json.loads(pending.read_text(encoding="utf-8"))
@@ -388,7 +395,11 @@ def _turn_from_payload(payload: dict, session: str) -> TurnSource:
         started = datetime.fromisoformat(kept.get("at") or "")
     except (TypeError, ValueError):
         started = None
-    return [Turn(user=str(kept.get("prompt") or ""), assistant=[answer], started_at=started)], commit
+    try:
+        files = list(dict.fromkeys(line for line in edited.read_text(encoding="utf-8").splitlines() if line))
+    except OSError:
+        files = []
+    return [Turn(user=str(kept.get("prompt") or ""), assistant=[answer], started_at=started, files=files)], commit
 
 
 # Kept on each captured memory: enough to tie a turn to its code, small
@@ -463,7 +474,38 @@ def _file(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -
     dialect.emit("PostToolUse", reply.get("context", ""))
 
 
-_HANDLERS = {"session-start": _session_start, "prompt": _prompt, "stop": _stop, "file": _file}
+# The file lines of an apply_patch envelope (Codex's only file-writing tool).
+_PATCH_FILE = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$", re.MULTILINE)
+
+
+def patch_paths(patch: str) -> list[str]:
+    """The files an ``apply_patch`` envelope adds, updates, deletes or moves to."""
+    return list(dict.fromkeys(_PATCH_FILE.findall(patch)))
+
+
+def _edit(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
+    """After a Codex ``apply_patch`` succeeds: note the files it changed, for
+    Stop to keep on the turn. Codex reads files through shell commands, which
+    name no path reliably, so only edits are recorded."""
+    if dialect.turn_source != "payload" or payload.get("tool_name") != "apply_patch" or not agentd.supported():
+        return
+    tool_input = payload.get("tool_input")
+    patch = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(patch, str):
+        return
+    cwd = payload.get("cwd")
+    base = Path(cwd) if isinstance(cwd, str) and cwd else None
+    paths = [str(base / p) if base is not None and not Path(p).is_absolute() else p for p in patch_paths(patch)]
+    if not paths:
+        return
+    marker = _session_file(session, ".files")  # one path per line, despite the name
+    marker.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Appended, one path per line: patches applied in parallel each add theirs.
+    with marker.open("a", encoding="utf-8") as f:
+        f.write("".join(f"{p}\n" for p in paths))
+
+
+_HANDLERS = {"session-start": _session_start, "prompt": _prompt, "stop": _stop, "file": _file, "edit": _edit}
 
 
 PONG = {"astrocyte": "pong"}

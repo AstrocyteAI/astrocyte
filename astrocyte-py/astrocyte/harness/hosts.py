@@ -230,10 +230,12 @@ class HookHost:
     #: Opt-in recall on file reads and edits: (event, tool matcher, extra entry
     #: fields), or None where the harness has no such hook (yet).
     FILE_HOOK: tuple[str, str, dict[str, Any]] | None = None
+    #: Event → tool matcher, for HOOK_EVENTS entries that fire on tool calls.
+    HOOK_MATCHERS: dict[str, str] = {}
     # Matches the current ``<python> -I -m astrocyte.cli hook …`` form and the
     # earlier ``astrocyte hook …`` console-script form, with or without --host.
     _OURS = re.compile(
-        r"astrocyte(?:\.cli)?['\"]?\s+hook\s+(session-start|prompt|stop|file)(?:\s+--host\s+[a-z-]+)?\s*$"
+        r"astrocyte(?:\.cli)?['\"]?\s+hook\s+(session-start|prompt|stop|file|edit)(?:\s+--host\s+[a-z-]+)?\s*$"
     )
 
     @abstractmethod
@@ -316,7 +318,9 @@ class HookHost:
         verb: Status = "updated" if any(current.values()) else "installed"
         if dry_run:
             return Outcome(label, "planned", f"would {_VERB[verb]} {self.hooks_file()}")
-        matcher = {self.FILE_HOOK[0]: self.FILE_HOOK[1]} if self.FILE_HOOK else {}
+        matcher = dict(self.HOOK_MATCHERS)
+        if file_recall and self.FILE_HOOK:
+            matcher[self.FILE_HOOK[0]] = self.FILE_HOOK[1]
 
         def change(data: dict) -> None:
             self._strip_ours(data)  # replace stale entries; never touch the user's own hooks
@@ -435,17 +439,20 @@ class CodexHost(HookHost, _CliHost):
     # Codex speaks Claude Code's hook contract (same events, same
     # ``hookSpecificOutput.additionalContext``; verified on codex-cli 0.160),
     # but its Stop payload carries the reply as ``last_assistant_message``
-    # rather than a transcript we can parse — hence its own dialect.
-    # Timeouts are seconds.
+    # rather than a transcript we can parse — hence its own dialect — and
+    # names no files, so PostToolUse on apply_patch (its one file-writing
+    # tool; reads go through the shell) notes them. Timeouts are seconds.
     HOOK_EVENTS = {
         "SessionStart": ("session-start", {"timeout": 15}),
         "UserPromptSubmit": ("prompt", {"timeout": 5}),
+        "PostToolUse": ("edit", {"timeout": 5}),
         "Stop": ("stop", {"timeout": 10}),
     }
+    HOOK_MATCHERS = {"PostToolUse": "apply_patch"}
     hook_dialect = "codex"
     hooks_next_step = (
         "Codex runs new or changed hooks only once you trust them: in Codex, run /hooks and trust "
-        "the three astrocyte hooks."
+        "the four astrocyte hooks."
     )
 
     # Codex reads hooks from hooks.json and from config.toml, and warns on
@@ -513,7 +520,10 @@ class CodexHost(HookHost, _CliHost):
     def _block(self, wanted: dict[str, dict[str, Any]]) -> str:
         lines = [self._BEGIN, "# Automatic memory, managed by `astrocyte setup` (remove: astrocyte setup --no-hooks)."]
         for event, entry in wanted.items():
-            lines += ["", f"[[hooks.{event}]]", "", f"[[hooks.{event}.hooks]]"]
+            lines += ["", f"[[hooks.{event}]]"]
+            if event in self.HOOK_MATCHERS:
+                lines.append(f"matcher = {json.dumps(self.HOOK_MATCHERS[event])}")
+            lines += ["", f"[[hooks.{event}.hooks]]"]
             # JSON string escapes are valid TOML basic-string escapes.
             lines += [f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in entry.items()]
         return "\n".join([*lines, self._END]) + "\n"
@@ -588,7 +598,8 @@ class CodexHost(HookHost, _CliHost):
             self._strip_ours(expected)
             hooks = expected.setdefault("hooks", {})
             for event, entry in wanted.items():
-                hooks.setdefault(event, []).append({"hooks": [entry]})
+                group = {"matcher": self.HOOK_MATCHERS[event]} if event in self.HOOK_MATCHERS else {}
+                hooks.setdefault(event, []).append({**group, "hooks": [entry]})
             body = self._unmarked(text)
             body = body.rstrip("\n") + "\n\n" if body.strip() else ""
             self._write_toml(body + self._block(wanted), expected)

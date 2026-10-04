@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Codex turns record the files they edited.** Codex reports no files at Stop, so setup adds a fourth Codex hook, `PostToolUse` on `apply_patch` (its only file-writing tool), which notes the files each successful patch adds, updates, deletes or moves to; Stop keeps them on the captured turn as metadata `files`, relative to the project, like Claude Code's and Antigravity's. Files Codex only reads are not recorded: it reads through shell commands, whose paths can only be guessed. Checked against a live codex-cli 0.160 session. Existing installs get the hook from the next `astrocyte setup` or `astrocyte doctor --fix` (until then `doctor` reports it missing), and Codex runs it only once it is trusted in `/hooks`.
+
 ## [0.20.0] — 2026-10-05 — file recall; concurrent proxy recall; an SBOM for every gateway image
 
 Design and direction: `docs/_design/federated-sources.md` (F0, F0b delivered), `docs/_design/anchored-documents.md` (P0: a documents-only baseline and a staleness benchmark in `astrocyte-aml-py`, which is not published), and the roadmap's decision to keep structured extraction on now that its metadata is stored.
