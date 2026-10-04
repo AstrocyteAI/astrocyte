@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MCP server advertised tools it had not registered.** Its instructions told every agent to use `memory_reflect` and `memory_forget`, but `memory_forget` is only registered with `mcp.expose_forget: true` (off by default, and off in configs written by `astrocyte setup`), so an agent asked to forget something went looking for a tool that does not exist. The instructions now list only the registered tools; without forget, they tell the agent to give the user the `memory_id` from `memory_recall` for `astrocyte memory forget <memory_id> --bank <bank_id>`, which erases it from disk.
+
 ## [0.16.0] — 2026-10-03 — local install for coding agents
 
 ### Fixed
