@@ -37,6 +37,7 @@ from astrocyte.pipeline._orchestrator_common import (
     _build_cooccurrence_pairs,
     _entities_from_metadata,
 )
+from astrocyte.pipeline.provenance import SOURCE_KEY
 
 _logger = logging.getLogger("astrocyte.mip")
 
@@ -1165,6 +1166,11 @@ class RetainStageMixin:
         # Ties this retain's chunks together. ``_created_at`` cannot: on a
         # coarse clock (Windows ticks every ~15 ms) consecutive retains share it.
         chunk_metadata.setdefault("_retain_id", uuid.uuid4().hex)
+        # Where the content came from (a URL, a file, an agent): recall hits
+        # carry it as MemoryHit.source. It reached only the optional source
+        # store before, so on the default path every hit's source was None.
+        if request.source:
+            chunk_metadata.setdefault(SOURCE_KEY, request.source)
 
         # 3b. M10: persist source-document + chunk provenance, get back per-chunk
         # ``chunk_id``s that we'll stamp onto each VectorItem so recall can
@@ -1456,6 +1462,8 @@ class RetainStageMixin:
                 chunk_metadata["_mip.pipeline_version"] = int(mip_pipeline.version)
             chunk_metadata.setdefault("_created_at", datetime.now(timezone.utc).isoformat())
             chunk_metadata.setdefault("_retain_id", uuid.uuid4().hex)  # see the single-retain path
+            if request.source:
+                chunk_metadata.setdefault(SOURCE_KEY, request.source)
 
             # M10 source-aware retain — same helper as the single-retain path.
             chunk_ids = await self._provision_source_provenance(

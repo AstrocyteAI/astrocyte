@@ -94,6 +94,11 @@ class RetainBody(BaseModel):
     bank_id: str
     metadata: dict[str, Any] | None = None
     tags: list[str] | None = None
+    #: When the content happened (ISO 8601; a naive time is UTC). Defaults to
+    #: the time of the request.
+    occurred_at: datetime | None = None
+    #: Where it came from: a URL, a file path, a system. Returned on recall hits.
+    source: str | None = Field(default=None, max_length=2048)
 
 
 class RecallBody(BaseModel, _ResultLimitMixin):
