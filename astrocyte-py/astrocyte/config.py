@@ -92,6 +92,12 @@ class DedupConfig:
     enabled: bool = True
     similarity_threshold: float = 0.95
     action: str = "skip"  # "skip" | "warn" | "update"
+    #: Retain-time dedup also checks each chunk against its nearest stored
+    #: neighbours, so it holds across processes (a restarted daemon, a CLI
+    #: run, a gateway restart) and not only within one. One extra
+    #: ``search_similar`` per chunk: cheap on an ANN index, a full bank scan on
+    #: SqliteStore (~5 ms at 1k memories, ~25 ms at 10k, ~110 ms at 50k).
+    consult_store: bool = True
 
 
 @dataclass
@@ -1280,8 +1286,14 @@ def _parse_lifecycle(data: dict) -> LifecycleConfig:
     )
 
 
-def _parse_banks(data: dict) -> dict[str, BankConfig]:
-    """Parse a ``banks:`` config block with per-bank overrides."""
+def _parse_banks(data: dict, signal_quality_base: dict | None = None) -> dict[str, BankConfig]:
+    """Parse a ``banks:`` config block with per-bank overrides.
+
+    A bank's ``signal_quality`` block is merged over the top-level one
+    (``signal_quality_base``), so it states only what differs: a bank that sets
+    ``dedup.similarity_threshold`` keeps the top-level ``enabled`` and
+    ``consult_store`` rather than resetting them to the dataclass defaults.
+    """
     banks: dict[str, BankConfig] = {}
     for bid, bdata in data.items():
         if not isinstance(bdata, dict):
@@ -1295,7 +1307,7 @@ def _parse_banks(data: dict) -> dict[str, BankConfig]:
         if "barriers" in bdata and isinstance(bdata["barriers"], dict):
             bc.barriers = _parse_barriers(bdata["barriers"])
         if "signal_quality" in bdata and isinstance(bdata["signal_quality"], dict):
-            bc.signal_quality = _parse_signal_quality(bdata["signal_quality"])
+            bc.signal_quality = _parse_signal_quality(_deep_merge(signal_quality_base or {}, bdata["signal_quality"]))
         banks[str(bid)] = bc
     return banks
 
@@ -1426,7 +1438,8 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         config.lifecycle = _parse_lifecycle(data["lifecycle"])
 
     if "banks" in data and data["banks"]:
-        config.banks = _parse_banks(data["banks"])
+        sq_base = data.get("signal_quality")
+        config.banks = _parse_banks(data["banks"], sq_base if isinstance(sq_base, dict) else None)
 
     if "extraction_profiles" in data and isinstance(data["extraction_profiles"], dict):
         profiles: dict[str, ExtractionProfileConfig] = {}

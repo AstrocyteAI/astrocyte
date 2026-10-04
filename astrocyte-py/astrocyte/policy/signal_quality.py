@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from collections.abc import Iterable
 
 # Explicit negators. Deliberately a closed list: this guard targets the
 # measurable failure (a statement and its negation embed as near-duplicates),
@@ -114,22 +115,33 @@ class DedupDetector:
 
         Returns (is_dup, max_similarity).
         """
-        threshold = threshold_override if threshold_override is not None else self.threshold
-
         entries = self._cache.get(bank_id, [])
         if entries:
             self._touch_bank(bank_id)
-        max_sim = 0.0
+        scored = ((cosine_similarity(embedding, cached_emb), cached_text) for _, cached_emb, cached_text in entries)
+        return self.matches(scored, threshold_override=threshold_override, text=text)
 
-        for _, cached_emb, cached_text in entries:
-            sim = cosine_similarity(embedding, cached_emb)
+    def matches(
+        self,
+        candidates: Iterable[tuple[float, str | None]],
+        threshold_override: float | None = None,
+        text: str | None = None,
+    ) -> tuple[bool, float]:
+        """Apply the duplicate rule to ``(similarity, text)`` pairs scored elsewhere.
+
+        Shared by the cache scan above and by the retain pipeline's check
+        against the vector store's nearest neighbours, so both apply the same
+        threshold and the same negation guard. Returns (is_dup, max_similarity).
+        """
+        threshold = threshold_override if threshold_override is not None else self.threshold
+        max_sim = 0.0
+        for sim, other_text in candidates:
             max_sim = max(max_sim, sim)
             if sim >= threshold:
-                if text is not None and cached_text is not None and differs_by_negation(text, cached_text):
+                if text is not None and other_text is not None and differs_by_negation(text, other_text):
                     self.negation_overrides += 1
                     continue  # a reversal, not a duplicate — keep looking
                 return True, sim
-
         return False, max_sim
 
     def add(self, bank_id: str, memory_id: str, embedding: list[float], text: str | None = None) -> None:

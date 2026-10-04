@@ -138,10 +138,15 @@ signal_quality:
   dedup:
     enabled: true
     similarity_threshold: 0.95     # Cosine similarity for near-match
-    action: skip                   # "skip" | "warn" | "update"
+    action: skip                   # "skip" | "warn" | "update" (not read by the pipeline; see below)
+    consult_store: true            # also check the bank's stored memories (pipeline)
 ```
 
 When `action: skip`, duplicates are silently dropped. The RetainResult indicates the content was deduplicated, not stored.
+
+**What the storage pipeline honours.** `enabled` and `similarity_threshold` set the retain-time check for every bank: `enabled: false` turns it off entirely (MIP `dedup` rules can tune the check but not switch it back on), and `similarity_threshold` is the default a matched MIP rule's `dedup.threshold` overrides per retain. The config-level `action` is **not** read by the pipeline: the retain action comes from the matched MIP rule's `dedup.action` — `skip_chunk` (default: drop duplicate chunks, keep the rest), `skip` (reject the whole retain if any chunk is a duplicate), `warn` (keep everything); `update` is not implemented and behaves as `skip_chunk`. A bank's own `banks.<id>.signal_quality.dedup` block replaces these settings for that bank; it states only what differs, and unset keys inherit the top-level block (after any `profile:` merge). A matched MIP rule's `dedup.threshold` still overrides the bank's threshold.
+
+In the storage pipeline, each chunk is compared first with an in-process cache of recently retained embeddings and then, on a miss, with its nearest neighbours in the vector store — so dedup holds across processes (a restarted daemon, a CLI run, a gateway restart). A pair that differs by a negator ("allergic" vs "not allergic") is never a duplicate, and consolidated observations are not treated as originals. `consult_store: false` keeps the cache-only check and saves one `search_similar` per chunk, which on SQLite is a scan of the bank.
 
 ### 3.2 Quality scoring
 

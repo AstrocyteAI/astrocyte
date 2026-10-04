@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from astrocyte.config import AstrocyteConfig, ExtractionProfileConfig, RecallAuthorityConfig
+    from astrocyte.config import AstrocyteConfig, DedupConfig, ExtractionProfileConfig, RecallAuthorityConfig
     from astrocyte.pipeline.agentic_reflect import AgenticReflectParams
     from astrocyte.pipeline.cross_encoder_rerank import CrossEncoderProtocol
     from astrocyte.pipeline.link_expansion import LinkExpansionParams
@@ -63,6 +63,17 @@ class PipelineConfig:
     causal_links_enabled: bool
     causal_max_pairs_per_memory: int
     causal_min_confidence: float
+
+    # Retain-time dedup (``signal_quality.dedup``). ``action`` is not carried:
+    # the pipeline's action comes from MIP ``dedup.action`` (default
+    # "skip_chunk"), whose vocabulary differs from the config block's.
+    dedup_enabled: bool
+    dedup_similarity_threshold: float
+    # Retain-time dedup against the store, not only this process's cache.
+    dedup_consult_store: bool
+    # Banks with their own ``banks.<id>.signal_quality`` block: the resolved
+    # dedup settings (already merged over the top-level block) for that bank.
+    dedup_by_bank: dict[str, DedupConfig]
 
     # Semantic-kNN graph at retain time (C3a).
     semantic_link_graph_enabled: bool
@@ -182,6 +193,7 @@ class PipelineConfig:
         coocc_cfg = config.entity_cooccurrence
         qa_cfg = config.query_analyzer
         sar_cfg = config.source_aware_retrieval
+        dedup_cfg = config.signal_quality.dedup
 
         return cls(
             extraction_profiles=merged_extraction_profiles(config),
@@ -191,6 +203,14 @@ class PipelineConfig:
             causal_links_enabled=cl_cfg.enabled,
             causal_max_pairs_per_memory=cl_cfg.max_pairs_per_memory,
             causal_min_confidence=cl_cfg.min_confidence,
+            dedup_enabled=dedup_cfg.enabled,
+            dedup_similarity_threshold=dedup_cfg.similarity_threshold,
+            dedup_consult_store=dedup_cfg.consult_store,
+            dedup_by_bank={
+                bank_id: bank.signal_quality.dedup
+                for bank_id, bank in (config.banks or {}).items()
+                if bank.signal_quality is not None
+            },
             semantic_link_graph_enabled=slg_cfg.enabled,
             semantic_link_graph_top_k=slg_cfg.top_k,
             semantic_link_graph_threshold=slg_cfg.similarity_threshold,

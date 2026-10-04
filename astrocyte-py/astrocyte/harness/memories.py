@@ -270,10 +270,6 @@ async def _import(args: Namespace, pipeline: Any, brain: Any) -> int:
         md = item.metadata or {}
         if md.get("import_path") and md.get("import_hash"):
             held.setdefault(str(md["import_path"]), {}).setdefault(str(md["import_hash"]), []).append(item.id)
-    # The pipeline's near-duplicate check only sees what this process
-    # retained, so a section that duplicated another one would be stored by
-    # the next run. Checking the store keeps an import stable across runs.
-    threshold = getattr(getattr(pipeline, "_dedup", None), "threshold", 0.95)
     added = kept = removed = duplicates = 0
     for f in files:
         label = _label(f, args)
@@ -292,13 +288,10 @@ async def _import(args: Namespace, pipeline: Any, brain: Any) -> int:
             added, removed = added + len(new), removed + len(stale)
             continue
         when = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
-        vectors = await pipeline.llm_provider.embed([section for _, section in new]) if new else []
         stored = dup = 0
-        for (digest, section), vector in zip(new, vectors):
-            nearest = await pipeline.vector_store.search_similar(vector, bank, limit=1)
-            if nearest and nearest[0].score >= threshold:
-                dup += 1  # already said elsewhere
-                continue
+        for digest, section in new:
+            # The pipeline's dedup checks the store too, so a section already
+            # said elsewhere — in this run or an earlier one — is skipped.
             result = await brain.retain(
                 section, bank_id=bank, occurred_at=when, source="import",
                 metadata={"source": "import", "import_path": label, "import_hash": digest},

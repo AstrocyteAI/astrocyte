@@ -216,9 +216,12 @@ Deduplication and noise detection.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `true` | Enable duplicate detection |
-| `similarity_threshold` | float | `0.95` | Cosine similarity threshold for duplicates (0–1) |
-| `action` | string | `"skip"` | What to do with duplicates: `skip`, `warn`, `update` |
+| `enabled` | bool | `true` | Enable retain-time duplicate detection. `false` turns it off entirely, MIP `dedup` rules included |
+| `similarity_threshold` | float | `0.95` | Cosine similarity threshold for duplicates (0–1). A matched MIP rule's `dedup.threshold` overrides it |
+| `action` | string | `"skip"` | Reserved; not read by the built-in pipeline. Set the action per MIP rule with `dedup.action` (`skip_chunk` default, `skip`, `warn`) |
+| `consult_store` | bool | `true` | Also check each chunk against its nearest stored memories, so dedup holds across processes. One extra vector search per chunk |
+
+A bank can override any of these under `banks.<id>.signal_quality.dedup`; keys it leaves out inherit the top-level block.
 
 ### signal_quality.noisy_bank
 
@@ -512,7 +515,7 @@ banks:
 | `access` | list\[dict\] \| null | `null` | Bank-specific access grants |
 | `homeostasis` | HomeostasisConfig \| null | `null` | Override homeostasis settings |
 | `barriers` | BarrierConfig \| null | `null` | Override barrier settings |
-| `signal_quality` | SignalQualityConfig \| null | `null` | Override signal quality settings |
+| `signal_quality` | SignalQualityConfig \| null | `null` | Override signal quality settings. `dedup` keys apply to this bank's retain-time dedup; unset keys inherit the top-level block. `noisy_bank` is not yet read |
 
 ---
 

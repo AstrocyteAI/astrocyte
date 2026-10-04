@@ -24,6 +24,7 @@ from astrocyte.types import (
     MemoryLink,
     RetainRequest,
     RetainResult,
+    VectorHit,
     VectorItem,
 )
 
@@ -38,6 +39,14 @@ from astrocyte.pipeline._orchestrator_common import (
 )
 
 _logger = logging.getLogger("astrocyte.mip")
+
+#: Nearest neighbours fetched per chunk for the store-side dedup check. More
+#: than one so a negation-guarded or observation hit does not hide a genuine
+#: duplicate ranked just below it.
+_STORE_DEDUP_NEIGHBOURS = 3
+#: Store rows that are syntheses, not retained memories (``fact_type`` or
+#: ``memory_layer``); never treated as the original of a new chunk.
+_NOT_RETAINED_LAYERS = frozenset({"observation", "model"})
 
 
 class RetainStageMixin:
@@ -849,6 +858,69 @@ class RetainStageMixin:
         while deferred and (not cap or len(self._background_tasks) < cap):
             self._start_consolidation(deferred.popleft())
 
+    async def _find_duplicate_chunks(
+        self,
+        bank_id: str,
+        chunks: list[str],
+        embeddings: list[list[float]],
+        threshold_override: float | None,
+    ) -> list[bool]:
+        """Which chunks are near-duplicates of memories the bank already holds.
+
+        The in-process ``DedupDetector`` cache only knows what this process
+        retained, so a restarted daemon, a CLI run or a gateway restart would
+        store a duplicate of a memory written earlier. Chunks the cache does
+        not match are checked against their nearest neighbours in the vector
+        store, under the same threshold and negation guard. Observations and
+        mental models are skipped: a raw memory restating a synthesis is new
+        evidence, and the cache never held them either. A failed lookup counts
+        as "not a duplicate" — a redundant row is cheaper than a lost fact.
+
+        Costs one ``search_similar`` per chunk the cache missed;
+        ``dedup_consult_store = False`` turns it off. ``dedup_enabled = False``
+        skips the whole check: nothing is a duplicate. A bank listed in
+        ``dedup_by_bank`` uses its own enabled / threshold / consult_store; a
+        MIP ``threshold_override`` still beats the bank's threshold.
+        """
+        bank = getattr(self, "dedup_by_bank", {}).get(bank_id)
+        if bank is not None:
+            enabled, consult_store = bank.enabled, bank.consult_store
+            if threshold_override is None:
+                threshold_override = bank.similarity_threshold
+        else:
+            enabled = getattr(self, "dedup_enabled", True)
+            consult_store = getattr(self, "dedup_consult_store", True)
+        if not enabled:
+            return [False] * len(chunks)
+        dups = [
+            self._dedup.is_duplicate(bank_id, emb, threshold_override=threshold_override, text=chunk)[0]
+            for chunk, emb in zip(chunks, embeddings)
+        ]
+        misses = [i for i, dup in enumerate(dups) if not dup]
+        if not misses or not consult_store or self.vector_store is None:
+            return dups
+
+        async def nearest(i: int) -> list[VectorHit]:
+            try:
+                return await self.vector_store.search_similar(embeddings[i], bank_id, limit=_STORE_DEDUP_NEIGHBOURS)
+            except Exception as exc:
+                _logger.warning("retain dedup: store lookup failed in bank %r (%s); keeping the chunk", bank_id, exc)
+                return []
+
+        # Sequential on purpose: SqliteStore scans the bank per query, and
+        # concurrent scans thrash — 10 chunks against 50k rows took 12 s
+        # gathered vs 1.5 s one after another.
+        async with self._profiler.time("dedup_store"):
+            neighbours = [await nearest(i) for i in misses]
+        for i, hits in zip(misses, neighbours):
+            candidates = (
+                (hit.score, hit.text)
+                for hit in hits
+                if hit.fact_type not in _NOT_RETAINED_LAYERS and hit.memory_layer not in _NOT_RETAINED_LAYERS
+            )
+            dups[i] = self._dedup.matches(candidates, threshold_override=threshold_override, text=chunks[i])[0]
+        return dups
+
     async def retain(self, request: RetainRequest) -> RetainResult:
         """Retain pipeline: normalize → chunk → extract entities → embed → store."""
         # 0–1. Raw → normalizer → profile metadata/tags (M3 extraction chain)
@@ -926,13 +998,8 @@ class RetainStageMixin:
         #     "update":   not yet implemented; falls back to "skip_chunk"
         keep_indices: list[int] = []
         any_duplicate = False
-        for i, emb in enumerate(embeddings):
-            is_dup, _sim = self._dedup.is_duplicate(
-                request.bank_id,
-                emb,
-                threshold_override=dedup_threshold_override,
-                text=chunks[i],  # enables the negation guard
-            )
+        duplicates = await self._find_duplicate_chunks(request.bank_id, chunks, embeddings, dedup_threshold_override)
+        for i, is_dup in enumerate(duplicates):
             if is_dup:
                 any_duplicate = True
             if dedup_action == "warn" or not is_dup:
@@ -1211,13 +1278,10 @@ class RetainStageMixin:
 
             keep_indices: list[int] = []
             any_duplicate = False
-            for chunk_index, embedding in enumerate(embeddings):
-                is_dup, _sim = self._dedup.is_duplicate(
-                    request.bank_id,
-                    embedding,
-                    threshold_override=dedup_threshold_override,
-                    text=chunks[chunk_index],
-                )
+            duplicates = await self._find_duplicate_chunks(
+                request.bank_id, chunks, embeddings, dedup_threshold_override
+            )
+            for chunk_index, is_dup in enumerate(duplicates):
                 if is_dup:
                     any_duplicate = True
                 if dedup_action == "warn" or not is_dup:
