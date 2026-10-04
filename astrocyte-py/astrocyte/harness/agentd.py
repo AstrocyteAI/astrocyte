@@ -36,7 +36,7 @@ import socket
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +53,13 @@ PROMPT_MAX_CHARS = 1_800
 BOOT_MAX_ITEMS = 8
 BOOT_MAX_CHARS = 3_000
 ITEM_MAX_CHARS = 360
+# Where you left off: the closing turns of the project's previous session.
+# The last answer gets the most room: that is where conclusions and next steps are.
+RESUME_MAX_TURNS = 3
+RESUME_LAST_MAX_CHARS = 700
+RESUME_SCAN = 60
+SOURCE_LABELS = {"claude-code": "Claude Code", "codex": "Codex", "antigravity": "Antigravity",
+                 "copilot": "Copilot CLI"}
 DRAIN_INTERVAL_SECONDS = 20.0
 IDLE_EXIT_SECONDS = float(os.environ.get("ASTROCYTE_AGENTD_IDLE", "1800"))
 
@@ -73,15 +80,71 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def render_memory(text: str, when: datetime | None) -> str:
+def render_memory(text: str, when: datetime | None, *, limit: int = ITEM_MAX_CHARS) -> str:
     """One line per memory. Captured turns become "Q … → A …"; the answer
     gets most of the room because that is where conclusions live."""
     m = _TURN.match(text.strip())
     if m:
         q = _clip(m["q"], 110)
-        body = f"Q: {q} → A: {_clip(m['a'], ITEM_MAX_CHARS - len(q) - 12)}"
+        body = f"Q: {q} → A: {_clip(m['a'], limit - len(q) - 12)}"
     else:
-        body = _clip(text, ITEM_MAX_CHARS)
+        body = _clip(text, limit)
+    return f"- [{when.date().isoformat()}] {body}" if when else f"- {body}"
+
+
+def _clip_left(text: str, limit: int) -> str:
+    """The end of ``text``: where a long answer's conclusion is."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    tail = text[-(limit - 1):]
+    return "…" + (tail.split(" ", 1)[1] if " " in tail[:40] else tail)
+
+
+def _join_overlapping(a: str, b: str) -> str:
+    """``a`` then ``b``, written once where the chunker made them overlap."""
+    for k in range(min(len(a), len(b)), 15, -1):
+        if a.endswith(b[:k]):
+            return a + b[k:]
+    return f"{a} {b}" if a else b
+
+
+def _groups(items: list[Any]) -> list[list[Any]]:
+    """Memories regrouped into what was retained together, newest first.
+
+    A long captured turn is stored as several chunks (the question, then
+    overlapping pieces of the answer) that share one ``_created_at`` stamp and
+    come back in no useful order; ``retained_at`` follows the order they were
+    written."""
+    groups: dict[str, list[Any]] = {}
+    for item in items:
+        key = (item.metadata or {}).get("_created_at") or item.id
+        groups.setdefault(str(key), []).append(item)
+    out = []
+    for group in groups.values():
+        group.sort(key=lambda i: (i.retained_at is None, i.retained_at or 0))
+        out.append(group)
+    return out
+
+
+def render_group(group: list[Any], when: datetime | None, *, limit: int = ITEM_MAX_CHARS) -> str:
+    """One line for memories retained together. A chunked turn shows its
+    question and the end of its answer; other text, its beginning."""
+    if len(group) == 1:
+        return render_memory(group[0].text, when, limit=limit)
+    question = next((i.text for i in group if i.text.lstrip().startswith("**user**")), None)
+    if question is None:
+        return render_memory(group[0].text, when, limit=limit)
+    m = _TURN.match(question.strip())
+    q = _clip(m["q"] if m else question.split(":", 1)[-1], 110)
+    answer = ""
+    for item in group:
+        if item.text.lstrip().startswith("**user**"):
+            answer = m["a"] if m else ""
+        else:
+            answer = _join_overlapping(answer, item.text.strip())
+    answer = re.sub(r"^\*\*assistant\*\*:\s*", "", answer.strip())
+    body = f"Q: {q} → A: {_clip_left(answer, limit - len(q) - 12)}"
     return f"- [{when.date().isoformat()}] {body}" if when else f"- {body}"
 
 
@@ -93,6 +156,20 @@ def _budget(lines: list[str], limit: int) -> list[str]:
         out.append(line)
         used += len(line) + 1
     return out
+
+
+def _ago(when: datetime, now: datetime | None = None) -> str:
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    minutes = int(((now or datetime.now(timezone.utc)) - when).total_seconds() // 60)
+    if minutes < 2:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes} minutes ago"
+    if minutes < 48 * 60:
+        hours = minutes // 60
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    return f"{minutes // (24 * 60)} days ago"
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -132,26 +209,64 @@ class AgentDaemon:
     async def op_ping(self, _: dict) -> dict:
         return {"ok": True, "pid": os.getpid(), "config": str(self.cfg_path)}
 
+    async def _previous_session(self, bank: str, session: str) -> list[list[Any]]:
+        """The closing captured turns (oldest first) of the newest session in
+        ``bank`` other than ``session``. Sessions running side by side
+        interleave, so other sessions' turns are skipped, not a stop."""
+        from astrocyte.types import VectorFilters
+
+        recent = getattr(self.pipeline.vector_store, "list_recent_vectors", None)
+        if recent is None:
+            return []
+        previous, turns = None, []
+        items = await recent(bank, limit=RESUME_SCAN, filters=VectorFilters(tags=["captured"]))
+        for group in _groups(items):
+            sid = (group[0].metadata or {}).get("session_id") or ""
+            if not sid or sid == session or (previous is not None and sid != previous):
+                continue
+            previous = sid
+            turns.append(group)
+            if len(turns) == RESUME_MAX_TURNS:
+                break
+        return turns[::-1]
+
     async def op_boot(self, req: dict) -> dict:
         bank, session = req["bank"], req.get("session_id") or ""
         if req.get("source") in ("clear", "compact"):
             self.injected.pop(session, None)  # earlier injections left the context
         seen = self.injected.setdefault(session, set())
-        lines: list[str] = []
+        sections: list[str] = []
+        used = 0
+        resume = await self._previous_session(bank, session)
+        if resume:
+            last = resume[-1][-1]
+            when = last.occurred_at or last.retained_at
+            agent = SOURCE_LABELS.get(str((last.metadata or {}).get("source") or ""), "an agent")
+            lines = [render_group(g, None, limit=RESUME_LAST_MAX_CHARS if g is resume[-1] else ITEM_MAX_CHARS)
+                     for g in resume]
+            sections.append(f"Where you left off: the previous session here ({agent}"
+                            + (f", {_ago(when)}" if when else "") + ") ended with:\n" + "\n".join(lines))
+            used = len(sections[0])
+        shown = {item.id for g in resume for item in g}
+        seen |= shown
+        recent_groups: list[list[Any]] = []
         recent = getattr(self.pipeline.vector_store, "list_recent_vectors", None)
         if recent is not None:
-            for item in await recent(bank, limit=BOOT_MAX_ITEMS):
-                lines.append(render_memory(item.text, item.occurred_at or item.retained_at))
-                seen.add(item.id)
+            items = await recent(bank, limit=(BOOT_MAX_ITEMS + RESUME_MAX_TURNS) * 4)
+            recent_groups = [g for g in _groups(items) if not shown & {i.id for i in g}][:BOOT_MAX_ITEMS]  # not twice
+        body = _budget([render_group(g, g[0].occurred_at or g[0].retained_at) for g in recent_groups],
+                       BOOT_MAX_CHARS - used)
+        seen.update(i.id for g in recent_groups[: len(body)] for i in g)  # only what was shown counts as injected
         header = (
             f"Astrocyte memory is active for this project (bank `{bank}`). Relevant memories from "
             "earlier sessions are added to your context automatically; save durable decisions, "
             "conventions and preferences with the memory_retain tool."
         )
-        if not lines:
+        if not body and not sections:
             return {"context": header + " No memories for this project yet."}
-        body = _budget(lines, BOOT_MAX_CHARS)
-        return {"context": header + "\n\nMost recent memories:\n" + "\n".join(body)}
+        if body:
+            sections.append("Most recent memories:\n" + "\n".join(body))
+        return {"context": header + "\n\n" + "\n\n".join(sections)}
 
     async def op_recall(self, req: dict) -> dict:
         bank, session, prompt = req["bank"], req.get("session_id") or "", req["prompt"]

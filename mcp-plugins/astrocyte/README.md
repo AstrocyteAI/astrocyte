@@ -78,8 +78,10 @@ mcp-plugins/astrocyte/
 In Claude Code, Codex and Antigravity, `astrocyte setup` also turns on automatic memory for interactive
 sessions (headless `claude -p` / `codex exec` / `agy -p` runs are left alone): each finished turn of a conversation is saved to the project's local memory, and memories
 relevant to a new prompt are added to the agent's context — only when they are
-genuinely similar, never twice in one session. Nothing leaves your machine.
-Pause it with `ASTROCYTE_HOOKS=off`; remove it with `astrocyte setup --no-hooks`.
+genuinely similar, never twice in one session. A new session opens with where the
+previous one in that project left off. Nothing leaves your machine.
+Pause it with `ASTROCYTE_HOOKS=off`; remove it with `astrocyte setup --no-hooks`
+(remembered by later `astrocyte setup` runs until you run `astrocyte setup --claude`).
 In Codex, trust the three astrocyte hooks once with `/hooks`.
 
 `astrocyte memory` lists what is remembered about the current project; `astrocyte memory search`,

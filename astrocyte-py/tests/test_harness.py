@@ -414,6 +414,127 @@ def test_uninstall_removes_the_hooks_too(wired_home):
     assert not any(ClaudeCodeHost().hook_commands().values())
 
 
+# ── choices that survive a plain `astrocyte setup` ──────────────────────
+
+
+def _choices_file(home: Path) -> Path:
+    return home / ".config" / "astrocyte" / "harnesses.json"
+
+
+def test_an_agent_removed_by_name_stays_off_through_a_plain_setup(wired_home, capsys):
+    """Re-running setup (after an upgrade, say) must not undo `uninstall --claude`."""
+    cmd_setup(_ns())
+    assert cmd_uninstall(_ns(claude=True)) == 0
+    assert "astrocyte setup will leave Claude Code switched off" in capsys.readouterr().out
+    assert cmd_setup(_ns()) == 0
+    out = capsys.readouterr().out
+    assert ClaudeCodeHost().registration() is None
+    assert not any(ClaudeCodeHost().hook_commands().values())
+    assert "switched off; astrocyte setup --claude turns it back on" in out
+    assert CursorHost().registration() is not None, "the others are still wired"
+
+
+def test_naming_the_agent_turns_it_back_on_for_good(wired_home):
+    cmd_setup(_ns())
+    cmd_uninstall(_ns(claude=True))
+    cmd_setup(_ns(claude=True))
+    assert ClaudeCodeHost().registration() is not None and all(ClaudeCodeHost().hook_commands().values())
+    cmd_setup(_ns())
+    assert ClaudeCodeHost().registration() is not None, "the choice was cleared"
+    assert json.loads(_choices_file(wired_home).read_text()) == {"off": [], "hooks_off": []}
+
+
+def test_no_hooks_is_remembered_until_the_agent_is_named(wired_home, capsys):
+    cmd_setup(_ns(no_hooks=True))
+    cmd_setup(_ns())
+    out = capsys.readouterr().out
+    assert ClaudeCodeHost().registration() is not None, "memory tools stay wired"
+    assert not any(ClaudeCodeHost().hook_commands().values()), "automatic memory stays off"
+    assert "automatic memory off; astrocyte setup --claude turns it on" in out
+    assert "Automatic memory is on" not in out
+    cmd_setup(_ns(claude=True))
+    assert all(ClaudeCodeHost().hook_commands().values())
+
+
+def test_no_hooks_for_one_named_agent(wired_home):
+    install_cli(wired_home, "codex")
+    (wired_home / ".codex").mkdir()
+    cmd_setup(_ns(claude=True, no_hooks=True))
+    cmd_setup(_ns())
+    assert not any(ClaudeCodeHost().hook_commands().values())
+    assert all(CodexHost().hook_commands().values())
+
+
+def test_a_plain_uninstall_is_a_teardown_not_a_choice(wired_home):
+    cmd_setup(_ns())
+    cmd_uninstall(_ns())
+    assert not _choices_file(wired_home).exists()
+    cmd_setup(_ns())
+    assert ClaudeCodeHost().registration() is not None
+
+
+def test_dry_runs_record_nothing(wired_home):
+    cmd_setup(_ns())
+    cmd_uninstall(_ns(claude=True, dry_run=True))
+    cmd_setup(_ns(no_hooks=True, dry_run=True))
+    assert not _choices_file(wired_home).exists()
+
+
+def test_every_detected_agent_switched_off(wired_home, capsys):
+    cmd_setup(_ns())
+    cmd_uninstall(_ns(claude=True, cursor=True))
+    capsys.readouterr()
+    assert cmd_setup(_ns()) == 0
+    out = capsys.readouterr().out
+    assert "Every detected agent is switched off; nothing was wired" in out
+    assert ClaudeCodeHost().registration() is None and CursorHost().registration() is None
+
+
+def test_doctor_reports_a_switched_off_agent_as_a_choice(wired_home):
+    cmd_setup(_ns())
+    cmd_uninstall(_ns(claude=True))
+    checks = {c.area: c for c in run_checks(_cfg(wired_home), model_probes=False)}
+    assert checks["Claude Code"].level == "info"
+    assert checks["Claude Code"].summary.startswith("switched off")
+    assert "Claude Code hooks" not in checks, "nothing to say about hooks of an agent that is off"
+    cmd_setup(_ns(cursor=True, no_hooks=True))
+    checks = {c.area: c for c in run_checks(_cfg(wired_home), model_probes=False)}
+    assert checks["Cursor"].level == "ok"
+
+
+def test_doctor_reports_hooks_switched_off_as_a_choice(wired_home):
+    cmd_setup(_ns(no_hooks=True))
+    checks = {c.area: c for c in run_checks(_cfg(wired_home), model_probes=False)}
+    assert checks["Claude Code hooks"].summary.startswith("automatic memory switched off")
+
+
+@pytest.mark.parametrize("body", ['["claude"]', '{"off": "claude", "hooks_off": null}', '{"off": [1, null]}'])
+def test_a_choices_file_of_the_wrong_shape_records_nothing(tmp_path, body):
+    from astrocyte.harness.choices import load_choices
+
+    cfg = tmp_path / "astrocyte.yaml"
+    (tmp_path / "harnesses.json").write_text(body)
+    choices = load_choices(cfg)
+    assert choices.off == set() and choices.hooks_off == set()
+
+
+def test_choices_round_trip_and_no_file_when_nothing_is_off(tmp_path):
+    from astrocyte.harness.choices import Choices, choices_path, load_choices, save_choices
+
+    cfg = tmp_path / "astrocyte.yaml"
+    save_choices(cfg, Choices())
+    assert not choices_path(cfg).exists(), "no file until something is switched off"
+    save_choices(cfg, Choices(off={"codex", "claude"}, hooks_off={"cursor"}))
+    assert load_choices(cfg) == Choices(off={"claude", "codex"}, hooks_off={"cursor"})
+    assert json.loads(choices_path(cfg).read_text())["off"] == ["claude", "codex"], "stable order"
+
+
+def test_an_unreadable_choices_file_is_ignored(wired_home):
+    _choices_file(wired_home).write_text("{not json")
+    assert cmd_setup(_ns()) == 0
+    assert ClaudeCodeHost().registration() is not None
+
+
 def test_doctor_reports_and_repairs_hooks_from_a_moved_install(wired_home, capsys):
     cmd_setup(_ns(claude=True))
     host = ClaudeCodeHost()

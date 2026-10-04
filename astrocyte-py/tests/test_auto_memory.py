@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from argparse import Namespace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -380,21 +381,139 @@ class TestDaemonOverSocket:
         assert agentd.request("ping", timeout=0.2) is None
 
 
+def _sqlite_daemon(env, tmp_path):
+    pytest.importorskip("astrocyte_sqlite")
+    env.cfg.write_text(MINIMAL.replace("vector_store: in_memory", "vector_store: sqlite")
+                       + f"vector_store_config:\n  path: {tmp_path / 'm.db'}\n")
+    return agentd.AgentDaemon(env.cfg)
+
+
+def _turn(q: str, a: str, at: str) -> dict:
+    return {"content": f"**user**: {q}\n\n**assistant**: {a}", "started_at": at}
+
+
 class TestDaemonOps:
     def test_boot_lists_the_projects_recent_memories(self, env, tmp_path):
         """The session summary needs a store that can list by recency (SQLite,
         the local default); its memories then count as already injected."""
-        pytest.importorskip("astrocyte_sqlite")
-        env.cfg.write_text(MINIMAL.replace("vector_store: in_memory", "vector_store: sqlite")
-                           + f"vector_store_config:\n  path: {tmp_path / 'm.db'}\n")
-        d = agentd.AgentDaemon(env.cfg)
-        agentd.spool_capture("proj", "s1", "codex", [
-            {"content": "**user**: deploy day?\n\n**assistant**: Tuesdays.", "started_at": "2026-10-01T10:00:00+00:00"}])
-        asyncio.run(d.drain())
+        d = _sqlite_daemon(env, tmp_path)
+        asyncio.run(d.brain.retain("Deploys go out on Tuesdays.", bank_id="proj",
+                                   occurred_at=datetime(2026, 10, 1, 10, tzinfo=timezone.utc)))
         reply = asyncio.run(d.op_boot({"bank": "proj", "session_id": "s2"}))
-        assert "Most recent memories:" in reply["context"] and "Q: deploy day? → A: Tuesdays." in reply["context"]
+        assert "Most recent memories:" in reply["context"] and "Deploys go out on Tuesdays." in reply["context"]
         assert "[2026-10-01]" in reply["context"], "dated by when it was said"
+        assert "Where you left off" not in reply["context"], "no captured session yet"
         assert d.injected["s2"], "boot memories are not injected again by prompt recall"
+
+    def test_boot_opens_with_where_the_previous_session_left_off(self, env, tmp_path):
+        d = _sqlite_daemon(env, tmp_path)
+        agentd.spool_capture("proj", "s1", "codex", [
+            _turn("which queue?", "SQS, decided last week.", "2026-10-01T10:00:00+00:00"),
+            _turn("deploy day?", "Tuesdays.", "2026-10-01T10:05:00+00:00"),
+            _turn("what's left?", "Only the retry test; then tag the release.", "2026-10-01T10:09:00+00:00"),
+        ])
+        agentd.spool_capture("proj", "s0", "claude-code", [
+            _turn("older session?", "Yes, this one is older.", "2026-09-28T09:00:00+00:00")])
+        asyncio.run(d.drain())
+        ctx = asyncio.run(d.op_boot({"bank": "proj", "session_id": "s2"}))["context"]
+        resume, _, rest = ctx.partition("Most recent memories:")
+        assert "Where you left off: the previous session here (Codex, " in resume
+        # Its closing turns, oldest first, ending with the last answer.
+        assert resume.index("which queue?") < resume.index("deploy day?") < resume.index("what's left?")
+        assert resume.rstrip().endswith("A: Only the retry test; then tag the release.")
+        assert "older session?" not in resume, "only the most recent other session"
+        assert "what's left?" not in rest, "not shown twice"
+        assert len(d.injected["s2"]) >= 3, "resumed turns count as already injected"
+
+    def test_resume_skips_the_current_session_and_interleaved_ones(self, env, tmp_path):
+        """Two sessions running side by side interleave in the store; and a
+        session that restarts (compact, clear) must not be told about itself."""
+        d = _sqlite_daemon(env, tmp_path)
+        agentd.spool_capture("proj", "a", "claude-code", [_turn("a1?", "first of a.", "2026-10-01T10:00:00+00:00")])
+        agentd.spool_capture("proj", "b", "codex", [_turn("b1?", "first of b.", "2026-10-01T10:01:00+00:00")])
+        agentd.spool_capture("proj", "a", "claude-code", [_turn("a2?", "last of a.", "2026-10-01T10:02:00+00:00")])
+        agentd.spool_capture("proj", "c", "codex", [_turn("c1?", "current session.", "2026-10-01T10:03:00+00:00")])
+        asyncio.run(d.drain())
+        resume = asyncio.run(d.op_boot({"bank": "proj", "session_id": "c"}))["context"].partition(
+            "Most recent memories:")[0]
+        assert "(Claude Code, " in resume and "a1?" in resume and "a2?" in resume
+        assert "b1?" not in resume and "c1?" not in resume
+
+    def test_resume_gives_the_last_answer_the_most_room(self, env, tmp_path):
+        d = _sqlite_daemon(env, tmp_path)
+        agentd.spool_capture("proj", "s1", "codex", [
+            _turn("earlier?", " ".join(f"alpha{i}" for i in range(150)), "2026-10-01T10:00:00+00:00"),
+            _turn("final?", " ".join(f"omega{i}" for i in range(150)), "2026-10-01T10:01:00+00:00")])
+        asyncio.run(d.drain())
+        ctx = asyncio.run(d.op_boot({"bank": "proj", "session_id": "s2"}))["context"]
+        lines = [ln for ln in ctx.splitlines() if ln.startswith("- ")]
+        # A long turn is stored as several overlapping chunks; each turn is
+        # still one line, ending exactly where its answer ended.
+        assert len(lines) == 2, ctx
+        assert lines[0].startswith("- Q: earlier? → A: …") and lines[0].endswith("alpha149")
+        assert lines[1].startswith("- Q: final? → A: …") and lines[1].endswith("omega149")
+        words = lines[1].split("…", 1)[1].split()
+        assert words == [f"omega{i}" for i in range(150 - len(words), 150)], "no gaps or repeats at chunk seams"
+        assert len(lines[1]) > len(lines[0]) + 200
+        assert len(lines[1]) <= agentd.RESUME_LAST_MAX_CHARS + 10
+        assert "Most recent memories:" not in ctx, "both turns are already shown"
+
+    def test_chunked_memories_are_one_line_in_the_recent_list_too(self, env, tmp_path):
+        d = _sqlite_daemon(env, tmp_path)
+        agentd.spool_capture("proj", "s1", "codex", [
+            _turn("long one?", " ".join(f"beta{i}" for i in range(150)), "2026-10-01T10:00:00+00:00")])
+        asyncio.run(d.drain())
+        ctx = asyncio.run(d.op_boot({"bank": "proj", "session_id": "s1"}))["context"]  # its own session: no resume
+        lines = [ln for ln in ctx.splitlines() if ln.startswith("- ")]
+        assert len(lines) == 1 and lines[0].endswith("beta149"), ctx
+        assert len(d.injected["s1"]) > 1, "every chunk of a shown turn counts as injected"
+
+    @staticmethod
+    def _chunks(*texts: str, created: str = "t1"):
+        from types import SimpleNamespace
+
+        base = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        return [SimpleNamespace(id=f"{created}-{i}", text=t, metadata={"_created_at": created},
+                                retained_at=base + timedelta(microseconds=i), occurred_at=None)
+                for i, t in enumerate(texts)]
+
+    def test_a_chunked_non_turn_memory_shows_its_beginning(self):
+        """A long imported section is chunked too, but has no question: its
+        beginning says what it is about."""
+        group = self._chunks("Deploy guide: we ship on Tuesdays via Fly.io.", "rollback steps follow here")
+        assert agentd.render_group(group, None) == "- Deploy guide: we ship on Tuesdays via Fly.io."
+
+    def test_a_short_chunked_answer_is_shown_whole(self):
+        group = self._chunks("**user**: which queue?", "**assistant**: SQS.")
+        assert agentd.render_group(group, None) == "- Q: which queue? → A: SQS."
+
+    def test_a_question_chunk_that_also_starts_the_answer(self):
+        group = self._chunks("**user**: which queue?\n**assistant**: SQS, with a dead-letter queue",
+                             "with a dead-letter queue after five attempts.")
+        assert agentd.render_group(group, None) == (
+            "- Q: which queue? → A: SQS, with a dead-letter queue after five attempts.")
+
+    def test_groups_keep_memories_retained_apart_separate_and_in_write_order(self):
+        a = self._chunks("**user**: a?", "**assistant**: first", created="a")
+        b = self._chunks("standalone fact", created="b")
+        groups = agentd._groups([a[1], b[0], a[0]])  # newest first, chunks out of order
+        assert [[i.id for i in g] for g in groups] == [["a-0", "a-1"], ["b-0"]]
+
+    def test_join_overlapping(self):
+        assert agentd._join_overlapping("the quick brown fox jumps high", "brown fox jumps high over the dog") == (
+            "the quick brown fox jumps high over the dog")
+        # A short coincidence is not an overlap: chunk overlaps are long.
+        assert agentd._join_overlapping("ends with the", "the start") == "ends with the the start"
+        assert agentd._join_overlapping("", "start") == "start"
+        assert agentd._join_overlapping("no shared text here", "completely different") == (
+            "no shared text here completely different")
+
+    @pytest.mark.parametrize("minutes, expected", [
+        (0, "just now"), (5, "5 minutes ago"), (60, "1 hour ago"), (150, "2 hours ago"), (3 * 24 * 60, "3 days ago")])
+    def test_ago(self, minutes, expected):
+        now = datetime(2026, 10, 4, 12, tzinfo=timezone.utc)
+        assert agentd._ago(now - timedelta(minutes=minutes), now) == expected
+        assert agentd._ago((now - timedelta(minutes=minutes)).replace(tzinfo=None), now) == expected
 
     def test_boot_on_an_empty_bank_says_so(self, daemon):
         assert "No memories for this project yet" in asyncio.run(daemon.op_boot({"bank": "empty"}))["context"]
