@@ -420,12 +420,17 @@ def create_app(
         # only a claim, so it is dropped rather than stored as provenance.
         if ctx is None and metadata and "_actor" in metadata:
             metadata = {k: v for k, v in metadata.items() if k != "_actor"}
+        occurred_at = body.occurred_at
+        if occurred_at is not None and occurred_at.tzinfo is None:
+            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
         result = await brain.retain(
             body.content,
             body.bank_id,
             metadata=metadata,
             tags=body.tags,
             context=ctx,
+            occurred_at=occurred_at,
+            source=body.source,
         )
         return to_jsonable(result)
 

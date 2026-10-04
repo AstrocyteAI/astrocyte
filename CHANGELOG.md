@@ -18,6 +18,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - **The daemon's own stdout/stderr go to `agentd.stdio.log`**, not `agentd.log`, which the daemon rotates (Windows can't rename a file another handle holds open).
 
+### Fixed
+
+- **Recall hits carry the `source` a memory was retained with, and `POST /v1/retain` accepts `occurred_at` and `source`.** On the default (pipeline) path, `retain(source=...)` reached only the optional source store, so every recall hit's `source` was `None`; it is now kept on each stored chunk (metadata `_source`) and returned by every recall path. The gateway's retain body declared neither field, so a client's `occurred_at` and `source` were silently dropped (unknown fields are ignored); both are now accepted (a naive `occurred_at` is UTC) and validated.
+
 ### Security
 
 - **A pushed id can never take over another bank's memory or undo a forget.** Both stores key memories on `id` alone, so a push that simply upserted client-chosen ids could overwrite or move a row in a bank the caller can't write. Push looks every id up across banks first and writes insert-only; an id held by another bank is rejected without revealing that bank or its text, and an id that was forgotten stays forgotten.

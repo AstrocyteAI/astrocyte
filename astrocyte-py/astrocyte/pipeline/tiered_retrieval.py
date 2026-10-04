@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from astrocyte.pipeline.provenance import stored_source
 from astrocyte.pipeline.recall_cache import RecallCache
 from astrocyte.pipeline.recent_buffer import RecentMemoryBuffer
 from astrocyte.recall.merge_result import merge_external_into_recall_result
@@ -141,6 +142,7 @@ class TieredRetriever:
                             metadata=h.metadata,
                             memory_id=h.document_id,
                             bank_id=request.bank_id,
+                            source=stored_source(h.metadata),
                         )
                         for h in keyword_hits[: request.max_results]
                     ]
