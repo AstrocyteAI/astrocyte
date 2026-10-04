@@ -18,16 +18,18 @@ file; where the store can purge, the forgotten rows are then erased from disk.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
+import re
 import sys
 from argparse import Namespace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .paths import config_path
-from .project import project_bank
+from .project import project_bank, project_root
 
 LIST_DEFAULT = 20
 SEARCH_DEFAULT = 8
@@ -179,7 +181,187 @@ async def _banks(args: Namespace, pipeline: Any, _brain: Any) -> int:
     return 0
 
 
-_COMMANDS = {"list": _list, "search": _search, "forget": _forget, "banks": _banks}
+
+# ── import / export ──────────────────────────────────────────────────────
+
+IMPORT_SUFFIXES = (".md", ".mdx", ".markdown", ".txt")
+IMPORT_SKIP_DIRS = frozenset({"node_modules", "venv", ".venv", "dist", "build", "__pycache__", "site-packages"})
+IMPORT_MAX_FILE_BYTES = 512 * 1024
+SECTION_MAX_CHARS = 3_000
+_HEADING = re.compile(r"^#{1,3}\s+\S")
+_FENCE = re.compile(r"^\s*(```|~~~)")
+
+
+def import_files(paths: list[str]) -> list[Path]:
+    """Files named, plus the Markdown/text files under directories named —
+    skipping hidden, vendored and build directories and very large files."""
+    found: list[Path] = []
+    for raw in paths:
+        p = Path(raw).expanduser()
+        if p.is_file():
+            found.append(p)
+        elif p.is_dir():
+            for f in sorted(p.rglob("*")):
+                rel = f.relative_to(p).parts
+                if any(part.startswith(".") or part in IMPORT_SKIP_DIRS for part in rel[:-1]):
+                    continue
+                if f.is_file() and f.suffix.lower() in IMPORT_SUFFIXES and f.stat().st_size <= IMPORT_MAX_FILE_BYTES:
+                    found.append(f)
+        else:
+            raise FileNotFoundError(raw)
+    return list(dict.fromkeys(found))
+
+
+def sections(text: str) -> list[str]:
+    """Split Markdown at #–### headings (not inside code fences), each section
+    keeping its heading; long sections are split again at blank lines. One
+    focused memory per topic recalls better than one memory per file."""
+    parts: list[list[str]] = [[]]
+    fenced = False
+    for line in text.splitlines():
+        if _FENCE.match(line):
+            fenced = not fenced
+        if not fenced and _HEADING.match(line) and any(x.strip() for x in parts[-1]):
+            parts.append([])
+        parts[-1].append(line)
+    out: list[str] = []
+    for part in parts:
+        body = "\n".join(part).strip()
+        while len(body) > SECTION_MAX_CHARS:
+            cut = body.rfind("\n\n", 0, SECTION_MAX_CHARS)
+            cut = cut if cut > SECTION_MAX_CHARS // 3 else SECTION_MAX_CHARS
+            out.append(body[:cut].strip())
+            body = body[cut:].strip()
+        if body:
+            out.append(body)
+    return out
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def _label(path: Path, args: Namespace) -> str:
+    """How an imported file is identified: relative to the project root, so
+    the same file in another clone of the repo is recognised."""
+    root = project_root(str(Path(args.project or os.getcwd()).expanduser().resolve()))
+    try:
+        return str(path.resolve().relative_to(root))
+    except ValueError:
+        return str(path.resolve())
+
+
+async def _import(args: Namespace, pipeline: Any, brain: Any) -> int:
+    """Seed a project's memory from documents, as a sync: re-importing a file
+    adds its new sections and removes the ones no longer in it."""
+    bank = _bank(args)
+    if len(args.paths) == 1 and args.paths[0].endswith(".ama.jsonl"):
+        return await _import_archive(args, brain, bank)
+    try:
+        files = import_files(args.paths)
+    except FileNotFoundError as e:
+        print(f"  ✗ no such file or directory: {e}", file=sys.stderr)
+        return 2
+    if not files:
+        print("Nothing to import (Markdown and text files: " + ", ".join(IMPORT_SUFFIXES) + ").")
+        return 0
+    held: dict[str, dict[str, list[str]]] = {}  # import path → section hash → memory ids
+    for item in await _all_items(pipeline.vector_store, bank):
+        md = item.metadata or {}
+        if md.get("import_path") and md.get("import_hash"):
+            held.setdefault(str(md["import_path"]), {}).setdefault(str(md["import_hash"]), []).append(item.id)
+    # The pipeline's near-duplicate check only sees what this process
+    # retained, so a section that duplicated another one would be stored by
+    # the next run. Checking the store keeps an import stable across runs.
+    threshold = getattr(getattr(pipeline, "_dedup", None), "threshold", 0.95)
+    added = kept = removed = duplicates = 0
+    for f in files:
+        label = _label(f, args)
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"  ✗ {label}: {e}", file=sys.stderr)
+            continue
+        wanted = {_digest(s): s for s in sections(text)}
+        have = held.get(label, {})
+        new = [(h, s) for h, s in wanted.items() if h not in have]
+        stale = [mid for h, ids in have.items() if h not in wanted for mid in ids]
+        kept += len(wanted) - len(new)
+        if args.dry_run:
+            print(f"  {label}: {len(new)} to add, {len(stale)} to remove, {len(wanted) - len(new)} unchanged")
+            added, removed = added + len(new), removed + len(stale)
+            continue
+        when = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
+        vectors = await pipeline.llm_provider.embed([section for _, section in new]) if new else []
+        stored = dup = 0
+        for (digest, section), vector in zip(new, vectors):
+            nearest = await pipeline.vector_store.search_similar(vector, bank, limit=1)
+            if nearest and nearest[0].score >= threshold:
+                dup += 1  # already said elsewhere
+                continue
+            result = await brain.retain(
+                section, bank_id=bank, occurred_at=when, source="import",
+                metadata={"source": "import", "import_path": label, "import_hash": digest},
+            )
+            if result.stored:
+                stored += 1
+            elif getattr(result, "deduplicated", False):
+                dup += 1
+        if stale:
+            removed += (await brain.forget(bank, memory_ids=stale)).deleted_count
+            await _erase(pipeline, bank, stale)
+        added, duplicates = added + stored, duplicates + dup
+        dup_note = f", {dup} duplicates skipped" if dup else ""
+        print(f"  ✓ {label}: {stored} added, {len(stale)} removed, {len(wanted) - len(new)} unchanged{dup_note}")
+    verb = "Would add" if args.dry_run else "Added"
+    dup_note = f", skipped {duplicates} near-duplicates of existing memories" if duplicates else ""
+    print(f"\n{verb} {added}, removed {removed}, kept {kept}{dup_note} in {bank}.")
+    return 0
+
+
+async def _import_archive(args: Namespace, brain: Any, bank: str) -> int:
+    path = Path(args.paths[0]).expanduser().resolve()
+    if args.dry_run:
+        print(f"  would import {path} into {bank}")
+        return 0
+    result = await brain.import_bank(bank, str(path), allowed_roots=[str(path.parent)])
+    print(f"Imported {result.imported} memories into {bank} ({result.skipped} skipped).")
+    return 0 if not getattr(result, "errors", None) else 1
+
+
+async def _export(args: Namespace, pipeline: Any, _brain: Any) -> int:
+    """Write the bank as an Astrocyte Memory Archive (AMA JSONL), read straight
+    from the store so nothing is missed. Owner-only: it holds conversations."""
+    from astrocyte.portability import AMA_VERSION
+
+    bank = _bank(args)
+    items = await _all_items(pipeline.vector_store, bank)
+    dest = Path(args.file).expanduser()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"_ama_version": AMA_VERSION, "bank_id": bank,
+                             "exported_at": datetime.now(timezone.utc).isoformat(),
+                             "provider": "astrocyte-cli", "memory_count": len(items)}) + "\n")
+        for item in items:
+            record: dict[str, Any] = {"id": item.id, "text": item.text, "bank_id": bank}
+            if item.fact_type:
+                record["fact_type"] = item.fact_type
+            if item.tags:
+                record["tags"] = item.tags
+            if item.metadata:
+                record["metadata"] = item.metadata
+                if item.metadata.get("source"):
+                    record["source"] = item.metadata["source"]
+            if item.occurred_at or item.retained_at:
+                record["occurred_at"] = (item.occurred_at or item.retained_at).isoformat()
+            fh.write(json.dumps(record, default=str) + "\n")
+    print(f"Exported {len(items)} memories from {bank} to {dest}.")
+    return 0
+
+
+_COMMANDS = {"list": _list, "search": _search, "forget": _forget, "banks": _banks,
+             "import": _import, "export": _export}
 
 
 def run(args: Namespace) -> int:
@@ -229,3 +411,15 @@ def register(sub) -> None:
     forget.add_argument("--yes", action="store_true", help="confirm --all")
     scope(forget)
     scope(cmds.add_parser("banks", help="every bank with memories, this project's marked →"))
+    imp = cmds.add_parser(
+        "import", help="seed memory from Markdown/text files or directories (or an .ama.jsonl archive)",
+        description="Each file is split at its headings into one memory per section. Re-importing a file "
+        "syncs it: new sections are added, sections no longer in the file are removed. Credentials are "
+        "redacted as with any memory. Typical first step: astrocyte memory import CLAUDE.md AGENTS.md docs/",
+    )
+    imp.add_argument("paths", nargs="+", help="files, directories, or one .ama.jsonl archive")
+    imp.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
+    scope(imp)
+    exp = cmds.add_parser("export", help="write the bank to an .ama.jsonl archive (portable; re-import elsewhere)")
+    exp.add_argument("file", help="destination, e.g. project.ama.jsonl")
+    scope(exp)

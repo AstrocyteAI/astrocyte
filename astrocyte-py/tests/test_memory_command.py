@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 from argparse import Namespace
 from pathlib import Path
@@ -202,6 +203,120 @@ def test_stores_without_enumeration_or_purge_say_what_they_can_do(local, capsys)
 
     assert aio.run(go()) == 0
     assert "keeps forgotten memories for history" in capsys.readouterr().out
+
+
+# ── import / export ──────────────────────────────────────────────────────
+
+from astrocyte.harness.memories import import_files, sections  # noqa: E402
+
+GUIDE = """# Project guide
+
+Intro line.
+
+## Testing
+
+Run `uv run pytest` from astrocyte-py.
+
+```bash
+# not a heading: inside a fence
+uv run pytest -x
+```
+
+## Deploys
+
+Deploys happen on Tuesdays.
+"""
+
+
+def test_sections_split_at_headings_but_not_inside_code_fences():
+    parts = sections(GUIDE)
+    assert [p.splitlines()[0] for p in parts] == ["# Project guide", "## Testing", "## Deploys"]
+    assert "# not a heading: inside a fence" in parts[1]
+
+
+def test_long_sections_are_split_at_paragraphs():
+    long = "## Big\n\n" + "\n\n".join("para " + "x" * 900 for _ in range(6))
+    parts = sections(long)
+    assert len(parts) > 1 and all(len(p) <= 3_000 for p in parts)
+
+
+def test_directories_yield_docs_but_skip_hidden_vendored_and_huge(tmp_path):
+    (tmp_path / "docs" / "sub").mkdir(parents=True)
+    (tmp_path / "docs" / "a.md").write_text("# A")
+    (tmp_path / "docs" / "sub" / "b.txt").write_text("B")
+    (tmp_path / "docs" / "c.py").write_text("print()")
+    for skipped in (".git", "node_modules", ".venv"):
+        (tmp_path / "docs" / skipped).mkdir()
+        (tmp_path / "docs" / skipped / "x.md").write_text("# hidden")
+    (tmp_path / "docs" / "huge.md").write_text("x" * (600 * 1024))
+    names = sorted(f.name for f in import_files([str(tmp_path / "docs")]))
+    assert names == ["a.md", "b.txt"]
+
+
+def _memories(local) -> list[dict]:
+    async def go():
+        pipeline, _ = open_local(local.cfg)
+        items = await pipeline.vector_store.list_vectors(local.bank)
+        await pipeline.vector_store.close()
+        return [{"text": i.text, **(i.metadata or {})} for i in items]
+
+    return asyncio.run(go())
+
+
+def test_import_is_a_sync_of_each_file(local, capsys):
+    guide = local.repo / "CLAUDE.md"
+    guide.write_text(GUIDE)
+    code, out, _ = run(capsys, "import", "CLAUDE.md")
+    assert code == 0 and "3 added" in out
+    mems = _memories(local)
+    assert len(mems) == 3 and {m["import_path"] for m in mems} == {"CLAUDE.md"}
+    assert all(m["source"] == "import" for m in mems)
+
+    code, out, _ = run(capsys, "import", "CLAUDE.md")
+    assert "0 added, 0 removed, 3 unchanged" in out, "re-importing an unchanged file is a no-op"
+
+    guide.write_text(GUIDE.replace("Tuesdays", "Thursdays").replace("Intro line.", "Intro line, revised."))
+    code, out, _ = run(capsys, "import", "CLAUDE.md")
+    assert "2 added, 2 removed, 1 unchanged" in out
+    texts = " ".join(m["text"] for m in _memories(local))
+    assert "Thursdays" in texts and "Tuesdays" not in texts
+
+
+def test_import_dry_run_changes_nothing(local, capsys):
+    (local.repo / "AGENTS.md").write_text(GUIDE)
+    code, out, _ = run(capsys, "import", "AGENTS.md", "--dry-run")
+    assert code == 0 and "3 to add" in out and _memories(local) == []
+
+
+def test_import_of_a_missing_path_is_an_error(local, capsys):
+    code, _, err = run(capsys, "import", "nope.md")
+    assert code == 2 and "nope.md" in err
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+def test_export_then_import_round_trips_through_an_archive(local, capsys, tmp_path):
+    retain(local.cfg, local.bank, "Deploys happen on Tuesdays.", "The cache TTL is five minutes.")
+    archive = tmp_path / "proj.ama.jsonl"
+    code, out, _ = run(capsys, "export", str(archive))
+    assert code == 0 and "Exported 2 memories" in out
+    assert oct(archive.stat().st_mode & 0o777) == "0o600", "an archive holds conversations"
+    header, *records = [json.loads(line) for line in archive.read_text().splitlines()]
+    assert header["memory_count"] == 2 and {r["text"] for r in records} >= {"Deploys happen on Tuesdays."}
+    code, out, _ = run(capsys, "import", str(archive), "--bank", "elsewhere")
+    assert code == 0 and "Imported 2" in out
+    code, out, _ = run(capsys, "list", "--bank", "elsewhere")
+    assert "Tuesdays" in out
+
+
+def test_a_duplicated_section_is_skipped_the_same_way_every_run(local, capsys):
+    """The pipeline's own duplicate check only sees one process's retains;
+    without checking the store, the next import stored the duplicate."""
+    (local.repo / "a.md").write_text("## Deploys\n\nDeploys happen on Tuesdays.")
+    (local.repo / "b.md").write_text("## Deploys\n\nDeploys happen on Tuesdays.")
+    code, out, _ = run(capsys, "import", "a.md", "b.md")
+    assert "Added 1" in out and "skipped 1 near-duplicates" in out
+    code, out, _ = run(capsys, "import", "a.md", "b.md")
+    assert "Added 0" in out and len(_memories(local)) == 1
 
 
 def test_the_id_an_agent_gets_from_recall_is_what_forget_takes(local, capsys):

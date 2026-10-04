@@ -44,6 +44,11 @@ See what your agents remember about the project you're in with `astrocyte memory
 `astrocyte memory search "…"` shows what a prompt would recall, and
 `astrocyte memory forget <id>` erases a memory from disk (`--all --yes` for the whole project).
 
+Memory starts empty. Seed it with what your project already tells agents:
+`astrocyte memory import CLAUDE.md AGENTS.md docs/` (`setup` suggests the files it finds).
+Each file becomes one memory per section, and re-importing a file syncs it. Move a project's
+memory between machines with `astrocyte memory export project.ama.jsonl` and `import` on the other.
+
 The rest of this page covers embedding Astrocyte in your own application or
 running it as a shared service.
 
