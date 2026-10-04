@@ -197,7 +197,7 @@ jobs:
       - name: Gateway OpenAPI breaking changes (oasdiff)
         if: steps.oas-base.outputs.exists == 'true'
         # SHA-pinned third-party action (same policy as trivy-action)
-        uses: oasdiff/oasdiff-action/breaking@54d7a752569cb30b644b7f27a362c1077973d1c0 # v0.1.14
+        uses: oasdiff/oasdiff-action/breaking@b9325c9e0a27ab65b0da3b766522cedec6be81dc # v0.1.18
         with:
           base: openapi-base.json
           revision: astrocyte-services-py/astrocyte-gateway-py/openapi.json
