@@ -1600,12 +1600,20 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     1. *Persist per-chunk extraction metadata in `retain()`.* Found
        2026-10-04: the fact type, event time, and when/where/who were computed
        and discarded on the main retain path since extraction was introduced.
-       Everything below depends on dates and sources surviving storage. Fix
-       committed locally (`78eed43`), pending a paired measurement.
+       Everything below depends on dates and sources surviving storage.
+       **Fixed in `057ac2a`**; the paired measurement of extraction on vs off
+       is running.
     2. *Metadata parity for federated hits* (federated-sources F0b):
        `_row_to_hit` drops dates and provenance and invents a 0.5 score.
+       **Done 2026-10-04**; the 0.5 turned out never to rank anything and is
+       now flagged rather than replaced (federated-sources §8).
     3. *Federation hygiene* (F0): concurrent fan-out, a deadline well under
        1 s, partial results, per-source caching, p50/p95 per source.
+       **Partly done 2026-10-04:** concurrency, one deadline, partial results,
+       per-source timeouts and breakers. **Not yet:** overlap with local
+       retrieval (deferred to F1), caching late results for the next turn, and
+       latency for timeouts and errors (the existing histogram records only
+       successful calls, so p95 hides the slow tail) (federated-sources §8).
     4. *Per-caller auth passthrough* for federated sources (F4's core).
     5. *The claim model and the file-touch hook* (anchored-documents P1).
     6. *Write-back as pull requests,* Markdown in a repository first plus an

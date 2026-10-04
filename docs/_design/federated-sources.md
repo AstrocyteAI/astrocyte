@@ -239,6 +239,31 @@ and error bars (roadmap §9 item 9).
 | **F3** | Anchored external documents: anchors are URL plus version; batched freshness checks | Freshness eval: stale items served unflagged trend to zero |
 | **F4** | Team: per-principal search, `can_read` filtering, provenance in hits, write-back as repository pull requests then doc-tool suggestions | Permission eval: zero leakage |
 
+**F0 and F0b status (2026-10-04): implemented.** What shipped, and where it
+differs from the plan above:
+- *F0:* sources run concurrently under one deadline (0.8 s by default,
+  `ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS`), with partial results, a
+  per-source `recall_timeout_seconds` capped by the deadline, and a breaker
+  that skips a source for 60 s after 3 consecutive failures. Hits keep config
+  order, so fusion ranks do not depend on network timing. Measured in a test:
+  three 0.3 s sources took 0.90 s before and about 0.3 s after. **Deferred:**
+  overlapping the remote fetch with *local* retrieval. Fusion runs behind the
+  provider dispatcher and takes external hits as a finished list, so remote
+  calls still precede local retrieval, now bounded by the deadline instead of
+  their sum. Accepting late results in fusion belongs with F1's interface.
+  **Also not yet built:** caching late results for the next turn (rule 2), and
+  latency recorded for timeouts and errors. The existing per-source histogram
+  observes only successful calls, so its p95 hides exactly the slow tail
+  rule 4 is meant to expose; timeouts are counted, not timed.
+- *F0b:* `_row_to_hit` maps `occurred_at`, `retained_at` (or `updated_at`),
+  and the URL, version or etag, author, and anchor into reserved `_source_*`
+  metadata that remote metadata cannot spoof. **Finding:** the invented 0.5
+  score never ranked anything, because RRF ranks by list position; it only
+  chose which copy of a duplicate kept its metadata. It stays as a neutral
+  placeholder but is flagged `_score_missing`. **Not carried:** trust. A
+  source cannot vouch for itself; trust levels arrive with the claim model
+  (anchored-documents P1).
+
 F0 and F0b are independent and small, and both come before any new source:
 without F0b, more sources means more undated hits. F1 can run alongside the
 anchored-documents P1.
