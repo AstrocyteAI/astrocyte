@@ -389,10 +389,16 @@ def create_app(
         body: RetainBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
+        metadata = body.metadata
+        # With a context the core stamps ``_actor`` itself. Without one (an
+        # anonymous dev-mode request) an HTTP client's ``_actor`` is still
+        # only a claim, so it is dropped rather than stored as provenance.
+        if ctx is None and metadata and "_actor" in metadata:
+            metadata = {k: v for k, v in metadata.items() if k != "_actor"}
         result = await brain.retain(
             body.content,
             body.bank_id,
-            metadata=body.metadata,
+            metadata=metadata,
             tags=body.tags,
             context=ctx,
         )
