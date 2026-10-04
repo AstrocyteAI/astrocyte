@@ -35,6 +35,13 @@ REPO = Path(__file__).resolve().parents[2]
 PACKAGES = (REPO / "astrocyte-py", REPO / "adapters-storage-py" / "astrocyte-sqlite")
 
 
+WINDOWS = os.name == "nt"
+# A minimal PATH for the sandboxed CLI: nothing of the caller's, so no agent
+# CLI is found and nothing outside the sandbox can be configured.
+SYSTEM_PATH = ([os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32"),
+                os.environ.get("SYSTEMROOT", r"C:\Windows")] if WINDOWS else ["/usr/bin", "/bin"])
+
+
 def step(title: str) -> None:
     print(f"\n── {title}", flush=True)
 
@@ -119,7 +126,7 @@ def main() -> int:
 
         step(f"uv tool install '{requirement}'")
         run([*install, requirement], env={**os.environ, "UV_TOOL_DIR": str(tools), "UV_TOOL_BIN_DIR": str(bin_dir)})
-        python = tools / "astrocyte" / "bin" / "python"
+        python = tools / "astrocyte" / ("Scripts/python.exe" if WINDOWS else "bin/python")
         versions = run([str(python), "-I", "-c", "import importlib.metadata as m, json; print(json.dumps("
                         "{p: m.version(p) for p in ('astrocyte', 'astrocyte-sqlite', 'fastembed', 'fastmcp')}))"])
         assert "astrocyte-sqlite" in versions.stdout
@@ -128,13 +135,22 @@ def main() -> int:
 
         # A clean environment: no PATH entries of the caller's, so no agent
         # CLI is found and nothing outside the sandbox can be configured.
-        env = {"HOME": str(home), "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
+        env = {"HOME": str(home), "PATH": os.pathsep.join([str(bin_dir), *SYSTEM_PATH]),
                "XDG_STATE_HOME": str(root / "state"), "XDG_CACHE_HOME": str(root / "cache"),
                "OPENAI_API_KEY": "sk-smoke-not-used", "TERM": "dumb"}
+        if WINDOWS:
+            # `~` is USERPROFILE there, not HOME; and Windows processes need
+            # their system variables (Python can't even seed random without SYSTEMROOT).
+            env |= {"USERPROFILE": str(home), "APPDATA": str(home / "AppData" / "Roaming"),
+                    "LOCALAPPDATA": str(home / "AppData" / "Local"),
+                    **{k: os.environ[k] for k in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP")
+                       if k in os.environ}}
+        astrocyte = shutil.which("astrocyte", path=str(bin_dir))
+        assert astrocyte, f"astrocyte was not installed into {bin_dir}"
         cfg = home / ".config" / "astrocyte" / "astrocyte.yaml"
 
         step("astrocyte setup --cursor")
-        run(["astrocyte", "setup", "--cursor"], env=env, cwd=home)
+        run([astrocyte, "setup", "--cursor"], env=env, cwd=home)
         text = cfg.read_text()
         assert "vector_store: sqlite" in text and "embedding_provider: local_embeddings" in text, text
         wired = json.loads((home / ".cursor" / "mcp.json").read_text())["mcpServers"]["astrocyte"]
@@ -144,22 +160,22 @@ def main() -> int:
 
         step("astrocyte doctor")
         # --skip-models: the completion probe would call OpenAI with the dummy key.
-        run(["astrocyte", "doctor", "--skip-models"], env=env, cwd=home)
+        run([astrocyte, "doctor", "--skip-models"], env=env, cwd=home)
 
         if args.with_models:
             step("memory_retain through the MCP server")
             env.pop("XDG_CACHE_HOME")  # reuse a downloaded model when the caller has one
             mcp_round_trip(python, cfg, env)
             step("astrocyte memory search")
-            found = run(["astrocyte", "memory", "search", "when is the deploy freeze"], env=env, cwd=home)
+            found = run([astrocyte, "memory", "search", "when is the deploy freeze"], env=env, cwd=home)
             assert "Thursdays" in found.stdout
 
         step("astrocyte memory / banks")
-        run(["astrocyte", "memory"], env=env, cwd=home)
-        run(["astrocyte", "memory", "banks"], env=env, cwd=home)
+        run([astrocyte, "memory"], env=env, cwd=home)
+        run([astrocyte, "memory", "banks"], env=env, cwd=home)
 
         step("astrocyte uninstall --cursor")
-        run(["astrocyte", "uninstall", "--cursor"], env=env, cwd=home)
+        run([astrocyte, "uninstall", "--cursor"], env=env, cwd=home)
         assert "astrocyte" not in json.loads((home / ".cursor" / "mcp.json").read_text()).get("mcpServers", {})
         print("\n✓ local install works end to end")
         return 0
