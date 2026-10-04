@@ -747,12 +747,19 @@ class AstrocyteContext:
     ``principal`` remains the backwards-compatible primary string. When ``actor``
     is set, identity resolution uses ``actor`` (and optional ``on_behalf_of`` for OBO);
     ``principal`` is still useful for logging and integrations that have not migrated.
+
+    ``groups`` are group principals the actor belongs to (e.g. ``team:api``);
+    grants to a group apply to its members. ``grants`` are extra grants bound to
+    this caller (e.g. by a gateway token) and are added to the configured ones.
+    Both are set by the code that authenticated the caller, never by the caller.
     """
 
     principal: str  # e.g. "agent:support-bot-1", "user:calvin"
     actor: ActorIdentity | None = None
     on_behalf_of: ActorIdentity | None = None
     tenant_id: str | None = None
+    groups: list[str] | None = None
+    grants: list[AccessGrant] | None = None
 
 
 # ---------------------------------------------------------------------------
