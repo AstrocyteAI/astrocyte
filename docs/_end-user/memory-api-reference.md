@@ -108,9 +108,13 @@ Authorization: Bearer <token>
   "content": "Customer prefers dark-mode UI and weekly email digests.",
   "bank_id": "user-prefs",
   "metadata": {"customer_id": "cust_8291"},
-  "tags": ["ui", "notifications"]
+  "tags": ["ui", "notifications"],
+  "occurred_at": "2026-09-30T14:00:00Z",
+  "source": "https://crm.example.com/customers/cust_8291"
 }
 ```
+
+`occurred_at` (optional, ISO 8601; a time without a zone is UTC) is when the content happened; it defaults to the time of the request. `source` (optional, up to 2,048 characters) says where it came from: a URL, a file path, a system. Both come back on recall hits (`occurred_at`, `source`).
 
 ### curl example
 

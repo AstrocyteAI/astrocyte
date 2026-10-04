@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from string import punctuation
 
+from astrocyte.pipeline.provenance import stored_source
 from astrocyte.types import MemoryHit
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,7 @@ class RecentMemoryBuffer:
                 metadata=entry.metadata,
                 memory_id=entry.memory_id,
                 bank_id=bank_id,
+                source=stored_source(entry.metadata),
             )
             for score, entry in scored[:limit]
         ]

@@ -46,6 +46,7 @@ from astrocyte.pipeline._orchestrator_common import (
     _deterministic_names,
     _warn_on_version_drift,
 )
+from astrocyte.pipeline.provenance import stored_source
 
 _logger = logging.getLogger("astrocyte.mip")
 
@@ -488,6 +489,7 @@ class RecallStageMixin:
                 occurred_at=getattr(item, "occurred_at", None),
                 retained_at=getattr(item, "retained_at", None),  # M9
                 chunk_id=getattr(item, "chunk_id", None),  # M10
+                source=stored_source(item.metadata),
             )
             for item in trimmed
         ]
@@ -663,6 +665,7 @@ class RecallStageMixin:
                 memory_id=h.id,
                 bank_id=request.bank_id,
                 memory_layer="compiled",
+                source=stored_source(h.metadata),
             )
             for h in wiki_hits
         ]
