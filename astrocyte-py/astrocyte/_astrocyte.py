@@ -16,7 +16,7 @@ from astrocyte._hooks import HookHandler, HookManager
 from astrocyte._log_safety import safe as _safe_log
 from astrocyte._multi_bank import MultiBankOrchestrator
 from astrocyte._output_scanner import OutputScanner
-from astrocyte._policy import PolicyEnforcer
+from astrocyte._policy import NoisyBankVerdict, PolicyEnforcer
 from astrocyte._provider_dispatch import ProviderDispatcher
 from astrocyte._recall_params import RecallParams
 from astrocyte._validation import validate_bank_id
@@ -27,6 +27,7 @@ from astrocyte.errors import (
     ConfigError,
     MipRoutingError,
     ProviderUnavailable,
+    RateLimited,
 )
 from astrocyte.identity import context_principal_label
 from astrocyte.lifecycle import LifecycleManager
@@ -470,7 +471,7 @@ class Astrocyte:
         validate_bank_id(bank_id)
         with span("astrocyte.retain", {"astrocyte.bank_id": bank_id}):
             # Input size validation — reject oversized content before pipeline processing
-            input_error = self._policy.validate_retain_input(content, tags)
+            input_error = self._policy.validate_retain_input(content, tags, bank_id=bank_id)
             if input_error:
                 return RetainResult(stored=False, error=input_error)
 
@@ -522,15 +523,22 @@ class Astrocyte:
             # Rate limiting + quota (atomic to prevent TOCTOU)
             self._policy.check_rate_and_quota(bank_id, "retain")
 
+            # Noisy-bank detection (signal_quality.noisy_bank)
+            noisy = self._policy.check_noisy_bank(bank_id)
+            if noisy is not None:
+                rejection = self._apply_noisy_bank_verdict(bank_id, noisy)
+                if rejection is not None:
+                    return rejection
+
             # Content validation
-            errors = self._policy.validate_content(content, content_type)
+            errors = self._policy.validate_content(content, content_type, bank_id=bank_id)
             if errors:
                 return RetainResult(stored=False, error="; ".join(errors))
 
             # PII scanning (async for LLM/rules_then_llm modes)
-            content, pii_matches = await self._policy.scan_pii(content, self._config.barriers.pii.mode)
+            content, pii_matches = await self._policy.scan_pii(content, bank_id=bank_id)
             if pii_matches:
-                pii_action = self._policy.pii_action
+                pii_action = self._policy.pii_action_for(bank_id)
                 self._logger.log(
                     "astrocyte.policy.pii_detected",
                     bank_id=bank_id,
@@ -551,7 +559,7 @@ class Astrocyte:
                 )
 
             # Metadata sanitization
-            metadata, meta_warnings = self._policy.sanitize_metadata(metadata)
+            metadata, meta_warnings = self._policy.sanitize_metadata(metadata, bank_id=bank_id)
 
             # Build request
             request = RetainRequest(
@@ -588,6 +596,7 @@ class Astrocyte:
                     len(content),
                     deduplicated=getattr(result, "deduplicated", False),
                 )
+                self._policy.record_retain_signal(bank_id, len(content), getattr(result, "deduplicated", False))
                 await self._hook_manager.fire(
                     "on_retain",
                     bank_id=bank_id,
@@ -611,6 +620,33 @@ class Astrocyte:
                     {"bank_id": bank_id, "provider": self._provider_name, "status": "error"},
                 )
                 raise
+
+    def _apply_noisy_bank_verdict(self, bank_id: str, verdict: NoisyBankVerdict) -> RetainResult | None:
+        """Act on a noisy-bank check: log on a change of state, count every
+        flagged retain, then ``warn`` (proceed), ``throttle`` (raise
+        :class:`RateLimited`, retryable) or ``reject`` (refuse the retain).
+        Returns the refusal for ``reject``, else ``None``."""
+        if verdict.changed:
+            self._logger.log(
+                "astrocyte.signal_quality.noisy_bank"
+                if verdict.reasons
+                else "astrocyte.signal_quality.noisy_bank_cleared",
+                bank_id=bank_id,
+                operation="retain",
+                data={"reasons": ",".join(verdict.reasons), "action": verdict.action},
+                level=logging.WARNING if verdict.reasons else logging.INFO,
+            )
+        if not verdict.reasons:
+            return None
+        self._metrics.inc_counter(
+            "astrocyte_noisy_bank_total",
+            {"bank_id": bank_id, "action": verdict.action},
+        )
+        if verdict.action == "throttle":
+            raise RateLimited(bank_id=bank_id, operation="retain", retry_after_seconds=60.0)
+        if verdict.action == "reject":
+            return RetainResult(stored=False, error=f"Bank flagged as noisy ({', '.join(verdict.reasons)})")
+        return None
 
     async def _make_recall_request(
         self,
@@ -687,7 +723,7 @@ class Astrocyte:
         # Resolve bank(s)
         bank_ids = self._policy.resolve_read_bank_ids(bank_id, banks, context)
 
-        max_tokens = max_tokens or self._config.homeostasis.recall_max_tokens
+        max_tokens = max_tokens or self._policy.token_budget(bank_ids, "recall")
 
         with span(
             "astrocyte.recall",
@@ -820,7 +856,7 @@ class Astrocyte:
         # Resolve bank(s)
         bank_ids = self._policy.resolve_read_bank_ids(bank_id, banks, context)
 
-        max_tokens = max_tokens or self._config.homeostasis.reflect_max_tokens
+        max_tokens = max_tokens or self._policy.token_budget(bank_ids, "reflect")
         primary_bank = bank_ids[0]
 
         with span(

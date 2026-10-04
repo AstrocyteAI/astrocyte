@@ -138,13 +138,13 @@ signal_quality:
   dedup:
     enabled: true
     similarity_threshold: 0.95     # Cosine similarity for near-match
-    action: skip                   # "skip" | "warn" | "update" (not read by the pipeline; see below)
+    action: skip_chunk             # "skip_chunk" | "skip" | "warn" | "update"
     consult_store: true            # also check the bank's stored memories (pipeline)
 ```
 
-When `action: skip`, duplicates are silently dropped. The RetainResult indicates the content was deduplicated, not stored.
+`action` decides what a duplicate chunk does to the retain: `skip_chunk` (default) drops the duplicate chunks and stores the rest; `skip` rejects the whole retain if any chunk is a duplicate; `warn` stores everything; `update` is not implemented and behaves as `skip_chunk`. A retain with nothing left to store returns a RetainResult marked deduplicated, not stored.
 
-**What the storage pipeline honours.** `enabled` and `similarity_threshold` set the retain-time check for every bank: `enabled: false` turns it off entirely (MIP `dedup` rules can tune the check but not switch it back on), and `similarity_threshold` is the default a matched MIP rule's `dedup.threshold` overrides per retain. The config-level `action` is **not** read by the pipeline: the retain action comes from the matched MIP rule's `dedup.action` — `skip_chunk` (default: drop duplicate chunks, keep the rest), `skip` (reject the whole retain if any chunk is a duplicate), `warn` (keep everything); `update` is not implemented and behaves as `skip_chunk`. A bank's own `banks.<id>.signal_quality.dedup` block replaces these settings for that bank; it states only what differs, and unset keys inherit the top-level block (after any `profile:` merge). A matched MIP rule's `dedup.threshold` still overrides the bank's threshold.
+`enabled: false` turns the retain-time check off entirely (MIP `dedup` rules can tune the check but not switch it back on). A matched MIP rule's `dedup.threshold` and `dedup.action` override `similarity_threshold` and `action` for that retain. A bank's own `banks.<id>.signal_quality.dedup` block (or its `profile:`) replaces these settings for that bank; see §6.
 
 In the storage pipeline, each chunk is compared first with an in-process cache of recently retained embeddings and then, on a miss, with its nearest neighbours in the vector store — so dedup holds across processes (a restarted daemon, a CLI run, a gateway restart). A pair that differs by a negator ("allergic" vs "not allergic") is never a duplicate, and consolidated observations are not treated as originals. `consult_store: false` keeps the cache-only check and saves one `search_similar` per chunk, which on SQLite is a scan of the bank.
 
@@ -169,9 +169,11 @@ When `action: tag`, low-quality content is stored but tagged with `_quality: low
 
 Track per-bank metrics over time. Flag banks with anomalous patterns:
 
-- Retain rate suddenly spikes (runaway agent loop)
-- Average content length drops below threshold (junk)
-- Dedup hit rate exceeds threshold (redundant)
+- Retain rate suddenly spikes (runaway agent loop) — `retain_spike`: the last minute's retains exceed `retain_spike_multiplier` × the per-minute average of the hour before (at least 10 retains in the minute and 5 minutes of earlier history; the average is floored at one a minute)
+- Average content length drops below threshold (junk) — `short_content`: over the last 50 retains, once there are at least 20
+- Dedup hit rate exceeds threshold (redundant) — `high_dedup_rate`: same window
+
+`warn` logs `astrocyte.signal_quality.noisy_bank` when a bank becomes flagged (and `noisy_bank_cleared` when it recovers) and counts `astrocyte_noisy_bank_total` per flagged retain; the retain proceeds. `throttle` raises `RateLimited` (retry after 60 s); `reject` returns a RetainResult with `stored: false`. Samples are kept in memory per process and expire after an hour, so a flag clears once the bank behaves — or, under `throttle`/`reject`, once the window passes.
 
 ```yaml
 signal_quality:
@@ -363,6 +365,8 @@ banks:
         retain_per_minute: 10
 ```
 
+`homeostasis`, `barriers` and `signal_quality` resolve per bank as top-level section → the bank's `profile:` (if any) → the bank's own block, later layers winning key by key, so a bank states only what differs. The policy layer enforces the resolved sections for that bank only: its PII scanner, content validation, metadata sanitization, rate limits, quotas, size cap, dedup and noisy-bank settings. A recall or reflect across several banks uses the strictest token budget among them. Other sections — and a bank profile's other sections, such as `defaults` or `escalation` — are instance-wide.
+
 ---
 
 ## 7. Policy execution order
@@ -373,14 +377,15 @@ Policies execute in a fixed order on each request path:
 
 ```
 1. Rate limit check          (homeostasis)
-2. Content validation         (barrier)
-3. PII scanning               (barrier)
-4. Metadata sanitization      (barrier)
-5. Signal quality / dedup     (pruning)
-6. Start OTel span            (observability)
-7. Forward to provider
-8. Close OTel span
-9. Return result
+2. Noisy-bank check           (signal quality)
+3. Content validation         (barrier)
+4. PII scanning               (barrier)
+5. Metadata sanitization      (barrier)
+6. Dedup                      (signal quality, in the pipeline)
+7. Start OTel span            (observability)
+8. Forward to provider
+9. Close OTel span
+10. Return result
 ```
 
 ### Recall path (outbound)

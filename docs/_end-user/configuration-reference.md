@@ -218,7 +218,7 @@ Deduplication and noise detection.
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | Enable retain-time duplicate detection. `false` turns it off entirely, MIP `dedup` rules included |
 | `similarity_threshold` | float | `0.95` | Cosine similarity threshold for duplicates (0–1). A matched MIP rule's `dedup.threshold` overrides it |
-| `action` | string | `"skip"` | Reserved; not read by the built-in pipeline. Set the action per MIP rule with `dedup.action` (`skip_chunk` default, `skip`, `warn`) |
+| `action` | string | `"skip_chunk"` | What a duplicate chunk does: `skip_chunk` (drop it, store the rest), `skip` (reject the whole retain), `warn` (store everything), `update` (not implemented; as `skip_chunk`). A matched MIP rule's `dedup.action` overrides it |
 | `consult_store` | bool | `true` | Also check each chunk against its nearest stored memories, so dedup holds across processes. One extra vector search per chunk |
 
 A bank can override any of these under `banks.<id>.signal_quality.dedup`; keys it leaves out inherit the top-level block.
@@ -228,10 +228,10 @@ A bank can override any of these under `banks.<id>.signal_quality.dedup`; keys i
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | Enable noisy bank detection |
-| `retain_spike_multiplier` | float | `5.0` | Retain rate spike threshold |
-| `min_avg_content_length` | int | `20` | Minimum average chunk length (chars) |
-| `max_dedup_rate` | float | `0.8` | Max dedup rate before flagging |
-| `action` | string | `"warn"` | Action on noisy bank: `warn`, `throttle`, `reject` |
+| `retain_spike_multiplier` | float | `5.0` | Flag when the last minute's retains exceed this multiple of the previous hour's per-minute average |
+| `min_avg_content_length` | int | `20` | Flag when recent retains average fewer characters than this |
+| `max_dedup_rate` | float | `0.8` | Flag when more than this share of recent retains were duplicates |
+| `action` | string | `"warn"` | `warn` (log + metric, retain proceeds), `throttle` (raise `RateLimited`), `reject` (refuse the retain) |
 
 ---
 
@@ -486,7 +486,7 @@ See [Memory Intent Protocol](/design/memory-intent-protocol/) for the full MIP D
 
 ## banks
 
-Per-bank overrides. Each key is a bank ID. Any top-level section can be overridden per bank.
+Per-bank overrides. Each key is a bank ID. `homeostasis`, `barriers` and `signal_quality` resolve per bank as top-level section → the bank's `profile` → the bank's own block, later layers winning key by key, so a bank states only what differs. Other sections (and a bank profile's other sections, such as `defaults` or `escalation`) are instance-wide.
 
 ```yaml
 banks:
@@ -511,11 +511,11 @@ banks:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `profile` | string \| null | `null` | Override profile for this bank |
+| `profile` | string \| null | `null` | Profile whose `homeostasis`, `barriers` and `signal_quality` apply to this bank |
 | `access` | list\[dict\] \| null | `null` | Bank-specific access grants |
-| `homeostasis` | HomeostasisConfig \| null | `null` | Override homeostasis settings |
-| `barriers` | BarrierConfig \| null | `null` | Override barrier settings |
-| `signal_quality` | SignalQualityConfig \| null | `null` | Override signal quality settings. `dedup` keys apply to this bank's retain-time dedup; unset keys inherit the top-level block. `noisy_bank` is not yet read |
+| `homeostasis` | HomeostasisConfig \| null | `null` | Rate limits, quotas, size cap and token budgets for this bank. A multi-bank recall or reflect uses the strictest budget of its banks |
+| `barriers` | BarrierConfig \| null | `null` | PII scanning, content validation and metadata sanitization for this bank |
+| `signal_quality` | SignalQualityConfig \| null | `null` | Dedup and noisy-bank detection for this bank |
 
 ---
 

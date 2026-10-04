@@ -314,6 +314,96 @@ async def test_bank_consult_store_controls_the_cross_process_check(tmp_path) -> 
     assert default.deduplicated is True
 
 
+_TWO_CHUNKS = "Deploys happen on Tuesdays. The cache TTL is five minutes."  # two chunks at max 30
+
+
+async def _retain_with_one_duplicate_chunk(orch: PipelineOrchestrator, bank_id: str = "b1", mip_pipeline=None):
+    """Store chunk one, then retain chunk one + a new chunk two."""
+    from astrocyte.types import RetainRequest
+
+    await orch.retain(RetainRequest(content="Deploys happen on Tuesdays.", bank_id=bank_id))
+    return await orch.retain(RetainRequest(content=_TWO_CHUNKS, bank_id=bank_id, mip_pipeline=mip_pipeline))
+
+
+def _orch_with(tmp_path, yaml_text: str, vs: InMemoryVectorStore | None = None) -> PipelineOrchestrator:
+    orch = PipelineOrchestrator(vs or InMemoryVectorStore(), MockLLMProvider(), max_chunk_size=30)
+    orch.apply_config(PipelineConfig.from_config(_load(tmp_path, yaml_text)))
+    return orch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "stored", "rows"),
+    [
+        ("skip_chunk", True, 2),  # duplicate chunk dropped, new chunk kept
+        ("update", True, 2),  # not implemented: behaves as skip_chunk
+        ("skip", False, 1),  # whole retain rejected
+        ("warn", True, 3),  # duplicate kept too
+    ],
+)
+async def test_config_dedup_action_decides_what_a_duplicate_does(tmp_path, action, stored, rows) -> None:
+    vs = InMemoryVectorStore()
+    orch = _orch_with(tmp_path, f"signal_quality:\n  dedup:\n    action: {action}\n", vs)
+    r = await _retain_with_one_duplicate_chunk(orch)
+    assert r.stored is stored
+    assert len(await vs.list_vectors("b1")) == rows
+
+
+@pytest.mark.asyncio
+async def test_default_dedup_action_is_skip_chunk(tmp_path) -> None:
+    vs = InMemoryVectorStore()
+    orch = PipelineOrchestrator(vs, MockLLMProvider(), max_chunk_size=30)
+    assert orch.dedup_action == "skip_chunk"
+    orch.apply_config(PipelineConfig.from_config(AstrocyteConfig()))
+    assert orch.dedup_action == "skip_chunk"
+    assert (await _retain_with_one_duplicate_chunk(orch)).stored is True
+    assert len(await vs.list_vectors("b1")) == 2
+
+
+@pytest.mark.asyncio
+async def test_mip_dedup_action_overrides_config_action(tmp_path) -> None:
+    from astrocyte.mip.schema import DedupSpec, PipelineSpec
+
+    vs = InMemoryVectorStore()
+    orch = _orch_with(tmp_path, "signal_quality:\n  dedup:\n    action: skip\n", vs)
+    r = await _retain_with_one_duplicate_chunk(
+        orch, mip_pipeline=PipelineSpec(version=1, dedup=DedupSpec(action="warn"))
+    )
+    assert r.stored is True
+    assert len(await vs.list_vectors("b1")) == 3
+
+
+@pytest.mark.asyncio
+async def test_mip_rule_without_action_falls_back_to_config_action(tmp_path) -> None:
+    from astrocyte.mip.schema import DedupSpec, PipelineSpec
+
+    orch = _orch_with(tmp_path, "signal_quality:\n  dedup:\n    action: skip\n")
+    r = await _retain_with_one_duplicate_chunk(
+        orch, mip_pipeline=PipelineSpec(version=1, dedup=DedupSpec(threshold=0.95))
+    )
+    assert r.stored is False and r.deduplicated is True
+
+
+@pytest.mark.asyncio
+async def test_bank_dedup_action_applies_only_to_that_bank(tmp_path) -> None:
+    vs = InMemoryVectorStore()
+    orch = _orch_with(tmp_path, "banks:\n  strict:\n    signal_quality:\n      dedup:\n        action: skip\n", vs)
+    assert (await _retain_with_one_duplicate_chunk(orch, "strict")).stored is False
+    assert (await _retain_with_one_duplicate_chunk(orch, "other")).stored is True
+
+
+@pytest.mark.asyncio
+async def test_config_dedup_action_applies_in_retain_many(tmp_path) -> None:
+    from astrocyte.types import RetainRequest
+
+    vs = InMemoryVectorStore()
+    orch = _orch_with(tmp_path, "signal_quality:\n  dedup:\n    action: skip\n", vs)
+    await orch.retain(RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1"))
+    results = await orch.retain_many([RetainRequest(content=_TWO_CHUNKS, bank_id="b1")])
+    assert results[0].stored is False and results[0].deduplicated is True
+    assert len(await vs.list_vectors("b1")) == 1
+
+
 def test_source_store_and_mental_model_store_thread_through() -> None:
     sentinel_source = object()
     sentinel_mm = object()

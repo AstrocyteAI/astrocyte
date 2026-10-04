@@ -1,4 +1,4 @@
-"""Signal quality policies — deduplication detection.
+"""Signal quality policies — deduplication and noisy-bank detection.
 
 All functions are sync (Rust migration candidates).
 See docs/_design/policy-layer.md section 3.
@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import math
 import re
-from collections import Counter
-from collections.abc import Iterable
+import time
+from collections import Counter, deque
+from collections.abc import Callable, Iterable
 
 # Explicit negators. Deliberately a closed list: this guard targets the
 # measurable failure (a statement and its negation embed as near-duplicates),
@@ -190,3 +191,112 @@ class DedupDetector:
             del self._cache[bank_id]
 
         return len(self._cache.get(bank_id, [])) < before
+
+
+class NoisyBankDetector:
+    """Flags banks whose recent retains look like noise (policy-layer.md §3.3).
+
+    Three signals, each from retains this process has seen for the bank:
+
+    - ``retain_spike``: the last minute's retain count exceeds
+      ``retain_spike_multiplier`` × the per-minute average before it (a runaway
+      agent loop);
+    - ``short_content``: the average length of recent retains is below
+      ``min_avg_content_length`` characters (junk);
+    - ``high_dedup_rate``: more than ``max_dedup_rate`` of recent retains were
+      near-duplicates (redundant).
+
+    Samples expire after ``HORIZON_SECONDS``, so a flag clears once the bank
+    behaves — or, when the caller throttles or rejects flagged retains (which
+    are then never recorded), once the window has passed. In-memory and
+    per-process like ``DedupDetector``; thresholds are passed to ``check`` so
+    each bank can use its own ``noisy_bank`` settings.
+    """
+
+    _MAX_BANKS = 1000
+    #: Most recent retains the content-length and dedup-rate signals look at.
+    SAMPLE_WINDOW = 50
+    #: Below this many samples those two signals stay quiet: a new bank's first
+    #: few short notes are not a pattern.
+    MIN_SAMPLES = 20
+    #: Samples older than this are forgotten.
+    HORIZON_SECONDS = 3600.0
+    #: A spike needs at least this many retains in the last minute...
+    MIN_BURST = 10
+    #: ...and at least this much earlier history in the window to compare with.
+    MIN_BASELINE_SECONDS = 300.0
+    _MAX_EVENTS_PER_BANK = 10_000
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        # bank_id -> (timestamp, content_length, deduplicated), oldest first.
+        self._events: dict[str, deque[tuple[float, int, bool]]] = {}
+        # bank_id -> reasons it was flagged for at its last check.
+        self._flagged: dict[str, tuple[str, ...]] = {}
+
+    def record(self, bank_id: str, content_length: int, deduplicated: bool) -> None:
+        """Record one processed retain (stored or deduplicated)."""
+        events = self._events.pop(bank_id, None)
+        if events is None:
+            events = deque(maxlen=self._MAX_EVENTS_PER_BANK)
+        self._events[bank_id] = events  # re-insert: most recently used last
+        events.append((self._clock(), content_length, deduplicated))
+        while len(self._events) > self._MAX_BANKS:
+            evicted = next(iter(self._events))
+            del self._events[evicted]
+            self._flagged.pop(evicted, None)
+
+    def check(
+        self,
+        bank_id: str,
+        *,
+        retain_spike_multiplier: float,
+        min_avg_content_length: int,
+        max_dedup_rate: float,
+    ) -> tuple[tuple[str, ...], bool]:
+        """Return ``(reasons, changed)``: why the bank is flagged now (empty
+        when it is not), and whether that differs from its previous check — so
+        callers can log transitions instead of every flagged retain."""
+        reasons = self._reasons(bank_id, retain_spike_multiplier, min_avg_content_length, max_dedup_rate)
+        changed = reasons != self._flagged.get(bank_id, ())
+        if reasons:
+            self._flagged[bank_id] = reasons
+        else:
+            self._flagged.pop(bank_id, None)
+        return reasons, changed
+
+    def _reasons(
+        self,
+        bank_id: str,
+        spike_multiplier: float,
+        min_avg_length: int,
+        max_dedup_rate: float,
+    ) -> tuple[str, ...]:
+        events = self._events.get(bank_id)
+        if not events:
+            return ()
+        now = self._clock()
+        while events and events[0][0] < now - self.HORIZON_SECONDS:
+            events.popleft()
+        if not events:
+            return ()
+        reasons: list[str] = []
+
+        minute_ago = now - 60.0
+        last_minute = sum(1 for ts, _, _ in events if ts > minute_ago)
+        earlier = len(events) - last_minute
+        baseline_seconds = minute_ago - events[0][0]
+        if last_minute >= self.MIN_BURST and earlier and baseline_seconds >= self.MIN_BASELINE_SECONDS:
+            # Floor of one retain a minute: a quiet bank waking up to a handful
+            # of writes is not a runaway loop.
+            baseline_per_minute = max(earlier / (baseline_seconds / 60.0), 1.0)
+            if last_minute > spike_multiplier * baseline_per_minute:
+                reasons.append("retain_spike")
+
+        recent = list(events)[-self.SAMPLE_WINDOW :]
+        if len(recent) >= self.MIN_SAMPLES:
+            if sum(length for _, length, _ in recent) / len(recent) < min_avg_length:
+                reasons.append("short_content")
+            if sum(1 for _, _, dup in recent if dup) / len(recent) > max_dedup_rate:
+                reasons.append("high_dedup_rate")
+        return tuple(reasons)

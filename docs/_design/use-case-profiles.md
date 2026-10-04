@@ -303,6 +303,8 @@ banks:
       recall_max_tokens: 32768     # Research team gets bigger budget
 ```
 
+A bank's sections resolve as top-level section → the bank's `profile` → the bank's own block, key by key. Only a profile's `homeostasis`, `barriers` and `signal_quality` apply per bank; its `defaults`, `escalation` and other sections stay instance-wide.
+
 ---
 
 ## 6. Profile selection guidance

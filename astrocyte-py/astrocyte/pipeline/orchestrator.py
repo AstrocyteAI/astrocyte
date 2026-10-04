@@ -352,6 +352,10 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         #: as a duplicate, MIP ``dedup`` rules included (they tune the check,
         #: they cannot turn it on).
         self.dedup_enabled: bool = True
+        #: What a duplicate chunk does to the retain when no matched MIP rule
+        #: sets ``dedup.action``; set from ``signal_quality.dedup.action`` (see
+        #: ``astrocyte.config.DEDUP_ACTIONS``).
+        self.dedup_action: str = "skip_chunk"
         #: Also check each chunk against its nearest neighbours in the vector
         #: store when the in-process cache has no match, so dedup holds across
         #: processes (see ``RetainStageMixin._find_duplicate_chunks``). One
@@ -359,7 +363,7 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         #: ``signal_quality.dedup.consult_store``.
         self.dedup_consult_store: bool = True
         #: Per-bank dedup settings from ``banks.<id>.signal_quality.dedup``,
-        #: replacing the three attributes above for that bank. Each entry is
+        #: replacing the four attributes above for that bank. Each entry is
         #: already merged over the top-level block by the config loader.
         self.dedup_by_bank: dict[str, DedupConfig] = {}
         # Forget-cache invalidation: ``Astrocyte.forget`` calls this hook so
@@ -568,9 +572,7 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         """
         for name, value in cfg.as_orchestrator_attrs().items():
             if not hasattr(self, name):
-                raise AttributeError(
-                    f"PipelineConfig field {name!r} has no matching orchestrator attribute"
-                )
+                raise AttributeError(f"PipelineConfig field {name!r} has no matching orchestrator attribute")
             setattr(self, name, value)
 
     @property
@@ -623,7 +625,6 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
 
         for mid in memory_ids:
             self._dedup.remove(bank_id, mid)
-
 
     async def shutdown(self) -> None:
         """Drain background work and close provider resources owned by the pipeline."""

@@ -250,10 +250,13 @@ Only `knowledge-admin` can update the bank. All agents can query it.
 
 Banks can override instance-level configuration for:
 
-- **homeostasis** -- rate limits, concurrency
-- **barriers** -- PII scanning, validation rules
-- **signal_quality** -- relevance thresholds, dedup sensitivity
+- **homeostasis** -- rate limits, quotas, content size cap, recall/reflect token budgets
+- **barriers** -- PII scanning, content validation, metadata sanitization
+- **signal_quality** -- dedup threshold and action, noisy-bank detection
+- **profile** -- a profile whose homeostasis, barriers and signal_quality apply to this bank
 - **access** -- per-bank grants
+
+A bank states only what differs: each section resolves as the instance-level section, then the bank's `profile`, then the bank's own block.
 
 Example: a bank with stricter PII scanning than the instance default.
 
@@ -261,14 +264,15 @@ Example: a bank with stricter PII scanning than the instance default.
 banks:
   healthcare-notes:
     barriers:
-      pii_scan: true
-      pii_action: redact
-      pii_categories: [name, ssn, dob, medical_record]
+      pii:
+        mode: regex
+        action: redact
     homeostasis:
       rate_limits:
         retain_per_minute: 30
     signal_quality:
-      min_relevance: 0.8
+      dedup:
+        similarity_threshold: 0.98
 ```
 
 The instance default might allow PII through with a warning. This bank redacts it unconditionally.

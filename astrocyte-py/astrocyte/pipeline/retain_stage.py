@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     pass
 
 
-
 from astrocyte.pipeline._orchestrator_common import (
     _build_cooccurrence_pairs,
     _entities_from_metadata,
@@ -828,8 +827,12 @@ class RetainStageMixin:
                 "%d deferred (cap %d). Derived memory is incomplete for bank %s — "
                 "ingest is outpacing consolidation; a full deferred queue means this "
                 "is sustained, not a burst.",
-                shed, len(self._background_tasks), cap,
-                len(deferred) if deferred is not None else 0, dcap, bank_id,
+                shed,
+                len(self._background_tasks),
+                cap,
+                len(deferred) if deferred is not None else 0,
+                dcap,
+                bank_id,
             )
 
     def _start_consolidation(self, factory) -> None:
@@ -857,6 +860,13 @@ class RetainStageMixin:
         cap = getattr(self, "max_pending_consolidations", 0)
         while deferred and (not cap or len(self._background_tasks) < cap):
             self._start_consolidation(deferred.popleft())
+
+    def _config_dedup_action(self, bank_id: str) -> str:
+        """``signal_quality.dedup.action`` for ``bank_id`` — the bank's own
+        setting if it has one, else the top-level one. Used when no matched MIP
+        rule sets ``dedup.action``."""
+        bank = getattr(self, "dedup_by_bank", {}).get(bank_id)
+        return bank.action if bank is not None else getattr(self, "dedup_action", "skip_chunk")
 
     async def _find_duplicate_chunks(
         self,
@@ -937,7 +947,7 @@ class RetainStageMixin:
         mip_chunker = mip_pipeline.chunker if mip_pipeline else None
         mip_dedup = mip_pipeline.dedup if mip_pipeline else None
         dedup_threshold_override = mip_dedup.threshold if mip_dedup else None
-        dedup_action = (mip_dedup.action if mip_dedup else None) or "skip_chunk"
+        dedup_action = (mip_dedup.action if mip_dedup else None) or self._config_dedup_action(request.bank_id)
 
         prepared = prepare_retain_input(
             request,
@@ -991,7 +1001,8 @@ class RetainStageMixin:
         async with self._profiler.time("embed"):
             embeddings = await generate_embeddings(chunks, self.llm_provider)
 
-        # 2b. Per-chunk dedup — behavior depends on dedup_action:
+        # 2b. Per-chunk dedup — behavior depends on dedup_action (MIP rule,
+        #     else signal_quality.dedup.action for the bank):
         #     "skip_chunk" (default): drop duplicate chunks, keep the rest
         #     "skip":     if any chunk is a duplicate, reject the entire retain
         #     "warn":     keep all chunks regardless of duplicates
@@ -1274,7 +1285,7 @@ class RetainStageMixin:
             mip_pipeline = request.mip_pipeline
             mip_dedup = mip_pipeline.dedup if mip_pipeline else None
             dedup_threshold_override = mip_dedup.threshold if mip_dedup else None
-            dedup_action = (mip_dedup.action if mip_dedup else None) or "skip_chunk"
+            dedup_action = (mip_dedup.action if mip_dedup else None) or self._config_dedup_action(request.bank_id)
 
             keep_indices: list[int] = []
             any_duplicate = False

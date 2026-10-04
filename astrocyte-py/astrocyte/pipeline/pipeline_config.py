@@ -64,11 +64,11 @@ class PipelineConfig:
     causal_max_pairs_per_memory: int
     causal_min_confidence: float
 
-    # Retain-time dedup (``signal_quality.dedup``). ``action`` is not carried:
-    # the pipeline's action comes from MIP ``dedup.action`` (default
-    # "skip_chunk"), whose vocabulary differs from the config block's.
+    # Retain-time dedup (``signal_quality.dedup``). A matched MIP rule's
+    # ``dedup.threshold`` / ``dedup.action`` override these per retain.
     dedup_enabled: bool
     dedup_similarity_threshold: float
+    dedup_action: str
     # Retain-time dedup against the store, not only this process's cache.
     dedup_consult_store: bool
     # Banks with their own ``banks.<id>.signal_quality`` block: the resolved
@@ -205,6 +205,7 @@ class PipelineConfig:
             causal_min_confidence=cl_cfg.min_confidence,
             dedup_enabled=dedup_cfg.enabled,
             dedup_similarity_threshold=dedup_cfg.similarity_threshold,
+            dedup_action=dedup_cfg.action,
             dedup_consult_store=dedup_cfg.consult_store,
             dedup_by_bank={
                 bank_id: bank.signal_quality.dedup
@@ -225,9 +226,7 @@ class PipelineConfig:
             entity_cooccurrence_max_entities=coocc_cfg.max_entities_per_memory,
             query_analyzer_enabled=qa_cfg.enabled,
             query_analyzer_allow_llm_fallback=qa_cfg.allow_llm_fallback,
-            query_analyzer_enable_temporal_expansion=_temporal_expansion_flag(
-                qa_cfg.enable_temporal_expansion
-            ),
+            query_analyzer_enable_temporal_expansion=_temporal_expansion_flag(qa_cfg.enable_temporal_expansion),
             link_expansion_params=link_expansion_params,
             bm25_idf_enabled=config.bm25_idf.enabled,
             source_store=source_store,
