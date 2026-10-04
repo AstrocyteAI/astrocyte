@@ -791,7 +791,7 @@ The three items scoped after §4e, recorded honestly:
 
 | # | item | status |
 |---|---|---|
-| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h (a real-size batch measured 64 s/Add; cause and fix in §9.12). **In flight:** n=50 shuffled on `claude -p` with this architecture, started 2026-10-03 — pinned to frozen `8f13e2f`, so it measures *pre-fix* behaviour (positional join, thinking on); ETA ~03:00 UTC 2026-10-04. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
+| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h (a real-size batch measured 64 s/Add; cause and fix in §9.12). **Measured:** n=50 paired on this architecture — no accuracy penalty vs the baseline (+4.0 pts, CI [−4, +13], p = 0.69); see the paired section below. A fixed-code rerun is in flight. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
 | 2 | bound `OpenAIProvider` concurrency | **done.** `max_concurrency` / `ASTROCYTE_OPENAI_MAX_CONCURRENCY`, guarding `complete()` and `embed()`, opt-in. Negative control: `assert 20 <= 3`. |
 | 3 | `top_k` 50 vs 100 A/B | **not run** — rides on item 1. |
 
@@ -800,6 +800,37 @@ Prerequisite worth recording: the local `atlas-postgres` is vanilla
 the AML compose's own pgvectorscale image (port 8085; 8080 collides with
 `atlas-ser`). Dedup's negation guard (§9.10) also lands before item 1 runs, so item 1
 will measure it on `text-embedding-3-small` for the first time.
+
+#### Submission architecture vs baseline — paired, n=50 (2026-10-04)
+
+First measurement of the retain architecture the submission uses (Postgres +
+pgvectorscale DiskANN, `structured_fact_extraction: true`), with `claude -p`
+haiku + bge-small standing in for gpt-4o-mini + text-embedding-3-small. The
+first 50 items of the seed-42 sample — **all 50 are also in the n=250
+baseline**, so the comparison is paired on identical questions, with the same
+haiku judge procedure and two judge passes each.
+
+| | pass 1 | pass 2 |
+|---|---|---|
+| baseline (in_memory, structured extraction off) | 60.0% | 56.0% |
+| submission architecture | **64.0%** | **60.0%** |
+
+**Paired difference +4.0 pts, 95% bootstrap CI [−4.0, +13.0]; McNemar 2 vs 4
+discordant, p = 0.69.** The two configurations agree on 44 of 50 questions.
+**No measured accuracy penalty; no claimable gain.** Per type (directional
+only): multi-session 9→11/18, temporal 5→6/9, preference 1→0/5, rest equal.
+
+Caveats: this run used **pre-fix** code (§9.12) — positional metadata join,
+thinking on, Claude Code tool definitions and the user's hooks in every
+extraction prompt — and was still not worse. Both runs' judges also ran the
+user's Claude Code hooks (the judge was held constant on purpose). The cost is
+speed: structured extraction made an Add ~10× slower here (64 s vs ~6 s).
+
+**Follow-up in flight:** the same 50 items on the **fixed** code (`ee58f88`:
+chunk_index alignment, thinking off, built-in tools and hooks off), same judge.
+Verified identical embeddings between the two pins (cosine 1.000000), so
+retrieval is not confounded. Smoke test on the same batch: Add 64.4 s → 36.2 s,
+extraction call 58.4 s → 25.5 s.
 
 ## 5. M48 — Phase 3 (both sub-items gated)
 

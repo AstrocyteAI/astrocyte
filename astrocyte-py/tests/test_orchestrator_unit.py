@@ -208,7 +208,8 @@ class TestRetainDedup:
         assert r1.memory_id, "first retain must return a memory_id"
         memory_ids = [r1.memory_id]
 
-        # Simulate the forget callback — drop the cache entry.
+        # Simulate Astrocyte.forget — remove the row, then drop the cache entry.
+        await vs.delete(memory_ids, "b1")
         orch.invalidate_dedup_cache("b1", memory_ids)
 
         # Re-retain identical content. With the cache invalidated, this
@@ -226,14 +227,167 @@ class TestRetainDedup:
         llm = MockLLMProvider()
         orch = PipelineOrchestrator(vs, llm)
 
-        await orch.retain(RetainRequest(content="Memory one", bank_id="b1"))
-        await orch.retain(RetainRequest(content="Memory two", bank_id="b1"))
+        r1 = await orch.retain(RetainRequest(content="Memory one", bank_id="b1"))
+        r2 = await orch.retain(RetainRequest(content="Memory two", bank_id="b1"))
 
+        await vs.delete([r1.memory_id, r2.memory_id], "b1")  # what forget does first
         orch.invalidate_dedup_cache("b1", None)
 
         # Both memories' embeddings are gone from the cache; re-retain succeeds.
         r = await orch.retain(RetainRequest(content="Memory one", bank_id="b1"))
         assert r.stored is True
+
+
+class TestRetainDedupAcrossProcesses:
+    """Dedup must hold against what the bank already has, not only what this
+    process retained: a fresh orchestrator on the same store stands in for a
+    restarted daemon, a CLI import run, or a gateway restart."""
+
+    @pytest.mark.asyncio
+    async def test_fresh_orchestrator_dedups_against_the_store(self):
+        vs = InMemoryVectorStore()
+        r1 = await PipelineOrchestrator(vs, MockLLMProvider()).retain(
+            RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+        )
+        assert r1.stored is True
+
+        r2 = await PipelineOrchestrator(vs, MockLLMProvider()).retain(
+            RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+        )
+        assert r2.stored is False and r2.deduplicated is True
+        assert len(await vs.list_vectors("b1")) == 1
+
+    @pytest.mark.asyncio
+    async def test_fresh_orchestrator_dedups_in_retain_many(self):
+        vs = InMemoryVectorStore()
+        await PipelineOrchestrator(vs, MockLLMProvider()).retain(
+            RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+        )
+        results = await PipelineOrchestrator(vs, MockLLMProvider()).retain_many(
+            [
+                RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1"),
+                RetainRequest(content="The cache TTL is five minutes.", bank_id="b1"),
+            ]
+        )
+        assert results[0].deduplicated is True and results[0].stored is False
+        assert results[1].stored is True
+        assert len(await vs.list_vectors("b1")) == 2
+
+    @pytest.mark.asyncio
+    async def test_negation_guard_applies_to_stored_memories(self, monkeypatch):
+        """A reversal must not be dropped as a duplicate of the stored fact,
+        even when its embedding scores above threshold."""
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        same_vector = (await llm.embed(["x"]))[0]
+
+        async def embed(texts, **_kw):
+            return [same_vector for _ in texts]
+
+        monkeypatch.setattr(llm, "embed", embed)
+        await PipelineOrchestrator(vs, llm).retain(
+            RetainRequest(content="The user is allergic to peanuts.", bank_id="b1")
+        )
+        orch = PipelineOrchestrator(vs, llm)
+        r = await orch.retain(RetainRequest(content="The user is not allergic to peanuts.", bank_id="b1"))
+        assert r.stored is True
+        assert orch._dedup.negation_overrides == 1
+
+    @pytest.mark.asyncio
+    async def test_mip_skip_and_warn_apply_to_stored_memories(self):
+        from astrocyte.mip.schema import DedupSpec, PipelineSpec
+
+        vs = InMemoryVectorStore()
+        await PipelineOrchestrator(vs, MockLLMProvider()).retain(
+            RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+        )
+        content = "Deploys happen on Tuesdays. The cache TTL is five minutes."  # two chunks at max 30
+
+        skip = await PipelineOrchestrator(vs, MockLLMProvider(), max_chunk_size=30).retain(
+            RetainRequest(
+                content=content,
+                bank_id="b1",
+                mip_pipeline=PipelineSpec(version=1, dedup=DedupSpec(action="skip")),
+            )
+        )
+        assert skip.stored is False and skip.deduplicated is True
+        assert len(await vs.list_vectors("b1")) == 1
+
+        warn = await PipelineOrchestrator(vs, MockLLMProvider(), max_chunk_size=30).retain(
+            RetainRequest(
+                content=content,
+                bank_id="b1",
+                mip_pipeline=PipelineSpec(version=1, dedup=DedupSpec(action="warn")),
+            )
+        )
+        assert warn.stored is True
+        assert len(await vs.list_vectors("b1")) == 3, "warn keeps the duplicate chunk too"
+
+    @pytest.mark.asyncio
+    async def test_forgotten_memory_is_not_a_duplicate(self):
+        vs = InMemoryVectorStore()
+        r1 = await PipelineOrchestrator(vs, MockLLMProvider()).retain(
+            RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+        )
+        await vs.delete([r1.memory_id], "b1")
+        r2 = await PipelineOrchestrator(vs, MockLLMProvider()).retain(
+            RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+        )
+        assert r2.stored is True
+
+    @pytest.mark.asyncio
+    async def test_an_observation_is_not_a_duplicate_of_a_raw_memory(self):
+        """Consolidated observations share the vector store; a raw memory
+        that restates one is still new evidence and must be kept."""
+        vs = InMemoryVectorStore()
+        llm = MockLLMProvider()
+        vector = (await llm.embed(["Deploys happen on Tuesdays."]))[0]
+        await vs.store_vectors(
+            [
+                VectorItem(
+                    id="obs-1",
+                    bank_id="b1",
+                    vector=vector,
+                    text="Deploys happen on Tuesdays.",
+                    fact_type="observation",
+                )
+            ]
+        )
+        r = await PipelineOrchestrator(vs, llm).retain(
+            RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+        )
+        assert r.stored is True
+
+    @pytest.mark.asyncio
+    async def test_store_check_can_be_turned_off(self):
+        vs = InMemoryVectorStore()
+        await PipelineOrchestrator(vs, MockLLMProvider()).retain(
+            RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+        )
+        orch = PipelineOrchestrator(vs, MockLLMProvider())
+        orch.dedup_consult_store = False
+        r = await orch.retain(RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1"))
+        assert r.stored is True
+
+    @pytest.mark.asyncio
+    async def test_failed_store_lookup_keeps_the_chunk(self, monkeypatch, caplog):
+        """A redundant row is cheaper than a lost fact: if the neighbour search
+        fails, the chunk is treated as new and the retain still succeeds."""
+        vs = InMemoryVectorStore()
+        await PipelineOrchestrator(vs, MockLLMProvider()).retain(
+            RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+        )
+
+        async def broken_search(*_a, **_kw):
+            raise RuntimeError("index offline")
+
+        monkeypatch.setattr(vs, "search_similar", broken_search)
+        with caplog.at_level("WARNING", logger="astrocyte.mip"):
+            r = await PipelineOrchestrator(vs, MockLLMProvider()).retain(
+                RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1")
+            )
+        assert r.stored is True
+        assert "store lookup failed" in caplog.text and "index offline" in caplog.text
 
 
 class TestReflectAutoPromptRouting:

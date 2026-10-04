@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
@@ -87,11 +88,35 @@ class BarrierConfig:
     metadata: MetadataSanitizationConfig = field(default_factory=MetadataSanitizationConfig)
 
 
+#: ``signal_quality.dedup.action`` values, mapped to the retain pipeline's
+#: (MIP ``dedup.action``) vocabulary. Config ``skip`` keeps its documented
+#: meaning — duplicates are dropped — which is the pipeline's ``skip_chunk``
+#: (drop duplicate chunks, store the rest); ``skip_chunk`` is accepted as an
+#: alias. ``warn`` stores everything; ``update`` is not implemented and behaves
+#: as ``skip_chunk``. Rejecting a whole retain when any chunk is a duplicate is
+#: MIP's ``skip``, available per rule only.
+DEDUP_ACTION_TO_PIPELINE = {"skip": "skip_chunk", "skip_chunk": "skip_chunk", "warn": "warn", "update": "update"}
+DEDUP_ACTIONS = tuple(DEDUP_ACTION_TO_PIPELINE)
+NOISY_BANK_ACTIONS = ("warn", "throttle", "reject")
+
+
 @dataclass
 class DedupConfig:
     enabled: bool = True
     similarity_threshold: float = 0.95
-    action: str = "skip"  # "skip" | "warn" | "update"
+    action: str = "skip"  # "skip" | "skip_chunk" | "warn" | "update" — see DEDUP_ACTION_TO_PIPELINE
+
+    @property
+    def pipeline_action(self) -> str:
+        """``action`` in the retain pipeline's vocabulary (``skip`` -> ``skip_chunk``)."""
+        return DEDUP_ACTION_TO_PIPELINE.get(self.action, "skip_chunk")
+
+    #: Retain-time dedup also checks each chunk against its nearest stored
+    #: neighbours, so it holds across processes (a restarted daemon, a CLI
+    #: run, a gateway restart) and not only within one. One extra
+    #: ``search_similar`` per chunk: cheap on an ANN index, a full bank scan on
+    #: SqliteStore (~5 ms at 1k memories, ~25 ms at 10k, ~110 ms at 50k).
+    consult_store: bool = True
 
 
 @dataclass
@@ -100,7 +125,7 @@ class NoisyBankConfig:
     retain_spike_multiplier: float = 5.0
     min_avg_content_length: int = 20
     max_dedup_rate: float = 0.8
-    action: str = "warn"  # "warn" | "throttle" | "reject"
+    action: str = "warn"  # see NOISY_BANK_ACTIONS
 
 
 @dataclass
@@ -899,7 +924,15 @@ class AsyncTasksConfig:
 
 @dataclass
 class BankConfig:
-    """Per-bank override settings."""
+    """Per-bank override settings.
+
+    ``homeostasis``, ``barriers`` and ``signal_quality`` are the bank's
+    *resolved* sections when loaded from YAML: the top-level section, then the
+    bank's ``profile``, then the bank's own block (see ``_parse_banks``).
+    ``None`` means the bank uses the top-level section. Read them through
+    ``AstrocyteConfig.bank_homeostasis`` / ``bank_barriers`` /
+    ``bank_signal_quality``.
+    """
 
     profile: str | None = None
     access: list[dict[str, str | list[str]]] | None = None
@@ -1034,6 +1067,24 @@ class AstrocyteConfig:
     agents: dict[str, AgentRegistrationConfig] | None = None
     deployment: DeploymentConfig | None = None
     extraction_profiles: dict[str, ExtractionProfileConfig] | None = None
+
+    def _bank(self, bank_id: str | None) -> BankConfig | None:
+        return (self.banks or {}).get(bank_id) if bank_id else None
+
+    def bank_homeostasis(self, bank_id: str | None) -> HomeostasisConfig:
+        """``homeostasis`` in effect for ``bank_id`` (its override, else top-level)."""
+        bank = self._bank(bank_id)
+        return bank.homeostasis if bank and bank.homeostasis else self.homeostasis
+
+    def bank_barriers(self, bank_id: str | None) -> BarrierConfig:
+        """``barriers`` in effect for ``bank_id`` (its override, else top-level)."""
+        bank = self._bank(bank_id)
+        return bank.barriers if bank and bank.barriers else self.barriers
+
+    def bank_signal_quality(self, bank_id: str | None) -> SignalQualityConfig:
+        """``signal_quality`` in effect for ``bank_id`` (its override, else top-level)."""
+        bank = self._bank(bank_id)
+        return bank.signal_quality if bank and bank.signal_quality else self.signal_quality
 
 
 # ---------------------------------------------------------------------------
@@ -1280,8 +1331,28 @@ def _parse_lifecycle(data: dict) -> LifecycleConfig:
     )
 
 
-def _parse_banks(data: dict) -> dict[str, BankConfig]:
-    """Parse a ``banks:`` config block with per-bank overrides."""
+#: Sections a bank can override, with their parsers.
+_BANK_SECTION_PARSERS: dict[str, Callable[[dict], Any]] = {
+    "homeostasis": _parse_homeostasis,
+    "barriers": _parse_barriers,
+    "signal_quality": _parse_signal_quality,
+}
+
+
+def _parse_banks(data: dict, top_level: dict | None = None) -> dict[str, BankConfig]:
+    """Parse a ``banks:`` config block with per-bank overrides.
+
+    Each overridable section resolves as top-level section (``top_level``,
+    already merged with the top-level profile) → the bank's ``profile`` →
+    the bank's own block, later layers winning key by key. A bank therefore
+    states only what differs: one that sets ``dedup.similarity_threshold``
+    keeps the top-level ``enabled`` rather than resetting it to the dataclass
+    default. A section neither the bank nor its profile mentions stays ``None``
+    (the bank uses the top-level section). Only these three sections are
+    per-bank; a bank profile's other sections (``defaults``, ``escalation``,
+    ...) do not apply.
+    """
+    top_level = top_level or {}
     banks: dict[str, BankConfig] = {}
     for bid, bdata in data.items():
         if not isinstance(bdata, dict):
@@ -1290,12 +1361,17 @@ def _parse_banks(data: dict) -> dict[str, BankConfig]:
             profile=bdata.get("profile"),
             access=bdata.get("access"),
         )
-        if "homeostasis" in bdata and isinstance(bdata["homeostasis"], dict):
-            bc.homeostasis = _parse_homeostasis(bdata["homeostasis"])
-        if "barriers" in bdata and isinstance(bdata["barriers"], dict):
-            bc.barriers = _parse_barriers(bdata["barriers"])
-        if "signal_quality" in bdata and isinstance(bdata["signal_quality"], dict):
-            bc.signal_quality = _parse_signal_quality(bdata["signal_quality"])
+        profile_data = _load_profile(bc.profile) if bc.profile else {}
+        for section, parse in _BANK_SECTION_PARSERS.items():
+            layers = [layer.get(section) for layer in (profile_data, bdata)]
+            layers = [layer for layer in layers if isinstance(layer, dict)]
+            if not layers:
+                continue
+            base = top_level.get(section)
+            resolved = base if isinstance(base, dict) else {}
+            for layer in layers:
+                resolved = _deep_merge(resolved, layer)
+            setattr(bc, section, parse(resolved))
         banks[str(bid)] = bc
     return banks
 
@@ -1426,7 +1502,7 @@ def _dict_to_config(data: dict) -> AstrocyteConfig:
         config.lifecycle = _parse_lifecycle(data["lifecycle"])
 
     if "banks" in data and data["banks"]:
-        config.banks = _parse_banks(data["banks"])
+        config.banks = _parse_banks(data["banks"], data)
 
     if "extraction_profiles" in data and isinstance(data["extraction_profiles"], dict):
         profiles: dict[str, ExtractionProfileConfig] = {}
@@ -1496,8 +1572,22 @@ def _resolve_agent_bank_ids(
     return out
 
 
+def _validate_signal_quality(label: str, sq: SignalQualityConfig) -> None:
+    if sq.dedup.action not in DEDUP_ACTIONS:
+        raise ConfigError(f"{label}.dedup.action={sq.dedup.action!r} must be one of {', '.join(DEDUP_ACTIONS)}")
+    if sq.noisy_bank.action not in NOISY_BANK_ACTIONS:
+        raise ConfigError(
+            f"{label}.noisy_bank.action={sq.noisy_bank.action!r} must be one of {', '.join(NOISY_BANK_ACTIONS)}"
+        )
+
+
 def validate_astrocyte_config(config: AstrocyteConfig) -> None:
     """Cross-field checks for ADR-003 sections (v0.5.0 with M1)."""
+    _validate_signal_quality("signal_quality", config.signal_quality)
+    for bank_id, bank in (config.banks or {}).items():
+        if bank.signal_quality is not None:
+            _validate_signal_quality(f"banks.{bank_id}.signal_quality", bank.signal_quality)
+
     # M9 / ADR-008: Apache AGE was removed entirely. Existing configs that
     # still set ``graph_store: age`` must be migrated. There is no migration
     # tool — operators rebuild banks from raw memory_units. See

@@ -15,7 +15,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
-from astrocyte.config import ExtractionProfileConfig, RecallAuthorityConfig
+from astrocyte.config import DedupConfig, ExtractionProfileConfig, RecallAuthorityConfig
 
 # Re-exported for backward compatibility: these pure module helpers moved to
 # _orchestrator_common during the retain/recall/reflect stage extraction but
@@ -347,6 +347,25 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         # LLM call per recall.  Enable for multi-hop / paraphrase-heavy workloads.
         self.enable_hyde = enable_hyde
         self._dedup = DedupDetector(similarity_threshold=0.95)
+        #: Retain-time near-duplicate check on/off; set from
+        #: ``signal_quality.dedup.enabled``. Off means no chunk is ever dropped
+        #: as a duplicate, MIP ``dedup`` rules included (they tune the check,
+        #: they cannot turn it on).
+        self.dedup_enabled: bool = True
+        #: What a duplicate chunk does to the retain when no matched MIP rule
+        #: sets ``dedup.action``; set from ``signal_quality.dedup.action``,
+        #: mapped to the pipeline's vocabulary (``DedupConfig.pipeline_action``).
+        self.dedup_action: str = "skip_chunk"
+        #: Also check each chunk against its nearest neighbours in the vector
+        #: store when the in-process cache has no match, so dedup holds across
+        #: processes (see ``RetainStageMixin._find_duplicate_chunks``). One
+        #: extra ``search_similar`` per chunk; set from
+        #: ``signal_quality.dedup.consult_store``.
+        self.dedup_consult_store: bool = True
+        #: Per-bank dedup settings from ``banks.<id>.signal_quality.dedup``,
+        #: replacing the four attributes above for that bank. Each entry is
+        #: already merged over the top-level block by the config loader.
+        self.dedup_by_bank: dict[str, DedupConfig] = {}
         # Forget-cache invalidation: ``Astrocyte.forget`` calls this hook so
         # the in-memory dedup cache doesn't keep matching against memories
         # that are gone from the vector store. Without this, re-retain after
@@ -553,10 +572,22 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         """
         for name, value in cfg.as_orchestrator_attrs().items():
             if not hasattr(self, name):
-                raise AttributeError(
-                    f"PipelineConfig field {name!r} has no matching orchestrator attribute"
-                )
+                raise AttributeError(f"PipelineConfig field {name!r} has no matching orchestrator attribute")
             setattr(self, name, value)
+
+    @property
+    def dedup_similarity_threshold(self) -> float:
+        """Default cosine threshold of the retain-time dedup check.
+
+        Set from ``signal_quality.dedup.similarity_threshold``; a matched MIP
+        rule's ``dedup.threshold`` still overrides it per retain. Stored on the
+        detector itself so the cache and store checks share one value.
+        """
+        return self._dedup.threshold
+
+    @dedup_similarity_threshold.setter
+    def dedup_similarity_threshold(self, value: float) -> None:
+        self._dedup.threshold = value
 
     @property
     def tokens_used(self) -> int:
@@ -594,7 +625,6 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
 
         for mid in memory_ids:
             self._dedup.remove(bank_id, mid)
-
 
     async def shutdown(self) -> None:
         """Drain background work and close provider resources owned by the pipeline."""

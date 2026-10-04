@@ -89,9 +89,22 @@ async def _list(args: Namespace, pipeline: Any, _brain: Any) -> int:
     recent = getattr(store, "list_recent_vectors", None)
     items = await recent(bank, limit=args.limit) if recent else (await store.list_vectors(bank, limit=args.limit))
     if args.json:
-        print(json.dumps([{"id": i.id, "text": i.text, "source": _source(i.metadata),
-                           "when": (i.occurred_at or i.retained_at).isoformat() if (i.occurred_at or i.retained_at)
-                           else None} for i in items], indent=2))
+        print(
+            json.dumps(
+                [
+                    {
+                        "id": i.id,
+                        "text": i.text,
+                        "source": _source(i.metadata),
+                        "when": (i.occurred_at or i.retained_at).isoformat()
+                        if (i.occurred_at or i.retained_at)
+                        else None,
+                    }
+                    for i in items
+                ],
+                indent=2,
+            )
+        )
         return 0
     if not items:
         print(f"No memories in {bank}.")
@@ -127,8 +140,10 @@ async def _forget(args: Namespace, pipeline: Any, brain: Any) -> int:
             print(f"No memories in {bank}.")
             return 0
         if not args.yes:
-            print(f"This permanently removes all {len(items)} memories in {bank}.\n"
-                  "Re-run with --yes to confirm.", file=sys.stderr)
+            print(
+                f"This permanently removes all {len(items)} memories in {bank}.\nRe-run with --yes to confirm.",
+                file=sys.stderr,
+            )
             return 1
         result = await brain.forget(bank, scope="all")
         print(f"Removed {result.deleted_count} memories from {bank}.{await _erase(pipeline, bank, None)}")
@@ -164,14 +179,16 @@ async def _erase(pipeline: Any, bank: str, ids: list[str] | None) -> str:
 async def _banks(args: Namespace, pipeline: Any, _brain: Any) -> int:
     lister = getattr(pipeline.vector_store, "list_banks", None)
     if lister is None:
-        print(f"{type(pipeline.vector_store).__name__} can't enumerate banks; name one with --bank.",
-              file=sys.stderr)
+        print(f"{type(pipeline.vector_store).__name__} can't enumerate banks; name one with --bank.", file=sys.stderr)
         return 2
     banks = await lister()
     here = _bank(Namespace(bank=None, project=args.project))
     if args.json:
-        print(json.dumps([{"bank": b, "memories": n, "newest": t.isoformat() if t else None} for b, n, t in banks],
-                         indent=2))
+        print(
+            json.dumps(
+                [{"bank": b, "memories": n, "newest": t.isoformat() if t else None} for b, n, t in banks], indent=2
+            )
+        )
         return 0
     if not banks:
         print("No memories yet.")
@@ -179,7 +196,6 @@ async def _banks(args: Namespace, pipeline: Any, _brain: Any) -> int:
     for b, n, t in banks:
         print(f"  {'→' if b == here else ' '} {b:<48} {n:>6}  newest {_when(t)}")
     return 0
-
 
 
 # ── import / export ──────────────────────────────────────────────────────
@@ -270,10 +286,6 @@ async def _import(args: Namespace, pipeline: Any, brain: Any) -> int:
         md = item.metadata or {}
         if md.get("import_path") and md.get("import_hash"):
             held.setdefault(str(md["import_path"]), {}).setdefault(str(md["import_hash"]), []).append(item.id)
-    # The pipeline's near-duplicate check only sees what this process
-    # retained, so a section that duplicated another one would be stored by
-    # the next run. Checking the store keeps an import stable across runs.
-    threshold = getattr(getattr(pipeline, "_dedup", None), "threshold", 0.95)
     added = kept = removed = duplicates = 0
     for f in files:
         label = _label(f, args)
@@ -292,15 +304,15 @@ async def _import(args: Namespace, pipeline: Any, brain: Any) -> int:
             added, removed = added + len(new), removed + len(stale)
             continue
         when = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
-        vectors = await pipeline.llm_provider.embed([section for _, section in new]) if new else []
         stored = dup = 0
-        for (digest, section), vector in zip(new, vectors):
-            nearest = await pipeline.vector_store.search_similar(vector, bank, limit=1)
-            if nearest and nearest[0].score >= threshold:
-                dup += 1  # already said elsewhere
-                continue
+        for digest, section in new:
+            # The pipeline's dedup checks the store too, so a section already
+            # said elsewhere — in this run or an earlier one — is skipped.
             result = await brain.retain(
-                section, bank_id=bank, occurred_at=when, source="import",
+                section,
+                bank_id=bank,
+                occurred_at=when,
+                source="import",
                 metadata={"source": "import", "import_path": label, "import_hash": digest},
             )
             if result.stored:
@@ -340,9 +352,18 @@ async def _export(args: Namespace, pipeline: Any, _brain: Any) -> int:
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps({"_ama_version": AMA_VERSION, "bank_id": bank,
-                             "exported_at": datetime.now(timezone.utc).isoformat(),
-                             "provider": "astrocyte-cli", "memory_count": len(items)}) + "\n")
+        fh.write(
+            json.dumps(
+                {
+                    "_ama_version": AMA_VERSION,
+                    "bank_id": bank,
+                    "exported_at": datetime.now(timezone.utc).isoformat(),
+                    "provider": "astrocyte-cli",
+                    "memory_count": len(items),
+                }
+            )
+            + "\n"
+        )
         for item in items:
             record: dict[str, Any] = {"id": item.id, "text": item.text, "bank_id": bank}
             if item.fact_type:
@@ -360,8 +381,7 @@ async def _export(args: Namespace, pipeline: Any, _brain: Any) -> int:
     return 0
 
 
-_COMMANDS = {"list": _list, "search": _search, "forget": _forget, "banks": _banks,
-             "import": _import, "export": _export}
+_COMMANDS = {"list": _list, "search": _search, "forget": _forget, "banks": _banks, "import": _import, "export": _export}
 
 
 def run(args: Namespace) -> int:
@@ -412,7 +432,8 @@ def register(sub) -> None:
     scope(forget)
     scope(cmds.add_parser("banks", help="every bank with memories, this project's marked →"))
     imp = cmds.add_parser(
-        "import", help="seed memory from Markdown/text files or directories (or an .ama.jsonl archive)",
+        "import",
+        help="seed memory from Markdown/text files or directories (or an .ama.jsonl archive)",
         description="Each file is split at its headings into one memory per section. Re-importing a file "
         "syncs it: new sections are added, sections no longer in the file are removed. Credentials are "
         "redacted as with any memory. Typical first step: astrocyte memory import CLAUDE.md AGENTS.md docs/",
