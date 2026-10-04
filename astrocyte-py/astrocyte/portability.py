@@ -89,7 +89,10 @@ def _safe_resolve(
     # logic, so this whole file is in CodeQL's ``paths-ignore`` (see
     # ``.github/codeql/codeql-config.yml``). Threat model is locked by
     # ``tests/test_portability.py::TestPathContainment``.
-    resolved = Path(path_str).expanduser().resolve()
+    try:
+        resolved = Path(path_str).expanduser().resolve()
+    except RuntimeError as exc:  # "~nosuchuser": expanduser cannot find that home
+        raise ValueError(f"Portability path has an unresolvable home directory: {path_str!r}") from exc
     roots: list[Path]
     if allowed_roots:
         roots = [Path(r).expanduser().resolve() for r in allowed_roots]

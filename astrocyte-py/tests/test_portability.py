@@ -238,6 +238,15 @@ class TestPathContainment:
         with pytest.raises(ValueError, match="containment is required"):
             await brain.export_bank("b1", str(tmp_path / "out.jsonl"))
 
+    async def test_unknown_home_directory_is_a_value_error(self):
+        """``~nosuchuser`` makes expanduser raise RuntimeError; callers (the
+        gateway maps ValueError to 422) must see a ValueError, not a crash."""
+        brain, _ = _make_brain()
+        with pytest.raises(ValueError, match="unresolvable home directory"):
+            await brain.export_bank("b1", "~astrocyte-no-such-user-0")
+        with pytest.raises(ValueError, match="unresolvable home directory"):
+            await brain.import_bank("b1", "~astrocyte-no-such-user-0")
+
     async def test_export_allows_uncontained_when_opted_in(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("ASTROCYTE_PORTABILITY_ROOTS", raising=False)
         brain, _ = _make_brain()
