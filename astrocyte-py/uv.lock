@@ -292,6 +292,7 @@ bench = [
     { name = "astrocyte-ingestion-kafka" },
     { name = "astrocyte-ingestion-redis" },
     { name = "astrocyte-postgres" },
+    { name = "astrocyte-sqlite" },
     { name = "dateparser" },
     { name = "fastapi" },
     { name = "fastmcp" },
@@ -311,6 +312,7 @@ default = [
     { name = "astrocyte-postgres" },
 ]
 dev = [
+    { name = "astrocyte-sqlite" },
     { name = "fastapi" },
     { name = "fastmcp" },
     { name = "openai" },
@@ -427,6 +429,8 @@ requires-dist = [
     { name = "astrocyte-postgres", marker = "extra == 'postgres'", editable = "../adapters-storage-py/astrocyte-postgres" },
     { name = "astrocyte-qdrant", marker = "extra == 'all'", editable = "../adapters-storage-py/astrocyte-qdrant" },
     { name = "astrocyte-qdrant", marker = "extra == 'qdrant'", editable = "../adapters-storage-py/astrocyte-qdrant" },
+    { name = "astrocyte-sqlite", marker = "extra == 'bench'", editable = "../adapters-storage-py/astrocyte-sqlite" },
+    { name = "astrocyte-sqlite", marker = "extra == 'dev'", editable = "../adapters-storage-py/astrocyte-sqlite" },
     { name = "astrocyte-sqlite", marker = "extra == 'local'", editable = "../adapters-storage-py/astrocyte-sqlite" },
     { name = "astrocyte-sqlite", marker = "extra == 'sqlite'", editable = "../adapters-storage-py/astrocyte-sqlite" },
     { name = "dateparser", marker = "extra == 'bench'", specifier = ">=1.2" },

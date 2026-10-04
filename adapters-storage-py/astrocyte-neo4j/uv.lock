@@ -54,6 +54,8 @@ requires-dist = [
     { name = "astrocyte-postgres", marker = "extra == 'postgres'", editable = "../astrocyte-postgres" },
     { name = "astrocyte-qdrant", marker = "extra == 'all'", editable = "../astrocyte-qdrant" },
     { name = "astrocyte-qdrant", marker = "extra == 'qdrant'", editable = "../astrocyte-qdrant" },
+    { name = "astrocyte-sqlite", marker = "extra == 'bench'", editable = "../astrocyte-sqlite" },
+    { name = "astrocyte-sqlite", marker = "extra == 'dev'", editable = "../astrocyte-sqlite" },
     { name = "astrocyte-sqlite", marker = "extra == 'local'", editable = "../astrocyte-sqlite" },
     { name = "astrocyte-sqlite", marker = "extra == 'sqlite'", editable = "../astrocyte-sqlite" },
     { name = "dateparser", marker = "extra == 'bench'", specifier = ">=1.2" },
