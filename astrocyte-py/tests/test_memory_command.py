@@ -202,3 +202,20 @@ def test_stores_without_enumeration_or_purge_say_what_they_can_do(local, capsys)
 
     assert aio.run(go()) == 0
     assert "keeps forgotten memories for history" in capsys.readouterr().out
+
+
+def test_the_id_an_agent_gets_from_recall_is_what_forget_takes(local, capsys):
+    """The MCP server tells agents to hand users a memory_id from
+    memory_recall for `astrocyte memory forget <id> --bank <bank>`."""
+    retain(local.cfg, local.bank, "The staging password is in the team vault.")
+
+    async def recall_id():
+        pipeline, brain = open_local(local.cfg)
+        hits = (await brain.recall("staging password", bank_id=local.bank)).hits
+        await pipeline.vector_store.close()
+        return hits[0].memory_id
+
+    memory_id = asyncio.run(recall_id())
+    code, out, _ = run(capsys, "forget", memory_id, "--bank", local.bank)
+    assert code == 0 and "Removed 1 memory" in out
+    assert ids(capsys) == []
