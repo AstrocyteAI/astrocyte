@@ -436,6 +436,19 @@ class AgentDaemon:
             cleanup.unlink()
 
 
+def _replace(src: Path, dst: Path) -> None:
+    """``os.replace``, retried briefly: on Windows it fails while another
+    process (a hook reading state, a virus scanner) has ``dst`` open."""
+    for attempt in range(4):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == 3:
+                raise
+            time.sleep(0.05)
+
+
 def _write_private(path: Path, data: dict) -> None:
     """Atomically, readable by the owner only (0600 on POSIX; on Windows the
     state directory's profile ACLs)."""
@@ -444,13 +457,13 @@ def _write_private(path: Path, data: dict) -> None:
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(data, fh)
-    os.replace(tmp, path)
+    _replace(tmp, path)
 
 
 def _atomic_write(path: Path, data: dict) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data), encoding="utf-8")
-    os.replace(tmp, path)
+    _replace(tmp, path)
 
 
 def spool_capture(bank: str, session_id: str, source: str, turns: list[dict]) -> Path:

@@ -12,7 +12,7 @@ from .doctor import Check, apply_fixes, run_checks
 from .hosts import ALL_HOSTS, SUPPORTED_HOSTS, HookHost, Host, Outcome, host_by_key, hosts
 from .localconfig import SetupError, choose_providers, render_config, write_config
 from .paths import config_path, database_path
-from .server import handshake, hook_prefix, locate_mcp_server, server_spec
+from .server import HookPathError, handshake, hook_prefix, locate_mcp_server, server_spec
 
 HOST_KEYS = tuple(cls.key for cls in ALL_HOSTS)  # v0.16.0's value: part of the public API
 SUPPORTED_HOST_KEYS = tuple(cls.key for cls in SUPPORTED_HOSTS)
@@ -117,9 +117,14 @@ def cmd_setup(args: Namespace) -> int:
     # 5. Automatic memory (lifecycle hooks, where the harness has them).
     hook_hosts = [h for h in targets if isinstance(h, HookHost)]
     auto_memory = [h for h in hook_hosts if h.key not in choices.hooks_off]
+    try:
+        prefix, prefix_error = hook_prefix(found.command), ""
+    except HookPathError as e:  # Windows: a path no shell-neutral command can name
+        prefix, prefix_error = None, str(e)
     for h in hook_hosts:
         if h in auto_memory:
-            outcomes.append(h.install_hooks(hook_prefix(found.command), dry_run=dry))
+            outcomes.append(h.install_hooks(prefix, dry_run=dry) if prefix
+                            else Outcome(f"{h.label} hooks", "failed", prefix_error))
             continue
         # Off by choice (--no-hooks, now or before), including a previous install.
         outcome = h.uninstall_hooks(dry_run=dry)

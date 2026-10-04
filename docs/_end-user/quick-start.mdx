@@ -41,9 +41,11 @@ asked to look. A new session opens with where the previous one in that project l
 `ASTROCYTE_HOOKS=off`; turn off with `astrocyte setup --no-hooks`. Codex runs new hooks only
 once you trust them: run `/hooks` in Codex after setup.
 
-**Windows:** the memory tools (MCP) work natively, but automatic memory needs Unix sockets
-and is off there for now. Run your agents inside WSL to get it today; native support is
-designed in `windows-local-install` and on its way.
+**Windows:** the memory tools (MCP) work natively, and so do the pieces of automatic memory
+(the hooks, which run the same under cmd, PowerShell and Git Bash, and the background process),
+each tested on Windows in CI. They have not yet been checked against a real agent session on
+a Windows machine, so WSL remains the recommended way to get automatic memory there for now.
+`astrocyte doctor` runs every installed hook through each shell and says if one doesn't work.
 
 Setup remembers what you switch off: after `astrocyte uninstall --claude` or
 `astrocyte setup --no-hooks`, a later `astrocyte setup` (after an upgrade, say) leaves it off.
