@@ -1410,6 +1410,73 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     hermetic provider. Anything it shares with ongoing development is a way
     for that work to invalidate it without an error.
 
+13. **"Agents don't need memory, they need documentation" — what the critique gets
+    right** (added 2026-10-04). Kevin Liao's
+    [essay](https://liao.gg/blog/agents-dont-need-memory) (2026-10-03) argues that
+    every memory plugin is "just RAG": snippets extracted from transcripts,
+    retrieved by similarity, injected on every prompt. His alternative is a
+    Markdown "brain" that the agent reads before a task and updates after it
+    ([operator-memory](https://github.com/aerovato/operator-memory)). The evidence
+    is one developer's year of use, with no measurement — the same self-report
+    caution as engrim (item 10). The diagnosis still deserves a straight answer,
+    because **it describes Astrocyte's Claude Code hook mode exactly**: the
+    `prompt` hook injects recalled memories on every non-trivial prompt.
+
+    **Where it is right, with our own evidence:**
+    - *Similar is not correct or current.* §4e defect 4 is the live example: a
+      rerank silently dropped `occurred_at`, so every recalled memory carried its
+      ingest date and nothing looked wrong until it was measured.
+    - *A vector store cannot be audited by reading it.* Trust and status fields do
+      not exist yet (item 5), and the 2026-10-04 pg50fix run carried 22.5%
+      duplicate rows in retried banks that only a SQL query revealed.
+    - *Query-driven recall cannot surface what the agent does not know to ask
+      for.* A table of contents can.
+    - *Complexity without evidence.* Structured extraction made an Add ~10×
+      slower; n=250 plus paired tests show it costs no accuracy, and nothing yet
+      shows it helps.
+
+    **Where it overreaches:**
+    - *The case is one developer and one codebase*, where the code is ground
+      truth and someone has reason to keep docs current. Conversational and
+      multi-user memory (LongMemEval: something said in session 37 of 500) has no
+      author for the docs and too much volume to read in context.
+    - *"Documentation" is memory with a different write policy:* write-time
+      consolidation by the foreground agent while it holds full context. It is the
+      same job as the background "dreamer" it rejects; it spends the tokens in the
+      main loop instead.
+    - *Docs have the failure modes it attributes to RAG:* agent-written docs drift,
+      an LLM rewrite loses information silently with no provenance, and concurrent
+      agents conflict on one file. Once the brain outgrows the context window,
+      "consult the index" is retrieval again, performed by the LLM.
+    - *"Isolated snippets" targets fact-extraction systems.* Astrocyte stores each
+      chunk verbatim with structured metadata precisely to keep context, at no
+      measured accuracy cost (§4e paired section).
+
+    **What to adopt — documents for durable, curated knowledge; memory for the
+    volume no one will curate:**
+    1. *Documents as the primary surface for coding agents.* The wiki tier and OKF
+       export (§6.1) already emit Markdown. Durable project knowledge — decisions,
+       specs, constraints — belongs there, readable and committable, with the
+       episodic store as the long tail and an index into the documents.
+    2. *Push a table of contents, not only top-k.* The composed-context MCP tool
+       proposed in §6 (one call returns a page plus top facts per entity) is that
+       idea; it answers "agents can't search for what they don't know."
+    3. *Retain the agent's own end-of-task summary,* not only facts extracted from
+       the transcript. Writing while the full picture is in context is a better
+       write policy, and it fits the existing `retain()` path.
+    4. *Validate code memories against code.* Stamp memories about a repository
+       with the git SHA and paths they describe, and mark them suspect when those
+       files change — a cheap answer to the staleness point that extends the
+       derived `stale_after` (§6.1).
+
+    None of these is a benchmark lever; they belong to the coding-agent product
+    surface and wait until after AML cycle 2. **Design:**
+    [`anchored-documents.md`](anchored-documents.md) — documents as the interface
+    and memory as the evidence: a claim model (citations, anchors, trust,
+    validity), file-touch recall, anchor checks at recall, a patch-only write
+    path, and an evaluation plan that starts by building the essay's system as
+    the baseline.
+
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
 1. ~~**A-H capability legend — GATES M46.**~~ **RESOLVED-AS-UNPUBLISHED 2026-09-03.** No public legend exists (search scope in §3). M46's gate is lifted to inference-only; the documented seven-capability list, the G1-G5 / F1 leaf corrections, and the empirical probe proposal are recorded in §3. Reopen only if an AML paper appears or they answer by email.
