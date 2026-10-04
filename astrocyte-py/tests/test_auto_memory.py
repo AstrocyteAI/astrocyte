@@ -468,6 +468,37 @@ class TestDaemonOps:
         assert len(lines) == 1 and lines[0].endswith("beta149"), ctx
         assert len(d.injected["s1"]) > 1, "every chunk of a shown turn counts as injected"
 
+    @staticmethod
+    def _chunks(*texts: str, created: str = "t1"):
+        from types import SimpleNamespace
+
+        base = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        return [SimpleNamespace(id=f"{created}-{i}", text=t, metadata={"_created_at": created},
+                                retained_at=base + timedelta(microseconds=i), occurred_at=None)
+                for i, t in enumerate(texts)]
+
+    def test_a_chunked_non_turn_memory_shows_its_beginning(self):
+        """A long imported section is chunked too, but has no question: its
+        beginning says what it is about."""
+        group = self._chunks("Deploy guide: we ship on Tuesdays via Fly.io.", "rollback steps follow here")
+        assert agentd.render_group(group, None) == "- Deploy guide: we ship on Tuesdays via Fly.io."
+
+    def test_a_short_chunked_answer_is_shown_whole(self):
+        group = self._chunks("**user**: which queue?", "**assistant**: SQS.")
+        assert agentd.render_group(group, None) == "- Q: which queue? → A: SQS."
+
+    def test_a_question_chunk_that_also_starts_the_answer(self):
+        group = self._chunks("**user**: which queue?\n**assistant**: SQS, with a dead-letter queue",
+                             "with a dead-letter queue after five attempts.")
+        assert agentd.render_group(group, None) == (
+            "- Q: which queue? → A: SQS, with a dead-letter queue after five attempts.")
+
+    def test_groups_keep_memories_retained_apart_separate_and_in_write_order(self):
+        a = self._chunks("**user**: a?", "**assistant**: first", created="a")
+        b = self._chunks("standalone fact", created="b")
+        groups = agentd._groups([a[1], b[0], a[0]])  # newest first, chunks out of order
+        assert [[i.id for i in g] for g in groups] == [["a-0", "a-1"], ["b-0"]]
+
     def test_join_overlapping(self):
         assert agentd._join_overlapping("the quick brown fox jumps high", "brown fox jumps high over the dog") == (
             "the quick brown fox jumps high over the dog")

@@ -508,6 +508,27 @@ def test_doctor_reports_hooks_switched_off_as_a_choice(wired_home):
     assert checks["Claude Code hooks"].summary.startswith("automatic memory switched off")
 
 
+@pytest.mark.parametrize("body", ['["claude"]', '{"off": "claude", "hooks_off": null}', '{"off": [1, null]}'])
+def test_a_choices_file_of_the_wrong_shape_records_nothing(tmp_path, body):
+    from astrocyte.harness.choices import load_choices
+
+    cfg = tmp_path / "astrocyte.yaml"
+    (tmp_path / "harnesses.json").write_text(body)
+    choices = load_choices(cfg)
+    assert choices.off == set() and choices.hooks_off == set()
+
+
+def test_choices_round_trip_and_no_file_when_nothing_is_off(tmp_path):
+    from astrocyte.harness.choices import Choices, choices_path, load_choices, save_choices
+
+    cfg = tmp_path / "astrocyte.yaml"
+    save_choices(cfg, Choices())
+    assert not choices_path(cfg).exists(), "no file until something is switched off"
+    save_choices(cfg, Choices(off={"codex", "claude"}, hooks_off={"cursor"}))
+    assert load_choices(cfg) == Choices(off={"claude", "codex"}, hooks_off={"cursor"})
+    assert json.loads(choices_path(cfg).read_text())["off"] == ["claude", "codex"], "stable order"
+
+
 def test_an_unreadable_choices_file_is_ignored(wired_home):
     _choices_file(wired_home).write_text("{not json")
     assert cmd_setup(_ns()) == 0
