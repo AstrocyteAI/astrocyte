@@ -1,4 +1,4 @@
-"""Resolve caller identity for REST handlers (dev header vs API key vs JWT)."""
+"""Resolve caller identity for REST handlers (dev header, per-user token, API key, JWT)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,9 @@ from fastapi import Header, HTTPException
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWTError
 
-__all__ = ["get_astrocyte_context", "validate_auth_startup_config"]
+from astrocyte_gateway.tokens import TOKENS_FILE_ENV, TokenRegistryError, registry_for
+
+__all__ = ["get_astrocyte_context", "validate_auth_startup_config", "validate_token_scoping"]
 
 _logger = logging.getLogger(__name__)
 
@@ -40,9 +42,14 @@ def validate_auth_startup_config() -> None:
     Raises:
         RuntimeError: if ``ASTROCYTE_AUTH_MODE`` is ``dev`` (or unset) AND
             ``ASTROCYTE_HOST`` is a non-loopback address AND the explicit
-            opt-out is not set.
+            opt-out is not set; or if ``token`` mode has no readable,
+            well-formed ``ASTROCYTE_TOKENS_FILE``.
     """
-    if _auth_mode() != "dev":
+    mode = _auth_mode()
+    if mode == "token":
+        _validate_token_registry()
+        return
+    if mode != "dev":
         return
     host = os.environ.get("ASTROCYTE_HOST", "127.0.0.1").strip()
     if host in _LOOPBACK_HOSTS:
@@ -60,11 +67,76 @@ def validate_auth_startup_config() -> None:
         f"Refusing to start: auth mode is 'dev' (no authentication) but "
         f"ASTROCYTE_HOST={host!r} is not a loopback address. A dev-mode gateway "
         f"on a public interface is fully open — any caller can impersonate any "
-        f"principal and read any bank. Set ASTROCYTE_AUTH_MODE to 'api_key', "
+        f"principal and read any bank. Set ASTROCYTE_AUTH_MODE to 'token', 'api_key', "
         f"'jwt_hs256', or 'jwt_oidc', bind to 127.0.0.1, or (if you truly intend "
         f"unauthenticated public access behind a trusted proxy) set "
         f"ASTROCYTE_ALLOW_DEV_AUTH=1."
     )
+
+
+def _tokens_file() -> str:
+    return os.environ.get(TOKENS_FILE_ENV, "").strip()
+
+
+def _validate_token_registry() -> None:
+    path = _tokens_file()
+    if not path:
+        raise RuntimeError(f"Refusing to start: ASTROCYTE_AUTH_MODE=token requires {TOKENS_FILE_ENV}.")
+    try:
+        active = registry_for(path).load()
+    except TokenRegistryError as e:
+        raise RuntimeError(f"Refusing to start: {e}") from e
+    if active == 0:
+        _logger.warning("Token registry %s has no active tokens; every request will be refused.", path)
+
+
+# Set by create_app from the brain's config. A token's bank grants and groups
+# are enforced only by access control; without it they would silently mean
+# "every bank", so scoped tokens are refused rather than over-trusted.
+_access_control_enabled: bool | None = None
+
+
+def validate_token_scoping(access_control_enabled: bool) -> None:
+    """In token mode, refuse to start when scoped tokens exist but access
+    control is off; remember the setting for tokens added while running."""
+    global _access_control_enabled
+    _access_control_enabled = access_control_enabled
+    if _auth_mode() != "token" or access_control_enabled:
+        return
+    records = registry_for(_tokens_file()).active_records()
+    scoped = [r.id for r in records if r.scoped]
+    if scoped:
+        raise RuntimeError(
+            f"Refusing to start: token(s) {', '.join(scoped)} carry bank grants or groups, but "
+            "access_control.enabled is false, so they would reach every bank. Enable access control "
+            "in astrocyte.yaml, or revoke them and mint unscoped tokens."
+        )
+    _logger.warning("Token mode without access control: every token can read and write every bank.")
+
+
+def _context_from_token(authorization: str | None, x_api_key: str | None) -> AstrocyteContext:
+    # The principal comes from the token's registry entry only. A client's
+    # X-Astrocyte-Principal is never consulted in this mode.
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+    else:
+        token = (x_api_key or "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Bearer token or X-Api-Key required")
+    path = _tokens_file()
+    if not path:
+        raise HTTPException(status_code=500, detail=f"{TOKENS_FILE_ENV} is not set")
+    try:
+        record = registry_for(path).lookup(token)
+    except TokenRegistryError:
+        _logger.exception("Token registry could not be loaded; refusing request")
+        raise HTTPException(status_code=500, detail="Token registry unavailable") from None
+    if record is None:
+        raise HTTPException(status_code=401, detail="Invalid or revoked token")
+    if record.scoped and _access_control_enabled is False:
+        _logger.error("Token %s is scoped but access control is off; refusing it", record.id)
+        raise HTTPException(status_code=403, detail="Token is scoped but the gateway has access control off")
+    return record.context()
 
 
 @lru_cache(maxsize=1)
@@ -168,6 +240,9 @@ def resolve_astrocyte_identity(
             return None
         return AstrocyteContext(principal=x_astrocyte_principal)
 
+    if mode == "token":
+        return _context_from_token(authorization, x_api_key)
+
     if mode == "api_key":
         expected = os.environ.get("ASTROCYTE_API_KEY", "")
         if not expected:
@@ -227,7 +302,7 @@ async def get_astrocyte_context(
     x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
     x_astrocyte_principal: str | None = Header(default=None, alias="X-Astrocyte-Principal"),
 ) -> AstrocyteContext | None:
-    """FastAPI dependency: trusted principal from JWT/API key, or dev header."""
+    """FastAPI dependency: trusted principal from token/JWT/API key, or dev header."""
     return resolve_astrocyte_identity(
         authorization=authorization,
         x_api_key=x_api_key,

@@ -6,11 +6,18 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- **Per-user gateway tokens.** A new gateway auth mode, `ASTROCYTE_AUTH_MODE=token`, gives each person, agent or CI job its own token. The token is looked up in a registry file (`ASTROCYTE_TOKENS_FILE`) and decides the principal; `X-Astrocyte-Principal` is ignored. Each entry binds the token to a principal, optional `team:` groups and optional bank grants. `python -m astrocyte_gateway.tokens create|list|revoke` manages the file: `create` prints the token once and stores only its SHA-256 hash, the file is written atomically with mode 0600, and a revoke keeps the row as an audit trail. The gateway refuses to start without a readable registry and re-reads it when it changes, so a revoked token is refused on the next request. Sent as `Authorization: Bearer` or `X-Api-Key`. The first step of team memory (`team-memory.md` §8, G1). A token's grants and groups are enforced by access control, so the gateway refuses to start (and refuses such a token added later, 403) while scoped tokens exist and `access_control.enabled` is false.
+- **Glob patterns in access grants.** A grant's `bank_id` and `principal` may be fnmatch patterns (`project:*`, `user:*`), matched case-sensitively; `project:*` covers every project bank but not `projectx`. Exact ids and a lone `*` match as before. The docs already showed `shared-*` and `user:*`, which matched nothing before; a config that already has such a row now grants what it says, so check existing configs for pattern rows before upgrading.
+- **`team:` groups.** `team:api` is a principal type (it used to parse as `user:team:api`). `AstrocyteContext.groups` lists the groups a caller belongs to, set by whoever authenticated it, and grants to a group apply to its members. `AstrocyteContext.grants` carries grants bound to the caller (a token's), which are added to the configured grants for that principal and never take anything away.
 - **The agent daemon runs on Windows** (Windows plan W1). Where there are no Unix domain sockets it serves on 127.0.0.1 at a port the OS picks and publishes the port with a random token in `agentd.json` in the state directory; a request without the token gets no reply (any local account can reach a loopback port, so the token is the authentication). `ASTROCYTE_AGENTD_TRANSPORT=tcp` forces this transport anywhere, and the daemon tests run over both transports on every OS. The single-instance lock uses `msvcrt` on Windows, and the daemon starts detached (no console window, out of the agent's job where allowed). Automatic memory is still off on native Windows: hook commands are POSIX-quoted and headless detection uses `ps` (plans W2, W3); WSL remains the way to get it there today.
 
 ### Changed
 
 - **The daemon's own stdout/stderr go to `agentd.stdio.log`**, not `agentd.log`, which the daemon rotates (Windows can't rename a file another handle holds open).
+
+### Security
+
+- **Memory provenance can't be forged.** `retain()` stamped `metadata._actor` with `setdefault`, so a client that sent its own `_actor` (through `POST /v1/retain`, for example) was recorded as whoever it named. With a context present, the resolved actor now overwrites it; without one (library imports) a caller's `_actor` is kept. The gateway drops `_actor` from anonymous requests.
 
 ## [0.18.0] — 2026-10-04 — where you left off; Windows fixes; tested on Linux, macOS and Windows
 

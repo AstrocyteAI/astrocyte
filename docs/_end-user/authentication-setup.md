@@ -1,6 +1,6 @@
 # Authentication setup
 
-Step-by-step guide for configuring authentication on the Astrocyte standalone gateway (`astrocyte-gateway-py`). Covers all four auth modes, access grants, and integration with OIDC providers.
+Step-by-step guide for configuring authentication on the Astrocyte standalone gateway (`astrocyte-gateway-py`). Covers all five auth modes, access grants, and integration with OIDC providers.
 
 ---
 
@@ -12,6 +12,7 @@ Set `ASTROCYTE_AUTH_MODE` to select how the gateway authenticates incoming reque
 |------|--------------|--------------|---------|-------------|
 | **Dev** | `dev` (default) | `X-Astrocyte-Principal` header | `principal` | No |
 | **API key** | `api_key` | `X-Api-Key` + `X-Astrocyte-Principal` | `principal` | Internal only |
+| **Per-user tokens** | `token` | `Authorization: Bearer <token>` (or `X-Api-Key`) | `principal`, groups and grants from the token's registry entry | Yes (teams without an IdP) |
 | **JWT HS256** | `jwt_hs256` or `jwt` | `Authorization: Bearer <token>` | `principal` from `sub` claim | Yes (symmetric) |
 | **JWT OIDC** | `jwt_oidc` | `Authorization: Bearer <token>` | `principal`, `actor`, `tenant_id` from claims | Yes (enterprise SSO) |
 
@@ -71,9 +72,85 @@ curl -X POST http://localhost:8080/v1/recall \
 
 **When to use:** Service-to-service calls where both sides share a secret. No key rotation mechanism — rotate by redeploying with a new value.
 
+Anyone holding the shared key can send any `X-Astrocyte-Principal`, so this mode cannot tell teammates apart. For a team, use per-user tokens.
+
 ---
 
-## Mode 3: JWT HS256
+## Mode 3: Per-user tokens
+
+Each person (or agent, or CI job) gets their own token. The gateway looks the token up in a registry file; the registry entry, not the client, decides the principal. `X-Astrocyte-Principal` is ignored in this mode. Tokens are stored as SHA-256 hashes; the plaintext is shown once, when the token is created.
+
+```bash
+# .env
+ASTROCYTE_AUTH_MODE=token
+ASTROCYTE_TOKENS_FILE=/etc/astrocyte/tokens.yaml
+```
+
+The gateway refuses to start if `ASTROCYTE_TOKENS_FILE` is unset, missing, or malformed. It re-reads the file whenever it changes, so new and revoked tokens take effect on the next request without a restart.
+
+### Mint, list, and revoke tokens
+
+```bash
+# Alice: read and write every project bank, and a member of team:api
+python -m astrocyte_gateway.tokens create --principal user:alice \
+  --banks 'project:*' --permissions read,write --groups team:api \
+  --label "alice laptop" --file tokens.yaml
+# → prints the token (astk_…) on stdout, once. Hand it to Alice; it is not stored.
+
+# A read-only token for a CI job
+python -m astrocyte_gateway.tokens create --principal service:ci \
+  --banks 'project:api-1a2b3c' --permissions read --file tokens.yaml
+
+python -m astrocyte_gateway.tokens list --file tokens.yaml          # active tokens (never the plaintext)
+python -m astrocyte_gateway.tokens list --all --file tokens.yaml    # include revoked
+python -m astrocyte_gateway.tokens revoke 3f9a1c2e --file tokens.yaml
+```
+
+`--file` defaults to `$ASTROCYTE_TOKENS_FILE`. A `.json` file name writes JSON; anything else writes YAML. The file is written atomically with mode `0600`. Revoking keeps the row (with `revoked_at`) as an audit trail. With the release image, run the CLI through the image's interpreter: `docker run --rm -v "$PWD:/tokens" <image> -m astrocyte_gateway.tokens create … --file /tokens/tokens.yaml`.
+
+| Option | Meaning |
+|--------|---------|
+| `--principal` | `user:<id>`, `agent:<id>` or `service:<id>`. No wildcards. |
+| `--banks` | Comma-separated bank ids or glob patterns (`project:*`). Optional. |
+| `--permissions` | Comma-separated `read`, `write`, `forget`, `admin`, `*` for those banks. Default `read,write`. |
+| `--groups` | Comma-separated `team:<name>` groups the principal belongs to. |
+| `--label` | Free-text note shown by `list`. |
+
+### Client request
+
+```bash
+curl -X POST http://localhost:8080/v1/retain \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer astk_…" \
+  -d '{"content": "We moved the queue to SQS", "bank_id": "project:api-1a2b3c"}'
+```
+
+### How token grants combine with config
+
+A token's `--banks`/`--permissions` and `--groups` are enforced by access control, so they need `access_control.enabled: true`. Without it the gateway **refuses to start** while any active token carries grants or groups (they would otherwise reach every bank), and refuses such a token added while it runs (403). Unscoped tokens work without access control, and then every token can read and write every bank; the gateway logs a warning saying so. With access control on, token grants are **added** to the grants in `astrocyte.yaml` for that principal; they never remove anything. Effective permissions on a bank are the union of:
+
+- config grants whose `principal` matches the token's principal,
+- config grants to any of the token's `team:` groups,
+- the token's own bank grants.
+
+So to issue a read-only token, give the principal no config-level `write` grant and mint the token with `--permissions read`. Two tokens for the same principal can carry different grants (a read-write laptop token and a read-only CI token). See [access control setup](access-control-setup/#groups-and-token-grants).
+
+Every memory written through the gateway records its author in `metadata._actor`, taken from the authenticated principal. A client-supplied `_actor` is overwritten.
+
+**Errors:**
+
+| Status | Detail | Cause |
+|--------|--------|-------|
+| 401 | Bearer token or X-Api-Key required | No token sent |
+| 401 | Invalid or revoked token | Token unknown or revoked |
+| 403 | Principal '…' denied '…' on bank '…' | Token and config grants don't allow the operation |
+| 500 | Token registry unavailable | The registry file became unreadable or malformed after startup |
+
+**When to use:** Teams sharing a gateway without an identity provider. With an IdP, prefer `jwt_oidc`.
+
+---
+
+## Mode 4: JWT HS256
 
 Symmetric-key JWT verification. The issuer and gateway share a secret. The `sub` claim becomes the principal.
 
@@ -133,7 +210,7 @@ If `ASTROCYTE_JWT_AUDIENCE` is not set, the gateway logs a warning and skips aud
 
 ---
 
-## Mode 4: JWT OIDC (RS256 + JWKS)
+## Mode 5: JWT OIDC (RS256 + JWKS)
 
 Asymmetric JWT verification using your IdP's JWKS endpoint. The gateway fetches public keys from the IdP and verifies RS256 signatures — no shared secret needed.
 
@@ -332,8 +409,9 @@ If `ASTROCYTE_ADMIN_TOKEN` is not set, admin routes are unprotected.
 
 | Variable | Required by | Description |
 |----------|------------|-------------|
-| `ASTROCYTE_AUTH_MODE` | All | Auth mode: `dev`, `api_key`, `jwt_hs256`/`jwt`, `jwt_oidc` |
+| `ASTROCYTE_AUTH_MODE` | All | Auth mode: `dev`, `api_key`, `token`, `jwt_hs256`/`jwt`, `jwt_oidc` |
 | `ASTROCYTE_API_KEY` | `api_key` | Shared secret for API key auth |
+| `ASTROCYTE_TOKENS_FILE` | `token` | Token registry (YAML or JSON) written by `python -m astrocyte_gateway.tokens` |
 | `ASTROCYTE_JWT_SECRET` | `jwt_hs256` | Symmetric key for HS256 JWT verification |
 | `ASTROCYTE_JWT_AUDIENCE` | `jwt_hs256` (optional) | Expected `aud` claim |
 | `ASTROCYTE_OIDC_JWKS_URL` | `jwt_oidc` | JWKS endpoint URL |

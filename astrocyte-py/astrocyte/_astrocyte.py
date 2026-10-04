@@ -488,9 +488,12 @@ class Astrocyte:
             actor_identity = resolve_actor(context) if context else None
             if actor_identity is not None:
                 # Stamped into metadata rather than a column: metadata is JSONB,
-                # so provenance-of-authorship needs no migration.
+                # so provenance-of-authorship needs no migration. Overwrites a
+                # caller-supplied ``_actor``: with a context present, the
+                # context is who wrote this, and anything else is a forgery.
+                # Context-free callers (imports) keep their own ``_actor``.
                 metadata = dict(metadata or {})
-                metadata.setdefault("_actor", format_principal(actor_identity))
+                metadata["_actor"] = format_principal(actor_identity)
 
             # MIP routing (before policy layer)
             mip_pipeline = None

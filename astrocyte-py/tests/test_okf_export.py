@@ -619,17 +619,26 @@ class TestActorEndToEnd:
         assert written, "expected at least one memory concept"
         assert any("by: human:calvin" in p.read_text() for p in written)
 
-    async def test_caller_supplied_actor_is_not_overwritten(self):
-        # An explicit _actor in metadata is the caller's assertion; setdefault
-        # must not clobber it with the request context.
+    async def test_context_actor_overwrites_caller_supplied_actor(self):
+        # With a context, the context is who wrote the memory; a metadata
+        # _actor that disagrees is a forged provenance claim (team memory §6).
         from astrocyte.types import AstrocyteContext
 
         brain, vs = await self._brain_with_vectors()
         await brain.retain(
             "x",
             bank_id="eng",
-            metadata={"_actor": "service:importer"},
+            metadata={"_actor": "user:mallory"},
             context=AstrocyteContext(principal="user:calvin"),
         )
+        items = await vs.list_vectors("eng", offset=0, limit=10)
+        actors = {(i.metadata or {}).get("_actor") for i in items}
+        assert actors == {"user:calvin"}
+
+    async def test_caller_supplied_actor_is_kept_without_context(self):
+        # No context means a library caller (e.g. an importer) asserting the
+        # original author; there is nothing authoritative to replace it with.
+        brain, vs = await self._brain_with_vectors()
+        await brain.retain("x", bank_id="eng", metadata={"_actor": "service:importer"})
         items = await vs.list_vectors("eng", offset=0, limit=10)
         assert any((i.metadata or {}).get("_actor") == "service:importer" for i in items)
