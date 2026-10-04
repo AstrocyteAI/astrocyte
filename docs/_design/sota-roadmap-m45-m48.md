@@ -1609,11 +1609,10 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
        now flagged rather than replaced (federated-sources §8).
     3. *Federation hygiene* (F0): concurrent fan-out, a deadline well under
        1 s, partial results, per-source caching, p50/p95 per source.
-       **Partly done 2026-10-04:** concurrency, one deadline, partial results,
-       per-source timeouts and breakers. **Not yet:** overlap with local
-       retrieval (deferred to F1), caching late results for the next turn, and
-       latency for timeouts and errors (the existing histogram records only
-       successful calls, so p95 hides the slow tail) (federated-sources §8).
+       **Done 2026-10-04:** concurrency, one deadline, partial results,
+       per-source timeouts and breakers, late answers kept for the next recall,
+       and latency for every outcome. **Not yet:** overlap with local
+       retrieval, deferred to F1 (federated-sources §8).
     4. *Per-caller auth passthrough* for federated sources (F4's core).
     5. *The claim model and the file-touch hook* (anchored-documents P1).
     6. *Write-back as pull requests,* Markdown in a repository first plus an

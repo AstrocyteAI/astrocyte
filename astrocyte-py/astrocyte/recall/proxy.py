@@ -356,7 +356,11 @@ def _record_proxy_metrics(
         {"source_id": source_id, "status": status},
         "Proxy recall attempts by source and status",
     )
-    if duration_s is not None and status == "ok":
+    # Every timed outcome, not only successes: a histogram of successful calls
+    # alone hides exactly the slow tail (errors after a long wait, deadline
+    # misses) that p95 is meant to expose. ``status`` stays on the counter, so
+    # the documented label set (ADR-003) is unchanged.
+    if duration_s is not None:
         metrics.observe_histogram(
             _HIST,
             duration_s,
@@ -385,6 +389,7 @@ async def fetch_proxy_recall_hits(
         method = "GET"
 
     base_url = url_t.strip()
+    started = time.monotonic()
 
     with span(
         "astrocyte.proxy_recall",
@@ -454,7 +459,9 @@ async def fetch_proxy_recall_hits(
                     r.raise_for_status()
                     data = r.json()
             except Exception:
-                _record_proxy_metrics(metrics, source_id=source_id, status="error", duration_s=None)
+                _record_proxy_metrics(
+                    metrics, source_id=source_id, status="error", duration_s=time.monotonic() - started
+                )
                 raise
         duration_s = t["elapsed_ms"] / 1000.0
 
@@ -483,6 +490,19 @@ _BREAKER_COOLDOWN_S = 60.0
 
 # source_id -> (consecutive failures, monotonic time until which it is skipped)
 _breakers: dict[str, tuple[int, float]] = {}
+
+#: A source that misses the deadline keeps running in the background; when it
+#: answers, its hits are kept here for the next recall of the same query, so
+#: the work is not thrown away. One-shot: a cached answer is used once.
+#: Keyed by (source, bank, query): sources authenticate with their own config
+#: today, not per caller. Per-caller auth (federated-sources F4) must add the
+#: principal to the key, or one caller would be served another's results.
+_LATE_TTL_S = 60.0
+_LATE_MAX_ENTRIES = 256
+#: A late fetch is cancelled outright after this many deadlines.
+_LATE_HARD_CAP_FACTOR = 10.0
+_late_hits: dict[tuple[str, str, str], tuple[float, list[MemoryHit]]] = {}
+_late_tasks: set[asyncio.Task] = set()
 
 
 def _deadline_seconds() -> float:
@@ -515,8 +535,33 @@ def _record_outcome(source_id: str, ok: bool) -> None:
 
 
 def reset_proxy_breakers() -> None:
-    """Forget every source's failure history (tests, config reloads)."""
+    """Forget every source's failure history and late answers (tests, config reloads)."""
     _breakers.clear()
+    _late_hits.clear()
+    for task in list(_late_tasks):
+        task.cancel()
+    _late_tasks.clear()
+
+
+def _take_late(key: tuple[str, str, str]) -> list[MemoryHit] | None:
+    entry = _late_hits.pop(key, None)
+    if entry is None:
+        return None
+    expires, hits = entry
+    return hits if time.monotonic() < expires else None
+
+
+def _keep_late(key: tuple[str, str, str], task: asyncio.Task, hard_cap: asyncio.TimerHandle) -> None:
+    hard_cap.cancel()
+    _late_tasks.discard(task)
+    if task.cancelled() or task.exception() is not None:
+        return
+    hits = task.result()
+    if not hits:
+        return
+    _late_hits[key] = (time.monotonic() + _LATE_TTL_S, hits)
+    while len(_late_hits) > _LATE_MAX_ENTRIES:
+        _late_hits.pop(next(iter(_late_hits)))
 
 
 async def gather_proxy_hits_for_bank(
@@ -529,9 +574,11 @@ async def gather_proxy_hits_for_bank(
     """Fetch hits from all ``type: proxy`` sources whose ``target_bank`` matches ``bank_id``.
 
     Sources are queried concurrently under one deadline; a source that has not
-    answered by then is cancelled and contributes nothing, so one slow or dead
-    source costs at most the deadline. A source that keeps failing is skipped
-    for a cool-down. Hits come back in config order, not completion order, so
+    answered by then contributes nothing to this recall, so one slow or dead
+    source costs at most the deadline. It keeps running in the background (up
+    to ten deadlines), and a late answer serves the next recall of the same
+    query. A source that keeps failing or missing the deadline is skipped for a
+    cool-down. Hits come back in config order, not completion order, so
     fusion ranks do not depend on network timing.
     """
     sources = getattr(config, "sources", None) or {}
@@ -552,35 +599,53 @@ async def gather_proxy_hits_for_bank(
 
     deadline = _deadline_seconds()
 
-    async def one(sid: str, src: SourceConfig) -> list[MemoryHit]:
+    async def one(sid: str, src: SourceConfig) -> list[MemoryHit] | None:
+        """Hits, or None when the source failed."""
         cap = src.recall_timeout_seconds
         timeout = min(cap, deadline) if cap and cap > 0 else deadline
         try:
-            hits = await fetch_proxy_recall_hits(
+            return await fetch_proxy_recall_hits(
                 sid, src, query=query, bank_id=bank_id, timeout=timeout, metrics=metrics
             )
         except Exception as e:
-            _record_outcome(sid, ok=False)
             logger.warning("proxy recall failed for source %s: %s", sid, e)
-            return []
-        _record_outcome(sid, ok=True)
-        return hits
+            return None
 
-    tasks = [asyncio.create_task(one(sid, src)) for sid, src in eligible]
-    _done, pending = await asyncio.wait(tasks, timeout=deadline)
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    results: dict[str, list[MemoryHit]] = {}
+    tasks: dict[str, asyncio.Task] = {}
+    for sid, src in eligible:
+        late = _take_late((sid, bank_id, query))
+        if late is not None:
+            results[sid] = late
+            _record_proxy_metrics(metrics, source_id=sid, status="late_cache", duration_s=None)
+        else:
+            tasks[sid] = asyncio.create_task(one(sid, src))
+
+    if tasks:
+        _done, pending = await asyncio.wait(tasks.values(), timeout=deadline)
+        loop = asyncio.get_running_loop()
+        for sid, task in tasks.items():
+            if task in pending:
+                # Missing the deadline counts against the source even if it
+                # answers later: a source that is always late must still trip
+                # the breaker. Its late answer only fills the cache.
+                _record_outcome(sid, ok=False)
+                _record_proxy_metrics(metrics, source_id=sid, status="timeout", duration_s=deadline)
+                logger.warning("proxy source %s missed the %.2f s recall deadline", sid, deadline)
+                hard_cap = loop.call_later(deadline * _LATE_HARD_CAP_FACTOR, task.cancel)
+                _late_tasks.add(task)
+                task.add_done_callback(
+                    lambda t, k=(sid, bank_id, query), h=hard_cap: _keep_late(k, t, h)
+                )
+                continue
+            hits = task.result()
+            _record_outcome(sid, ok=hits is not None)
+            if hits:
+                results[sid] = hits
 
     out: list[MemoryHit] = []
-    for (sid, _src), task in zip(eligible, tasks, strict=True):
-        if task in pending:
-            _record_outcome(sid, ok=False)
-            _record_proxy_metrics(metrics, source_id=sid, status="timeout", duration_s=None)
-            logger.warning("proxy source %s missed the %.2f s recall deadline", sid, deadline)
-            continue
-        out.extend(task.result())
+    for sid, _src in eligible:
+        out.extend(results.get(sid, []))
     return out
 
 

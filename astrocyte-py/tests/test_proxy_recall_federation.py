@@ -178,3 +178,96 @@ class TestRowMetadataParity:
 
         hit = _row_to_hit("s", {"text": "x", "score": 0.5, "occurred_at": "2026-09-01T00:00:00Z"})
         assert memory_hits_as_scored([hit])[0].occurred_at == datetime(2026, 9, 1, tzinfo=UTC)
+
+
+class _Metrics:
+    def __init__(self):
+        self.observed: list[tuple[str, float, dict]] = []
+        self.counted: list[dict] = []
+
+    def inc_counter(self, name, labels, description=""):
+        self.counted.append(labels)
+
+    def observe_histogram(self, name, value, labels, description=""):
+        self.observed.append((name, value, labels))
+
+
+class TestLatencyCoversEveryOutcome:
+    async def test_a_deadline_miss_is_timed_at_the_deadline(self, monkeypatch):
+        monkeypatch.setenv("ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS", "0.2")
+        _fake_fetch(monkeypatch, {"slow": 5.0})
+        m = _Metrics()
+        await gather_proxy_hits_for_bank(_config("slow"), query="q", bank_id="b1", metrics=m)
+        assert ("astrocyte_proxy_recall_duration_seconds", 0.2, {"source_id": "slow"}) in m.observed
+        assert {"source_id": "slow", "status": "timeout"} in m.counted
+
+    async def test_an_error_is_timed_too(self, monkeypatch):
+        """The HTTP layer itself: a failed request is observed, not only counted."""
+
+        async def failing_headers(*_a, **_k):
+            await asyncio.sleep(0.05)
+            raise RuntimeError("auth backend down")
+
+        monkeypatch.setattr(proxy, "build_proxy_headers", failing_headers)
+        m = _Metrics()
+        with pytest.raises(RuntimeError):
+            await proxy.fetch_proxy_recall_hits(
+                "s",
+                SourceConfig(type="proxy", url="https://s.example/q", target_bank="b1"),
+                query="q",
+                bank_id="b1",
+                metrics=m,
+            )
+        assert m.counted == [{"source_id": "s", "status": "error"}]
+        ((name, value, labels),) = m.observed
+        assert labels == {"source_id": "s"} and value >= 0.05
+
+
+class TestLateAnswers:
+    async def test_a_late_answer_serves_the_next_recall_of_the_same_query(self, monkeypatch):
+        monkeypatch.setenv("ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS", "0.1")
+        calls: list = []
+        _fake_fetch(monkeypatch, {"slow": 0.25}, calls)
+        first = await gather_proxy_hits_for_bank(_config("slow"), query="q", bank_id="b1")
+        assert first == []
+        await asyncio.sleep(0.3)  # the late fetch finishes in the background
+        second = await gather_proxy_hits_for_bank(_config("slow"), query="q", bank_id="b1")
+        assert [h.text for h in second] == ["hit from slow"]
+        assert len(calls) == 1, "served from the late answer, no new fetch"
+
+    async def test_a_late_answer_is_used_once(self, monkeypatch):
+        monkeypatch.setenv("ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS", "0.1")
+        calls: list = []
+        _fake_fetch(monkeypatch, {"slow": 0.15}, calls)
+        await gather_proxy_hits_for_bank(_config("slow"), query="q", bank_id="b1")
+        await asyncio.sleep(0.2)
+        await gather_proxy_hits_for_bank(_config("slow"), query="q", bank_id="b1")
+        await gather_proxy_hits_for_bank(_config("slow"), query="q", bank_id="b1")
+        assert len(calls) == 2, "the third recall fetches again"
+
+    async def test_a_different_query_or_bank_is_not_served_the_late_answer(self, monkeypatch):
+        monkeypatch.setenv("ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS", "0.1")
+        calls: list = []
+        _fake_fetch(monkeypatch, {"slow": 0.15}, calls)
+        await gather_proxy_hits_for_bank(_config("slow"), query="q1", bank_id="b1")
+        await asyncio.sleep(0.2)
+        await gather_proxy_hits_for_bank(_config("slow"), query="q2", bank_id="b1")
+        assert len(calls) == 2
+
+    async def test_a_source_that_is_always_late_still_trips_the_breaker(self, monkeypatch):
+        monkeypatch.setenv("ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS", "0.05")
+        calls: list = []
+        _fake_fetch(monkeypatch, {"slow": 0.08}, calls)
+        for i in range(proxy._BREAKER_THRESHOLD):
+            await gather_proxy_hits_for_bank(_config("slow"), query=f"q{i}", bank_id="b1")
+            await asyncio.sleep(0.1)  # each late answer completes (and must not reset the count)
+        await gather_proxy_hits_for_bank(_config("slow"), query="fresh", bank_id="b1")
+        assert len(calls) == proxy._BREAKER_THRESHOLD, "tripped: late successes do not reset it"
+
+    async def test_a_runaway_late_fetch_is_cancelled_at_the_hard_cap(self, monkeypatch):
+        monkeypatch.setenv("ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS", "0.02")
+        _fake_fetch(monkeypatch, {"stuck": 60.0})
+        await gather_proxy_hits_for_bank(_config("stuck"), query="q", bank_id="b1")
+        assert len(proxy._late_tasks) == 1
+        await asyncio.sleep(0.02 * proxy._LATE_HARD_CAP_FACTOR + 0.1)
+        assert not proxy._late_tasks, "cancelled after ten deadlines"

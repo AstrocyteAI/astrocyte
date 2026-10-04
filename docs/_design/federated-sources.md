@@ -251,10 +251,13 @@ differs from the plan above:
   provider dispatcher and takes external hits as a finished list, so remote
   calls still precede local retrieval, now bounded by the deadline instead of
   their sum. Accepting late results in fusion belongs with F1's interface.
-  **Also not yet built:** caching late results for the next turn (rule 2), and
-  latency recorded for timeouts and errors. The existing per-source histogram
-  observes only successful calls, so its p95 hides exactly the slow tail
-  rule 4 is meant to expose; timeouts are counted, not timed.
+  **Closed later on 2026-10-04:** the latency histogram now observes every
+  timed outcome (errors at their real duration, deadline misses at the
+  deadline), keeping ADR-003's label set; and a source that misses the
+  deadline keeps running for up to ten deadlines, its late answer serving the
+  next recall of the same query once. A late answer never resets the breaker,
+  so a source that is always late still trips it. The late-answer key is
+  (source, bank, query); per-caller auth (F4) must add the principal to it.
 - *F0b:* `_row_to_hit` maps `occurred_at`, `retained_at` (or `updated_at`),
   and the URL, version or etag, author, and anchor into reserved `_source_*`
   metadata that remote metadata cannot spoof. **Finding:** the invented 0.5
