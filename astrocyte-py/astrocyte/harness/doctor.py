@@ -159,14 +159,15 @@ def _probe_shells() -> list[tuple[str, list[str]]]:
 
 
 def _git_bash() -> str | None:
-    git = shutil.which("git")
-    if not git:
-        return None
-    root = Path(git).resolve().parent.parent  # Git\cmd\git.exe → Git
-    for candidate in (root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
-        if candidate.is_file():
-            return str(candidate)
-    return None
+    """Git for Windows' bash, found the way Claude Code looks for it: the
+    standard install locations, then beside the ``git`` on PATH (which may be
+    Git\\cmd\\git.exe or Git\\bin\\git.exe)."""
+    candidates = [Path(os.environ[var]) / "Git" / "bin" / "bash.exe"
+                  for var in ("ProgramFiles", "ProgramFiles(x86)") if os.environ.get(var)]
+    if git := shutil.which("git"):
+        here = Path(git).resolve().parent
+        candidates += [here / "bash.exe", here.parent / "bin" / "bash.exe", here.parent / "usr" / "bin" / "bash.exe"]
+    return next((str(c) for c in candidates if c.is_file()), None)
 
 
 def _probe(command: str, shell: list[str]) -> str | None:

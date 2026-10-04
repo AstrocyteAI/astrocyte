@@ -101,10 +101,19 @@ def shells() -> list[tuple[str, list[str]]]:
                       "/d", "/s", "/c"])]
     if ps := shutil.which("pwsh") or shutil.which("powershell"):
         found.append(("PowerShell", [ps, "-NoProfile", "-NonInteractive", "-Command"]))
+    # Git Bash, the shell Claude Code prefers on Windows: where Claude Code
+    # looks for it, then beside the git on PATH (Git\\cmd or Git\\bin).
+    candidates = [Path(os.environ[var]) / "Git" / "bin" / "bash.exe"
+                  for var in ("ProgramFiles", "ProgramFiles(x86)") if os.environ.get(var)]
     if git := shutil.which("git"):
-        bash = Path(git).resolve().parent.parent / "bin" / "bash.exe"
-        if bash.is_file():
-            found.append(("Git Bash", [str(bash), "-c"]))
+        here = Path(git).resolve().parent
+        candidates += [here / "bash.exe", here.parent / "bin" / "bash.exe"]
+    bash = next((c for c in candidates if c.is_file()), None)
+    # CI runners have Git for Windows: a missing Git Bash would silently skip
+    # the shell that matters most, so it is an error, not a skip.
+    assert bash or not os.environ.get("CI"), f"Git Bash not found (looked at {candidates})"
+    if bash:
+        found.append(("Git Bash", [str(bash), "-c"]))
     return found
 
 
