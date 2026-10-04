@@ -242,9 +242,9 @@ class TestPathContainment:
         """``~nosuchuser`` makes expanduser raise RuntimeError; callers (the
         gateway maps ValueError to 422) must see a ValueError, not a crash."""
         brain, _ = _make_brain()
-        with pytest.raises(ValueError, match="unresolvable home directory"):
+        with pytest.raises(ValueError, match="cannot be resolved"):
             await brain.export_bank("b1", "~astrocyte-no-such-user-0")
-        with pytest.raises(ValueError, match="unresolvable home directory"):
+        with pytest.raises(ValueError, match="cannot be resolved"):
             await brain.import_bank("b1", "~astrocyte-no-such-user-0")
 
     async def test_export_allows_uncontained_when_opted_in(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
