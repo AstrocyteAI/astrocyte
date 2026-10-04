@@ -4,9 +4,15 @@ Why a daemon: a hook is a fresh process per event. Measured on an Apple
 Silicon laptop, the first recall in a fresh process costs ~1.1 s (mostly
 importing fastembed), against 8 ms in a warm one — and ``UserPromptSubmit``
 blocks the user's prompt until the hook returns. So hooks talk to this
-per-user process over a Unix socket and never load a model themselves.
+per-user process and never load a model themselves.
 
-Lifecycle: started on demand by the hooks, one instance per user (flock),
+Transport: a Unix domain socket in the state directory (0600: filesystem
+permissions are the authentication). Where there is none (Windows; or forced
+with ``ASTROCYTE_AGENTD_TRANSPORT=tcp``), TCP on 127.0.0.1 at a port the OS
+picks, published with a random token in ``agentd.json`` in the state
+directory; a request without that token gets no reply.
+
+Lifecycle: started on demand by the hooks, one instance per user (a lock file),
 exits after ``ASTROCYTE_AGENTD_IDLE`` seconds without a request (default
 1800) or as soon as its config file changes, so the next hook restarts it on
 the new config. Captures arrive through a durable on-disk spool, so a daemon
@@ -26,12 +32,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
 import logging.handlers
 import math
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -41,7 +49,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .paths import agentd_socket, config_path, spool_dir, state_dir
+from .paths import agentd_endpoint, agentd_socket, config_path, spool_dir, state_dir
 
 logger = logging.getLogger("astrocyte.agentd")
 
@@ -69,8 +77,22 @@ IDLE_EXIT_SECONDS = float(os.environ.get("ASTROCYTE_AGENTD_IDLE", "1800"))
 _TURN = re.compile(r"^\*\*user\*\*:\s*(?P<q>.*?)\s*\*\*assistant\*\*:\s*(?P<a>.*)$", re.DOTALL)
 
 
+TRANSPORT_ENV = "ASTROCYTE_AGENTD_TRANSPORT"
+
+
+def transport() -> str:
+    """``unix`` where there are Unix domain sockets, else ``tcp`` (loopback +
+    token). ``ASTROCYTE_AGENTD_TRANSPORT=tcp`` forces TCP, so the Windows
+    path is exercised on every platform."""
+    unix = hasattr(socket, "AF_UNIX") and os.name != "nt"
+    forced = os.environ.get(TRANSPORT_ENV, "").strip().lower()
+    return "tcp" if forced == "tcp" or not unix else "unix"
+
+
 def supported() -> bool:
-    return hasattr(socket, "AF_UNIX") and os.name != "nt"
+    """Can hooks reach a daemon here? Every platform has a transport; kept so
+    callers can still ask (and tests can say no)."""
+    return True
 
 
 # ── rendering ────────────────────────────────────────────────────────────
@@ -200,6 +222,7 @@ class AgentDaemon:
         # queued 32 of them).
         self.pipeline, self.brain = open_local(cfg_path)
         self.injected: dict[str, set[str]] = {}
+        self.token: str | None = None  # set when serving over TCP
         self.last_activity = time.monotonic()
         self._drain_lock = asyncio.Lock()
         self._stop = asyncio.Event()
@@ -354,6 +377,10 @@ class AgentDaemon:
         try:
             line = await asyncio.wait_for(reader.readline(), timeout=5)
             req = json.loads(line or b"{}")
+            if self.token is not None and not hmac.compare_digest(str(req.pop("token", "")), self.token):
+                logger.warning("refused a request without the daemon's token")
+                writer.close()
+                return
             op = getattr(self, f"op_{req.get('op', '')}", None)
             reply = await op(req) if op else {"error": f"unknown op {req.get('op')!r}"}
         except Exception as e:  # noqa: BLE001 — a bad request must not kill the daemon
@@ -387,16 +414,37 @@ class AgentDaemon:
 
     async def serve(self, sock_path: Path) -> None:
         await self.warm()
-        with contextlib.suppress(FileNotFoundError):
-            sock_path.unlink()  # stale: we hold the instance lock
-        server = await asyncio.start_unix_server(self.handle, path=str(sock_path))
-        os.chmod(sock_path, 0o600)
-        logger.info("serving on %s (pid %d)", sock_path, os.getpid())
+        if transport() == "tcp":
+            self.token = secrets.token_urlsafe(32)
+            server = await asyncio.start_server(self.handle, host="127.0.0.1", port=0)
+            port = server.sockets[0].getsockname()[1]
+            endpoint = agentd_endpoint()
+            _write_private(endpoint, {"transport": "tcp", "port": port, "token": self.token, "pid": os.getpid()})
+            logger.info("serving on 127.0.0.1:%d (pid %d)", port, os.getpid())
+            cleanup = endpoint
+        else:
+            with contextlib.suppress(FileNotFoundError):
+                sock_path.unlink()  # stale: we hold the instance lock
+            server = await asyncio.start_unix_server(self.handle, path=str(sock_path))
+            os.chmod(sock_path, 0o600)
+            logger.info("serving on %s (pid %d)", sock_path, os.getpid())
+            cleanup = sock_path
         await self.drain()  # anything captured while no daemon was running
         async with server:
             await self.housekeeping()
         with contextlib.suppress(FileNotFoundError):
-            sock_path.unlink()
+            cleanup.unlink()
+
+
+def _write_private(path: Path, data: dict) -> None:
+    """Atomically, readable by the owner only (0600 on POSIX; on Windows the
+    state directory's profile ACLs)."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+    os.replace(tmp, path)
 
 
 def _atomic_write(path: Path, data: dict) -> None:
@@ -428,11 +476,18 @@ def request(op: str, payload: dict[str, Any] | None = None, *, timeout: float = 
     """One request to the daemon; None if it isn't reachable in time."""
     if not supported():
         return None
+    message: dict[str, Any] = {"op": op, **(payload or {})}
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        if transport() == "tcp":
+            endpoint = json.loads(agentd_endpoint().read_text(encoding="utf-8"))
+            message["token"] = endpoint["token"]
+            s = socket.create_connection(("127.0.0.1", int(endpoint["port"])), timeout=timeout)
+        else:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(timeout)
             s.connect(str(agentd_socket()))
-            s.sendall((json.dumps({"op": op, **(payload or {})}) + "\n").encode())
+        with s:
+            s.sendall((json.dumps(message) + "\n").encode())
             buf = b""
             while not buf.endswith(b"\n"):
                 chunk = s.recv(65536)
@@ -440,7 +495,7 @@ def request(op: str, payload: dict[str, Any] | None = None, *, timeout: float = 
                     break
                 buf += chunk
         return json.loads(buf) if buf else None
-    except (OSError, ValueError):
+    except (OSError, ValueError, KeyError, TypeError):
         return None
 
 
@@ -456,12 +511,26 @@ def spawn(cfg: Path) -> None:
         if time.time() - marker.stat().st_mtime < 5:
             return
     marker.touch()
-    log = open(d / "agentd.log", "ab")  # noqa: SIM115 — handed to the child process
-    subprocess.Popen(
-        [sys.executable, "-I", "-m", "astrocyte.harness.agentd", "--config", str(cfg)],
-        stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, close_fds=True,
-    )
-    log.close()
+    # Not agentd.log: the daemon rotates that, and Windows can't rename a file
+    # another handle holds open. This catches what precedes logging (a crash on import).
+    log = open(d / "agentd.stdio.log", "ab")  # noqa: SIM115 — handed to the child process
+    argv = [sys.executable, "-I", "-m", "astrocyte.harness.agentd", "--config", str(cfg)]
+    try:
+        if os.name == "nt":
+            # No console window; out of the hook's process group; and out of the
+            # agent's job object where allowed, or the daemon dies with the session.
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            try:
+                subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True,
+                                 creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB)
+            except OSError:  # the job forbids breakaway: live as long as the session
+                subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True,
+                                 creationflags=flags)
+        else:
+            subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
+                             close_fds=True)
+    finally:
+        log.close()
 
 
 def ensure_running(cfg: Path, *, wait: float) -> bool:
@@ -479,9 +548,25 @@ def ensure_running(cfg: Path, *, wait: float) -> bool:
 # ── entry point ──────────────────────────────────────────────────────────
 
 
+def _lock_exclusively(fh: Any) -> bool:
+    """Take the single-instance lock without waiting; False if it's held."""
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
 def run(cfg: Path) -> int:
     if not supported():
-        print("astrocyte agentd needs Unix domain sockets (macOS or Linux).", file=sys.stderr)
+        print("astrocyte agentd: no local transport on this platform.", file=sys.stderr)
         return 1
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -489,12 +574,8 @@ def run(cfg: Path) -> int:
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[handler])
 
-    import fcntl
-
     lock = open(d / "agentd.lock", "w")  # noqa: SIM115 — held for the process lifetime
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    if not _lock_exclusively(lock):
         return 0  # another daemon owns the socket
     try:
         asyncio.run(AgentDaemon(cfg).serve(agentd_socket()))

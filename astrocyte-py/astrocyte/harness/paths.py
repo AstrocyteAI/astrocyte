@@ -39,6 +39,11 @@ def state_dir() -> Path:
     return Path(base).expanduser() / "astrocyte"
 
 
+def agentd_endpoint() -> Path:
+    """Where a TCP daemon (Windows) publishes its port and token."""
+    return state_dir() / "agentd.json"
+
+
 def agentd_socket() -> Path:
     # Kept short: AF_UNIX paths are capped at ~104 bytes on macOS.
     return state_dir() / "agentd.sock"

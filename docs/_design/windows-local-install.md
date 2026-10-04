@@ -1,6 +1,6 @@
 # Automatic memory on Windows
 
-Status: **accepted** (October 2026; decisions in §7). Not implemented yet; W1 first.
+Status: **accepted** (October 2026; decisions in §7). W1 implemented (transport, lock, detached start); W2–W4 to come.
 
 On Windows, `astrocyte setup` registers the MCP server, but automatic memory does nothing. The hooks are installed, yet the agent daemon they talk to needs Unix domain sockets (`agentd.supported()` is false on Windows), so nothing is captured and nothing is recalled. `astrocyte doctor` says so. This design makes the hook path work on Windows. Every part can be tested on GitHub's `windows-latest` runners, except one: which shell each agent uses to run a hook. That is called out as needing a Windows user (§4).
 
@@ -76,13 +76,11 @@ For Copilot, setup writes this same string into both `bash` and `powershell`.
 
 ## 5. Paths
 
-- **New Windows installs:** config in `%APPDATA%\astrocyte\astrocyte.yaml`; data and state under `%LOCALAPPDATA%\astrocyte\` (`astrocyte.db`; `state\` for the socket file, spool and logs).
-- **`XDG_*` variables, if set,** still win, as on POSIX.
-- **An existing `~/.config/astrocyte/astrocyte.yaml`** on Windows keeps being used (setup has written there until now). Only absent files move to the new defaults, so nothing is migrated or orphaned.
+**Unchanged, decided in W1.** Config, data and state stay under the user's profile (`~\.config\astrocyte\`, `~\.local\share\astrocyte\`, `~\.local\state\astrocyte\`), where setup has always put them on Windows. The `%APPDATA%` / `%LOCALAPPDATA%` convention would have meant precedence rules for existing files and every test that builds a sandbox profile learning a second layout, for no change in behaviour. `XDG_*` variables still win. Revisit if Windows users ask.
 
 ## 6. Plan (PRs, in order)
 
-Since #105 (v0.18.0), CI runs `astrocyte-py`, `astrocyte-sqlite` and the install smoke test on `windows-latest` for every change. Tests that need what this design adds are marked in `tests/platform_compat.py` (`needs_unix_socket`, `posix_shell`) and skip on Windows; each PR below removes the marks it makes obsolete.
+Since #105 (v0.18.0), CI runs `astrocyte-py`, `astrocyte-sqlite` and the install smoke test on `windows-latest` for every change. Tests that need what this design adds are marked in `tests/platform_compat.py` and skip on Windows; each PR below removes the marks it makes obsolete. W1 removed `needs_unix_socket`: the daemon tests run on Windows, and on every OS over both transports.
 
 | PR | Content | Proven by |
 |---|---|---|

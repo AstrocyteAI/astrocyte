@@ -170,7 +170,7 @@ def _check_daemon() -> Check:
     from . import agentd
 
     if not agentd.supported():
-        return Check("agent daemon", "warn", "needs Unix sockets; automatic recall is off on this OS")
+        return Check("agent daemon", "warn", "no local transport; automatic recall is off on this OS")
     ping = agentd.request("ping", timeout=0.5)
     return Check("agent daemon", "ok" if ping else "info",
                  f"running (pid {ping['pid']})" if ping else "not running (starts with the next session)")
