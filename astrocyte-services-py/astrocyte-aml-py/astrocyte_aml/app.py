@@ -27,7 +27,14 @@ Design rules this service is bound by
    we additionally surface ``stored``/``error`` as a hard failure so the
    platform's retry logic sees a non-200 rather than a false success.
 
-4. **user_id is the isolation boundary.** Mapped 1:1 to ``bank_id``.
+4. **Add is idempotent under retry.** AML retries 408/429/500/524 up to 32
+   times, so a slow Add that times out on the caller's side is re-sent while
+   (or after) the first attempt runs. A retry joins the in-flight attempt or
+   replays its recorded success instead of ingesting the same batch twice:
+   duplicate memories crowd the top-k and make a reproduced score drift.
+   Failures are never recorded, so a retry after a 500 genuinely re-runs.
+
+5. **user_id is the isolation boundary.** Mapped 1:1 to ``bank_id``.
    AML forbids sharing memories across user_ids; Astrocyte's per-bank
    access boundary enforces this at the storage layer. ``session_id`` is
    grouping metadata only and is explicitly NOT used as a search filter
@@ -38,8 +45,11 @@ Contract reference: https://agentmemoryleaderboard.ai/api-guide
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 import os
+from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import Any
 
@@ -57,6 +67,12 @@ logger = logging.getLogger("astrocyte.aml")
 # return our best N rather than padding to 100. Override per-cycle via env
 # while calibrating against the leaderboard.
 DEFAULT_RESULT_CAP = int(os.environ.get("ASTROCYTE_AML_RESULT_CAP", "50"))
+
+# Completed Add keys remembered for retry replay. Each entry is a short tuple,
+# and the full AML suite is a few tens of thousands of Adds, so the default
+# holds a whole run with room to spare. Process-local by design: a restart
+# forgets, and a retry then re-runs (dedup still applies) rather than failing.
+ADD_REPLAY_CAPACITY = int(os.environ.get("ASTROCYTE_AML_ADD_REPLAY_CAPACITY", "200000"))
 
 # Recall breadth requested from the pipeline before the cap is applied.
 RECALL_FETCH_K = int(os.environ.get("ASTROCYTE_AML_FETCH_K", "100"))
@@ -175,6 +191,12 @@ def create_app(brain: Any | None = None) -> FastAPI:
     """
     app = FastAPI(title="Astrocyte AML adapter", version="1")
     app.state.brain = brain
+    # Idempotency state (see design rule 4). Keyed on user_id, request_id AND
+    # a digest of the rendered content: the contract does not promise that a
+    # request_id is never reused for a different batch, and coalescing two
+    # different batches would silently drop memory. Identical retries match.
+    app.state.add_inflight = {}
+    app.state.add_done = OrderedDict()
 
     async def _brain() -> Any:
         if app.state.brain is None:
@@ -230,8 +252,49 @@ def create_app(brain: Any | None = None) -> FastAPI:
             # Contract error — AML does not retry 400/422.
             raise HTTPException(status_code=400, detail="messages must be non-empty")
 
-        brain = await _brain()
         content = render_conversation(req.messages)
+        key = (
+            req.user_id,
+            req.request_id,
+            hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        )
+        response = AddResponse(
+            success=True,
+            request_id=req.request_id,
+            user_id=req.user_id,
+            session_id=req.session_id,
+        )
+
+        done: OrderedDict = app.state.add_done
+        if key in done:
+            done.move_to_end(key)
+            logger.info("aml.add replayed request_id=%s", _safe_log(req.request_id))
+            return response
+
+        inflight: dict = app.state.add_inflight
+        task = inflight.get(key)
+        if task is None:
+            task = asyncio.ensure_future(_retain_batch(req, content))
+            inflight[key] = task
+            task.add_done_callback(lambda t, k=key: _settle(k, t))
+        else:
+            logger.info("aml.add joined in-flight request_id=%s", _safe_log(req.request_id))
+        # Shielded: a caller that disconnects (the very case that triggers a
+        # retry) must not cancel the retain the retry is waiting on.
+        await asyncio.shield(task)
+        return response
+
+    def _settle(key: tuple, task: asyncio.Future) -> None:
+        app.state.add_inflight.pop(key, None)
+        if task.cancelled() or task.exception() is not None:
+            return  # never cache failure: the retry must re-run
+        done: OrderedDict = app.state.add_done
+        done[key] = None
+        while len(done) > ADD_REPLAY_CAPACITY:
+            done.popitem(last=False)
+
+    async def _retain_batch(req: AddRequest, content: str) -> None:
+        brain = await _brain()
 
         # Earliest turn timestamp anchors the batch in domain time.
         stamps = [t for t in (_ms_to_dt(m.timestamp) for m in req.messages) if t]
@@ -262,13 +325,6 @@ def create_app(brain: Any | None = None) -> FastAPI:
         if not_stored and not getattr(result, "deduplicated", False):
             detail = getattr(result, "error", None) or "retain did not store content"
             raise HTTPException(status_code=500, detail=detail)
-
-        return AddResponse(
-            success=True,
-            request_id=req.request_id,
-            user_id=req.user_id,
-            session_id=req.session_id,
-        )
 
     @app.post("/search", response_model=SearchResponse)
     async def search(req: SearchRequest, request: Request) -> SearchResponse:
