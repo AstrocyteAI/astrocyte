@@ -1,6 +1,6 @@
 # Automatic memory on Windows
 
-Status: **accepted** (October 2026; decisions in §7). W1 implemented (transport, lock, detached start); W2–W4 to come.
+Status: **accepted** (October 2026; decisions in §7). W1–W3 implemented (transport and lifecycle; psutil ancestry; shell-neutral hook commands checked by doctor); W4 and the per-agent check to come.
 
 On Windows, `astrocyte setup` registers the MCP server, but automatic memory does nothing. The hooks are installed, yet the agent daemon they talk to needs Unix domain sockets (`agentd.supported()` is false on Windows), so nothing is captured and nothing is recalled. `astrocyte doctor` says so. This design makes the hook path work on Windows. Every part can be tested on GitHub's `windows-latest` runners, except one: which shell each agent uses to run a hook. That is called out as needing a Windows user (§4).
 
@@ -95,4 +95,4 @@ The full test suite does not need to run on Windows: only the harness, the SQLit
 
 1. **`psutil` as a Windows-only dependency** for process ancestry.
 2. **The one-time per-agent check on Windows is still unassigned.** Until someone with Windows and agent accounts runs it, each agent's row in §4 stays "not verified", and the docs say so.
-3. **WSL is the recommended Windows path** in the docs until W1–W4 land: an agent running inside WSL is Linux, and automatic memory works there today.
+3. **WSL is the recommended Windows path** in the docs until W1–W4 land and the per-agent check is done: an agent running inside WSL is Linux, and automatic memory works there today.

@@ -9,6 +9,7 @@ embedder rather than trusting mock vectors.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import shutil
@@ -22,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from platform_compat import WINDOWS, posix_shell, set_home, system_env, system_path
+from platform_compat import WINDOWS, set_home, system_env, system_path
 
 from astrocyte.harness import agentd, hooks
 from astrocyte.harness.hosts import ClaudeCodeHost, CodexHost, HostConfigError
@@ -885,7 +886,7 @@ class TestAncestry:
 
     def test_finds_the_agent_through_a_shell(self, monkeypatch):
         self._ps(monkeypatch, {100: "50 /bin/zsh -c hook", 50: "1 /opt/homebrew/bin/codex exec hi"})
-        assert hooks._agent_ancestor_args("codex") == ["/opt/homebrew/bin/codex", "exec", "hi"]
+        assert hooks._posix_ancestor_args("codex", 5) == ["/opt/homebrew/bin/codex", "exec", "hi"]
 
     @pytest.mark.parametrize("table", [
         {100: "1 /bin/zsh"},  # reached init without finding it
@@ -894,18 +895,112 @@ class TestAncestry:
     ])
     def test_not_found_is_none(self, monkeypatch, table):
         self._ps(monkeypatch, table)
-        assert hooks._agent_ancestor_args("codex") is None
+        assert hooks._posix_ancestor_args("codex", 5) is None
 
     def test_ps_failing_is_none(self, monkeypatch):
         def broken(*a, **k):
             raise OSError("no ps")
 
         monkeypatch.setattr(hooks.subprocess, "run", broken)
-        assert hooks._agent_ancestor_args("claude") is None
+        assert hooks._posix_ancestor_args("claude", 5) is None
 
     def test_depth_is_bounded(self, monkeypatch):
         self._ps(monkeypatch, {pid: f"{pid + 1} /bin/sh" for pid in range(100, 200)})
-        assert hooks._agent_ancestor_args("claude", max_depth=3) is None
+        assert hooks._posix_ancestor_args("claude", 3) is None
+
+
+class TestWindowsAncestry:
+    """Windows has no `ps`: psutil walks the parents (a fake here, so it runs
+    on every OS)."""
+
+    class _Proc:
+        def __init__(self, argv, parent=None, fail=False):
+            self.argv, self._parent, self.fail = argv, parent, fail
+
+        def cmdline(self):
+            if self.fail:
+                import psutil
+
+                raise psutil.AccessDenied()
+            return self.argv
+
+        def parent(self):
+            return self._parent
+
+    def _psutil(self, monkeypatch, chain):
+        psutil = pytest.importorskip("psutil")  # installed on Windows; a dev extra elsewhere
+        monkeypatch.setattr(psutil, "Process", lambda pid: chain)
+        return psutil
+
+    def test_finds_claude_through_cmd(self, monkeypatch):
+        claude = self._Proc([r"C:\Users\a\.local\bin\claude.exe", "-p", "hi"])
+        self._psutil(monkeypatch, self._Proc(["cmd.exe", "/c", "hook"], parent=claude))
+        assert hooks._windows_ancestor_args("claude", 5) == [r"C:\Users\a\.local\bin\claude.exe", "-p", "hi"]
+
+    def test_finds_an_npm_installed_agent_run_by_node(self, monkeypatch):
+        node = self._Proc(["node.exe", r"C:\npm\node_modules\@anthropic-ai\claude-code\cli.js", "-p", "x"])
+        self._psutil(monkeypatch, self._Proc(["pwsh.exe"], parent=node))
+        assert hooks._windows_ancestor_args("claude", 5)[1:] == ["-p", "x"]
+
+    def test_access_denied_or_top_of_tree_is_none(self, monkeypatch):
+        self._psutil(monkeypatch, self._Proc(["x.exe"], fail=True))
+        assert hooks._windows_ancestor_args("claude", 5) is None
+        self._psutil(monkeypatch, self._Proc(["explorer.exe"], parent=None))
+        assert hooks._windows_ancestor_args("claude", 5) is None
+
+    def test_without_psutil_it_is_none(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "psutil", None)  # import fails
+        assert hooks._windows_ancestor_args("claude", 5) is None
+
+
+def test_copilot_installs_from_before_powershell_are_updated(env):
+    """An entry written by 0.18 (bash only) is not "unchanged": Windows needs
+    the powershell field."""
+    from astrocyte.harness.hosts import CopilotHost
+
+    host, cli = CopilotHost(), "/opt/astro/bin/python -I -m astrocyte.cli"
+    host.install_hooks(cli)
+    data = json.loads(host.hooks_file().read_text())
+    for handlers in data["hooks"].values():
+        handlers[0].pop("powershell")
+    host.hooks_file().write_text(json.dumps(data))
+    assert host.install_hooks(cli).status == "updated"
+    assert all(h[0]["powershell"] for h in json.loads(host.hooks_file().read_text())["hooks"].values())
+
+
+def test_state_replace_retries_while_windows_holds_the_file(tmp_path, monkeypatch):
+    calls = []
+    real = os.replace
+
+    def flaky(src, dst):
+        calls.append(dst)
+        if len(calls) < 3:
+            raise PermissionError("in use")
+        real(src, dst)
+
+    monkeypatch.setattr(agentd.os, "replace", flaky)
+    monkeypatch.setattr(agentd.time, "sleep", lambda s: None)
+    agentd._atomic_write(tmp_path / "s.json", {"a": 1})
+    assert len(calls) == 3 and json.loads((tmp_path / "s.json").read_text()) == {"a": 1}
+    calls.clear()
+    monkeypatch.setattr(agentd.os, "replace", lambda s, d: (_ for _ in ()).throw(PermissionError("held")))
+    with pytest.raises(PermissionError):
+        agentd._atomic_write(tmp_path / "s.json", {"a": 2})
+
+
+class TestHookPing:
+    """`astrocyte doctor` proves a registered command reaches this code."""
+
+    @pytest.mark.parametrize("host", ["claude", "codex", "antigravity", "copilot"])
+    def test_ping_answers_pong_even_when_paused(self, env, monkeypatch, capsys, host):
+        monkeypatch.setenv("ASTROCYTE_HOOKS", "off")
+        monkeypatch.setattr(sys, "stdin", io.StringIO('{"ping": true}'))
+        assert hooks.main("stop", host) == 0
+        assert json.loads(capsys.readouterr().out) == {"astrocyte": "pong"}
+
+    @pytest.mark.parametrize("text", ["", "{}", '{"ping": "yes"}', "not json", "[1]"])
+    def test_anything_else_is_not_a_ping(self, text):
+        assert hooks._is_ping(text) is False
 
 
 class TestCodexHooks:
@@ -1159,7 +1254,7 @@ class TestClaudeHookInstall:
         from astrocyte.harness.server import hook_prefix
 
         host = ClaudeCodeHost()
-        host.install_hooks(hook_prefix("/Users/Jane Doe/tools/bin/python"))
+        host.install_hooks(hook_prefix("/Users/Jane Doe/tools/bin/python", windows=False))
         assert host.hook_commands()["Stop"] == "'/Users/Jane Doe/tools/bin/python' -I -m astrocyte.cli hook stop"
 
     def test_uninstall_removes_only_ours(self, env):
@@ -1283,17 +1378,23 @@ class TestCodexHookInstall:
         monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
         assert CodexHost().hooks_file() == tmp_path / "codex-home" / "config.toml"
 
-    @posix_shell
     def test_installed_commands_parse(self, env):
-        """The installed command line must be accepted by `astrocyte hook`."""
+        """The installed command line must be accepted by `astrocyte hook`, in
+        every shell an agent may run it through (Windows: cmd, PowerShell and
+        Git Bash)."""
+        from astrocyte.harness.doctor import _probe_shells
         from astrocyte.harness.server import hook_prefix
 
         host = CodexHost()
         host.install_hooks(hook_prefix(sys.executable))
         cmd = host.hook_commands()["Stop"]
-        proc = subprocess.run(cmd, shell=True, input="{}", capture_output=True, text=True,
-                              env={**os.environ, "ASTROCYTE_HOOKS": "off"})
-        assert proc.returncode == 0 and proc.stdout == "", proc.stderr
+        shells = _probe_shells()
+        if WINDOWS:
+            assert {"cmd", "PowerShell"} <= {name for name, _ in shells}
+        for name, shell in shells:
+            proc = subprocess.run([*shell, cmd], input="{}", capture_output=True, text=True,
+                                  env={**os.environ, "ASTROCYTE_HOOKS": "off"})
+            assert proc.returncode == 0 and proc.stdout.strip() == "", (name, proc.stderr)
 
 
 # ── MCP default bank ─────────────────────────────────────────────────────
@@ -1440,13 +1541,20 @@ class TestCopilotHooks:
         assert not (env.state / "spool").exists()
 
     def test_node_launched_copilot_print_mode_is_headless(self, monkeypatch):
+        # The ps-based walker, faked below; on Windows headless_session would
+        # otherwise ask psutil (covered by TestWindowsAncestry).
+        monkeypatch.setattr(hooks, "_windows_ancestor_args", hooks._posix_ancestor_args)
         def fake_run(argv, **kw):
             table = {100: "50 /bin/sh -c hook", 50: "1 /opt/homebrew/bin/node /opt/lib/node_modules/@github/copilot/index.js -p hi"}
             return subprocess.CompletedProcess(argv, 0, stdout=table.get(int(argv[-1]), ""), stderr="")
 
         monkeypatch.setattr(hooks.subprocess, "run", fake_run)
         monkeypatch.setattr(hooks.os, "getppid", lambda: 100)
-        assert hooks._agent_ancestor_args("copilot") is None, "the script is index.js, not copilot"
+        # npm runs the agent's package script by path (index.js here; cli.js under
+        # @anthropic-ai/claude-code on Windows): the agent's name is in a path
+        # component, and missing it would let a headless run into memory.
+        assert hooks._posix_ancestor_args("copilot", 5) == ["/opt/lib/node_modules/@github/copilot/index.js", "-p", "hi"]
+        assert hooks.headless_session("copilot") is True
 
         def fake_run2(argv, **kw):
             table = {100: "50 /bin/sh -c hook", 50: "1 node /opt/homebrew/bin/copilot -p hi"}
@@ -1493,8 +1601,9 @@ class TestNewHookInstalls:
         other.write_text('{"version": 1, "hooks": {}}')
         assert host.install_hooks(self.CLI).status == "installed"
         data = json.loads(host.hooks_file().read_text())
-        assert data["version"] == 1 and data["hooks"]["sessionStart"][0]["bash"] == (
-            f"{self.CLI} hook session-start --host copilot")
+        entry = data["hooks"]["sessionStart"][0]
+        assert data["version"] == 1 and entry["bash"] == f"{self.CLI} hook session-start --host copilot"
+        assert entry["powershell"] == entry["bash"], "Copilot on Windows runs the powershell field"
         assert host.install_hooks(self.CLI).status == "unchanged"
         assert host.uninstall_hooks().status == "removed"
         assert not host.hooks_file().exists() and other.read_text() == '{"version": 1, "hooks": {}}'

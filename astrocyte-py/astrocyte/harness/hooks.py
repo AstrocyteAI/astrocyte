@@ -169,6 +169,20 @@ def dialect_for(host: str) -> Dialect | None:
     return DIALECTS.get(host) or _MORE_DIALECTS.get(host)
 
 
+def _agent_argv(argv: list[str], binary: str) -> list[str] | None:
+    """``argv`` if it is the ``binary`` agent, run directly or by Node."""
+    if argv and binary in Path(argv[0]).name.lower():
+        return argv
+    # Node CLIs run as `node /path/to/copilot …`; on Windows npm's shims run
+    # `node …/node_modules/@anthropic-ai/claude-code/cli.js`, so the agent's
+    # name is in the script's path rather than its file name.
+    if len(argv) > 1 and Path(argv[0]).name.lower().startswith("node"):
+        parts = re.split(r"[\\/]", argv[1].lower())
+        if any(binary in part for part in parts):
+            return argv[1:]
+    return None
+
+
 def _agent_ancestor_args(binary: str, max_depth: int = 5) -> list[str] | None:
     """argv of the nearest ``binary`` process above this hook, if any.
 
@@ -177,6 +191,11 @@ def _agent_ancestor_args(binary: str, max_depth: int = 5) -> list[str] | None:
     an interactive session inherits ``CLAUDE_CODE_SESSION_ATTENDED=1`` and
     ``CLAUDE_CODE_ENTRYPOINT`` unchanged (measured).
     """
+    walk = _windows_ancestor_args if os.name == "nt" else _posix_ancestor_args
+    return walk(binary, max_depth)
+
+
+def _posix_ancestor_args(binary: str, max_depth: int) -> list[str] | None:
     pid = os.getppid()
     for _ in range(max_depth):
         if pid <= 1:
@@ -189,16 +208,32 @@ def _agent_ancestor_args(binary: str, max_depth: int = 5) -> list[str] | None:
         if not out:
             return None
         ppid, _, args = out.partition(" ")
-        argv = args.split()
-        if argv and binary in Path(argv[0]).name.lower():
-            return argv
-        # Node CLIs (copilot) run as `node /path/to/copilot …`.
-        if len(argv) > 1 and Path(argv[0]).name.startswith("node") and binary in Path(argv[1]).name.lower():
-            return argv[1:]
+        if found := _agent_argv(args.split(), binary):
+            return found
         try:
             pid = int(ppid)
         except ValueError:
             return None
+    return None
+
+
+def _windows_ancestor_args(binary: str, max_depth: int) -> list[str] | None:
+    """Windows has no `ps`; psutil reads each parent's command line (the
+    headless flags live there, which process names alone don't show)."""
+    try:
+        import psutil
+    except ImportError:  # a Windows install without the dependency: treat as interactive
+        return None
+    try:
+        proc = psutil.Process(os.getppid())
+        for _ in range(max_depth):
+            if found := _agent_argv(proc.cmdline(), binary):
+                return found
+            proc = proc.parent()
+            if proc is None:
+                return None
+    except (psutil.Error, OSError):
+        return None
     return None
 
 
@@ -379,7 +414,25 @@ def _stop(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -
 _HANDLERS = {"session-start": _session_start, "prompt": _prompt, "stop": _stop}
 
 
+PONG = {"astrocyte": "pong"}
+
+
+def _is_ping(stdin_text: str) -> bool:
+    try:
+        payload = json.loads(stdin_text or "{}")
+    except ValueError:
+        return False
+    return isinstance(payload, dict) and payload.get("ping") is True
+
+
 def run(event: str, stdin_text: str, host: str = "claude") -> int:
+    # `astrocyte doctor` runs each registered command through the shells an
+    # agent may use, with {"ping": true}: answering proves the command line
+    # reached this code, without touching memory. Before ASTROCYTE_HOOKS, so a
+    # paused install still checks out.
+    if _is_ping(stdin_text):
+        print(json.dumps(PONG))
+        return 0
     mode = os.environ.get("ASTROCYTE_HOOKS", "").strip().lower()
     if mode in ("0", "off", "false", "no"):
         return 0

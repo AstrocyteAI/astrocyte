@@ -33,6 +33,9 @@ dependencies = [
     # tokenizer, MIT licensed. See docs/_design/m34-query-intent-routing.md
     # and the v015l → v015m bench cycle.
     "tiktoken>=0.12",
+    # Agent hooks find their parent agent's command line (headless runs stay
+    # out of memory); Windows has no `ps` to ask.
+    "psutil>=5.9; sys_platform == 'win32'",
 ]
 
 [project.urls]
@@ -160,6 +163,8 @@ all = [
 # were conflated, which is why ``dev`` used to be ~148 packages.
 dev = [
     "pytest>=8.0",
+    # The Windows process-ancestry tests use psutil (a runtime dependency on Windows only).
+    "psutil>=5.9",
     "pytest-asyncio>=0.23",
     "pytest-xdist>=3.5",
     "pytest-timeout>=2.2",
