@@ -85,20 +85,23 @@ jobs:
           # Poll via pip download — checks the simple index, the same path pip uses
           # at Docker build time. The JSON API can return 200 before the simple index
           # propagates to all CDN nodes, so JSON-only checks are unreliable here.
+          # --no-cache-dir: never answer from pip's own copy of the index page.
+          # Up to 30 minutes: on v0.17.0 astrocyte-postgres was still missing from
+          # the index 12 minutes after its upload.
           # astrocyte-age removed from the wait list in M9 (ADR-008).
           for pkg in astrocyte astrocyte-postgres; do
             echo "Waiting for ${pkg}==${VERSION} to be pip-downloadable..."
-            for i in $(seq 1 40); do
-              if pip download "${pkg}==${VERSION}" --no-deps -q -d /tmp/pypi-check; then
+            for i in $(seq 1 180); do
+              if pip download --no-cache-dir "${pkg}==${VERSION}" --no-deps -q -d /tmp/pypi-check; then
                 echo "✓ ${pkg}==${VERSION} available"
                 rm -rf /tmp/pypi-check
                 break
               fi
-              if [ "$i" = "40" ]; then
-                echo "✗ ${pkg}==${VERSION} not available after ~6 minutes"
+              if [ "$i" = "180" ]; then
+                echo "✗ ${pkg}==${VERSION} not available after ~30 minutes"
                 exit 1
               fi
-              echo "  Attempt ${i}/40 — ${pkg}==${VERSION} not yet available, retrying in 10s..."
+              echo "  Attempt ${i}/180 — ${pkg}==${VERSION} not yet available, retrying in 10s..."
               sleep 10
             done
           done
