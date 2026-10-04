@@ -610,6 +610,33 @@ def test_doctor_runs_each_hook_command_through_the_shells(wired_home, monkeypatc
     assert "does not run under broken shell" in checks["Claude Code hooks"].summary
 
 
+def test_git_bash_is_found_wherever_git_for_windows_puts_git(tmp_path, monkeypatch):
+    """GitHub's Windows runners resolve git to Git\\bin\\git.exe, not Git\\cmd:
+    looking only two levels up from git silently dropped Git Bash."""
+    from astrocyte.harness import doctor
+
+    git_root = tmp_path / "Git"
+    for d in ("bin", "cmd"):
+        (git_root / d).mkdir(parents=True)
+    (git_root / "bin" / "bash.exe").write_text("")
+    for var in ("ProgramFiles", "ProgramFiles(x86)"):
+        monkeypatch.delenv(var, raising=False)
+    for git in (git_root / "bin" / "git.exe", git_root / "cmd" / "git.exe"):
+        monkeypatch.setattr(doctor.shutil, "which", lambda name, g=git: str(g) if name == "git" else None)
+        assert doctor._git_bash() == str(git_root / "bin" / "bash.exe")
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: None)
+    assert doctor._git_bash() is None
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    assert doctor._git_bash() == str(git_root / "bin" / "bash.exe"), "the standard install location"
+
+
+def test_on_windows_doctor_probes_git_bash_too():
+    from astrocyte.harness.doctor import _probe_shells
+
+    if WINDOWS:  # the runners have Git for Windows
+        assert "Git Bash" in {name for name, _ in _probe_shells()}
+
+
 def test_probe_needs_the_pong(monkeypatch):
     from astrocyte.harness.doctor import _probe, _probe_shells
 

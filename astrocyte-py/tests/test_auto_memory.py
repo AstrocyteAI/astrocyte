@@ -1390,7 +1390,7 @@ class TestCodexHookInstall:
         cmd = host.hook_commands()["Stop"]
         shells = _probe_shells()
         if WINDOWS:
-            assert {"cmd", "PowerShell"} <= {name for name, _ in shells}
+            assert {"cmd", "PowerShell", "Git Bash"} <= {name for name, _ in shells}
         for name, shell in shells:
             proc = subprocess.run([*shell, cmd], input="{}", capture_output=True, text=True,
                                   env={**os.environ, "ASTROCYTE_HOOKS": "off"})
