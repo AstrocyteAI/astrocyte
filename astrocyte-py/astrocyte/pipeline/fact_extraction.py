@@ -99,6 +99,11 @@ class ExtractedFact:
     occurred_end: datetime | None = None
     entities: list[FactEntity] = field(default_factory=list)
     causal_relations: list[FactCausalRelation] = field(default_factory=list)
+    # Last, so positional construction stays compatible.
+    #: False when ``fact_type`` is the default rather than the model's
+    #: answer (its metadata entry was missing or invalid). Storage must not
+    #: treat a default as a classification.
+    fact_type_classified: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -493,8 +498,9 @@ def _build_extracted_fact_from_raw(
             continue
         etype = str(ent.get("entity_type") or "OTHER").strip().upper() or "OTHER"
         entities.append(FactEntity(name=name, entity_type=etype))
-    ftype = str(raw.get("fact_type") or "experience").strip().lower()
-    if ftype not in {"world", "experience"}:
+    ftype = str(raw.get("fact_type") or "").strip().lower()
+    classified = ftype in {"world", "experience"}
+    if not classified:
         ftype = "experience"
     return ExtractedFact(
         what=chunk,
@@ -503,6 +509,7 @@ def _build_extracted_fact_from_raw(
         who=str(raw.get("who") or "N/A").strip() or "N/A",
         why=str(raw.get("why") or "N/A").strip() or "N/A",
         fact_type=ftype,
+        fact_type_classified=classified,
         occurred_start=_parse_iso_datetime(raw.get("occurred_start")),
         occurred_end=_parse_iso_datetime(raw.get("occurred_end")),
         entities=entities,
@@ -842,8 +849,9 @@ async def extract_facts_verbatim(
                 strength = 1.0
             causal.append(FactCausalRelation(target_fact_index=target, strength=strength))
 
-        ftype = str(raw.get("fact_type") or "experience").strip().lower()
-        if ftype not in {"world", "experience"}:
+        ftype = str(raw.get("fact_type") or "").strip().lower()
+        classified = ftype in {"world", "experience"}
+        if not classified:
             ftype = "experience"
 
         out.append(
@@ -855,6 +863,7 @@ async def extract_facts_verbatim(
                 who=str(raw.get("who") or "N/A").strip() or "N/A",
                 why=str(raw.get("why") or "N/A").strip() or "N/A",
                 fact_type=ftype,
+                fact_type_classified=classified,
                 occurred_start=_parse_iso_datetime(raw.get("occurred_start")),
                 occurred_end=_parse_iso_datetime(raw.get("occurred_end")),
                 entities=entities,
