@@ -7,6 +7,7 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
+from .choices import load_choices, save_choices
 from .doctor import Check, apply_fixes, run_checks
 from .hosts import ALL_HOSTS, SUPPORTED_HOSTS, HookHost, Host, Outcome, host_by_key, hosts
 from .localconfig import SetupError, choose_providers, render_config, write_config
@@ -90,30 +91,51 @@ def cmd_setup(args: Namespace) -> int:
         for line in _make_store_private(cfg_path):
             print(f"  ✓ store        {line}")
 
-    # 4. Harnesses.
+    # 4. Harnesses. Naming one records the choice made for it; a plain run
+    # leaves alone what the user switched off before.
     targets, explicit = _selected_hosts(args)
     if not targets:
         print("\n  No agent harnesses detected. Supported: " + ", ".join(c.label for c in SUPPORTED_HOSTS)
               + ".\n  Install one, or name it explicitly, e.g. astrocyte setup --claude")
         return 1
-    if not explicit:
+    choices = load_choices(cfg_path)
+    if explicit:
+        for h in targets:
+            choices.off.discard(h.key)
+            (choices.hooks_off.add if args.no_hooks else choices.hooks_off.discard)(h.key)
+    else:
         print("\n  Detected: " + ", ".join(h.label for h in targets))
+        if args.no_hooks:
+            choices.hooks_off |= {h.key for h in targets if isinstance(h, HookHost)}
+    switched_off = [h for h in targets if h.key in choices.off]
+    targets = [h for h in targets if h.key not in choices.off]
     print()
-    outcomes = [h.install(spec, dry_run=dry) for h in targets]
+    outcomes = [Outcome(h.label, "skipped", f"switched off; astrocyte setup --{h.key} turns it back on")
+                for h in switched_off]
+    outcomes += [h.install(spec, dry_run=dry) for h in targets]
 
     # 5. Automatic memory (lifecycle hooks, where the harness has them).
     hook_hosts = [h for h in targets if isinstance(h, HookHost)]
-    auto_memory = [] if args.no_hooks else hook_hosts
+    auto_memory = [h for h in hook_hosts if h.key not in choices.hooks_off]
     for h in hook_hosts:
-        if not args.no_hooks:
+        if h in auto_memory:
             outcomes.append(h.install_hooks(hook_prefix(found.command), dry_run=dry))
             continue
-        # --no-hooks turns automatic memory off, including a previous install.
+        # Off by choice (--no-hooks, now or before), including a previous install.
         outcome = h.uninstall_hooks(dry_run=dry)
         if outcome.status != "absent":
             outcomes.append(outcome)
+        elif not args.no_hooks:
+            outcomes.append(Outcome(f"{h.label} hooks", "skipped",
+                                    f"automatic memory off; astrocyte setup --{h.key} turns it on"))
     for o in outcomes:
         _print_outcome(o)
+    if not dry:
+        save_choices(cfg_path, choices)
+    if not targets:
+        print("\nEvery detected agent is switched off; nothing was wired. "
+              f"Name one to turn it back on, e.g. astrocyte setup --{switched_off[0].key}")
+        return 0
 
     failed = [o for o in outcomes if o.status == "failed"]
     if dry:
@@ -186,13 +208,22 @@ def _warm_embeddings(cfg_path: Path) -> str:
 
 
 def cmd_uninstall(args: Namespace) -> int:
-    targets, _ = _selected_hosts(args)
+    targets, explicit = _selected_hosts(args)
     print("Removing Astrocyte from agent harnesses\n")
     outcomes = [h.uninstall(dry_run=args.dry_run) for h in targets]
     outcomes += [h.uninstall_hooks(dry_run=args.dry_run) for h in targets if isinstance(h, HookHost)]
     for o in outcomes:
         _print_outcome(o)
     cfg_path = config_path()
+    if explicit:
+        # Removing one agent is a standing choice; removing them all (no
+        # flags) is a teardown, which a later `astrocyte setup` reverses.
+        if not args.dry_run:
+            choices = load_choices(cfg_path)
+            choices.off |= {h.key for h in targets}
+            save_choices(cfg_path, choices)
+        print(f"\nastrocyte setup will leave {_join([h.label for h in targets])} switched off;\n"
+              f"turn it back on with: astrocyte setup {' '.join('--' + h.key for h in targets)}")
     print(f"\nYour config ({cfg_path}) and memories ({database_path()}) were left in place;\n"
           "delete them yourself if you no longer want them.")
     return 1 if any(o.status == "failed" for o in outcomes) else 0

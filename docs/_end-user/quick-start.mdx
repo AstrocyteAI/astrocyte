@@ -36,9 +36,14 @@ In Claude Code, Codex and Antigravity, setup also turns on **automatic memory** 
 (headless `claude -p` / `codex exec` / `agy -p` runs — scripts, benchmarks — are left alone): each finished turn is
 saved to the project's local memory, and genuinely relevant memories are added
 to new prompts — so the agent knows what was decided last week without being
-asked to look. Conversations are stored only on your machine. Pause with
+asked to look. A new session opens with where the previous one in that project left off
+(its last few exchanges, whichever agent it was in). Conversations are stored only on your machine. Pause with
 `ASTROCYTE_HOOKS=off`; turn off with `astrocyte setup --no-hooks`. Codex runs new hooks only
 once you trust them: run `/hooks` in Codex after setup.
+
+Setup remembers what you switch off: after `astrocyte uninstall --claude` or
+`astrocyte setup --no-hooks`, a later `astrocyte setup` (after an upgrade, say) leaves it off.
+Name the agent to turn it back on: `astrocyte setup --claude`.
 
 See what your agents remember about the project you're in with `astrocyte memory`;
 `astrocyte memory search "…"` shows what a prompt would recall, and

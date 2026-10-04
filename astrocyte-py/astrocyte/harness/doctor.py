@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from .choices import Choices, load_choices
 from .hosts import HookHost, Host, HostConfigError, hosts
 from .server import handshake, locate_mcp_server, server_spec
 
@@ -122,12 +123,14 @@ async def _check_models(config) -> list[Check]:
     return out
 
 
-def _check_host(host: Host, expected) -> Check:
+def _check_host(host: Host, expected, choices: Choices | None = None) -> Check:
     try:
         reg = host.registration()
     except HostConfigError as e:
         return Check(host.label, "fail", str(e))
     if reg is None:
+        if choices is not None and host.key in choices.off:
+            return Check(host.label, "info", f"switched off; astrocyte setup --{host.key} turns it back on")
         return Check(host.label, "info", "installed, Astrocyte not wired",
                      fix=f"astrocyte setup --{host.key}")
     if not Path(reg.command).exists():
@@ -139,7 +142,7 @@ def _check_host(host: Host, expected) -> Check:
     return Check(host.label, "ok", f"wired ({host.config_file()})")
 
 
-def _check_hooks(host) -> Check:
+def _check_hooks(host, choices: Choices | None = None) -> Check:
     """One harness's lifecycle hooks (automatic memory)."""
     from .server import hook_prefix, locate_mcp_server
 
@@ -149,6 +152,8 @@ def _check_hooks(host) -> Check:
     except HostConfigError as e:
         return Check(label, "fail", str(e))
     if not any(commands.values()):
+        if choices is not None and host.key in choices.hooks_off:
+            return Check(label, "info", f"automatic memory switched off; astrocyte setup --{host.key} turns it on")
         return Check(label, "info", "automatic memory off", fix=f"astrocyte setup --{host.key}")
     missing = [event for event, cmd in commands.items() if not cmd]
     found = locate_mcp_server()
@@ -190,12 +195,14 @@ def run_checks(config_path: Path, *, model_probes: bool = True) -> list[Check]:
                 else f"MCP server failed to start: {result.detail}",
             ))
 
+    choices = load_choices(config_path)
     hook_checks: list[Check] = []
     for host in hosts():
         if host.detected():
-            checks.append(_check_host(host, expected))
-            if isinstance(host, HookHost):
-                hook_checks.append(_check_hooks(host))
+            check = _check_host(host, expected, choices)
+            checks.append(check)
+            if isinstance(host, HookHost) and not check.summary.startswith("switched off"):
+                hook_checks.append(_check_hooks(host, choices))
     checks += hook_checks
     if any(c.level != "info" for c in hook_checks):
         checks.append(_check_daemon())

@@ -4,12 +4,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Where you left off.** A new session in Claude Code, Codex, Antigravity or Copilot CLI opens with the closing exchanges (up to three) of the previous session in that project — whichever agent it was in — labelled with the agent and how long ago, the last answer given the most room. Built from the captured turns already in the store (newest other session; sessions running side by side are told apart; a session is never shown itself), so it adds no second copy of conversation text. Those turns count as already injected, and are not repeated under "Most recent memories".
+- **`astrocyte setup` remembers what you switched off.** It wired every agent it detected on every run, so a plain re-run (after an upgrade, say) undid `astrocyte uninstall --claude` and `astrocyte setup --no-hooks`. Both choices are now recorded in `harnesses.json` beside the config; a plain `setup` leaves those agents (or their automatic memory) off and says so, and `doctor` reports them as switched off rather than "not wired". Naming the agent (`astrocyte setup --claude`) turns it back on and clears the choice. A plain `astrocyte uninstall` (no agent named) is a teardown, not a choice: a later `setup` reverses it.
+
 ### Fixed
 
+- **Session-start memories showed long turns as scrambled fragments.** A long captured turn is stored as several overlapping chunks that share a timestamp, and the session summary listed each chunk as its own memory, in arbitrary order, cut mid-word. Chunks retained together are now regrouped into one line: the question and the end of the reassembled answer, where its conclusion is.
 - **The gateway image runs on Debian 13 (Python 3.13).** `gcr.io/distroless/python3-debian12` still ships Python 3.11, OpenSSL, krb5 and expat without fixes Debian has released (25 fixable HIGH CVEs), which failed the image scan and left v0.16.0 and v0.17.0 without a scanned image. `python3-debian13` has none; the builder stage moves to Python 3.13 to match. The image workflow can now be dispatched with a `version` to rebuild a released version's image without re-tagging.
-
-### Fixed
-
 - **`Astrocyte.export_bank` exports every memory.** It paged a relevance-ranked `query="*"` recall without an offset, so a bank larger than one batch (100) was exported truncated with no error, and the AMA header's `memory_count` counted only the first page. Pipeline-backed brains now page the vector store's `list_vectors` in its stable id order. Engine providers, which expose no listing API, keep one capped recall and log a warning when it comes back full. The AMA record format is unchanged.
 - **`bank_health` reports the real memory count.** It came from `list_vectors(limit=0)`, which returns no rows on every store, so `memory_count` was always 0. It now pages through `list_vectors`; the VectorStore SPI has no count method, so the cost grows with bank size.
 - **`astrocyte memory` commands don't run noisy-bank detection.** Importing a docs tree with many short sections tripped the `short_content` signal and printed a raw JSON warning in the terminal. Detection guards against agents writing junk or looping; the user's own commands now open the store with it off. The automatic-memory daemon keeps it, and logs to its own file.
