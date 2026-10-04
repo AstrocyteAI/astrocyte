@@ -350,6 +350,55 @@ class TestStartup:
         assert any("no active tokens" in w for w in warnings)
 
 
+class TestScopedTokensNeedAccessControl:
+    """A token's grants and groups are enforced only by access control; with it
+    off they would quietly mean every bank, so the gateway refuses instead."""
+
+    def _app_without_acl(self, monkeypatch, tmp_path, *, scoped: bool):
+        from astrocyte_gateway.tokens import create_token
+
+        cfg = _write_acl_config(tmp_path).read_text(encoding="utf-8").replace("enabled: true", "enabled: false")
+        (tmp_path / "astrocyte.yaml").write_text(cfg, encoding="utf-8")
+        registry = tmp_path / "tokens.yaml"
+        token, _ = create_token(registry, principal="user:alice", banks=["project:*"] if scoped else None)
+        monkeypatch.setenv("ASTROCYTE_AUTH_MODE", "token")
+        monkeypatch.setenv("ASTROCYTE_TOKENS_FILE", str(registry))
+        monkeypatch.setenv("ASTROCYTE_CONFIG_PATH", str(tmp_path / "astrocyte.yaml"))
+        from astrocyte_gateway.app import create_app
+
+        return create_app, token, registry
+
+    def test_scoped_tokens_without_access_control_refuse_to_start(self, monkeypatch, tmp_path):
+        create_app, _, _ = self._app_without_acl(monkeypatch, tmp_path, scoped=True)
+        with pytest.raises(RuntimeError, match="access_control.enabled is false"):
+            create_app()
+
+    def test_unscoped_tokens_start_and_say_they_reach_every_bank(self, monkeypatch, tmp_path):
+        from astrocyte_gateway import auth
+
+        create_app, token, _ = self._app_without_acl(monkeypatch, tmp_path, scoped=False)
+        warnings: list[str] = []
+        monkeypatch.setattr(auth._logger, "warning", lambda msg, *a: warnings.append(msg % a))
+        client = TestClient(create_app())
+        assert any("every token can read and write every bank" in w for w in warnings)
+        assert _retain(client, token, bank_id="anything").status_code == 200
+
+    def test_a_scoped_token_added_while_running_is_refused(self, monkeypatch, tmp_path):
+        from astrocyte_gateway.tokens import create_token
+
+        create_app, _, registry = self._app_without_acl(monkeypatch, tmp_path, scoped=False)
+        client = TestClient(create_app())
+        scoped, _ = create_token(registry, principal="user:bob", banks=["project:api"])
+        assert _retain(client, scoped).status_code == 403
+
+    def test_with_access_control_scoped_tokens_start(self, monkeypatch, tmp_path):
+        from astrocyte_gateway.tokens import create_token
+
+        client, _, registry = _token_app(monkeypatch, tmp_path)
+        token, _ = create_token(registry, principal="user:alice", banks=["project:*"])
+        assert _retain(client, token).status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Requests
 # ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from astrocyte_gateway import response_models as rm
-from astrocyte_gateway.auth import get_astrocyte_context, validate_auth_startup_config
+from astrocyte_gateway.auth import get_astrocyte_context, validate_auth_startup_config, validate_token_scoping
 from astrocyte_gateway.brain import build_astrocyte
 from astrocyte_gateway.models import (
     AdminLifecycleBody,
@@ -253,6 +253,7 @@ def create_app(
 
     if brain is None:
         brain = build_astrocyte()
+    validate_token_scoping(brain.config.access_control.enabled)
     if tenant_extension is None:
         tenant_extension = default_tenant_extension()
     ingest_registry = SourceRegistry.from_sources_config(

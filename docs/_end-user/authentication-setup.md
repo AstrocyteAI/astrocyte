@@ -127,7 +127,7 @@ curl -X POST http://localhost:8080/v1/retain \
 
 ### How token grants combine with config
 
-A token's `--banks`/`--permissions` and `--groups` apply only when access control is enabled (`access_control.enabled: true`). They are **added** to the grants in `astrocyte.yaml` for that principal; they never remove anything. Effective permissions on a bank are the union of:
+A token's `--banks`/`--permissions` and `--groups` are enforced by access control, so they need `access_control.enabled: true`. Without it the gateway **refuses to start** while any active token carries grants or groups (they would otherwise reach every bank), and refuses such a token added while it runs (403). Unscoped tokens work without access control, and then every token can read and write every bank; the gateway logs a warning saying so. With access control on, token grants are **added** to the grants in `astrocyte.yaml` for that principal; they never remove anything. Effective permissions on a bank are the union of:
 
 - config grants whose `principal` matches the token's principal,
 - config grants to any of the token's `team:` groups,

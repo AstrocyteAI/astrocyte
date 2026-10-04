@@ -17,7 +17,7 @@ from jwt.exceptions import PyJWTError
 
 from astrocyte_gateway.tokens import TOKENS_FILE_ENV, TokenRegistryError, registry_for
 
-__all__ = ["get_astrocyte_context", "validate_auth_startup_config"]
+__all__ = ["get_astrocyte_context", "validate_auth_startup_config", "validate_token_scoping"]
 
 _logger = logging.getLogger(__name__)
 
@@ -90,6 +90,30 @@ def _validate_token_registry() -> None:
         _logger.warning("Token registry %s has no active tokens; every request will be refused.", path)
 
 
+# Set by create_app from the brain's config. A token's bank grants and groups
+# are enforced only by access control; without it they would silently mean
+# "every bank", so scoped tokens are refused rather than over-trusted.
+_access_control_enabled: bool | None = None
+
+
+def validate_token_scoping(access_control_enabled: bool) -> None:
+    """In token mode, refuse to start when scoped tokens exist but access
+    control is off; remember the setting for tokens added while running."""
+    global _access_control_enabled
+    _access_control_enabled = access_control_enabled
+    if _auth_mode() != "token" or access_control_enabled:
+        return
+    records = registry_for(_tokens_file()).active_records()
+    scoped = [r.id for r in records if r.scoped]
+    if scoped:
+        raise RuntimeError(
+            f"Refusing to start: token(s) {', '.join(scoped)} carry bank grants or groups, but "
+            "access_control.enabled is false, so they would reach every bank. Enable access control "
+            "in astrocyte.yaml, or revoke them and mint unscoped tokens."
+        )
+    _logger.warning("Token mode without access control: every token can read and write every bank.")
+
+
 def _context_from_token(authorization: str | None, x_api_key: str | None) -> AstrocyteContext:
     # The principal comes from the token's registry entry only. A client's
     # X-Astrocyte-Principal is never consulted in this mode.
@@ -109,6 +133,9 @@ def _context_from_token(authorization: str | None, x_api_key: str | None) -> Ast
         raise HTTPException(status_code=500, detail="Token registry unavailable") from None
     if record is None:
         raise HTTPException(status_code=401, detail="Invalid or revoked token")
+    if record.scoped and _access_control_enabled is False:
+        _logger.error("Token %s is scoped but access control is off; refusing it", record.id)
+        raise HTTPException(status_code=403, detail="Token is scoped but the gateway has access control off")
     return record.context()
 
 

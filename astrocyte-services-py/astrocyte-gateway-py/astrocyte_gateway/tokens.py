@@ -88,6 +88,11 @@ class TokenRecord:
     def active(self) -> bool:
         return self.revoked_at is None
 
+    @property
+    def scoped(self) -> bool:
+        """Carries bank grants or groups, which mean something only under access control."""
+        return bool(self.grants or self.groups)
+
     def context(self) -> AstrocyteContext:
         """The authenticated context a request carrying this token runs as."""
         return AstrocyteContext(
@@ -298,6 +303,9 @@ class TokenRegistry:
     def load(self) -> int:
         """Load now (fail fast at startup); returns the number of active tokens."""
         return len(self._refresh())
+
+    def active_records(self) -> list[TokenRecord]:
+        return list(self._refresh())
 
     def lookup(self, token: str) -> TokenRecord | None:
         """The active record for ``token``, or ``None``. Compares every hash in constant time."""
