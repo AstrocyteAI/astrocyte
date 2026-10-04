@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable, Literal
 
+from astrocyte._log_safety import safe as _safe_log
 from astrocyte.types import Metadata, RecallRequest, RecallResult, RetainRequest, VectorItem
 
 logger = logging.getLogger("astrocyte.portability")
@@ -313,7 +314,7 @@ async def _records_from_recall(
             "export_bank: provider has no listing API; recall returned a full page of %d "
             "for bank %r, so the export may be incomplete",
             batch_size,
-            bank_id,
+            _safe_log(bank_id),
         )
 
     records: list[dict] = []
@@ -505,7 +506,7 @@ async def import_bank(
                 try:
                     occurred_at = datetime.fromisoformat(mem.occurred_at)
                 except ValueError:
-                    logger.debug("Skipping unparseable occurred_at: %s", mem.occurred_at)
+                    logger.debug("Skipping unparseable occurred_at: %s", _safe_log(mem.occurred_at))
 
             request = RetainRequest(
                 content=mem.text,
