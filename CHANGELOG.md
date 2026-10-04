@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **The agent daemon restarts after an upgrade.** It exited only when idle for 30 minutes or when its config changed, so on a machine with an agent open all day the daemon kept running the old version's code after an upgrade, and new hooks asked it for operations it didn't have (seen on 0.19.0 → 0.20.0: file recall got no answers). It now checks the installed version alongside the config every 20 seconds and exits when it changes; the next hook starts the new one. Captures wait in the spool meanwhile, so nothing is lost.
+
 ## [0.20.0] — 2026-10-05 — file recall; concurrent proxy recall; an SBOM for every gateway image
 
 Design and direction: `docs/_design/federated-sources.md` (F0, F0b delivered), `docs/_design/anchored-documents.md` (P0: a documents-only baseline and a staleness benchmark in `astrocyte-aml-py`, which is not published), and the roadmap's decision to keep structured extraction on now that its metadata is stored.
