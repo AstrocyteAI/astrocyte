@@ -66,6 +66,9 @@ jobs:
 
       # Tags publish astrocyte and astrocyte-sqlite in separate workflows;
       # wait until both versions are installable rather than racing them.
+      # Poll the simple index installers read, not the JSON API: on v0.17.0 the
+      # JSON API had astrocyte-sqlite a minute before the index did, and the
+      # install that followed failed to resolve.
       - name: Wait for both packages on PyPI
         if: steps.target.outputs.version != ''
         env:
@@ -74,8 +77,9 @@ jobs:
           for _ in $(seq 1 60); do
             ok=1
             for pkg in astrocyte astrocyte-sqlite; do
-              code=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$pkg/$VERSION/json")
-              [ "$code" = "200" ] || ok=0
+              curl -sf -H "Accept: application/vnd.pypi.simple.v1+json" "https://pypi.org/simple/$pkg/" \
+                | python3 -c 'import json, os, sys; sys.exit(os.environ["VERSION"] not in json.load(sys.stdin)["versions"])' \
+                || ok=0
             done
             [ "$ok" = 1 ] && exit 0
             sleep 30
