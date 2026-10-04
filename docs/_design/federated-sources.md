@@ -12,6 +12,13 @@ Astrocyte the layer that governs knowledge wherever it lives (provenance,
 freshness, trust, permissions, fusion) instead of a store that everything must
 be migrated into.
 
+**Decisions (2026-10-04)** are recorded in
+[`anchored-documents.md`](anchored-documents.md) §0. Two apply here directly:
+results from a team's existing search and RAG systems are **evidence with
+sources, never raw text passed to the agent** (decision 7), and write-back goes
+through the team's own review tools, with **no Astrocyte review UI**
+(decision 5).
+
 **One line:** Astrocyte does not need to hold every document; it needs to know
 where each one came from, whether it is still current, and who may see it.
 
@@ -43,6 +50,19 @@ therefore *local + the sum of every remote call*: three slow sources can add
 takes about 10 ms ([`team-memory.md`](team-memory.md) §1). Proxy hits also all
 enter fusion at a single weight (`intent_weights.semantic`,
 `pipeline/recall_stage.py`), whatever their source's quality.
+
+### 1.2 Proxy hits lose their dates and provenance
+
+`_row_to_hit` (`recall/proxy.py:253`) maps a remote row to a `MemoryHit` from
+its text, score, flat scalar metadata, tags, id, and fact type, and labels it
+`proxy:<source>`. It does not map `occurred_at` or `retained_at`, a source URL,
+a version or etag, or an author; nested metadata is dropped; and **a missing
+score silently becomes 0.5**. Every federated hit therefore arrives undated
+and unanchored, with an invented score. That is the same class of defect as
+roadmap §4e defect 4, where a rerank silently dropped `occurred_at` and every
+recalled memory carried a wrong date. Plugging in more RAG systems without
+fixing it brings back "similar isn't current". F0b (§8) fixes it before any
+new source is added.
 
 ## 2. Three ways to plug in
 
@@ -79,7 +99,9 @@ SourceHit:  item_id, text, url, source_score, version, author, updated_at
   `search` alone. An anchored source needs `version`, and a team deployment
   needs `can_read` or a per-user `principal`.
 - **First sources:** GitHub repository docs and ADRs, Notion, Confluence, a
-  generic vector database (pgvector, Qdrant), **and MCP servers as sources**.
+  generic vector database (pgvector, Qdrant), **operator-memory's Markdown
+  brain** (decision 6: work with existing documents and add anchors and
+  staleness checks to them), **and MCP servers as sources**.
   MCP is already how agents reach tools, so any MCP search tool becomes a
   source without a bespoke adapter.
 - **Today's `type: proxy` becomes one implementation** of this interface, so
@@ -89,7 +111,8 @@ SourceHit:  item_id, text, url, source_score, version, author, updated_at
 
 **Rule 1: federation is never on the prompt hook's critical path.** The hook
 reads only the local anchored index (§2). Live federation is for
-agent-initiated deep search, where seconds are acceptable.
+agent-initiated search, under a default deadline **well under 1 s**; a caller
+that wants a longer deep search must ask for it explicitly.
 
 **Rule 2: fan out concurrently, under one deadline.** Remote sources run
 *alongside* local retrieval, not before it. One deadline covers the whole
@@ -101,7 +124,11 @@ is skipped for a cool-down. That is the same pattern that paused benchmark
 ingest rather than storing degraded memories, and it stops one dead wiki
 from taxing every recall.
 
-**Rule 4: freshness checks are batched and cached.** For anchored items, one
+**Rule 4 (metrics): record p50 and p95 latency per source.** A slow source
+is visible before it becomes a complaint, and the deadline can be tuned from
+data rather than guessed.
+
+**Rule 5: freshness checks are batched and cached.** For anchored items, one
 `version()` call per source per recall covers every candidate from that
 source. Results are cached per `(item, version)` for a short TTL.
 
@@ -166,9 +193,13 @@ answerable, which is what the essay's "unauditable" critique asks for.
 
 **Write-back as proposals.** An agent's end-of-task notes about shared
 knowledge become a reviewable change in the system of record: a pull request
-against the docs repository, or a draft page. They do not become private
-memory. This is the essay's consult-then-update loop, scaled to a team, with
-human review.
+against Markdown in the repository first, then suggestions in documentation
+tools such as Confluence or Notion. They do not become private memory.
+Astrocyte builds no review UI of its own (decision 5): people approve in the
+tools they already use, and provenance travels in both directions, from the
+source into recall and from the agent's evidence into the proposed change.
+This is the essay's consult-then-update loop, scaled to a team, with human
+review.
 
 **Erasure.** Federated content is not Astrocyte's to erase. Cached copies,
 index entries, and embeddings must honour deletion at the source: a
@@ -181,9 +212,12 @@ LongMemEval and AML exercise neither external documents nor permissions, so
 federation needs its own evaluation:
 
 1. **A docs-augmented coding eval.** A repository, its documentation and ADRs,
-   and tasks whose answers live in the docs, in memory, or in both. Run paired
-   arms: memory only, docs only (federated), and anchored fusion. AML's
-   coding-memory track (repository history) is the closest public analogue.
+   and tasks whose answers live in the docs, in memory, or in both. It is the
+   **federated arm** of the four-arm evaluation in
+   [`anchored-documents.md`](anchored-documents.md) §9 (documents only, memory
+   only, hybrid, federated), reported with accuracy confidence intervals and
+   latency p50/p95. AML's coding-memory track (repository history) is the
+   closest public analogue.
 2. **Latency under failure.** Recall latency with one source slow, one dead,
    and one healthy, which checks rules 2 and 3.
 3. **Permission correctness.** Two principals with different source rights.
@@ -199,12 +233,15 @@ and error bars (roadmap §9 item 9).
 | Phase | Scope | Exit criterion |
 |---|---|---|
 | **F0** | Proxy recall concurrent with local retrieval: one deadline, per-source timeout and circuit breaker, partial results | Latency-under-failure test passes; a slow source no longer adds its full timeout |
-| **F1** | `RecallSource` interface; `type: proxy` ported onto it; first sources: GitHub docs, one wiki (Notion or Confluence), generic vector DB, MCP | Existing proxy configs unchanged; each source passes a conformance suite |
+| **F0b** | Metadata parity for proxy hits (§1.2): map `occurred_at`, source URL, version or etag, author, and anchor; carry trust; no invented 0.5 score (a missing score fuses by rank only) | A federated hit carries the same date and provenance fields as a local one; tests pin each field |
+| **F1** | `RecallSource` interface; `type: proxy` ported onto it; first sources: GitHub docs, one wiki (Notion or Confluence), generic vector DB, operator-memory Markdown, MCP | Existing proxy configs unchanged; each source passes a conformance suite |
 | **F2** | Calibration: measured per-source weights, slot budgets, cross-source dedup that merges provenance | Docs-augmented eval shows fusion no worse than the best single arm |
 | **F3** | Anchored external documents: anchors are URL plus version; batched freshness checks | Freshness eval: stale items served unflagged trend to zero |
-| **F4** | Team: per-principal search, `can_read` filtering, provenance in hits, write-back as reviewed proposals | Permission eval: zero leakage |
+| **F4** | Team: per-principal search, `can_read` filtering, provenance in hits, write-back as repository pull requests then doc-tool suggestions | Permission eval: zero leakage |
 
-F0 is independent and small. F1 can run alongside the anchored-documents P1.
+F0 and F0b are independent and small, and both come before any new source:
+without F0b, more sources means more undated hits. F1 can run alongside the
+anchored-documents P1.
 F4 depends on per-user gateway tokens and team memory G1.
 
 ## 9. Non-goals and boundaries
@@ -227,7 +264,7 @@ F4 depends on per-user gateway tokens and team memory G1.
 - **Sources without versions.** A content hash at index time detects change
   only on re-fetch. Decide how often unversioned sources are re-checked.
 - **Rate limits and cost on hosted APIs.** Notion and Confluence throttle.
-  Freshness batching (rule 4) helps; budgets per source may also be needed.
+  Freshness batching (rule 5) helps; budgets per source may also be needed.
 - **MCP as a source.** MCP tools return free text with no versions or
   permissions model. They may be useful only in federate mode, never
   anchored.

@@ -1571,6 +1571,49 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     permissions and write-back. None of it carries an accuracy claim until the
     docs-augmented evaluation in the design measures it.
 
+15. **Direction committed publicly — documents people can check** (added
+    2026-10-04). Calvin's reply to the essay in item 13, "Agents Need Documents
+    They Can Check" (calvinx.com, publishing 2026-10-04), states Astrocyte's direction in
+    public. The eight decisions are recorded in
+    [`anchored-documents.md`](anchored-documents.md) §0; in short:
+    Astrocyte is the evidence layer behind documents, not a rival to them; the
+    every-prompt similarity hook stops being the default (table of contents at
+    session start plus claims anchored to the open file, similarity as
+    fallback); capture stays automatic; what the agent knows is readable pages;
+    agents draft and people approve **in tools teams already use** (repository
+    pull requests first, then Confluence or Notion suggestions, **no Astrocyte
+    review UI**); existing documents, **including operator-memory's
+    Markdown**, gain sources and staleness checks; existing search and RAG
+    systems are drawn on as **evidence with sources, never raw text**; and
+    results come before claims, with the documents-only baseline compared
+    and published whichever way it goes. The post says none of this is built
+    and that it follows the AML cycle 2 work.
+
+    **Positioning:** memory is low effort and low control (trusted by results);
+    documentation is high effort and high control (trusted by inspection).
+    Astrocyte aims at the empty corner: captured as easily as memory, checked
+    as easily as a document. Integrations deliver the control half only if
+    they write back for human review and carry provenance both ways.
+
+    **Build order** (supersedes the order in item 13's "what to adopt"):
+    1. *Persist per-chunk extraction metadata in `retain()`.* Found
+       2026-10-04: the fact type, event time, and when/where/who were computed
+       and discarded on the main retain path since extraction was introduced.
+       Everything below depends on dates and sources surviving storage. Fix
+       committed locally (`78eed43`), pending a paired measurement.
+    2. *Metadata parity for federated hits* (federated-sources F0b):
+       `_row_to_hit` drops dates and provenance and invents a 0.5 score.
+    3. *Federation hygiene* (F0): concurrent fan-out, a deadline well under
+       1 s, partial results, per-source caching, p50/p95 per source.
+    4. *Per-caller auth passthrough* for federated sources (F4's core).
+    5. *The claim model and the file-touch hook* (anchored-documents P1).
+    6. *Write-back as pull requests,* Markdown in a repository first plus an
+       operator-memory-compatible adapter, then Confluence and Notion.
+    7. *Cross-source dedup* that merges provenance (F2).
+    8. *A fourth "federated" arm* in the anchored-documents §9 evaluation
+       (documents only, memory only, hybrid, federated), with latency p50/p95
+       alongside accuracy and confidence intervals.
+
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
 1. ~~**A-H capability legend — GATES M46.**~~ **RESOLVED-AS-UNPUBLISHED 2026-09-03.** No public legend exists (search scope in §3). M46's gate is lifted to inference-only; the documented seven-capability list, the G1-G5 / F1 leaf corrections, and the empirical probe proposal are recorded in §3. Reopen only if an AML paper appears or they answer by email.
