@@ -205,7 +205,7 @@ class TestLatencyCoversEveryOutcome:
         """The HTTP layer itself: a failed request is observed, not only counted."""
 
         async def failing_headers(*_a, **_k):
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)  # Windows timers are ~15.6 ms coarse: leave margin
             raise RuntimeError("auth backend down")
 
         monkeypatch.setattr(proxy, "build_proxy_headers", failing_headers)
@@ -220,7 +220,7 @@ class TestLatencyCoversEveryOutcome:
             )
         assert m.counted == [{"source_id": "s", "status": "error"}]
         ((name, value, labels),) = m.observed
-        assert labels == {"source_id": "s"} and value >= 0.05
+        assert labels == {"source_id": "s"} and value >= 0.05, "the failed call was timed, not recorded without a duration"
 
 
 class TestLateAnswers:
