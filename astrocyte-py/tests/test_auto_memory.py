@@ -699,7 +699,8 @@ class TestDaemonOps:
 
 class TestDaemonHousekeeping:
     """The daemon must not outlive its purpose: a config change (setup or a
-    hand edit) or 30 idle minutes ends it; the next hook starts a fresh one."""
+    hand edit), an upgrade or 30 idle minutes ends it; the next hook starts a
+    fresh one."""
 
     def _run(self, d, timeout=5):
         asyncio.run(asyncio.wait_for(d.housekeeping(), timeout=timeout))
@@ -709,6 +710,22 @@ class TestDaemonHousekeeping:
         daemon.cfg_mtime -= 10  # as if the file was edited after start
         self._run(daemon)
         assert daemon._stop.is_set()
+
+    def test_exits_when_the_package_is_upgraded(self, env, monkeypatch, daemon):
+        """Otherwise new hooks talk to old code until it idles out, which a
+        machine with an agent open all day never does (seen on 0.19 -> 0.20:
+        the daemon had no file-recall operation)."""
+        monkeypatch.setattr(agentd, "DRAIN_INTERVAL_SECONDS", 0.05)
+        assert daemon.version == agentd.installed_version()
+        monkeypatch.setattr(agentd, "installed_version", lambda: "999.0.0")
+        self._run(daemon)
+        assert daemon._stop.is_set()
+
+    def test_keeps_running_on_the_same_version(self, env, monkeypatch, daemon):
+        monkeypatch.setattr(agentd, "DRAIN_INTERVAL_SECONDS", 0.05)
+        with pytest.raises(TimeoutError):
+            self._run(daemon, timeout=0.3)
+        assert not daemon._stop.is_set()
 
     def test_exits_when_the_config_is_deleted(self, env, monkeypatch, daemon):
         monkeypatch.setattr(agentd, "DRAIN_INTERVAL_SECONDS", 0.05)
