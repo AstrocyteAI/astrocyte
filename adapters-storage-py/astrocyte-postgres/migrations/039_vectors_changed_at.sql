@@ -1,0 +1,33 @@
+-- Team memory G3: change feed over astrocyte_vectors.
+--
+-- ``GET /v1/banks/{bank_id}/changes`` (``VectorStore.list_changes``) pages a
+-- bank's stored memories and tombstones in ``(changed_at, id)`` order, so a
+-- teammate's mirror can pull what changed since its cursor
+-- (docs/_design/team-memory.md §8, G3).
+--
+-- ``changed_at`` = max(retained_at, forgotten_at): when the row was stored,
+-- or when it was forgotten (soft delete sets forgotten_at). GREATEST ignores
+-- NULLs, so a live row's changed_at is its retained_at.
+--
+-- It is an indexed EXPRESSION, not a stored column. Every write path that
+-- sets retained_at or forgotten_at (store/upsert, forget, restore by
+-- re-store, writers outside this package) is then correct by construction,
+-- and existing rows need no backfill. A stored column would have to be
+-- backfilled, and on this table that is expensive: adding a STORED generated
+-- column rewrites the table under an ACCESS EXCLUSIVE lock and rebuilds every
+-- index with it, the DiskANN index included; an UPDATE backfill writes a new
+-- version of every row, each inserted into the DiskANN index too. This index
+-- only reads the table (writes wait while it builds; reads don't). On a very
+-- large table, an operator can build it beforehand with
+-- CREATE INDEX CONCURRENTLY under the same name, and this file then skips it.
+--
+-- PostgresStore.list_changes selects and orders by exactly this expression,
+-- so the planner uses the index. ``id`` is indexed COLLATE "C" because the
+-- feed orders and compares ids byte-wise: the same order on every database
+-- locale, and the same as the SQLite store.
+--
+-- Mirrored by PostgresStore._ensure_schema (bootstrap_schema=True).
+-- Idempotent: CREATE INDEX IF NOT EXISTS.
+
+CREATE INDEX IF NOT EXISTS astrocyte_vectors_bank_changed_idx
+    ON astrocyte_vectors (bank_id, (GREATEST(retained_at, forgotten_at)), id COLLATE "C");

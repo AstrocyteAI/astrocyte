@@ -23,6 +23,7 @@ shapes come from supervisor internals (``/health/ingest``, ``/v1/admin/sources``
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from astrocyte.portability import ImportResult
@@ -62,6 +63,8 @@ __all__ = [  # noqa: RUF022 — grouped: re-exported dataclasses, then wrappers
     "RetainResult",
     # wrappers for dict-shaped endpoints
     "AllBankHealthResponse",
+    "ChangeEntry",
+    "ChangesResponse",
     "DebugRecallResponse",
     "DeletedResponse",
     "DsarForgetPrincipalResponse",
@@ -148,6 +151,30 @@ class HoldStatusResponse(BaseModel):
 
 class AllBankHealthResponse(BaseModel):
     banks: list[BankHealth]
+
+
+class ChangeEntry(BaseModel):
+    """One change-feed entry. A tombstone (``deleted: true``) has only ``id``,
+    ``deleted`` and ``changed_at``; a live row has the full record."""
+
+    id: str
+    deleted: bool
+    changed_at: datetime
+    text: str | None = None
+    occurred_at: datetime | None = None
+    retained_at: datetime | None = None
+    tags: list[str] | None = None
+    fact_type: str | None = None
+    memory_layer: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ChangesResponse(BaseModel):
+    """``GET /v1/banks/{bank_id}/changes``: a page of the change feed."""
+
+    changes: list[ChangeEntry]
+    next_cursor: str | None = None
+    has_more: bool
 
 
 # Convenience: the standard error responses most endpoints can produce, for

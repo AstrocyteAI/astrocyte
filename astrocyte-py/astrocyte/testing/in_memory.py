@@ -25,6 +25,7 @@ from astrocyte.types import (
     GraphHit,
     HealthStatus,
     LLMCapabilities,
+    MemoryChange,
     MemoryEntityAssociation,
     MemoryHit,
     MentalModel,
@@ -50,6 +51,11 @@ from astrocyte.types import (
 )
 
 
+def _utc(dt: datetime) -> datetime:
+    """Naive datetimes are UTC, as the SQL stores' ``timestamptz`` treats them."""
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+
 def _cosine_sim(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
@@ -71,11 +77,22 @@ class InMemoryVectorStore:
 
     def __init__(self) -> None:
         self._vectors: dict[str, VectorItem] = {}
+        # Change-feed bookkeeping (``list_changes``). Deletes stay hard in
+        # ``_vectors``; a forgotten id is remembered here as a tombstone
+        # ``(bank_id, forgotten_at)`` the way the SQL stores keep the row with
+        # ``forgotten_at`` set. ``_stored_at`` is each live row's effective
+        # ``retained_at`` (the item's own, else the time it was stored).
+        self._tombstones: dict[str, tuple[str, datetime]] = {}
+        self._stored_at: dict[str, datetime] = {}
 
     async def store_vectors(self, items: list[VectorItem]) -> list[str]:
         ids = []
         for item in items:
             self._vectors[item.id] = item
+            # Upsert semantics match the SQL stores: a re-stored id is live
+            # again (their ``forgotten_at = NULL``).
+            self._tombstones.pop(item.id, None)
+            self._stored_at[item.id] = _utc(item.retained_at) if item.retained_at else datetime.now(UTC)
             ids.append(item.id)
         return ids
 
@@ -141,11 +158,51 @@ class InMemoryVectorStore:
 
     async def delete(self, ids: list[str], bank_id: str) -> int:
         count = 0
+        now = datetime.now(UTC)
         for vid in ids:
             if vid in self._vectors and self._vectors[vid].bank_id == bank_id:
                 del self._vectors[vid]
+                stored_at = self._stored_at.pop(vid, now)
+                self._tombstones[vid] = (bank_id, max(stored_at, now))
                 count += 1
         return count
+
+    async def list_changes(
+        self,
+        bank_id: str,
+        *,
+        after: tuple[datetime, str] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryChange]:
+        """Live rows and tombstones ordered by ``(changed_at, id)``, strictly
+        after ``after`` (see ``VectorStore`` optional methods)."""
+        changes: list[MemoryChange] = []
+        for vid, item in self._vectors.items():
+            if item.bank_id != bank_id:
+                continue
+            stored_at = self._stored_at.get(vid) or datetime.now(UTC)
+            changes.append(
+                MemoryChange(
+                    id=vid,
+                    bank_id=bank_id,
+                    changed_at=stored_at,
+                    text=item.text,
+                    occurred_at=item.occurred_at,
+                    retained_at=stored_at,
+                    tags=list(item.tags) if item.tags else None,
+                    fact_type=item.fact_type,
+                    memory_layer=item.memory_layer,
+                    metadata=item.metadata,
+                )
+            )
+        for vid, (tomb_bank, forgotten_at) in self._tombstones.items():
+            if tomb_bank == bank_id:
+                changes.append(MemoryChange(id=vid, bank_id=bank_id, changed_at=forgotten_at, deleted=True))
+        if after is not None:
+            position = (_utc(after[0]), after[1])
+            changes = [c for c in changes if (c.changed_at, c.id) > position]
+        changes.sort(key=lambda c: (c.changed_at, c.id))
+        return changes[: max(limit, 0)]
 
     async def get_by_chunk_ids(
         self,

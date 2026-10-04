@@ -18,6 +18,7 @@ Complete reference for Astrocyte's core memory operations -- retain, recall, ref
 | **graph search** | Search entities in the graph store | `astrocyte.graph_search()` | `POST /v1/graph/search` |
 | **graph neighbors** | Traverse graph-linked memories | `astrocyte.graph_neighbors()` | `POST /v1/graph/neighbors` |
 | **export/import** | Move bank contents via AMA JSONL | `astrocyte.export_bank()` / `astrocyte.import_bank()` | `POST /v1/export`, `POST /v1/import` |
+| **changes** | Page a bank's change feed (stored memories and tombstones) for team-memory sync | `astrocyte.list_changes()` | `GET /v1/banks/{bank_id}/changes` |
 | **create_directive** | Author a user-curated hard rule | `astrocyte.create_directive()` | MCP: `memory_create_directive` |
 | **list/create/delete observation** | CRUD for live observations with trend tracking | `astrocyte.list_observations()` etc. | MCP: `memory_list_observations` etc. |
 | **list/create/update/delete mental model** | CRUD for curated structured summaries | `astrocyte.list_mental_models()` etc. | MCP: `memory_list_mental_models` etc. |
@@ -807,6 +808,71 @@ curl -X POST https://gateway.example.com/v1/forget \
     "bank_id": "user-prefs",
     "tags": ["deprecated"]
   }'
+```
+
+---
+
+## list_changes() -- Read a bank's change feed
+
+The read side of team-memory sync (`docs/_design/team-memory.md` §8, G3): every memory stored in a bank and every memory forgotten from it, in order, so a teammate's local mirror can pull what changed since it last looked. A forgotten memory appears as a **tombstone** that carries only its id, so the mirror can erase it; its text never leaves the gateway again.
+
+Requires `read` on the bank. Needs a pipeline (Tier 1) whose vector store implements the optional `list_changes` method: `PostgresStore`, `SqliteStore` and the in-memory store do; otherwise the call raises `CapabilityNotSupported` (HTTP 501).
+
+### Python signature
+
+```python
+async def list_changes(
+    self,
+    bank_id: str,
+    *,
+    cursor: str | None = None,   # opaque; None starts from the beginning
+    limit: int = 100,            # 1-1000
+    settle_seconds: float = 0.0, # hold back changes younger than this
+    context: AstrocyteContext | None = None,
+) -> MemoryChangePage
+```
+
+### MemoryChangePage and MemoryChange
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `changes` | `list[MemoryChange]` | Up to `limit` changes strictly after `cursor`, ordered by `(changed_at, id)` |
+| `next_cursor` | `str \| None` | Position after the last change on the page (the request's cursor when the page is empty; `None` only for a bank with no changes). Store it and pass it back |
+| `has_more` | `bool` | More changes were already waiting; fetch again now |
+
+A `MemoryChange` has `id`, `bank_id`, `deleted`, `changed_at` and, for a live memory, `text`, `occurred_at`, `retained_at`, `tags`, `fact_type`, `memory_layer` and `metadata` (including the authoritative `_actor`). `changed_at` is `max(retained_at, forgotten_at)`: when the memory was stored, or when it was forgotten.
+
+**Ordering and resuming.** Many memories can share one `changed_at` (a retain's chunks, a batch); the id breaks the tie, compared byte-wise, so resuming from a cursor never skips or repeats one. The cursor is URL-safe base64 of `{"changed_at": …, "id": …}`, but treat it as opaque: a cursor the server can't parse is rejected (`InvalidCursor`, HTTP 400).
+
+**Settle window.** A row's `changed_at` is stamped just before its write commits, so with concurrent writers a slow commit could land behind a cursor that has already moved past its timestamp, and a puller would never see it. `settle_seconds` holds back changes younger than that so in-flight writes commit first. The library default is `0`; the gateway passes `ASTROCYTE_CHANGES_SETTLE_SECONDS` (default 5), so a memory reaches the feed a few seconds after it is stored or forgotten.
+
+### REST equivalent
+
+```
+GET /v1/banks/{bank_id}/changes?cursor=<opaque>&limit=<n>
+```
+
+`limit` defaults to 100 and is clamped into 1–1000. Response:
+
+```json
+{
+  "changes": [
+    {"id": "9f2c41d07ab3e815", "deleted": false, "changed_at": "2026-10-02T09:14:03.120391+00:00",
+     "text": "We moved the job queue from SQS to Kafka.", "occurred_at": null,
+     "retained_at": "2026-10-02T09:14:03.120391+00:00", "tags": ["decision"], "fact_type": "world",
+     "memory_layer": null, "metadata": {"_actor": "user:alice", "_created_at": "2026-10-02T09:14:03.118Z"}},
+    {"id": "1c0d5e7f9a2b4c6d", "deleted": true, "changed_at": "2026-10-02T10:01:44.902114+00:00"}
+  ],
+  "next_cursor": "eyJjaGFuZ2VkX2F0Ijoi…",
+  "has_more": false
+}
+```
+
+### curl example
+
+```bash
+curl "https://gateway.example.com/v1/banks/project:api-1a2b3c/changes?limit=500&cursor=$CURSOR" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN"
 ```
 
 ---

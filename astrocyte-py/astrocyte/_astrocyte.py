@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -24,6 +24,7 @@ from astrocyte.analytics import BankMetricsCollector, compute_bank_health, count
 from astrocyte.config import AstrocyteConfig, load_config
 from astrocyte.errors import (
     AccessDenied,
+    CapabilityNotSupported,
     ConfigError,
     MipRoutingError,
     ProviderUnavailable,
@@ -48,6 +49,7 @@ from astrocyte.types import (
     HistoryResult,
     LegalHold,
     LifecycleRunResult,
+    MemoryChangePage,
     MemoryHit,
     MentalModel,
     MultiBankStrategy,
@@ -2300,6 +2302,80 @@ class Astrocyte:
             },
         )
         return result
+
+    # ---------------------------------------------------------------------------
+    # Team memory sync (team-memory.md §8)
+    # ---------------------------------------------------------------------------
+
+    def _sync_vector_store(self, capability: str) -> Any:
+        """The pipeline's vector store, which sync reads and writes directly.
+
+        Retain only lands there when no engine provider is set (see
+        ``ProviderDispatcher.retain``), so a Tier 2 engine can't serve sync.
+        """
+        store = None
+        if self._dispatcher.engine_provider is None and self._pipeline is not None:
+            store = self._pipeline.vector_store
+        if store is None:
+            raise CapabilityNotSupported(self._provider_name, capability)
+        return store
+
+    async def list_changes(
+        self,
+        bank_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 100,
+        settle_seconds: float = 0.0,
+        context: AstrocyteContext | None = None,
+    ) -> MemoryChangePage:
+        """Read a bank's change feed: stored memories and tombstones, in order.
+
+        The read side of team-memory sync (``team-memory.md`` §8, G3; served
+        as ``GET /v1/banks/{bank_id}/changes``). Returns up to ``limit``
+        (1–1000) changes strictly after ``cursor``, ordered by
+        ``(changed_at, id)``. Pass the returned ``next_cursor`` back to
+        resume; ``has_more`` says whether to fetch again now. A forgotten
+        memory appears as a tombstone (``deleted=True``) carrying only its
+        id and ``changed_at``, so mirrors can erase it.
+
+        ``settle_seconds`` holds back changes younger than that. A row's
+        ``changed_at`` is stamped before its write commits, so a slow commit
+        can land behind a cursor that has already moved past its timestamp,
+        and a puller would never see it. Withholding the newest few seconds
+        lets in-flight writes commit first; the gateway sets it (default 5 s).
+
+        Requires ``read`` on the bank. Raises :class:`ValueError` for a
+        ``limit`` out of range, :class:`~astrocyte.errors.InvalidCursor` (a
+        ``ValueError``) for a cursor this server did not issue, and
+        :class:`CapabilityNotSupported` when the vector store has no
+        ``list_changes`` (or retain goes to an engine provider).
+        """
+        from astrocyte._sync import MAX_CHANGES_LIMIT, decode_cursor, encode_cursor
+
+        validate_bank_id(bank_id)
+        if not 1 <= limit <= MAX_CHANGES_LIMIT:
+            raise ValueError(f"limit must be between 1 and {MAX_CHANGES_LIMIT}")
+        self._policy.check_access(bank_id, "read", context)
+        after = decode_cursor(cursor) if cursor else None
+        list_fn = getattr(self._sync_vector_store("list_changes"), "list_changes", None)
+        if list_fn is None:
+            raise CapabilityNotSupported(self._provider_name, "list_changes")
+        # One extra row answers "is there more?" without a second query.
+        rows = await list_fn(bank_id, after=after, limit=limit + 1)
+        if settle_seconds > 0:
+            horizon = datetime.now(timezone.utc) - timedelta(seconds=settle_seconds)
+            # Rows come in changed_at order, so the settled ones are a prefix.
+            settled = 0
+            while settled < len(rows) and rows[settled].changed_at <= horizon:
+                settled += 1
+            rows = rows[:settled]
+        changes, has_more = rows[:limit], len(rows) > limit
+        if changes:
+            next_cursor: str | None = encode_cursor(changes[-1].changed_at, changes[-1].id)
+        else:
+            next_cursor = cursor
+        return MemoryChangePage(changes=changes, next_cursor=next_cursor, has_more=has_more)
 
     # ---------------------------------------------------------------------------
     # Internal routing

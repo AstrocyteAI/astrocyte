@@ -94,6 +94,8 @@ from astrocyte.types import (
     LifecycleAction,
     LifecycleRunResult,
     LLMCapabilities,
+    MemoryChange,
+    MemoryChangePage,
     MemoryEntityAssociation,
     MemoryHit,
     MemoryUsage,
@@ -175,6 +177,8 @@ __all__ = [  # noqa: RUF022 — grouped by category, not alphabetically
     "VectorItem",
     "VectorFilters",
     "VectorHit",
+    "MemoryChange",
+    "MemoryChangePage",
     # Types — graph store
     "Entity",
     "EntityLink",

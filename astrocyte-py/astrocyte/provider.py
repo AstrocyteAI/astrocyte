@@ -83,6 +83,27 @@ class VectorStore(Protocol):
 
     See ``astrocyte_postgres.store.PostgresStore`` for a production example,
     or ``astrocyte.testing.in_memory.InMemoryVectorStore`` for a minimal reference.
+
+    **Optional methods.** Not part of the protocol (so ``isinstance`` checks
+    don't require them); Astrocyte probes for them with ``getattr`` and falls
+    back, or reports the capability as unsupported, when they are absent:
+
+    - ``list_recent_vectors(bank_id, limit, filters)`` — newest live vectors
+      first; recency retrieval uses it instead of scanning ``list_vectors``.
+    - ``get_by_chunk_ids(chunk_ids, bank_id)`` — sibling chunks of a source
+      chunk, for chunk expansion at recall.
+    - ``list_changes(bank_id, *, after, limit) -> list[MemoryChange]`` — the
+      bank's change feed for team-memory sync: live rows **and** forgotten
+      rows (tombstones, ``deleted=True``, no text) ordered by
+      ``(changed_at, id)`` ascending, where ``changed_at`` is
+      ``max(retained_at, forgotten_at)``. ``after`` is a ``(changed_at, id)``
+      position; only entries strictly after it are returned, so paging by the
+      last entry's position never skips or repeats a row, even when many rows
+      share one ``changed_at``. Ids compare byte-wise (``COLLATE "C"`` on
+      Postgres). Requires soft deletes (or remembered tombstones): a store
+      that erases rows outright cannot report that they were forgotten.
+      ``Astrocyte.list_changes`` (``GET /v1/banks/{bank_id}/changes``) raises
+      :class:`~astrocyte.errors.CapabilityNotSupported` without it.
     """
 
     SPI_VERSION: ClassVar[int] = 1

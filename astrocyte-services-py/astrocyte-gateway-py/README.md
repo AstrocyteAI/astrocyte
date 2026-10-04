@@ -115,6 +115,7 @@ Then set `vector_store: postgres`, `wiki_store: postgres`, and `async_tasks.back
 | `ASTROCYTE_MAX_REQUEST_BODY_BYTES` | If set to a positive integer, reject requests whose **`Content-Length`** exceeds it (**413**). Unset = no limit (dev default). |
 | `ASTROCYTE_CORS_ORIGINS` | Comma-separated allowed origins for **browser** `fetch` (e.g. `https://app.example.com`). Unset = CORS middleware not added (same-origin / server-to-server only). |
 | `ASTROCYTE_RATE_LIMIT_PER_SECOND` | Optional **positive integer**: max requests per **1 s** rolling window **per client** (client = first **`X-Forwarded-For`** hop, else TCP peer). **`/live`**, **`/health*`** are exempt. Returns **429** with **`Retry-After: 1`**. Prefer coarse limits at Kong/APISIX/Azure APIM when exposed to the internet; use this as a backstop. Unset = no in-process limit. |
+| `ASTROCYTE_CHANGES_SETTLE_SECONDS` | Changes younger than this many seconds (default **5**) are held back from **`GET /v1/banks/{bank_id}/changes`** until a later call, so a write still committing can't land behind a puller's cursor. **`0`** serves everything immediately. |
 | `ASTROCYTE_ADMIN_TOKEN` | If set, **`GET /v1/admin/*`** requires header **`X-Admin-Token`** with the same value (use behind TLS; rotate like any secret). Unset = admin routes behave like other API routes (auth mode only). |
 | `ASTROCYTE_LOG_FORMAT` | Set to **`json`** for JSON lines on loggers `astrocyte_gateway` / `astrocyte_gateway.access` (aligns with §3.6 observability in production docs). Ingest packages also emit structured lines (**`astrocyte.ingest.logutil`**: supervisor lifecycle, GitHub rate limits, stream errors) when this is set. |
 | `ASTROCYTE_LOG_LEVEL` | Default **`INFO`** when JSON logging is enabled. |
@@ -149,6 +150,7 @@ In **`dev`** mode, send optional header **`X-Astrocyte-Principal`** (for example
 | `POST` | `/v1/recall` | `query`; `bank_id` or `banks`; optional `max_results`, `max_tokens`, `tags` |
 | `POST` | `/v1/reflect` | `query`, `bank_id`; optional `max_tokens`, `include_sources` |
 | `POST` | `/v1/forget` | `bank_id`; optional `memory_ids`, `tags` |
+| `GET` | `/v1/banks/{bank_id}/changes` | Query: optional `cursor`, `limit` (1–1000, default 100). Change feed for team-memory sync: stored memories and tombstones in `(changed_at, id)` order; needs `read` |
 | `POST` | `/v1/compile` | `bank_id`; optional `scope` (requires `wiki_store`) |
 | `POST` | `/v1/audit` | `scope`, `bank_id`; optional `max_memories`, `max_tokens`, `tags` |
 | `POST` | `/v1/history` | `query`, `bank_id`, `as_of`; optional `max_results`, `max_tokens`, `tags` |

@@ -65,6 +65,8 @@ EXPECTED_PUBLIC_API = frozenset([
     "LifecycleAction",
     "LifecycleRunResult",
     "log_safe",
+    "MemoryChange",
+    "MemoryChangePage",
     "MemoryEntityAssociation",
     "MemoryHit",
     "MemoryUsage",

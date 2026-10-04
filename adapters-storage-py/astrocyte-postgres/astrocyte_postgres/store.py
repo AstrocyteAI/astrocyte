@@ -19,7 +19,7 @@ import json
 import os
 import re
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import psycopg
 from astrocyte.tenancy import fq_function, fq_table, get_current_schema
@@ -39,7 +39,17 @@ from psycopg_pool import AsyncConnectionPool
 
 from astrocyte_postgres._vectors import parse_pgvector
 
+if TYPE_CHECKING:
+    # Imported where used: MemoryChange is newer than this package's
+    # ``astrocyte`` floor, and only an astrocyte that has it calls list_changes.
+    from astrocyte.types import MemoryChange
+
 _TABLE_SAFE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+#: A row's change-feed position: when it was stored or, if later, forgotten
+#: (GREATEST ignores NULL). Indexed as written by migration 039 and the
+#: bootstrap DDL; queries must use this exact expression to hit the index.
+_CHANGED_AT = "GREATEST(retained_at, forgotten_at)"
 
 
 def _sanitize_table(name: str) -> str:
@@ -401,6 +411,9 @@ class PostgresStore:
                 # ``astrocyte_postgres.pageindex_store.PostgresPageIndexStore``,
                 # which mirrors them in its own bootstrap path.
                 #
+                # 039_vectors_changed_at.sql is mirrored at the end of this
+                # method, after the text_fts block.
+                #
                 # 038_tenant_storage_snapshots.sql is intentionally NOT
                 # mirrored here — it creates the cross-tenant
                 # ``public.astrocyte_tenant_storage_snapshots`` table read
@@ -471,6 +484,14 @@ class PostgresStore:
                     UPDATE {vectors}
                     SET text_fts = to_tsvector('english', COALESCE(text, ''))
                     WHERE text_fts IS NULL
+                    """
+                )
+                # Mirrors 039_vectors_changed_at.sql (team-memory change
+                # feed): changed_at is the indexed expression _CHANGED_AT.
+                await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS {self._table}_bank_changed_idx
+                    ON {vectors} (bank_id, ({_CHANGED_AT}), id COLLATE "C")
                     """
                 )
                 await conn.commit()
@@ -876,6 +897,74 @@ class PostgresStore:
                 )
             )
         return items
+
+    async def list_changes(
+        self,
+        bank_id: str,
+        *,
+        after: tuple[datetime, str] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryChange]:
+        """The bank's change feed: live rows and tombstones (forgotten rows),
+        ordered by ``(changed_at, id)``, strictly after ``after``.
+
+        Optional VectorStore method (team-memory sync). ``changed_at`` is
+        ``max(retained_at, forgotten_at)``, computed by the same expression
+        migration 039 indexes (``_CHANGED_AT``), so the keyset scan below is
+        an index scan; ids order byte-wise (``COLLATE "C"``) whatever the
+        database locale.
+        """
+        from astrocyte.types import MemoryChange
+
+        if limit <= 0:
+            return []
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        where = "bank_id = %s"
+        params: list[Any] = [bank_id]
+        if after is not None:
+            where += f' AND ({_CHANGED_AT}, id COLLATE "C") > (%s, %s)'
+            params.extend([after[0], after[1]])
+        params.append(limit)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT id, bank_id, text, metadata, tags, fact_type, occurred_at,
+                           memory_layer, retained_at, forgotten_at, {_CHANGED_AT} AS changed_at
+                    FROM {self._fq()}
+                    WHERE {where}
+                    ORDER BY {_CHANGED_AT}, id COLLATE "C"
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                rows = await cur.fetchall()
+        changes: list[MemoryChange] = []
+        for row in rows:
+            if row["forgotten_at"] is not None:
+                changes.append(
+                    MemoryChange(id=row["id"], bank_id=row["bank_id"], changed_at=row["changed_at"], deleted=True)
+                )
+                continue
+            md = row["metadata"]
+            if isinstance(md, str):
+                md = json.loads(md)
+            changes.append(
+                MemoryChange(
+                    id=row["id"],
+                    bank_id=row["bank_id"],
+                    changed_at=row["changed_at"],
+                    text=row["text"],
+                    occurred_at=row["occurred_at"],
+                    retained_at=row["retained_at"],
+                    tags=list(row["tags"]) if row["tags"] else None,
+                    fact_type=row["fact_type"],
+                    memory_layer=row.get("memory_layer"),
+                    metadata=md,
+                )
+            )
+        return changes
 
     async def delete(self, ids: list[str], bank_id: str) -> int:
         if not ids:

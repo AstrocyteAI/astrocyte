@@ -103,6 +103,47 @@ class VectorHit:
             raise ValueError(f"VectorHit.score must be >= 0.0, got {self.score}")
 
 
+@dataclass
+class MemoryChange:
+    """One entry in a bank's change feed (team memory sync, ``VectorStore.list_changes``).
+
+    ``changed_at`` is ``max(retained_at, forgotten_at)``: when the row was
+    stored, or when it was forgotten. A forgotten row is a **tombstone**:
+    ``deleted`` is true and only ``id``, ``bank_id`` and ``changed_at`` are
+    set, so a forgotten memory's text never leaves the store through the feed.
+    A live row carries the full record. The feed is ordered by
+    ``(changed_at, id)``.
+    """
+
+    id: str
+    bank_id: str
+    changed_at: datetime
+    deleted: bool = False
+    text: str | None = None
+    occurred_at: datetime | None = None
+    retained_at: datetime | None = None
+    tags: list[str] | None = None
+    fact_type: str | None = None
+    memory_layer: str | None = None
+    metadata: Metadata | None = None
+
+
+@dataclass
+class MemoryChangePage:
+    """A page of :class:`MemoryChange` entries from ``Astrocyte.list_changes``.
+
+    ``next_cursor`` is the opaque position after the last change on this page
+    (the request's own cursor when the page is empty, ``None`` only when the
+    bank has no changes at all). Store it and pass it back to resume without
+    gaps or repeats. ``has_more`` is true when more changes were already
+    waiting past this page.
+    """
+
+    changes: list[MemoryChange]
+    next_cursor: str | None = None
+    has_more: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Tier 1: Graph Store
 # ---------------------------------------------------------------------------

@@ -177,3 +177,60 @@ def _assert_reference_stack_rows(dsn: str, bank: str) -> None:
             LIMIT 1
             """
         ).fetchone() is not None
+
+
+def _minimal_postgres_config(tmp_path: Path) -> Path:
+    migrated = os.environ.get("ASTROCYTE_GATEWAY_E2E_MIGRATED", "").strip().lower() in ("1", "true", "yes")
+    dims = _embedding_dimensions_for_database(os.environ["DATABASE_URL"])
+    cfg = tmp_path / "sync.yaml"
+    cfg.write_text(
+        f"""
+provider_tier: storage
+vector_store: postgres
+llm_provider: mock
+llm_provider_config:
+  embedding_dimensions: {dims}
+vector_store_config:
+  embedding_dimensions: {dims}
+  bootstrap_schema: {str(not migrated).lower()}
+barriers:
+  pii:
+    mode: disabled
+access_control:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    return cfg
+
+
+def test_gateway_changes_feed_postgres(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Team memory G3 over real Postgres: retains appear in order, a forget as a tombstone."""
+    import uuid
+
+    monkeypatch.setenv("ASTROCYTE_CONFIG_PATH", str(_minimal_postgres_config(tmp_path)))
+    monkeypatch.setenv("ASTROCYTE_CHANGES_SETTLE_SECONDS", "0")
+    from astrocyte_gateway.app import create_app
+
+    bank = f"project:e2e-changes-{uuid.uuid4().hex[:8]}"
+    headers = {"X-Astrocyte-Principal": "user:alice"}
+    with TestClient(create_app()) as client:
+        ids = []
+        for text in ("We use SQS for the job queue.", "Deploys happen on Tuesdays."):
+            r = client.post("/v1/retain", json={"content": text, "bank_id": bank}, headers=headers)
+            assert r.status_code == 200 and r.json()["stored"], r.text
+            ids.append(r.json()["memory_id"])
+
+        page = client.get(f"/v1/banks/{bank}/changes", headers=headers).json()
+        assert [c["id"] for c in page["changes"]] == ids
+        assert all(not c["deleted"] and c["changed_at"] == c["retained_at"] for c in page["changes"])
+        first = client.get(f"/v1/banks/{bank}/changes", params={"limit": 1}, headers=headers).json()
+        assert [c["id"] for c in first["changes"]] == ids[:1] and first["has_more"] is True
+
+        r = client.post("/v1/forget", json={"bank_id": bank, "memory_ids": [ids[0]]}, headers=headers)
+        assert r.status_code == 200, r.text
+        after = client.get(f"/v1/banks/{bank}/changes", params={"cursor": page["next_cursor"]}, headers=headers)
+        [tomb] = after.json()["changes"]
+        assert set(tomb) == {"id", "deleted", "changed_at"} and (tomb["id"], tomb["deleted"]) == (ids[0], True)
+        bad = client.get(f"/v1/banks/{bank}/changes", params={"cursor": "nope"}, headers=headers)
+        assert bad.status_code == 400

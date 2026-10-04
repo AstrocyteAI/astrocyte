@@ -19,6 +19,7 @@ from astrocyte.errors import (
     CapabilityNotSupported,
     ConfigError,
     IngestError,
+    InvalidCursor,
     PiiRejected,
     ProviderUnavailable,
     RateLimited,
@@ -29,7 +30,7 @@ from astrocyte.ingest.supervisor import IngestSupervisor, merge_source_health
 from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.pipeline.mental_model import MentalModelService
 from astrocyte.tenancy import TenantExtension
-from astrocyte.types import AstrocyteContext
+from astrocyte.types import AstrocyteContext, MemoryChange
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -75,6 +76,14 @@ _logger = logging.getLogger("astrocyte.gateway")
 # bounds per-request memory. Override with ASTROCYTE_MAX_REQUEST_BODY_BYTES
 # (``0`` disables the cap entirely).
 _DEFAULT_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB
+# ``GET /v1/banks/{bank_id}/changes`` page size: default, and the ceiling an
+# out-of-range ``limit`` is clamped into (the M1 DoS-guard convention).
+_CHANGES_DEFAULT_LIMIT = 100
+_CHANGES_MAX_LIMIT = 1000
+# Changes younger than this are held back from the feed so writes still
+# committing can't land behind a cursor (see Astrocyte.list_changes).
+# Override with ASTROCYTE_CHANGES_SETTLE_SECONDS (``0`` serves everything).
+_DEFAULT_CHANGES_SETTLE_SECONDS = 5.0
 # Default per-client rate limit (requests/second) applied ONLY when the gateway
 # is bound to a non-loopback interface and the operator has not set the env.
 # Loopback (local dev, tests, in-process benchmarks) stays unlimited.
@@ -140,6 +149,16 @@ def _configure_gateway_middleware(app: FastAPI) -> None:
     rl = _resolve_rate_limit()
     if rl is not None:
         app.add_middleware(SlidingWindowRateLimitMiddleware, max_per_window=rl)
+
+
+def _changes_settle_seconds() -> float:
+    raw = os.environ.get("ASTROCYTE_CHANGES_SETTLE_SECONDS", "").strip()
+    if not raw:
+        return _DEFAULT_CHANGES_SETTLE_SECONDS
+    try:
+        return max(float(raw), 0.0)
+    except ValueError:
+        return _DEFAULT_CHANGES_SETTLE_SECONDS
 
 
 def _resolve_rate_limit() -> int | None:
@@ -328,6 +347,10 @@ def create_app(
             status_code=501,
             content={"detail": str(exc), "provider": exc.provider, "capability": exc.capability},
         )
+
+    @app.exception_handler(InvalidCursor)
+    async def _invalid_cursor(_request: Request, exc: InvalidCursor) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.exception_handler(PiiRejected)
     async def _pii(_request: Request, exc: PiiRejected) -> JSONResponse:
@@ -569,6 +592,43 @@ def create_app(
             context=ctx,
         )
         return to_jsonable(result)
+
+    # ── team memory sync (team-memory.md §8) ──────────────────────────────
+
+    @app.get("/v1/banks/{bank_id}/changes", responses={200: {"model": rm.ChangesResponse}, **rm.VALIDATION_ERROR})
+    async def list_changes(
+        bank_id: str,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+        cursor: str | None = None,
+        limit: int = _CHANGES_DEFAULT_LIMIT,
+    ) -> dict[str, Any]:
+        """Change feed of a bank: stored memories and tombstones, in order (team memory G3).
+
+        Returns up to ``limit`` changes (default 100; clamped into 1–1000)
+        strictly after ``cursor``, ordered by ``(changed_at, id)``, where
+        ``changed_at`` is when a memory was stored or, for a tombstone, when
+        it was forgotten. Omit ``cursor`` to start from the beginning; pass
+        ``next_cursor`` back to resume without gaps or repeats. ``has_more``
+        says more changes are already waiting. A tombstone is
+        ``{"id", "deleted": true, "changed_at"}``. Changes younger than
+        ``ASTROCYTE_CHANGES_SETTLE_SECONDS`` (default 5) are served on a later
+        call, so a write still committing can't be skipped. Requires ``read``
+        on the bank; an invalid cursor is 400; 501 when the vector store has
+        no change feed.
+        """
+        limit = min(max(limit, 1), _CHANGES_MAX_LIMIT)
+        page = await brain.list_changes(
+            bank_id,
+            cursor=cursor or None,
+            limit=limit,
+            settle_seconds=_changes_settle_seconds(),
+            context=ctx,
+        )
+        return {
+            "changes": [_change_to_json(c) for c in page.changes],
+            "next_cursor": page.next_cursor,
+            "has_more": page.has_more,
+        }
 
     @app.post("/v1/dsar/forget_principal", responses={200: {"model": rm.DsarForgetPrincipalResponse}, **rm.VALIDATION_ERROR})
     async def dsar_forget_principal(
@@ -1136,6 +1196,24 @@ def create_app(
 
     maybe_instrument_otel(app)
     return app
+
+
+def _change_to_json(change: MemoryChange) -> dict[str, Any]:
+    """A change-feed entry as served: tombstones carry no content at all."""
+    if change.deleted:
+        return {"id": change.id, "deleted": True, "changed_at": to_jsonable(change.changed_at)}
+    return {
+        "id": change.id,
+        "deleted": False,
+        "changed_at": to_jsonable(change.changed_at),
+        "text": change.text,
+        "occurred_at": to_jsonable(change.occurred_at),
+        "retained_at": to_jsonable(change.retained_at),
+        "tags": change.tags,
+        "fact_type": change.fact_type,
+        "memory_layer": change.memory_layer,
+        "metadata": to_jsonable(change.metadata),
+    }
 
 
 def _iso8601_z(value: Any) -> str:
