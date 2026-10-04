@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Astrocyte.export_bank` exports every memory.** It paged a relevance-ranked `query="*"` recall without an offset, so a bank larger than one batch (100) was exported truncated with no error, and the AMA header's `memory_count` counted only the first page. Pipeline-backed brains now page the vector store's `list_vectors` in its stable id order. Engine providers, which expose no listing API, keep one capped recall and log a warning when it comes back full. The AMA record format is unchanged.
+- **`bank_health` reports the real memory count.** It came from `list_vectors(limit=0)`, which returns no rows on every store, so `memory_count` was always 0. It now pages through `list_vectors`; the VectorStore SPI has no count method, so the cost grows with bank size.
+- **`astrocyte memory` commands don't run noisy-bank detection.** Importing a docs tree with many short sections tripped the `short_content` signal and printed a raw JSON warning in the terminal. Detection guards against agents writing junk or looping; the user's own commands now open the store with it off. The automatic-memory daemon keeps it, and logs to its own file.
+
+### Security
+
+- **Dependency sweep.** Every `uv.lock` (16) refreshed for the packages behind GitHub's open Dependabot alerts — `anyio` (critical), `PyJWT` (critical), `urllib3`, `pypdf`, `virtualenv`, `soupsieve` and `litellm` — clearing all 142 Python alerts. Lockfiles only; no `pyproject.toml` range changed, so installs from PyPI are unaffected except where they resolve to the same new versions. The gateway image is built from its lockfile and picks these up.
+
 ## [0.17.0] — 2026-10-04 — Antigravity and Copilot CLI; memory import/export; config that now applies
 
 Upgrade note: `signal_quality.dedup` and per-bank `homeostasis` / `barriers` / `signal_quality` / `profile:` were parsed and ignored before this release; they now apply (see Fixed). A config that sets them behaves differently after upgrading; a default config does not. Upgrade a local install with `uv tool upgrade astrocyte`, then `astrocyte setup` to add the new harnesses and tighten the store's permissions.
@@ -19,9 +29,6 @@ Upgrade note: `signal_quality.dedup` and per-bank `homeostasis` / `barriers` / `
 
 ### Fixed
 
-- **`Astrocyte.export_bank` exports every memory.** It paged a relevance-ranked `query="*"` recall without an offset, so a bank larger than one batch (100) was exported truncated with no error, and the AMA header's `memory_count` counted only the first page. Pipeline-backed brains now page the vector store's `list_vectors` in its stable id order. Engine providers, which expose no listing API, keep one capped recall and log a warning when it comes back full. The AMA record format is unchanged.
-- **`bank_health` reports the real memory count.** It came from `list_vectors(limit=0)`, which returns no rows on every store, so `memory_count` was always 0. It now pages through `list_vectors`; the VectorStore SPI has no count method, so the cost grows with bank size.
-- **`astrocyte memory` commands don't run noisy-bank detection.** Importing a docs tree with many short sections tripped the `short_content` signal and printed a raw JSON warning in the terminal. Detection guards against agents writing junk or looping; the user's own commands now open the store with it off. The automatic-memory daemon keeps it, and logs to its own file.
 - **Export/import paths with an unknown `~user` return 422, not 500.** `Path.expanduser()` raises `RuntimeError` for a home directory it cannot find (`~0`), which escaped `astrocyte.portability` as an uncaught error; it is now a `ValueError` like every other rejected path. Found by the gateway's schemathesis conformance test, which hit it only on some runs.
 - **Retain-time dedup now holds across processes.** The near-duplicate check compared a new chunk only with what the same process had retained (an in-memory cache of at most 1000 embeddings per bank), so every new process — the automatic-memory daemon after its idle restart, a CLI import, a gateway restart — stored duplicates of memories already in the bank. Chunks the cache does not match are now checked against their nearest neighbours in the vector store, with the same threshold, the same negation guard ("allergic" vs "not allergic" is never a duplicate) and the same MIP `dedup.action` semantics; consolidated observations are not treated as originals. Cost: one `search_similar` per chunk — negligible on an ANN index, a bank scan on SQLite (+5 ms per chunk at 1k memories, +22 ms at 10k, +110 ms at 50k). Opt out with `signal_quality.dedup.consult_store: false`. `astrocyte memory import` drops its own store check, which this replaces.
 - **`signal_quality.dedup` is honoured.** The pipeline built its duplicate detector with a hardcoded 0.95 threshold and read none of the block, so the use-case profiles' settings did nothing: `minimal` (`enabled: false`) still dropped duplicates, and `coding` (0.98), `research` (0.97), `personal` (0.93) and `support` (0.92) all deduped at 0.95. `enabled`, `similarity_threshold` and `action` now apply; a matched MIP rule's `dedup.threshold` / `dedup.action` still override them per retain, and `enabled: false` turns the check off, MIP `dedup` rules included. Config `skip` keeps its documented meaning (duplicates are dropped, i.e. the pipeline's `skip_chunk`, now accepted as an alias); `warn` now keeps duplicates; an unknown value is a config error. Rejecting a whole retain remains MIP-only (MIP `dedup.action: skip`). A default config is unchanged.
@@ -30,7 +37,6 @@ Upgrade note: `signal_quality.dedup` and per-bank `homeostasis` / `barriers` / `
 
 ### Security
 
-- **Dependency sweep.** Every `uv.lock` (16) refreshed for the packages behind GitHub's open Dependabot alerts — `anyio` (critical), `PyJWT` (critical), `urllib3`, `pypdf`, `virtualenv`, `soupsieve` and `litellm` — clearing all 142 Python alerts. Lockfiles only; no `pyproject.toml` range changed, so installs from PyPI are unaffected except where they resolve to the same new versions. The gateway image is built from its lockfile and picks these up.
 - **The local memory store is private to its owner.** SQLite files were created with the umask — on most systems readable by every account on the machine — and they hold conversations. `astrocyte-sqlite` now creates the database 0600 (its -wal/-shm files follow) and the directory 0700; `astrocyte doctor` reports a store others can read and `--fix` (or re-running `setup`) tightens it. A database in a directory of your choosing keeps that directory's permissions. Exports are written 0600 too.
 
 ## [0.16.0] — 2026-10-03 — local install for coding agents
