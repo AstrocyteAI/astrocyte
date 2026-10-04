@@ -9,6 +9,18 @@
    gh attestation verify oci://ghcr.io/OWNER/REPO/astrocyte-gateway-py:v0.8.0 --repo OWNER/REPO
    ```
 
+   Each platform image also carries an **SPDX SBOM** attestation, attached to that platform's digest rather than the multi-arch index (an index has no filesystem to inventory). Verify one by its platform digest, or let `cosign` resolve the platform from the tag:
+
+   ```bash
+   docker buildx imagetools inspect ghcr.io/OWNER/REPO/astrocyte-gateway-py:v0.8.0   # lists each platform's digest
+   gh attestation verify oci://ghcr.io/OWNER/REPO/astrocyte-gateway-py@sha256:<platform digest> --repo OWNER/REPO \
+     --predicate-type https://spdx.dev/Document/v2.3
+   cosign download attestation --platform linux/arm64 \
+     --predicate-type https://spdx.dev/Document/v2.3 ghcr.io/OWNER/REPO/astrocyte-gateway-py:v0.8.0
+   ```
+
+   `gh attestation verify` checks the digest the tag points at (the index), so pass the platform digest for SBOMs. `cosign download sbom` does not apply: it reads cosign's deprecated SBOM attachments, not attestations.
+
    Replace `OWNER/REPO` and the tag. Public repos on current GitHub plans can use attestations per [GitHub docs](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds); private repos may need Enterprise for attestations.
 
 ## Cut a release
