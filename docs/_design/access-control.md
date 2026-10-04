@@ -52,10 +52,23 @@ When **`on_behalf_of`** is set (agent acting for a user), effective permissions 
 ```python
 @dataclass
 class AccessGrant:
-    bank_id: str                         # Bank this grant applies to (or "*" for all)
-    principal: str                       # Who gets access (or "*" for all)
+    bank_id: str                         # Bank this grant applies to: exact, "*", or a glob ("project:*")
+    principal: str                       # Who gets access: exact, "*", a glob ("user:*"), or a group ("team:api")
     permissions: list[str]               # ["read", "write", "forget", "admin"]
 ```
+
+**Matching.** A `bank_id` or `principal` without `*`, `?` or `[` matches exactly; a lone `*` matches everything. Anything else is an fnmatch pattern, matched case-sensitively on every platform (`fnmatchcase`): `project:*` matches `project:api-1a2b3c` but not `projectx`. Bank ids are restricted to `[a-zA-Z0-9._:@-]`, so a pattern can never be mistaken for a real id. Patterns are never offered as candidates by identity-driven bank resolution; only concrete ids are.
+
+### 1.5 Groups and caller-bound grants
+
+`AstrocyteContext` carries two optional fields set by whatever authenticated the caller, never by the caller itself:
+
+- **`groups`**: group principals the actor belongs to (`team:api`). A grant whose `principal` matches a group applies to its members. `team:x` parses as `ActorIdentity(type="team", id="x")`.
+- **`grants`**: extra grants bound to this caller, e.g. by a per-user gateway token (`ASTROCYTE_AUTH_MODE=token`, see the gateway's authentication guide).
+
+**Combination rule.** Caller-bound grants are **added** to the configured grants, then matched exactly like them (bank and principal). Effective permissions for a single identity are therefore the union of: configured grants for the principal, configured grants for its groups, and its caller-bound grants. A token can widen what its principal may do but never narrow the config; to issue a restricted token, keep the principal's config grants narrow. Under on-behalf-of, `groups` extend the actor's side only, and the intersection with the delegating identity still applies (§1.2).
+
+This is the auth model team memory relies on (`team-memory.md` §6): one token per person, bound to a principal, its `team:` groups and `project:*`-style grants.
 
 ### 1.4 Sharing memory between users and agents
 
@@ -249,7 +262,9 @@ Astrocyte does **not** authenticate callers. It receives a principal identifier 
 
 - **Library usage**: the calling application asserts the principal
 - **MCP server**: the MCP config asserts the principal
-- **HTTP service** (if wrapped in a web framework): the auth middleware asserts the principal
+- **HTTP service** (if wrapped in a web framework): the auth middleware asserts the principal. The reference gateway's `token` mode resolves a per-user token to its principal, groups and grants, and ignores any client-supplied principal header.
+
+**Provenance.** `retain()` stamps `metadata["_actor"]` with the resolved actor whenever a context is present, overwriting any `_actor` the caller put in `metadata`, so a client can't attribute a memory to someone else. Without a context (library imports), a caller-supplied `_actor` is kept; the gateway drops it on anonymous HTTP requests.
 
 This separation follows the same pattern as Kubernetes RBAC (auth middleware → identity → RBAC enforcement) and avoids coupling Astrocyte to any specific auth system.
 

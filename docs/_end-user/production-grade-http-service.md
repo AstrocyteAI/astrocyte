@@ -168,7 +168,7 @@ This repository ships an optional **`astrocyte-gateway-py`** HTTP service that e
 
 - **Tier 1 pipeline** resolved from config: library/dev defaults are **`in_memory`** vector store and **`mock`** LLM (entry points on `astrocyte-py`). The service Compose/runbook defaults use the full Postgres reference stack: `pgvector`, `wiki_store: postgres`, and PgQueuer. Data is **not** durable when using the built-in in-memory stack.
 - **Access control** defaults to **off** when no config file is loaded; when you enable **`access_control`** in YAML, **`access_grants`** and **`banks.*.access`** are loaded from config and applied via **`set_access_grants`** (see §5). You still need a **deliberate** prod policy—do not rely on defaults.
-- **Identity:** **`ASTROCYTE_AUTH_MODE`** selects **`dev`** (trusts **`X-Astrocyte-Principal`** only—use only behind a trusted gateway), **`api_key`**, **`jwt_hs256`** / **`jwt`** (HS256 Bearer, `sub` → principal), or **`jwt_oidc`** (RS256 + JWKS; maps claims to **`AstrocyteContext`**). This is a **starting point** for §3.2, not a full IdP integration (no discovery document automation, per-key API-key store, or mTLS in-process).
+- **Identity:** **`ASTROCYTE_AUTH_MODE`** selects **`dev`** (trusts **`X-Astrocyte-Principal`** only—use only behind a trusted gateway), **`api_key`**, **`token`** (per-user tokens from a hashed registry; the token, not a header, sets the principal), **`jwt_hs256`** / **`jwt`** (HS256 Bearer, `sub` → principal), or **`jwt_oidc`** (RS256 + JWKS; maps claims to **`AstrocyteContext`**). This is a **starting point** for §3.2, not a full IdP integration (no discovery document automation or mTLS in-process).
 
 Treat this as a **reference implementation** of the HTTP mapping only, not as a hardened product.
 

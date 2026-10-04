@@ -122,7 +122,7 @@ Then set `vector_store: postgres`, `wiki_store: postgres`, and `async_tasks.back
 
 If **`ASTROCYTE_CONFIG_PATH`** is **not** set, the process uses an empty `AstrocyteConfig` plus the env overrides above and applies **dev-style** defaults (PII off, access control off), matching the previous reference behavior. Install **`astrocyte-postgres`** (`uv sync --extra postgres`) before selecting `pgvector` as the vector store.
 
-**Auth / identity (optional):** set **`ASTROCYTE_AUTH_MODE`** to `dev` (default), `api_key`, `jwt` / `jwt_hs256`, or **`jwt_oidc`** (RS256 + JWKS). For OIDC-style tokens:
+**Auth / identity (optional):** set **`ASTROCYTE_AUTH_MODE`** to `dev` (default), `api_key`, **`token`** (per-user tokens from a hashed registry at **`ASTROCYTE_TOKENS_FILE`**; mint with `python -m astrocyte_gateway.tokens create --principal user:alice --banks 'project:*' --file tokens.yaml`), `jwt` / `jwt_hs256`, or **`jwt_oidc`** (RS256 + JWKS). See [`docs/_end-user/authentication-setup.md`](../../docs/_end-user/authentication-setup.md). For OIDC-style tokens:
 
 | Variable | Meaning |
 |----------|---------|
