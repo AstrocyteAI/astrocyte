@@ -12,9 +12,6 @@ import pytest
 
 WINDOWS = os.name == "nt"
 
-#: Automatic memory's agent daemon speaks over a Unix domain socket and stays
-#: off on Windows until docs/_design/windows-local-install.md lands.
-needs_unix_socket = pytest.mark.skipif(WINDOWS, reason="agent daemon needs Unix sockets (Windows: not yet supported)")
 #: POSIX permission bits; Windows protects files with ACLs on the user profile.
 posix_modes = pytest.mark.skipif(WINDOWS, reason="POSIX file modes; Windows relies on profile ACLs")
 #: Registered hook commands use POSIX shell quoting (Windows: see the design).

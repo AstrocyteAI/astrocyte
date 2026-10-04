@@ -791,7 +791,8 @@ The three items scoped after §4e, recorded honestly:
 
 | # | item | status |
 |---|---|---|
-| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h (a real-size batch measured 64 s/Add; cause and fix in §9.12). **Measured:** n=50 paired on this architecture — no accuracy penalty vs the baseline (+4.0 pts, CI [−4, +13], p = 0.69); see the paired section below. A fixed-code rerun is in flight. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
+| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h (a real-size batch measured 64 s/Add; cause and fix in §9.12). **Measured:** n=50 paired on this architecture — no accuracy penalty vs the baseline (+4.0 pts, CI [−4, +13], p = 0.69); see the paired section below. The fixed-code rerun matches it (62% / 58%, one
+question different) at ~2.2× the speed. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
 | 2 | bound `OpenAIProvider` concurrency | **done.** `max_concurrency` / `ASTROCYTE_OPENAI_MAX_CONCURRENCY`, guarding `complete()` and `embed()`, opt-in. Negative control: `assert 20 <= 3`. |
 | 3 | `top_k` 50 vs 100 A/B | **not run** — rides on item 1. |
 
@@ -803,8 +804,8 @@ will measure it on `text-embedding-3-small` for the first time.
 
 #### Submission architecture vs baseline — paired, n=50 (2026-10-04)
 
-First measurement of the retain architecture the submission uses (Postgres +
-pgvectorscale DiskANN, `structured_fact_extraction: true`), with `claude -p`
+First measurement of the retain architecture the submission uses (Postgres with
+`bootstrap_schema`, `structured_fact_extraction: true`), with `claude -p`
 haiku + bge-small standing in for gpt-4o-mini + text-embedding-3-small. The
 first 50 items of the seed-42 sample — **all 50 are also in the n=250
 baseline**, so the comparison is paired on identical questions, with the same
@@ -826,11 +827,64 @@ extraction prompt — and was still not worse. Both runs' judges also ran the
 user's Claude Code hooks (the judge was held constant on purpose). The cost is
 speed: structured extraction made an Add ~10× slower here (64 s vs ~6 s).
 
-**Follow-up in flight:** the same 50 items on the **fixed** code (`ee58f88`:
-chunk_index alignment, thinking off, built-in tools and hooks off), same judge.
-Verified identical embeddings between the two pins (cosine 1.000000), so
-retrieval is not confounded. Smoke test on the same batch: Add 64.4 s → 36.2 s,
-extraction call 58.4 s → 25.5 s.
+**Correction (2026-10-04): no DiskANN index was involved.** The benchmark
+database had only the `vector` extension (0.8.6), no `vectorscale`, and no
+approximate-NN index on `astrocyte_vectors` — `bootstrap_schema` does not create
+one, and both this run and the fixed rerun used it. Every measurement here is an
+**exact cosine scan**. The shipped AML config uses the same bootstrap path, so
+measured and submitted setups match, and exact search is deterministic, which
+helps under the reproduction clause. Earlier text in this section said
+"pgvectorscale DiskANN"; that was wrong.
+
+#### Fixed code on the same 50 items (2026-10-04)
+
+Same 50 items, same frozen judge (two passes), on the **fixed** code (`ee58f88`:
+chunk_index alignment, thinking off, built-in tools and hooks off). Embeddings
+verified identical between the two pins (cosine 1.000000), so retrieval is not
+confounded.
+
+| | pass 1 | pass 2 |
+|---|---|---|
+| baseline | 60.0% | 56.0% |
+| submission architecture, pre-fix | 64.0% | 60.0% |
+| **submission architecture, fixed** | **62.0%** | **58.0%** |
+
+| paired difference (judge passes averaged) | pts | 95% bootstrap CI | McNemar (pass 1) |
+|---|---|---|---|
+| fixed − pre-fix | −2.0 | [−7.0, +3.0] | 1 vs 0 discordant, p = 1.0 |
+| fixed − baseline | +2.0 | [−4.0, +9.0] | 2 vs 3, p = 1.0 |
+
+**The fixes cost no accuracy.** Pre-fix and fixed disagree on exactly one
+question in pass 1 (`09ba9854`, multi-session); the other differences are the
+judge flipping between passes (4 flips per run, the same rate as before). Per
+type, the fixed run matches the pre-fix run everywhere except that one
+multi-session item.
+
+**And they made it ~2.2× faster end to end:** 16 h 18 m pre-fix vs 7 h 33 m
+fixed, even though the fixed run redid one whole chunk (an adapter died mid-chunk;
+10 items failed with ConnectError and were retried) and sat through four
+circuit-breaker pauses on `claude -p` rate limiting (up to 30 min each).
+
+**A confound, found and bounded.** Ten items timed out during those pauses and
+were retried. Killing the adapter between chunks left them half-ingested in
+Postgres, and the retry ingested them again under the same bank: **retried banks
+carried 22.5% duplicate rows vs 3.8% for clean banks** (worst bank 43%).
+Pipeline dedup missed them because its cache is in memory and was lost on each
+restart. It did not move the result: on those 10 items the fixed and pre-fix runs
+score identically (50% / 50% both passes), and on the 40 clean items the picture
+is unchanged (fixed − baseline +3.8 pts, CI [−2.5, +11.2]; fixed − pre-fix
+−2.5, CI [−8.8, +3.8]).
+
+Two consequences outside the benchmark:
+- It is the failure mode AML's retry policy creates. `/add` is now idempotent
+  under retry (`a89a99a`, in v0.18.0), but that fix is **process-local**: a
+  container restart mid-run would still duplicate. A durable check against the
+  store (content hash per bank, or the stored `aml_request_id`) is a follow-up.
+- Dedup that cannot see the store does not survive a restart. Same follow-up.
+
+**What remains open:** the actual submission models (gpt-4o-mini +
+text-embedding-3-small) are still unmeasured — the OpenAI-credit blocker in item
+1 above.
 
 ## 5. M48 — Phase 3 (both sub-items gated)
 
