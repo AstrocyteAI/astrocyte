@@ -41,6 +41,10 @@ asked to look. A new session opens with where the previous one in that project l
 `ASTROCYTE_HOOKS=off`; turn off with `astrocyte setup --no-hooks`. Codex runs new hooks only
 once you trust them: run `/hooks` in Codex after setup.
 
+**Windows:** the memory tools (MCP) work natively, but automatic memory needs Unix sockets
+and is off there for now. Run your agents inside WSL to get it today; native support is
+designed in `windows-local-install` and on its way.
+
 Setup remembers what you switch off: after `astrocyte uninstall --claude` or
 `astrocyte setup --no-hooks`, a later `astrocyte setup` (after an upgrade, say) leaves it off.
 Name the agent to turn it back on: `astrocyte setup --claude`.
