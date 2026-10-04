@@ -6,8 +6,11 @@ import asyncio
 import ipaddress
 import json
 import logging
+import os
 import re
 import socket
+import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from urllib.parse import ParseResult, parse_qsl, quote, urlparse, urlunparse
 
@@ -250,23 +253,67 @@ def _resolve_post_json(source: SourceConfig, query: str, bank_id: str) -> dict[s
     return {"query": query, "bank_id": bank_id}
 
 
+#: Provenance fields a remote row may carry, mapped onto reserved metadata keys.
+#: Reserved keys are written last, so a source cannot spoof them through its own
+#: ``metadata`` object.
+_PROVENANCE_FIELDS: dict[str, tuple[str, ...]] = {
+    "_source_url": ("url", "source_url"),
+    "_source_version": ("version", "etag", "revision"),
+    "_source_author": ("author",),
+    "_source_anchor": ("anchor",),
+}
+
+
+def _parse_when(value: Any) -> datetime | None:
+    """ISO-8601 string or Unix seconds -> aware UTC datetime; anything else -> None."""
+    if isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        if isinstance(value, str) and value.strip():
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+    return None
+
+
 def _row_to_hit(source_id: str, row: dict[str, Any]) -> MemoryHit | None:
+    """Map one remote row to a ``MemoryHit`` with the dates and provenance a
+    local hit carries (federated-sources F0b).
+
+    Before 2026-10-04 only text, score, flat metadata, tags, id, and fact type
+    survived, so every federated hit arrived undated and unanchored: the same
+    class of defect as a rerank that dropped ``occurred_at`` (roadmap §4e).
+    Fusion ranks by list position, so a missing score never ranked anything;
+    it gets a neutral placeholder flagged ``_score_missing`` rather than
+    passing as a measurement.
+    """
     text = row.get("text")
     if not isinstance(text, str) or not text.strip():
         return None
     score = row.get("score")
-    if isinstance(score, (int, float)):
-        s = float(score)
-    else:
-        s = 0.5
+    score_missing = isinstance(score, bool) or not isinstance(score, (int, float))
+    s = 0.5 if score_missing else float(score)
     mid = row.get("memory_id")
+    meta: Metadata = {}
     meta_raw = row.get("metadata")
-    meta: Metadata | None = None
     if isinstance(meta_raw, dict):
-        meta = {}
         for k, v in meta_raw.items():
             if isinstance(v, (str, int, float, bool)) or v is None:
                 meta[str(k)] = v
+    for key, names in _PROVENANCE_FIELDS.items():
+        meta.pop(key, None)
+        for name in names:
+            v = row.get(name)
+            if isinstance(v, (str, int, float)) and not isinstance(v, bool) and str(v).strip():
+                meta[key] = str(v)
+                break
+    if score_missing:
+        meta["_score_missing"] = True
+    else:
+        meta.pop("_score_missing", None)
     tags = row.get("tags")
     tag_list: list[str] | None = None
     if isinstance(tags, list):
@@ -275,10 +322,14 @@ def _row_to_hit(source_id: str, row: dict[str, Any]) -> MemoryHit | None:
         text=text,
         score=min(1.0, max(0.0, s)),
         fact_type=str(row["fact_type"]) if row.get("fact_type") is not None else None,
-        metadata=meta,
+        metadata=meta or None,
         tags=tag_list,
         memory_id=str(mid) if mid is not None else None,
         source=f"proxy:{source_id}",
+        occurred_at=_parse_when(row.get("occurred_at")),
+        # When the source last recorded it: its own retained_at, else the
+        # document's last modification.
+        retained_at=_parse_when(row.get("retained_at")) or _parse_when(row.get("updated_at")),
     )
 
 
@@ -420,6 +471,54 @@ async def fetch_proxy_recall_hits(
     return out
 
 
+#: One deadline for all proxy sources of a recall, in seconds. Sources run
+#: concurrently; whatever has answered by the deadline is fused and the rest
+#: are cancelled. Before 2026-10-04 sources ran one after another with 15 s
+#: each, so recall paid the SUM of every remote call (federated-sources §1.1).
+_DEFAULT_DEADLINE = 0.8
+#: Consecutive failures (errors or timeouts) before a source is skipped.
+_BREAKER_THRESHOLD = 3
+#: How long a tripped source is skipped before it is tried again.
+_BREAKER_COOLDOWN_S = 60.0
+
+# source_id -> (consecutive failures, monotonic time until which it is skipped)
+_breakers: dict[str, tuple[int, float]] = {}
+
+
+def _deadline_seconds() -> float:
+    raw = os.environ.get("ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS")
+    try:
+        value = float(raw) if raw else _DEFAULT_DEADLINE
+    except ValueError:
+        logger.warning("ignoring invalid ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS=%r", raw)
+        value = _DEFAULT_DEADLINE
+    return value if value > 0 else _DEFAULT_DEADLINE
+
+
+def _breaker_open(source_id: str) -> bool:
+    _failures, until = _breakers.get(source_id, (0, 0.0))
+    return time.monotonic() < until
+
+
+def _record_outcome(source_id: str, ok: bool) -> None:
+    if ok:
+        _breakers.pop(source_id, None)
+        return
+    failures = _breakers.get(source_id, (0, 0.0))[0] + 1
+    until = time.monotonic() + _BREAKER_COOLDOWN_S if failures >= _BREAKER_THRESHOLD else 0.0
+    if until:
+        logger.warning(
+            "proxy source %s failed %d times in a row; skipping it for %.0f s",
+            source_id, failures, _BREAKER_COOLDOWN_S,
+        )
+    _breakers[source_id] = (failures, until)
+
+
+def reset_proxy_breakers() -> None:
+    """Forget every source's failure history (tests, config reloads)."""
+    _breakers.clear()
+
+
 async def gather_proxy_hits_for_bank(
     config: AstrocyteConfig | Any,
     *,
@@ -427,9 +526,16 @@ async def gather_proxy_hits_for_bank(
     bank_id: str,
     metrics: MetricsCollector | None = None,
 ) -> list[MemoryHit]:
-    """Fetch hits from all ``type: proxy`` sources whose ``target_bank`` matches ``bank_id``."""
+    """Fetch hits from all ``type: proxy`` sources whose ``target_bank`` matches ``bank_id``.
+
+    Sources are queried concurrently under one deadline; a source that has not
+    answered by then is cancelled and contributes nothing, so one slow or dead
+    source costs at most the deadline. A source that keeps failing is skipped
+    for a cool-down. Hits come back in config order, not completion order, so
+    fusion ranks do not depend on network timing.
+    """
     sources = getattr(config, "sources", None) or {}
-    out: list[MemoryHit] = []
+    eligible: list[tuple[str, SourceConfig]] = []
     for sid, src in sources.items():
         if not isinstance(src, SourceConfig):
             continue
@@ -437,11 +543,44 @@ async def gather_proxy_hits_for_bank(
             continue
         if (src.target_bank or "").strip() != bank_id:
             continue
+        if _breaker_open(sid):
+            _record_proxy_metrics(metrics, source_id=sid, status="skipped", duration_s=None)
+            continue
+        eligible.append((sid, src))
+    if not eligible:
+        return []
+
+    deadline = _deadline_seconds()
+
+    async def one(sid: str, src: SourceConfig) -> list[MemoryHit]:
+        cap = src.recall_timeout_seconds
+        timeout = min(cap, deadline) if cap and cap > 0 else deadline
         try:
-            batch = await fetch_proxy_recall_hits(sid, src, query=query, bank_id=bank_id, metrics=metrics)
-            out.extend(batch)
+            hits = await fetch_proxy_recall_hits(
+                sid, src, query=query, bank_id=bank_id, timeout=timeout, metrics=metrics
+            )
         except Exception as e:
+            _record_outcome(sid, ok=False)
             logger.warning("proxy recall failed for source %s: %s", sid, e)
+            return []
+        _record_outcome(sid, ok=True)
+        return hits
+
+    tasks = [asyncio.create_task(one(sid, src)) for sid, src in eligible]
+    _done, pending = await asyncio.wait(tasks, timeout=deadline)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    out: list[MemoryHit] = []
+    for (sid, _src), task in zip(eligible, tasks, strict=True):
+        if task in pending:
+            _record_outcome(sid, ok=False)
+            _record_proxy_metrics(metrics, source_id=sid, status="timeout", duration_s=None)
+            logger.warning("proxy source %s missed the %.2f s recall deadline", sid, deadline)
+            continue
+        out.extend(task.result())
     return out
 
 

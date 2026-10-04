@@ -253,6 +253,7 @@ class TestRowToHit:
             "src1",
             {
                 "text": "a",
+                "score": 0.5,  # scored, so no _score_missing flag joins the metadata
                 "metadata": {"key": "val", "num": 42, "bad": [1, 2]},
             },
         )

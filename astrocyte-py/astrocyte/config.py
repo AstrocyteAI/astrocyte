@@ -706,6 +706,10 @@ class SourceConfig:
     # M4.1 proxy recall: GET (default) or POST JSON to ``url``
     recall_method: str | None = None  # "GET" | "POST"
     recall_body: Any | None = None  # POST JSON: dict/str with placeholders (see ``astrocyte.recall.proxy``)
+    # Per-source cap on one proxy recall request, in seconds. None = the shared
+    # deadline (``ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS``, default 0.8 s);
+    # a value above the deadline is capped by it. See federated-sources §4.
+    recall_timeout_seconds: float | None = None
 
 
 @dataclass
