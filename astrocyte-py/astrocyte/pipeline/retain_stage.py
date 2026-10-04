@@ -1081,6 +1081,9 @@ class RetainStageMixin:
             "_created_at",
             datetime.now(timezone.utc).isoformat(),
         )
+        # Ties this retain's chunks together. ``_created_at`` cannot: on a
+        # coarse clock (Windows ticks every ~15 ms) consecutive retains share it.
+        chunk_metadata.setdefault("_retain_id", uuid.uuid4().hex)
 
         # 3b. M10: persist source-document + chunk provenance, get back per-chunk
         # ``chunk_id``s that we'll stamp onto each VectorItem so recall can

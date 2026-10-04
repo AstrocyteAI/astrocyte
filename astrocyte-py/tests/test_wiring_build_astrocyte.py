@@ -9,10 +9,12 @@ see. Store wiring lived only in the gateway and AML adapter.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
 import pytest
+from platform_compat import system_env, system_path
 
 from astrocyte.config import load_config
 from astrocyte.errors import ConfigError
@@ -151,7 +153,7 @@ class TestMcpEntryPoint:
         ]
         proc = subprocess.Popen(
             args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            env={"PATH": "/usr/bin:/bin", "HOME": env_home, "XDG_CONFIG_HOME": f"{env_home}/.config"},
+            env={"PATH": os.pathsep.join(system_path()), **system_env(), "HOME": env_home, "XDG_CONFIG_HOME": f"{env_home}/.config"},
         )
         replies: dict[int, dict] = {}
         try:
@@ -185,7 +187,7 @@ class TestMcpEntryPoint:
         proc = subprocess.run(
             [sys.executable, "-m", "astrocyte.mcp"],
             capture_output=True, text=True, timeout=60,
-            env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path / "cfg")},
+            env={"PATH": os.pathsep.join(system_path()), **system_env(), "HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path / "cfg")},
         )
         assert proc.returncode == 2
         assert "astrocyte setup" in proc.stderr

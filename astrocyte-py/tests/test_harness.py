@@ -22,6 +22,7 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
+from platform_compat import WINDOWS, posix_modes, set_home, system_path, write_executable
 
 from astrocyte.harness import hosts as hosts_mod
 from astrocyte.harness.commands import cmd_doctor, cmd_setup, cmd_uninstall
@@ -107,19 +108,17 @@ def home(tmp_path, monkeypatch) -> Path:
     for var in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
                 "ASTROCYTE_CONFIG", "OPENAI_API_KEY"):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("HOME", str(h))
+    set_home(monkeypatch, h)
     # Keep doctor's daemon ping away from the developer's real state dir.
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin")
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *system_path()]))
     return h
 
 
 def install_cli(home: Path, name: str) -> None:
-    path = home.parent / "bin" / name
-    path.write_text(FAKE_CLI.format(python=sys.executable, name=name))
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    write_executable(home.parent / "bin", name, FAKE_CLI.format(python=sys.executable, name=name))
 
 
 def cli_calls(home: Path) -> list[str]:
@@ -211,7 +210,8 @@ def test_json_host_preserves_other_servers_and_keeps_a_backup(home, host_cls):
     data = json.loads(path.read_text())
     assert data["mcpServers"]["other"] == original["mcpServers"]["other"]
     assert data["theme"] == "dark"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600, "file permissions must survive the rewrite"
+    if not WINDOWS:  # POSIX modes; Windows files carry the profile's ACLs
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600, "file permissions must survive the rewrite"
     assert json.loads(path.with_name(path.name + ".astrocyte-bak").read_text()) == original
     assert host.install(SPEC).status == "unchanged"
 
@@ -890,6 +890,7 @@ def test_setup_says_copilot_only_recalls(wired_home, capsys):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+@posix_modes
 def test_doctor_reports_and_fixes_a_store_others_can_read(home, capsys, monkeypatch):
     """Stores created before v0.16.1 inherited the umask (world-readable)."""
     pytest.importorskip("astrocyte_sqlite")
@@ -914,6 +915,7 @@ def test_doctor_reports_and_fixes_a_store_others_can_read(home, capsys, monkeypa
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+@posix_modes
 def test_a_store_in_a_directory_of_your_choosing_leaves_the_directory_alone(tmp_path, monkeypatch):
     from astrocyte.harness.privacy import make_private
 

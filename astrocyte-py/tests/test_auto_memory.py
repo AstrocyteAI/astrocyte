@@ -11,8 +11,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from argparse import Namespace
@@ -20,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from platform_compat import needs_unix_socket, posix_shell, set_home, system_env, system_path
 
 from astrocyte.harness import agentd, hooks
 from astrocyte.harness.hosts import ClaudeCodeHost, CodexHost, HostConfigError
@@ -36,10 +39,10 @@ def env(tmp_path, monkeypatch):
     home.mkdir()
     for var in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "ASTROCYTE_CONFIG", "ASTROCYTE_HOOKS", "XDG_DATA_HOME"):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("HOME", str(home))
+    set_home(monkeypatch, home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     # Short state path: AF_UNIX socket paths are capped at ~104 bytes on macOS.
-    state = Path("/tmp") / f"astro-test-{time.time_ns()}"
+    state = Path("/tmp" if os.name != "nt" else tempfile.gettempdir()) / f"astro-test-{time.time_ns()}"
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
     cfg = home / ".config" / "astrocyte" / "astrocyte.yaml"
     cfg.parent.mkdir(parents=True)
@@ -48,7 +51,7 @@ def env(tmp_path, monkeypatch):
     # whether the test runner happens to sit under a `claude -p`.
     monkeypatch.setattr(hooks, "headless_session", lambda *_: False)
     yield Namespace(home=home, cfg=cfg, state=state / "astrocyte")
-    subprocess.run(["rm", "-rf", str(state)], check=False)
+    shutil.rmtree(state, ignore_errors=True)
 
 
 def git(cwd: Path, *args: str) -> None:
@@ -350,6 +353,7 @@ class TestSpool:
         assert (env.state / "spool" / "failed" / "1-1.json").exists()
 
 
+@needs_unix_socket
 class TestDaemonOverSocket:
     def test_ping_capture_recall_round_trip(self, env, monkeypatch):
         monkeypatch.setattr(agentd, "DRAIN_INTERVAL_SECONDS", 0.2)
@@ -500,6 +504,29 @@ class TestDaemonOps:
         groups = agentd._groups([a[1], b[0], a[0]])  # newest first, chunks out of order
         assert [[i.id for i in g] for g in groups] == [["a-0", "a-1"], ["b-0"]]
 
+    def test_retains_within_one_clock_tick_stay_apart(self):
+        """Windows' clock ticks every ~15 ms, so turns drained in one burst
+        share ``_created_at``; ``_retain_id`` keeps them separate (found by the
+        Windows CI job: two resumed turns rendered as one)."""
+        from types import SimpleNamespace
+
+        tick = "2026-10-04T07:00:00.000000+00:00"
+        items = [SimpleNamespace(id=f"m{i}", text=f"**user**: q{i}\n**assistant**: a{i}", retained_at=None,
+                                 metadata={"_created_at": tick, "_retain_id": f"r{i}"}) for i in range(3)]
+        assert [[i.id for i in g] for g in agentd._groups(items)] == [["m0"], ["m1"], ["m2"]]
+        legacy = [SimpleNamespace(id=i.id, text=i.text, retained_at=None, metadata={"_created_at": tick})
+                  for i in items]
+        assert len(agentd._groups(legacy)) == 1, "memories stored before _retain_id still group by _created_at"
+
+    async def test_every_chunk_of_a_retain_carries_one_retain_id(self, env, tmp_path):
+        d = _sqlite_daemon(env, tmp_path)
+        await d.brain.retain("**user**: long?\n\n**assistant**: " + " ".join(f"w{i}" for i in range(150)),
+                             bank_id="proj", content_type="conversation")
+        await d.brain.retain("A separate short fact.", bank_id="proj")
+        items = await d.pipeline.vector_store.list_recent_vectors("proj", limit=20)
+        ids = {(i.metadata or {}).get("_retain_id") for i in items}
+        assert None not in ids and len(ids) == 2 and len(items) > 2
+
     def test_join_overlapping(self):
         assert agentd._join_overlapping("the quick brown fox jumps high", "brown fox jumps high over the dog") == (
             "the quick brown fox jumps high over the dog")
@@ -574,6 +601,7 @@ class TestDaemonHousekeeping:
         assert daemon._stop.is_set()
 
 
+@needs_unix_socket
 class TestDaemonProcess:
     """The real thing: hooks start the daemon as a detached process."""
 
@@ -660,6 +688,7 @@ class TestHooks:
                                               "additionalContext": "Possibly relevant memories:\n- x"}}
         assert seen["op"] == "recall" and seen["bank"] == project_bank(str(env.home)) and seen["session_id"] == "s1"
 
+    @needs_unix_socket
     def test_stop_spools_new_turns_once(self, env, tmp_path, monkeypatch):
         monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
         monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
@@ -766,6 +795,7 @@ class TestCodexHooks:
     def _spooled(self, env) -> list[dict]:
         return [json.loads(f.read_text()) for f in sorted((env.state / "spool").glob("*.json"))]
 
+    @needs_unix_socket
     def test_a_turn_is_the_kept_prompt_plus_the_reply(self, env, monkeypatch, capsys):
         self._capture(monkeypatch)
         base = {"session_id": "c1", "cwd": str(env.home), "turn_id": "t1"}
@@ -779,6 +809,7 @@ class TestCodexHooks:
         # Codex fails a Stop hook that emits additionalContext (observed).
         assert capsys.readouterr().out == ""
 
+    @needs_unix_socket
     def test_each_turn_is_captured_once(self, env, monkeypatch):
         self._capture(monkeypatch)
         base = {"session_id": "c1", "cwd": str(env.home)}
@@ -794,6 +825,7 @@ class TestCodexHooks:
                   "codex")
         assert not (env.state / "spool").exists()
 
+    @needs_unix_socket
     def test_slight_prompts_skip_recall_but_still_make_a_turn(self, env, monkeypatch):
         calls = []
         monkeypatch.setattr(agentd, "request", lambda op, *a, **k: calls.append(op) or None)
@@ -811,6 +843,7 @@ class TestCodexHooks:
         assert json.loads(capsys.readouterr().out) == {"hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit", "additionalContext": "Possibly relevant memories:\n- x"}}
 
+    @needs_unix_socket
     def test_credentials_never_reach_the_spool(self, env, monkeypatch):
         """The spool is plaintext on disk and is replayed into other agents'
         prompts later; a pasted key must be gone before it is written."""
@@ -831,6 +864,7 @@ class TestCodexHooks:
         assert not (env.state / "spool").exists()
         assert not list((env.state / "sessions").glob("*.prompt.json")), "a stale prompt must not pair with a later reply"
 
+    @needs_unix_socket
     def test_a_damaged_kept_prompt_still_makes_a_turn(self, env, monkeypatch):
         self._capture(monkeypatch)
         base = {"session_id": "c1", "cwd": str(env.home)}
@@ -882,6 +916,7 @@ class TestStaysOutOfAutomation:
         hooks.run("session-start", json.dumps({"cwd": str(scratch)}))
         assert calls == []
 
+    @needs_unix_socket
     def test_first_capture_of_a_session_takes_only_the_latest_turn(self, env, tmp_path, monkeypatch):
         """A session already running when hooks were installed (Claude Code
         hot-reloads settings) had its whole history captured in one burst."""
@@ -935,7 +970,7 @@ def test_registered_commands_ignore_an_inherited_pythonpath(tmp_path):
     decoy = tmp_path / "decoy" / "astrocyte"
     decoy.mkdir(parents=True)
     (decoy / "__init__.py").write_text("raise SystemExit('decoy astrocyte imported')\n")
-    env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(tmp_path / "decoy")}
+    env = {"PATH": os.pathsep.join(system_path()), "PYTHONPATH": str(tmp_path / "decoy"), **system_env()}
     # The mechanism, independent of install mode (editable installs use an
     # import finder that outranks PYTHONPATH; regular installs — the real
     # incident — do not): -I must drop PYTHONPATH from sys.path.
@@ -1129,6 +1164,7 @@ class TestCodexHookInstall:
         monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
         assert CodexHost().hooks_file() == tmp_path / "codex-home" / "config.toml"
 
+    @posix_shell
     def test_installed_commands_parse(self, env):
         """The installed command line must be accepted by `astrocyte hook`."""
         from astrocyte.harness.server import hook_prefix
@@ -1247,6 +1283,7 @@ class TestAntigravityHooks:
         monkeypatch.setenv("ASTROCYTE_HOOKS", "off")
         assert self._run(monkeypatch, capsys, "stop", "{}") == {}
 
+    @needs_unix_socket
     def test_stop_captures_the_finished_turn(self, env, tmp_path, monkeypatch):
         monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
         monkeypatch.setattr(agentd, "spawn", lambda cfg: None)

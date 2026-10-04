@@ -220,22 +220,20 @@ class TestHermeticCalls:
     @pytest.mark.asyncio
     async def test_calls_disable_hooks_and_user_mcp_servers(self, tmp_path):
         import os
-        import stat
-        import sys
 
         from astrocyte.providers.claude_cli import ClaudeCliProvider
 
         record = tmp_path / "call.json"
-        fake = tmp_path / "claude"
-        fake.write_text(
-            f"#!{sys.executable}\n"
+        from platform_compat import write_executable
+
+        fake = write_executable(
+            tmp_path, "claude",
             "import json, os, sys\n"
             "sys.stdin.read()\n"
             f"json.dump({{'argv': sys.argv[1:], 'hooks_env': os.environ.get('ASTROCYTE_HOOKS'),"
             f" 'api_key': os.environ.get('ANTHROPIC_API_KEY')}}, open({str(record)!r}, 'w'))\n"
-            "print('OK')\n"
+            "print('OK')\n",
         )
-        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         os.environ["ANTHROPIC_API_KEY"] = "sk-should-not-leak"
         try:
             reply = await ClaudeCliProvider(model="haiku", binary=str(fake)).complete(

@@ -113,12 +113,15 @@ def _groups(items: list[Any]) -> list[list[Any]]:
     """Memories regrouped into what was retained together, newest first.
 
     A long captured turn is stored as several chunks (the question, then
-    overlapping pieces of the answer) that share one ``_created_at`` stamp and
-    come back in no useful order; ``retained_at`` follows the order they were
+    overlapping pieces of the answer) that share one ``_retain_id`` and come
+    back in no useful order; ``retained_at`` follows the order they were
     written."""
     groups: dict[str, list[Any]] = {}
     for item in items:
-        key = (item.metadata or {}).get("_created_at") or item.id
+        meta = item.metadata or {}
+        # _retain_id since 0.18; _created_at alone for memories stored before
+        # (it can merge retains made within one clock tick).
+        key = meta.get("_retain_id") or meta.get("_created_at") or item.id
         groups.setdefault(str(key), []).append(item)
     out = []
     for group in groups.values():

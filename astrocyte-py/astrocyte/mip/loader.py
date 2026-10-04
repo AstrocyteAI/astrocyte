@@ -73,7 +73,7 @@ def load_mip_config(path: str | Path) -> MipConfig:
     if not config_path.exists():
         raise ConfigError(f"MIP config file not found: {config_path}")
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
     raw = _substitute_env_recursive(raw)
