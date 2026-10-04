@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- **The gateway image runs on Debian 13 (Python 3.13).** `gcr.io/distroless/python3-debian12` still ships Python 3.11, OpenSSL, krb5 and expat without fixes Debian has released (25 fixable HIGH CVEs), which failed the image scan and left v0.16.0 and v0.17.0 without a scanned image. `python3-debian13` has none; the builder stage moves to Python 3.13 to match. The image workflow can now be dispatched with a `version` to rebuild a released version's image without re-tagging.
+
+### Fixed
+
 - **`Astrocyte.export_bank` exports every memory.** It paged a relevance-ranked `query="*"` recall without an offset, so a bank larger than one batch (100) was exported truncated with no error, and the AMA header's `memory_count` counted only the first page. Pipeline-backed brains now page the vector store's `list_vectors` in its stable id order. Engine providers, which expose no listing API, keep one capped recall and log a warning when it comes back full. The AMA record format is unchanged.
 - **`bank_health` reports the real memory count.** It came from `list_vectors(limit=0)`, which returns no rows on every store, so `memory_count` was always 0. It now pages through `list_vectors`; the VectorStore SPI has no count method, so the cost grows with bank size.
 - **`astrocyte memory` commands don't run noisy-bank detection.** Importing a docs tree with many short sections tripped the `short_content` signal and printed a raw JSON warning in the terminal. Detection guards against agents writing junk or looping; the user's own commands now open the store with it off. The automatic-memory daemon keeps it, and logs to its own file.

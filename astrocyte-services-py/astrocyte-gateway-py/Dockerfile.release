@@ -5,8 +5,11 @@
 # Runtime is distroless nonroot (no shell, no package manager, UID 65532) — it
 # pairs with the restricted-PSS securityContext shipped in the Helm chart. Deps
 # are installed with `pip install --target` (not a venv) so the site-packages
-# tree is interpreter-path-independent: distroless supplies CPython 3.11 and we
-# point PYTHONPATH at the copied tree. All native deps ride in self-contained
+# tree is interpreter-path-independent: distroless supplies CPython 3.13 and we
+# point PYTHONPATH at the copied tree. The builder's Python must match it
+# (native wheels are per-version). Debian 13: the debian12 image still ships
+# Python 3.11, OpenSSL, krb5 and expat with fixed HIGH CVEs unapplied, which
+# blocked v0.16.0 and v0.17.0 at the image scan. All native deps ride in self-contained
 # manylinux wheels (psycopg[binary] bundles libpq/libssl; uvicorn[standard]'s
 # uvloop/httptools are static), so no system libraries are required at runtime.
 #
@@ -24,7 +27,7 @@
 # releases, ``astrocyte-pgvector`` is on PyPI but not ``astrocyte-postgres``;
 # this Dockerfile only supports v0.11.0+ release builds.
 
-FROM python:3.11-slim AS builder
+FROM python:3.13-slim AS builder
 
 ARG ASTROCYTE_VERSION
 ARG SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0
@@ -48,7 +51,7 @@ RUN python -m pip install --upgrade pip \
         /build/astrocyte-gateway-py \
     && rm -rf /build
 
-FROM gcr.io/distroless/python3-debian12:nonroot
+FROM gcr.io/distroless/python3-debian13:nonroot
 
 COPY --from=builder /install /app
 ENV PYTHONPATH=/app \
