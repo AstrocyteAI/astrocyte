@@ -1531,6 +1531,46 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     path, and an evaluation plan that starts by building the essay's system as
     the baseline.
 
+14. **Federated sources — plugging into documentation and RAG systems** (added
+    2026-10-04). The follow-on to item 13: once agents read documents, most of a
+    team's documents live in GitHub, Confluence, Notion, or an existing RAG
+    index, not in Astrocyte. Design:
+    [`federated-sources.md`](federated-sources.md). It makes Astrocyte the
+    layer that governs knowledge wherever it lives (provenance, freshness,
+    trust, permissions, fusion) instead of a store everything must migrate into.
+
+    **Already here, more than expected:** proxy recall (M4.1, SSRF-guarded,
+    RRF-merged), `external_context`, ingestion adapters (document, github, s3,
+    kafka, redis), and the CocoIndex and team-memory designs.
+
+    **A defect found while scoping it:** proxy sources are queried **one after
+    another, before local retrieval starts**, each with a fixed 15 s timeout
+    (`recall/proxy.py:423`, awaited from `_astrocyte.py:662`). Recall latency is
+    local plus the sum of every remote call; three slow sources add 45 s against
+    a prompt-hook budget of 1.5 s. Proxy hits also all enter fusion at one weight.
+
+    **Decisions in the design:**
+    - *Anchor by default, federate as fallback, ingest only what Astrocyte
+      owns.* Anchoring keeps a pointer plus the source's version per item: the
+      anchored-documents git-SHA mechanism, generalized.
+    - *Latency:* federation never on the prompt hook's path; concurrent fan-out
+      alongside local retrieval under one deadline; a circuit breaker per
+      source; batched freshness checks.
+    - *Accuracy:* measured per-source weights (RRF ranks are not comparable
+      across sources); a slot budget inside the ~50-candidate cap (M30);
+      cross-source dedup that merges provenance; supersession over contradiction.
+    - *Teams:* search as the caller, never a shared service account (no
+      confused deputy); provenance on every hit; write-back as reviewed pull
+      requests or drafts; cached copies honour deletion at the source.
+    - *Boundaries:* the AML submission stays federation-free; Astrocyte does
+      not become a search engine.
+
+    **Phases:** F0, the concurrency fix, standalone and any time; F1, a
+    `RecallSource` plugin interface with GitHub, a wiki, a vector DB, and MCP as
+    first sources; F2, calibration; F3, anchored external documents; F4, team
+    permissions and write-back. None of it carries an accuracy claim until the
+    docs-augmented evaluation in the design measures it.
+
 ## 10. Open questions (blocking-ish, cheap to resolve)
 
 1. ~~**A-H capability legend — GATES M46.**~~ **RESOLVED-AS-UNPUBLISHED 2026-09-03.** No public legend exists (search scope in §3). M46's gate is lifted to inference-only; the documented seven-capability list, the G1-G5 / F1 leaf corrections, and the empirical probe proposal are recorded in §3. Reopen only if an AML paper appears or they answer by email.
