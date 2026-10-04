@@ -1535,6 +1535,55 @@ class TestAntigravityTranscript:
         assert turn.started_at is not None and resume == t.stat().st_size
 
 
+class TestAntigravityTouchedFiles:
+    """Antigravity records tool calls on PLANNER_RESPONSE steps, argument
+    values JSON-encoded as strings (measured on agy 1.2: find_by_name)."""
+
+    @staticmethod
+    def _call(name: str, **args) -> dict:
+        return {"name": name, "args": {k: json.dumps(v) for k, v in args.items()}}
+
+    def test_file_tools_are_recorded_and_other_tools_are_not(self, tmp_path):
+        t = tmp_path / "transcript.jsonl"
+        t.write_text(
+            _agy_user(0, "why does retry fail?")
+            + _agy_step(1, "PLANNER_RESPONSE", "", tool_calls=[
+                self._call("find_by_name", Pattern="*.py", SearchDirectory="/repo"),
+                self._call("view_file", AbsolutePath="/repo/src/retry.py")])
+            + _agy_step(2, "PLANNER_RESPONSE", "", tool_calls=[
+                self._call("replace_file_content", TargetFile="/repo/src/retry.py", ReplacementContent="SECRET"),
+                {"name": "write_to_file", "args": {"TargetFile": "/repo/tests/test_retry.py"}}])  # plain value too
+            + _agy_step(3, "PLANNER_RESPONSE", "Off by one; fixed."),
+            newline="\n",
+        )
+        [turn], _ = read_new_turns(t, antigravity=True)
+        assert turn.files == ["/repo/src/retry.py", "/repo/tests/test_retry.py"]
+        assert "SECRET" not in turn.render()
+
+    @pytest.mark.parametrize("tool_calls", [None, "nope", [None, {"name": "view_file", "args": None},
+                                                            {"name": "view_file", "args": {"AbsolutePath": '"broken'}}]])
+    def test_malformed_tool_calls_are_ignored(self, tmp_path, tool_calls):
+        t = tmp_path / "transcript.jsonl"
+        t.write_text(_agy_user(0, "q") + _agy_step(1, "PLANNER_RESPONSE", "a", tool_calls=tool_calls),
+                     newline="\n")
+        [turn], _ = read_new_turns(t, antigravity=True)
+        assert turn.files == []
+
+    def test_paths_are_relative_to_the_workspace(self, env, tmp_path, monkeypatch):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
+        monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        git(repo, "init", "-q")
+        t = tmp_path / "transcript.jsonl"
+        t.write_text(_agy_user(0, "q") + _agy_step(1, "PLANNER_RESPONSE", "a", tool_calls=[
+            self._call("view_file", AbsolutePath=str(repo / "src" / "retry.py"))]), newline="\n")
+        hooks.run("stop", json.dumps({"conversationId": "c1", "workspacePaths": [str(repo)],
+                                      "transcriptPath": str(t)}), "antigravity")
+        [spooled] = list((env.state / "spool").glob("*.json"))
+        assert json.loads(spooled.read_text())["turns"][0]["files"] == ["src/retry.py"]
+
+
 class TestAntigravityHooks:
     def _payload(self, env, t, conv="conv-1") -> str:
         return json.dumps({"conversationId": conv, "workspacePaths": [str(env.home)], "transcriptPath": str(t),

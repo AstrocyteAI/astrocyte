@@ -398,7 +398,8 @@ MAX_TOUCHED_CHARS = 1_500
 
 
 def _project_root_of(payload: dict) -> Path | None:
-    cwd = payload.get("cwd")
+    workspaces = payload.get("workspacePaths")  # Antigravity names the workspace, not a cwd
+    cwd = payload.get("cwd") or (workspaces[0] if isinstance(workspaces, list) and workspaces else None)
     return project_root(cwd) if isinstance(cwd, str) and cwd else None
 
 
