@@ -284,7 +284,7 @@ MINIMAL = "vector_store: in_memory\nllm_provider: mock\nbarriers:\n  pii:\n    m
 
 
 def _ns(**kw) -> Namespace:
-    base = {k: False for k in ("claude", "codex", "cursor", "gemini", "windsurf", "copilot")}
+    base = {k: False for k in ("claude", "codex", "cursor", "gemini", "windsurf", "copilot", "antigravity")}
     base.update(dry_run=False, no_verify=False, no_hooks=False, config=None, fix=False, json=False, skip_models=True)
     base.update(kw)
     return Namespace(**base)
@@ -393,7 +393,7 @@ def test_setup_turns_on_automatic_memory_in_codex_too(wired_home, capsys):
     cmd_setup(_ns())
     out = capsys.readouterr().out
     assert all(CodexHost().hook_commands().values())
-    assert "interactive Claude Code and Codex CLI sessions" in out
+    assert "Claude Code and Codex CLI: each finished turn is saved" in out
     # Codex skips new hooks until trusted in /hooks; say so on a fresh install only.
     assert "run /hooks" in out
     cmd_setup(_ns())
@@ -426,7 +426,7 @@ def test_doctor_reports_and_repairs_hooks_from_a_moved_install(wired_home, capsy
 
 
 def test_every_host_class_is_registered():
-    assert {c.key for c in hosts_mod.ALL_HOSTS} == {"claude", "codex", "cursor", "gemini", "windsurf", "copilot"}
+    assert {c.key for c in hosts_mod.SUPPORTED_HOSTS} == {"claude", "codex", "cursor", "gemini", "windsurf", "copilot", "antigravity"}
 
 
 
@@ -754,6 +754,15 @@ def test_a_crashed_server_is_explained_by_its_exception_line(stderr, expected):
     from astrocyte.harness.server import _explain
 
     assert _explain(stderr) == expected
+
+
+def test_setup_says_copilot_only_recalls(wired_home, capsys):
+    """Copilot CLI's turns aren't captured yet: setup must not claim they are."""
+    (wired_home / ".copilot").mkdir()
+    cmd_setup(_ns())
+    out = capsys.readouterr().out
+    assert "Copilot CLI: relevant memories (saved by your other agents)" in out
+    assert "its own turns are not saved yet" in out
 
 
 # ── the store is private to its owner ────────────────────────────────────

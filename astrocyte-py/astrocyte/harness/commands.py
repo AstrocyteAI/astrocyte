@@ -8,12 +8,13 @@ from argparse import Namespace
 from pathlib import Path
 
 from .doctor import Check, apply_fixes, run_checks
-from .hosts import ALL_HOSTS, HookHost, Host, Outcome, host_by_key, hosts
+from .hosts import ALL_HOSTS, SUPPORTED_HOSTS, HookHost, Host, Outcome, host_by_key, hosts
 from .localconfig import SetupError, choose_providers, render_config, write_config
 from .paths import config_path, database_path
 from .server import handshake, hook_prefix, locate_mcp_server, server_spec
 
-HOST_KEYS = tuple(cls.key for cls in ALL_HOSTS)
+HOST_KEYS = tuple(cls.key for cls in ALL_HOSTS)  # v0.16.0's value: part of the public API
+SUPPORTED_HOST_KEYS = tuple(cls.key for cls in SUPPORTED_HOSTS)
 
 _MARK = {"ok": "✓", "warn": "!", "fail": "✗", "info": "·"}
 _OUTCOME_MARK = {
@@ -24,7 +25,7 @@ _OUTCOME_MARK = {
 
 def _selected_hosts(args: Namespace) -> tuple[list[Host], bool]:
     """Hosts named by flags, else every detected one. Returns (hosts, explicit)."""
-    named = [k for k in HOST_KEYS if getattr(args, k, False)]
+    named = [k for k in SUPPORTED_HOST_KEYS if getattr(args, k, False)]
     if named:
         return [host_by_key(k) for k in named], True
     return [h for h in hosts() if h.detected()], False
@@ -92,7 +93,7 @@ def cmd_setup(args: Namespace) -> int:
     # 4. Harnesses.
     targets, explicit = _selected_hosts(args)
     if not targets:
-        print("\n  No agent harnesses detected. Supported: " + ", ".join(c.label for c in ALL_HOSTS)
+        print("\n  No agent harnesses detected. Supported: " + ", ".join(c.label for c in SUPPORTED_HOSTS)
               + ".\n  Install one, or name it explicitly, e.g. astrocyte setup --claude")
         return 1
     if not explicit:
@@ -128,10 +129,16 @@ def cmd_setup(args: Namespace) -> int:
             for note in notes:
                 print(f"  • {note}")
         if auto_memory:
-            names = " and ".join(h.label for h in auto_memory)
-            print(f"\nAutomatic memory is on in interactive {names} sessions, including ones already open:\n"
-                  "from their next turn, each turn is saved to that project's local memory and relevant\n"
-                  "memories are added to new prompts. Headless runs (`claude -p`, `codex exec`) are left alone.\n"
+            capture = [h.label for h in auto_memory if h.captures_turns]
+            recall_only = [h.label for h in auto_memory if not h.captures_turns]
+            print("\nAutomatic memory is on in interactive sessions, including ones already open.")
+            if capture:
+                print(f"  {_join(capture)}: each finished turn is saved to that project's local memory,\n"
+                      "  and relevant memories are added to new prompts.")
+            if recall_only:
+                print(f"  {_join(recall_only)}: relevant memories (saved by your other agents) are added to\n"
+                      "  new prompts; its own turns are not saved yet.")
+            print("Headless runs (`claude -p`, `codex exec`, `agy -p`, `copilot -p`) are left alone.\n"
                   "Pause with ASTROCYTE_HOOKS=off, or remove with: astrocyte setup --no-hooks")
         seed = _seed_files(Path.cwd())
         if seed:
@@ -233,7 +240,7 @@ def register(sub) -> None:
     """Add setup / uninstall / doctor to the ``astrocyte`` CLI."""
 
     def host_flags(p) -> None:
-        for cls in ALL_HOSTS:
+        for cls in SUPPORTED_HOSTS:
             p.add_argument(f"--{cls.key}", action="store_true", help=f"only {cls.label}")
         p.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
 
@@ -253,7 +260,8 @@ def register(sub) -> None:
 
     hook = sub.add_parser("hook", help="(called by agent hooks) automatic memory for one lifecycle event")
     hook.add_argument("event", choices=["session-start", "prompt", "stop"])
-    hook.add_argument("--host", choices=["claude", "codex"], default="claude", help="the agent firing the hook")
+    hook.add_argument("--host", choices=["claude", "codex", "antigravity", "copilot"], default="claude",
+                      help="the agent firing the hook")
     hook.set_defaults(func=lambda a: _run_hook(a.event, a.host))
 
     agentd = sub.add_parser("agentd", help="(started on demand) keep memory warm for agent hooks")
@@ -286,3 +294,7 @@ def _run_agentd(config: str | None) -> int:
     from .agentd import run
 
     return run(Path(config).expanduser() if config else config_path())
+
+
+def _join(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]

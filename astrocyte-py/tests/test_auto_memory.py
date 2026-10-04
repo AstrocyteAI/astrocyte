@@ -1054,3 +1054,171 @@ def test_stdio_mcp_server_defaults_to_the_project_bank(env, tmp_path):
         proc.wait()
     banks = json.loads(reply["result"]["content"][0]["text"])
     assert banks["default"] == project_bank(str(repo))
+
+
+# ── Antigravity ──────────────────────────────────────────────────────────
+
+
+def _agy_step(i: int, kind: str, content, source: str = "MODEL", **extra) -> str:
+    return json.dumps({"step_index": i, "source": source, "type": kind, "status": "DONE",
+                       "created_at": "2026-10-04T03:03:55Z", "content": content, **extra}) + "\n"
+
+
+def _agy_user(i: int, text: str) -> str:
+    wrapped = f"<USER_REQUEST>\n{text}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nlocal time\n</ADDITIONAL_METADATA>"
+    return _agy_step(i, "USER_INPUT", wrapped, source="USER_EXPLICIT")
+
+
+class TestAntigravityTranscript:
+    """Step format measured on agy 1.2 and the Antigravity app."""
+
+    def test_turns_are_user_requests_and_prose_replies(self, tmp_path):
+        t = tmp_path / "transcript.jsonl"
+        t.write_text(
+            _agy_user(0, "what is our deploy day?")
+            + _agy_step(1, "EPHEMERAL_MESSAGE", "Possibly relevant memories: …", source="SYSTEM_SDK")
+            + _agy_step(2, "PLANNER_RESPONSE", None, tool_calls=[{"name": "find_by_name"}])
+            + _agy_step(3, "GENERIC", "The command exited with code 0.")
+            + _agy_step(4, "PLANNER_RESPONSE", "Tuesdays.")
+        )
+        [turn], resume = read_new_turns(t, antigravity=True)
+        assert turn.user == "what is our deploy day?" and turn.assistant == ["Tuesdays."]
+        assert "Possibly relevant" not in turn.render(), "our own injection is never re-captured"
+        assert turn.started_at is not None and resume == t.stat().st_size
+
+
+class TestAntigravityHooks:
+    def _payload(self, env, t, conv="conv-1") -> str:
+        return json.dumps({"conversationId": conv, "workspacePaths": [str(env.home)], "transcriptPath": str(t),
+                           "invocationNum": 0, "initialNumSteps": 1})
+
+    def _wire(self, monkeypatch, calls):
+        def fake_request(op, payload=None, **kw):
+            calls.append(op)
+            return {"context": f"[{op}]"}
+
+        monkeypatch.setattr(agentd, "request", fake_request)
+        monkeypatch.setattr(agentd, "ensure_running", lambda cfg, wait: True)
+        monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
+
+    def _run(self, monkeypatch, capsys, event, stdin) -> dict:
+        import io
+
+        monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
+        assert hooks.main(event, "antigravity") == 0
+        return json.loads(capsys.readouterr().out)
+
+    def test_first_model_call_gets_summary_and_recall_later_calls_nothing(self, env, tmp_path, monkeypatch, capsys):
+        calls = []
+        self._wire(monkeypatch, calls)
+        t = tmp_path / "transcript.jsonl"
+        t.write_text(_agy_user(0, "why is staging failing today?"))
+        out = self._run(monkeypatch, capsys, "prompt", self._payload(env, t))
+        assert out == {"injectSteps": [{"ephemeralMessage": "[boot]\n\n[recall]"}]} and calls == ["boot", "recall"]
+        # PreInvocation fires before every model call of the turn: act once.
+        assert self._run(monkeypatch, capsys, "prompt", self._payload(env, t)) == {}
+        with t.open("a") as fh:
+            fh.write(_agy_step(1, "PLANNER_RESPONSE", "Checking.") + _agy_user(2, "and the migrations on staging?"))
+        out = self._run(monkeypatch, capsys, "prompt", self._payload(env, t))
+        assert out == {"injectSteps": [{"ephemeralMessage": "[recall]"}]}, "the summary only once per conversation"
+
+    def test_every_hook_answers_json_even_when_it_stays_out(self, env, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("ASTROCYTE_HOOKS", "off")
+        assert self._run(monkeypatch, capsys, "stop", "{}") == {}
+
+    def test_stop_captures_the_finished_turn(self, env, tmp_path, monkeypatch):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
+        monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
+        t = tmp_path / "transcript.jsonl"
+        t.write_text(_agy_user(0, "what is our deploy day?") + _agy_step(1, "PLANNER_RESPONSE", "Tuesdays."))
+        hooks.run("stop", self._payload(env, t), "antigravity")
+        [spooled] = list((env.state / "spool").glob("*.json"))
+        batch = json.loads(spooled.read_text())
+        assert batch["source"] == "antigravity" and batch["session_id"] == "conv-1"
+        assert batch["bank"] == project_bank(str(env.home)) and "Tuesdays." in batch["turns"][0]["content"]
+
+    @pytest.mark.parametrize("argv,headless", [
+        (["agy"], False),
+        (["agy", "--continue"], False),
+        (["/Users/x/.local/bin/agy", "-p", "hi"], True),
+        (["agy", "--print", "hi"], True),
+    ])
+    def test_agy_print_mode_is_headless(self, argv, headless):
+        assert hooks.dialect_for("antigravity").headless(argv) is headless
+
+
+class TestCopilotHooks:
+    def test_summary_and_recall_use_copilots_output_key(self, env, monkeypatch, capsys):
+        monkeypatch.setattr(agentd, "ensure_running", lambda cfg, wait: True)
+        monkeypatch.setattr(agentd, "request", lambda op, payload=None, **k: {"context": f"[{op}]"})
+        base = {"sessionId": "cp-1", "timestamp": 1, "cwd": str(env.home)}
+        hooks.run("session-start", json.dumps({**base, "source": "startup"}), "copilot")
+        assert json.loads(capsys.readouterr().out) == {"additionalContext": "[boot]"}
+        hooks.run("prompt", json.dumps({**base, "prompt": "why is staging failing today?"}), "copilot")
+        assert json.loads(capsys.readouterr().out) == {"additionalContext": "[recall]"}
+
+    def test_turns_are_not_captured_yet(self, env, tmp_path, monkeypatch):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
+        hooks.run("stop", json.dumps({"sessionId": "cp-1", "cwd": str(env.home),
+                                      "transcriptPath": str(tmp_path / "t.jsonl")}), "copilot")
+        assert not (env.state / "spool").exists()
+
+    def test_node_launched_copilot_print_mode_is_headless(self, monkeypatch):
+        def fake_run(argv, **kw):
+            table = {100: "50 /bin/sh -c hook", 50: "1 /opt/homebrew/bin/node /opt/lib/node_modules/@github/copilot/index.js -p hi"}
+            return subprocess.CompletedProcess(argv, 0, stdout=table.get(int(argv[-1]), ""), stderr="")
+
+        monkeypatch.setattr(hooks.subprocess, "run", fake_run)
+        monkeypatch.setattr(hooks.os, "getppid", lambda: 100)
+        assert hooks._agent_ancestor_args("copilot") is None, "the script is index.js, not copilot"
+
+        def fake_run2(argv, **kw):
+            table = {100: "50 /bin/sh -c hook", 50: "1 node /opt/homebrew/bin/copilot -p hi"}
+            return subprocess.CompletedProcess(argv, 0, stdout=table.get(int(argv[-1]), ""), stderr="")
+
+        monkeypatch.setattr(hooks.subprocess, "run", fake_run2)
+        assert hooks.headless_session("copilot") is True
+
+
+class TestNewHookInstalls:
+    CLI = "/opt/astrocyte/bin/astrocyte"
+
+    def test_antigravity_is_one_named_entry_beside_the_users_hooks(self, env):
+        from astrocyte.harness.hosts import AntigravityHost
+
+        host = AntigravityHost()
+        host.hooks_file().parent.mkdir(parents=True)
+        theirs = {"lint-checker": {"PostToolUse": [{"matcher": "run_command", "hooks": [{"command": "./lint.sh"}]}]}}
+        host.hooks_file().write_text(json.dumps(theirs))
+        assert host.install_hooks(self.CLI).status == "installed"
+        assert host.install_hooks(self.CLI).status == "unchanged"
+        data = json.loads(host.hooks_file().read_text())
+        assert data["lint-checker"] == theirs["lint-checker"]
+        assert data["astrocyte"]["PreInvocation"][0] == {
+            "type": "command", "command": f"{self.CLI} hook prompt --host antigravity", "timeout": 15}
+        assert host.uninstall_hooks().status == "removed"
+        assert json.loads(host.hooks_file().read_text()) == theirs
+
+    def test_antigravity_mcp_registration(self, env):
+        from astrocyte.harness.hosts import AntigravityHost, ServerSpec
+
+        spec = ServerSpec("/py", ("-I", "-m", "astrocyte.mcp"))
+        host = AntigravityHost()
+        assert host.install(spec).status == "installed"
+        assert json.loads(host.config_file().read_text())["mcpServers"]["astrocyte"] == {
+            "command": "/py", "args": ["-I", "-m", "astrocyte.mcp"]}
+
+    def test_copilot_hooks_are_a_file_of_their_own(self, env):
+        from astrocyte.harness.hosts import CopilotHost
+
+        host = CopilotHost()
+        other = env.home / ".copilot" / "hooks" / "codebase-memory-mcp.json"
+        other.parent.mkdir(parents=True)
+        other.write_text('{"version": 1, "hooks": {}}')
+        assert host.install_hooks(self.CLI).status == "installed"
+        data = json.loads(host.hooks_file().read_text())
+        assert data["version"] == 1 and data["hooks"]["sessionStart"][0]["bash"] == (
+            f"{self.CLI} hook session-start --host copilot")
+        assert host.install_hooks(self.CLI).status == "unchanged"
+        assert host.uninstall_hooks().status == "removed"
+        assert not host.hooks_file().exists() and other.read_text() == '{"version": 1, "hooks": {}}'

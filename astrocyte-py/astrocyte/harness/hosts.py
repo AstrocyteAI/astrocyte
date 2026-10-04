@@ -222,6 +222,8 @@ class HookHost:
     hook_dialect: str | None = None
     #: A consent gate the harness applies to new hooks (cf. Host.next_step).
     hooks_next_step: str = ""
+    #: Do this harness's hooks save finished turns, or only recall?
+    captures_turns: bool = True
     # Matches the current ``<python> -I -m astrocyte.cli hook …`` form and the
     # earlier ``astrocyte hook …`` console-script form, with or without --host.
     _OURS = re.compile(
@@ -654,8 +656,151 @@ class WindsurfHost(_JsonHost):
         return _home() / ".codeium" / "windsurf" / "mcp_config.json"
 
 
-class CopilotHost(_JsonHost):
+class _OwnHookFile(HookHost):
+    """Hook layouts other than Claude Code's grouped one. Subclasses say how
+    the ``astrocyte`` entries sit in their file; install / uninstall /
+    verification are shared."""
+
+    _COMMAND_KEY = "command"
+
+    def _entries(self, data: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def _write_entries(self, data: dict[str, Any], entries: dict[str, dict[str, Any]]) -> None:
+        raise NotImplementedError
+
+    def _drop_entries(self, data: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def _hook_entry(self, command: str, extra: dict[str, Any]) -> dict[str, Any]:
+        return {"type": "command", self._COMMAND_KEY: command, **extra}
+
+    def hook_commands(self) -> dict[str, str | None]:
+        events = self._entries(_read_json(self.hooks_file()))
+        found: dict[str, str | None] = dict.fromkeys(self.HOOK_EVENTS)
+        for event in self.HOOK_EVENTS:
+            for handler in events.get(event) or []:
+                if isinstance(handler, dict) and self._OURS.search(str(handler.get(self._COMMAND_KEY, ""))):
+                    found[event] = handler[self._COMMAND_KEY]
+        return found
+
+    def install_hooks(self, prefix: str, *, dry_run: bool = False) -> Outcome:
+        label = f"{self.label} hooks"
+        flag = f" --host {self.hook_dialect}" if self.hook_dialect else ""
+        wanted = {event: self._hook_entry(f"{prefix} hook {sub}{flag}", extra)
+                  for event, (sub, extra) in self.HOOK_EVENTS.items()}
+        try:
+            current = self.hook_commands()
+        except HostConfigError as e:
+            return Outcome(label, "failed", str(e))
+        if all(current[e] == wanted[e][self._COMMAND_KEY] for e in wanted):
+            return Outcome(label, "unchanged", str(self.hooks_file()))
+        verb: Status = "updated" if any(current.values()) else "installed"
+        if dry_run:
+            return Outcome(label, "planned", f"would {_VERB[verb]} {self.hooks_file()}")
+        try:
+            edit_json(self.hooks_file(), lambda data: self._write_entries(data, wanted))
+            after = self.hook_commands()
+        except (HostConfigError, OSError) as e:
+            return Outcome(label, "failed", str(e))
+        if any(after[e] != wanted[e][self._COMMAND_KEY] for e in wanted):
+            return Outcome(label, "failed", f"wrote {self.hooks_file()} but the hooks did not take effect")
+        return Outcome(label, verb, str(self.hooks_file()))
+
+    def uninstall_hooks(self, *, dry_run: bool = False) -> Outcome:
+        label = f"{self.label} hooks"
+        try:
+            if not any(self.hook_commands().values()):
+                return Outcome(label, "absent", str(self.hooks_file()))
+            if dry_run:
+                return Outcome(label, "planned", f"would remove from {self.hooks_file()}")
+            edit_json(self.hooks_file(), self._drop_entries)
+        except (HostConfigError, OSError) as e:
+            return Outcome(label, "failed", str(e))
+        return Outcome(label, "removed", str(self.hooks_file()))
+
+
+class AntigravityHost(_OwnHookFile, _JsonHost):
+    """Google Antigravity: the app and the ``agy`` CLI share ~/.gemini/config.
+
+    Hook names are the top-level keys of hooks.json, so ours is one named
+    entry — added and removed whole, beside the user's own. Antigravity has
+    no prompt-submitted event: PreInvocation (before each model call) carries
+    recall, and the project summary on a conversation's first call. Timeouts
+    are seconds. Verified against agy 1.2: both hooks fire and injected
+    context lands in the transcript.
+    """
+
+    key, label = "antigravity", "Antigravity"
+    next_step = "Antigravity loads MCP servers and hooks when a conversation starts: open a new one."
+    HOOK_EVENTS = {
+        "PreInvocation": ("prompt", {"timeout": 15}),
+        "Stop": ("stop", {"timeout": 10}),
+    }
+    hook_dialect = "antigravity"
+    _HOOK_NAME = "astrocyte"
+
+    def _dir(self) -> Path:
+        return _home() / ".gemini" / "config"
+
+    def detected(self) -> bool:
+        return self._dir().is_dir() or shutil.which("agy") is not None
+
+    def config_file(self) -> Path:
+        return self._dir() / "mcp_config.json"
+
+    def hooks_file(self) -> Path:
+        return self._dir() / "hooks.json"
+
+    def _entries(self, data: dict[str, Any]) -> dict[str, Any]:
+        entry = data.get(self._HOOK_NAME)
+        return entry if isinstance(entry, dict) else {}
+
+    def _write_entries(self, data: dict[str, Any], entries: dict[str, dict[str, Any]]) -> None:
+        data[self._HOOK_NAME] = {event: [handler] for event, handler in entries.items()}
+
+    def _drop_entries(self, data: dict[str, Any]) -> None:
+        data.pop(self._HOOK_NAME, None)
+
+
+class CopilotHost(_OwnHookFile, _JsonHost):
+    """Copilot CLI reads every ~/.copilot/hooks/*.json; ours is its own file.
+
+    Session start injects the project summary and each prompt is recalled
+    against. Turns are not captured yet: agentStop gives only a transcript
+    path whose format has not been verified. Built from GitHub's hooks
+    reference (not exercised against a live Copilot CLI).
+    """
+
     key, label = "copilot", "Copilot CLI"
+    captures_turns = False
+    HOOK_EVENTS = {
+        "sessionStart": ("session-start", {"timeoutSec": 15}),
+        "userPromptSubmitted": ("prompt", {"timeoutSec": 5}),
+    }
+    hook_dialect = "copilot"
+    _COMMAND_KEY = "bash"
+
+    def hooks_file(self) -> Path:
+        return self._dir() / "hooks" / "astrocyte.json"
+
+    def _entries(self, data: dict[str, Any]) -> dict[str, Any]:
+        hooks = data.get("hooks")
+        return hooks if isinstance(hooks, dict) else {}
+
+    def _write_entries(self, data: dict[str, Any], entries: dict[str, dict[str, Any]]) -> None:
+        data.clear()
+        data.update({"version": 1, "hooks": {event: [handler] for event, handler in entries.items()}})
+
+    def _drop_entries(self, data: dict[str, Any]) -> None:
+        data.clear()
+
+    def uninstall_hooks(self, *, dry_run: bool = False) -> Outcome:
+        outcome = super().uninstall_hooks(dry_run=dry_run)
+        if outcome.status == "removed":
+            self.hooks_file().unlink(missing_ok=True)  # the file was only ever ours
+            self.hooks_file().with_name(self.hooks_file().name + ".astrocyte-bak").unlink(missing_ok=True)
+        return outcome
 
     def _dir(self) -> Path:
         return Path(os.environ["COPILOT_HOME"]) if os.environ.get("COPILOT_HOME") else _home() / ".copilot"
@@ -673,13 +818,17 @@ class CopilotHost(_JsonHost):
 
 ALL_HOSTS: tuple[type[Host], ...] = (ClaudeCodeHost, CodexHost, CursorHost, GeminiHost, WindsurfHost, CopilotHost)
 
+# Every harness setup supports. ALL_HOSTS keeps its v0.16.0 value (it is part
+# of the public API); hosts added since are appended here.
+SUPPORTED_HOSTS: tuple[type[Host], ...] = (*ALL_HOSTS, AntigravityHost)
+
 
 def hosts() -> list[Host]:
-    return [cls() for cls in ALL_HOSTS]
+    return [cls() for cls in SUPPORTED_HOSTS]
 
 
 def host_by_key(key: str) -> Host:
     for h in hosts():
         if h.key == key:
             return h
-    raise KeyError(f"unknown harness {key!r}; expected one of {[c.key for c in ALL_HOSTS]}")
+    raise KeyError(f"unknown harness {key!r}; expected one of {[c.key for c in SUPPORTED_HOSTS]}")
