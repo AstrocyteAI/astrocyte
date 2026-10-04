@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-10-04 — automatic memory on native Windows; gateway tokens and team-sync endpoints; provenance kept
+
+Tagged at `f89997b`. This section was committed after the tag, so the released source still lists these entries under Unreleased.
+
+Design and direction: `docs/_design/team-memory.md` (accepted), `docs/_design/windows-local-install.md` (W1–W4 implemented), `docs/_design/anchored-documents.md` and `docs/_design/federated-sources.md` (the publicly committed direction: Astrocyte as the evidence layer behind documents), and the objective in `docs/_design/design-principles.md`.
+
 ### Added
 
 - **Per-user gateway tokens.** A new gateway auth mode, `ASTROCYTE_AUTH_MODE=token`, gives each person, agent or CI job its own token. The token is looked up in a registry file (`ASTROCYTE_TOKENS_FILE`) and decides the principal; `X-Astrocyte-Principal` is ignored. Each entry binds the token to a principal, optional `team:` groups and optional bank grants. `python -m astrocyte_gateway.tokens create|list|revoke` manages the file: `create` prints the token once and stores only its SHA-256 hash, the file is written atomically with mode 0600, and a revoke keeps the row as an audit trail. The gateway refuses to start without a readable registry and re-reads it when it changes, so a revoked token is refused on the next request. Sent as `Authorization: Bearer` or `X-Api-Key`. The first step of team memory (`team-memory.md` §8, G1). A token's grants and groups are enforced by access control, so the gateway refuses to start (and refuses such a token added later, 403) while scoped tokens exist and `access_control.enabled` is false.
@@ -21,6 +27,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- **Structured extraction's metadata reaches the stored memory.** `retain()` and `retain_many()` kept only each chunk's text and entities from structured extraction; the fact type, event time and when/where/who it computed (a paid LLM call) were discarded, since extraction was introduced. Each chunk's fields now reach its row through dedup: an explicit profile `fact_type` beats the model's, the model's beats the default, an extracted `occurred_start` becomes `occurred_at` (the request time is kept as `_mentioned_at`), and a chunk the model skipped keeps the request's values.
 - **Recall hits carry the `source` a memory was retained with, and `POST /v1/retain` accepts `occurred_at` and `source`.** On the default (pipeline) path, `retain(source=...)` reached only the optional source store, so every recall hit's `source` was `None`; it is now kept on each stored chunk (metadata `_source`) and returned by every recall path. The gateway's retain body declared neither field, so a client's `occurred_at` and `source` were silently dropped (unknown fields are ignored); both are now accepted (a naive `occurred_at` is UTC) and validated.
 
 ### Security
