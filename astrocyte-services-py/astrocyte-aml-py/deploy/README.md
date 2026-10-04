@@ -90,7 +90,7 @@ the measured and submitted setups match.
 Rebuilt and run end to end on 2026-10-04 from a clean checkout:
 
 - image builds from a clean context; both containers report healthy; the image
-  reports `astrocyte 0.17.0`
+  reports `astrocyte 0.18.0`
 - `/add` executes the full retain path and fails **only** on OpenAI
   authentication under a dummy key; a repeat of the failed request re-runs
   rather than replaying the failure
