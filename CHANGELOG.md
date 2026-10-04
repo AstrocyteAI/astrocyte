@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-10-04 — where you left off; Windows fixes; tested on Linux, macOS and Windows
+
 ### Added
 
 - **Where you left off.** A new session in Claude Code, Codex, Antigravity or Copilot CLI opens with the closing exchanges (up to three) of the previous session in that project — whichever agent it was in — labelled with the agent and how long ago, the last answer given the most room. Built from the captured turns already in the store (newest other session; sessions running side by side are told apart; a session is never shown itself), so it adds no second copy of conversation text. Those turns count as already injected, and are not repeated under "Most recent memories".
@@ -11,6 +13,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- **Windows: every `astrocyte` status line crashed when output was piped** (an agent running the CLI, a redirect, CI) with `UnicodeEncodeError`: piped output there is encoded as cp1252, which has no ✓ or ─. The CLI now speaks UTF-8 on Windows, stdin included for hook payloads.
+- **Config and MIP rule files are read as UTF-8 on every platform**, with or without the BOM some Windows editors add. They were read in the platform's default encoding, so on Windows any non-ASCII text (a `→` in a rule, an accented name) mis-decoded or failed. A file saved in the legacy code page still loads.
+- **Two captures in one clock tick no longer lose turns.** Spool files were named by `time_ns` and pid; on a coarse clock (Windows ticks every ~15 ms) two captures from one process got the same name and the second replaced the first. Names now carry a random tail.
+- **Turns saved within one clock tick stay separate in the session summary, and long answers reassemble in order.** Grouping used `_created_at`, which a coarse clock stamps alike across retains, and chunk order used `retained_at`, stamped alike within one. Every retain now records `_retain_id` and every chunk of a split retain `_chunk_index` (the batch retain path gained `_retain_id` too). Memories stored earlier keep the old grouping.
+- **Agent configs are found under the user's profile on Windows.** Astrocyte preferred `$HOME`, which Git Bash may set elsewhere, while Claude Code, Codex and the other agents read `USERPROFILE`; it now uses `Path.home()` everywhere (`$HOME` on POSIX).
+- **`timed()` measures with `perf_counter`.** `monotonic()` ticks every ~15 ms on Windows, so short operations measured 0 ms.
+- **AML service: `/add` is idempotent under platform retries.** A retried Add that was still running, or already done, re-ingested its batch; retries now join the in-flight attempt or replay a recorded success (keyed on user, request and a content digest), and failures re-run.
 - **Session-start memories showed long turns as scrambled fragments.** A long captured turn is stored as several overlapping chunks that share a timestamp, and the session summary listed each chunk as its own memory, in arbitrary order, cut mid-word. Chunks retained together are now regrouped into one line: the question and the end of the reassembled answer, where its conclusion is.
 - **The gateway image runs on Debian 13 (Python 3.13).** `gcr.io/distroless/python3-debian12` still ships Python 3.11, OpenSSL, krb5 and expat without fixes Debian has released (25 fixable HIGH CVEs), which failed the image scan and left v0.16.0 and v0.17.0 without a scanned image. `python3-debian13` has none; the builder stage moves to Python 3.13 to match. The image workflow can now be dispatched with a `version` to rebuild a released version's image without re-tagging.
 - **The arm64 gateway image passes the vulnerability scan, and the scan now covers it.** Trivy was given the multi-arch index and scanned only the runner's amd64 image, so the arm64 image shipped in v0.17.0 with 8 fixable CRITICAL/HIGH CVEs in pcre2 10.32 (CVE-2022-1586, CVE-2022-1587, CVE-2025-58050, …). The library came from `psycopg[binary]`, whose aarch64 wheel bundles libpq's dependencies from AlmaLinux 8; its x86_64 wheel bundles end-of-life CentOS 7 libraries. The image now uses psycopg's C implementation built against Debian 13's libpq, with libpq and the four packages it needs copied into the distroless runtime together with their dpkg records, so scanners inventory them. Each platform image is scanned by its own digest in a separate job, and the tags move only after every platform passes.
@@ -18,8 +27,13 @@ All notable changes to this project are documented here. The format follows [Kee
 - **`bank_health` reports the real memory count.** It came from `list_vectors(limit=0)`, which returns no rows on every store, so `memory_count` was always 0. It now pages through `list_vectors`; the VectorStore SPI has no count method, so the cost grows with bank size.
 - **`astrocyte memory` commands don't run noisy-bank detection.** Importing a docs tree with many short sections tripped the `short_content` signal and printed a raw JSON warning in the terminal. Detection guards against agents writing junk or looping; the user's own commands now open the store with it off. The automatic-memory daemon keeps it, and logs to its own file.
 
+### Tested on Linux, macOS and Windows
+
+- `astrocyte-py`'s suite now also runs on macOS and Windows, `astrocyte-sqlite`'s on both, and the install smoke test (`uv tool install`, `setup`, `doctor`, `memory`, `uninstall`) on all three for every change, not only macOS on release tags. The fixes above came out of the first Windows runs. Automatic memory's agent daemon still needs Unix sockets and stays off on Windows (design: `docs/_design/windows-local-install.md`).
+
 ### Security
 
+- **Export/import logs can't be forged** (CWE-117): the incomplete-export warning and the archive's `occurred_at` debug line now sanitize request-controlled values like the rest of the codebase.
 - **Dependency sweep.** Every `uv.lock` (16) refreshed for the packages behind GitHub's open Dependabot alerts — `anyio` (critical), `PyJWT` (critical), `urllib3`, `pypdf`, `virtualenv`, `soupsieve` and `litellm` — clearing all 142 Python alerts. Lockfiles only; no `pyproject.toml` range changed, so installs from PyPI are unaffected except where they resolve to the same new versions. The gateway image is built from its lockfile and picks these up.
 
 ## [0.17.0] — 2026-10-04 — Antigravity and Copilot CLI; memory import/export; config that now applies
