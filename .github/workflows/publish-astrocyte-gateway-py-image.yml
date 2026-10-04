@@ -312,13 +312,18 @@ jobs:
           DIGEST: ${{ matrix.digest }}
           PLATFORM: ${{ matrix.platform }}
         run: |
-          root="$(jq -c '[.packages[] | select(.primaryPackagePurpose == "CONTAINER")
-            | {digest: .versionInfo,
-               arch: ([.externalRefs[]? | select(.referenceType == "purl") | .referenceLocator
-                       | capture("[?&]arch=(?<a>[^&]+)").a][0])}]' "${SBOM}")"
-          want="$(jq -cn --arg d "${DIGEST}" --arg p "${PLATFORM}" '[{digest: $d, arch: ($p | split("/")[1])}]')"
-          if [ "${root}" != "${want}" ]; then
-            echo "::error::${SBOM} describes ${root}, expected ${want}"
+          # The root names the image by digest. Its purl's arch is empty when
+          # Syft (1.42) scans a digest from the registry, so the architecture
+          # comes from the Debian packages: every one not built for "all" must
+          # be built for this platform.
+          root="$(jq -c '[.packages[] | select(.primaryPackagePurpose == "CONTAINER") | .versionInfo]' "${SBOM}")"
+          arches="$(jq -c '[.packages[].externalRefs[]? | select(.referenceType == "purl") | .referenceLocator
+            | select(startswith("pkg:deb/")) | capture("[?&]arch=(?<a>[^&]+)").a | select(. != "all")]
+            | unique' "${SBOM}")"
+          want_root="$(jq -cn --arg d "${DIGEST}" '[$d]')"
+          want_arches="$(jq -cn --arg p "${PLATFORM}" '[$p | split("/")[1]]')"
+          if [ "${root}" != "${want_root}" ] || [ "${arches}" != "${want_arches}" ]; then
+            echo "::error::${SBOM} describes ${root} with ${arches} packages, expected ${want_root} with ${want_arches}"
             exit 1
           fi
           echo "${SBOM}: $(jq '.packages | length' "${SBOM}") packages, ${PLATFORM} @ ${DIGEST}"
