@@ -14,8 +14,6 @@ WINDOWS = os.name == "nt"
 
 #: POSIX permission bits; Windows protects files with ACLs on the user profile.
 posix_modes = pytest.mark.skipif(WINDOWS, reason="POSIX file modes; Windows relies on profile ACLs")
-#: Registered hook commands use POSIX shell quoting (Windows: see the design).
-posix_shell = pytest.mark.skipif(WINDOWS, reason="hook commands are POSIX-quoted (Windows: not yet supported)")
 
 
 def system_env() -> dict[str, str]:

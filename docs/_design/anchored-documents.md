@@ -17,6 +17,45 @@ where it came from and whether it is still true.
 
 ---
 
+## 0. Decisions (2026-10-04)
+
+Committed publicly in Calvin's reply to the essay,
+["Agents Need Documents They Can Check"](https://calvinx.com/blog/2026-Oct-04/agents-need-documents-they-can-check) (2026-10-04), whose "What this means for Astrocyte"
+section states the direction below. Nothing in it is built yet; it follows the
+AML cycle 2 work.
+
+1. **Astrocyte is the evidence layer behind documents, not a rival to them.**
+2. **The every-prompt similarity hook stops being the default.** It is replaced
+   by a table of contents at session start plus the claims anchored to the file
+   the agent opens; similarity stays as a fallback (§4).
+3. **Capture stays automatic.** Turns and work are retained as evidence (§7).
+4. **What the agent knows is readable pages,** with no database query needed
+   (§5.5).
+5. **Agents draft, people approve, in tools the team already uses.** Repository
+   Markdown pull requests first, then suggestions in documentation tools
+   (Confluence, Notion). **Astrocyte does not build its own review UI** (§7).
+6. **Work with existing documents, including operator-memory's Markdown,** and
+   add sources and staleness checks to them rather than asking teams to move.
+7. **Draw on search and RAG systems teams already run,** treating their results
+   as evidence with sources, never as raw text passed to the agent
+   ([`federated-sources.md`](federated-sources.md)).
+8. **Results before claims.** Build the essay's documents-only system as the
+   baseline and publish the comparison with error bars, whichever way it goes
+   (§9).
+
+**Positioning.** Memory is low effort and low control: it is trusted by its
+results. Documentation is high effort and high control: it is trusted by
+inspection. Astrocyte aims at the empty corner, captured as easily as memory
+and checked as easily as a document. Integrations deliver the control half
+only if they write back for human review and carry provenance in both
+directions.
+
+**Prerequisite for every phase:** retain must persist each chunk's extracted
+metadata. On 2026-10-04 we found that `retain()` discarded it (dates, fact
+type, when/where/who), keeping only chunk text and entities; a fix is in
+progress. Anchors, staleness, and trust all depend on dates and sources
+surviving storage.
+
 ## 1. The critiques this must answer
 
 From the essay, against memory systems:
@@ -202,6 +241,11 @@ touch. Query-driven retrieval is no longer the primary mechanism.
 2. **At end of task, while the agent still holds full context,** it proposes
    patches. This borrows the essay's best idea. Each patch adds, supersedes,
    or re-verifies claims, with citations to the turns that justify it.
+   **Patches are delivered where the team already reviews** (decision 5): a
+   pull request against Markdown in the repository first, then suggestions in
+   documentation tools such as Confluence or Notion. Astrocyte builds no review
+   UI of its own; approval happens in the team's tool, and Astrocyte records
+   the outcome.
 3. **Its own task summary is retained as evidence,** alongside the extracted
    facts. A summary written with full context is better evidence than facts
    extracted from a transcript afterwards.
@@ -229,6 +273,9 @@ touch. Query-driven retrieval is no longer the primary mechanism.
 | File-touch hook and anchored injection | **new**: needs a new hook event in the harness |
 | Write-time conflict classification | **new**: decision-model call site |
 | Patch-based write path at end of task | **new** |
+| Delivery as pull requests, then doc-tool suggestions | **new** (decision 5) |
+| Reading operator-memory's Markdown brain as documents, adding anchors | **new** (decision 6) |
+| Per-chunk extraction metadata persisted by `retain()` | **prerequisite**: discarded until 2026-10-04; fix in progress |
 
 ## 9. Evaluation — the essay offers none, so this must
 
@@ -237,8 +284,11 @@ touch. Query-driven retrieval is no longer the primary mechanism.
    is the only honest test of the claim.
 2. **AML's coding-memory track is the matched test:** reuse engineering
    experience from earlier work in the same repository, across time-constrained
-   historical tasks. Compare three arms: documents only, memory only, and this
-   hybrid.
+   historical tasks. Compare four arms: documents only, memory only, this
+   hybrid, and **federated** (the hybrid drawing on a team's existing
+   documentation and RAG systems, [`federated-sources.md`](federated-sources.md)).
+   Report accuracy with confidence intervals and **latency p50/p95** per arm,
+   and publish the comparison whichever way it comes out (decision 8).
 3. **A staleness benchmark, which nobody publishes:** write memories, change
    the code underneath them, then measure how often a stale memory misleads
    the agent. This tests critique 3 directly, and anchor checks should drive
@@ -252,11 +302,14 @@ replicate judge passes, and no number reported without its error bar (roadmap
 
 ## 10. Phasing
 
+All phases depend on the prerequisite in §0: extracted metadata must survive
+`retain()`.
+
 | Phase | Scope | Exit criterion |
 |---|---|---|
 | **P0** | Documents-only baseline; staleness benchmark | Both runnable; baseline numbers with error bars |
 | **P1** | Claim model; code anchors and checks at recall; file-touch injection; the map at session start | Staleness misleading rate measurably below baseline |
-| **P2** | Patch-based write path at end of task; citations; trust; write-time conflict check | No silent claim loss across a long run (every removal has a supersession record) |
+| **P2** | Patch-based write path at end of task, delivered as repository pull requests; citations; trust; write-time conflict check; operator-memory adapter | No silent claim loss across a long run (every removal has a supersession record) |
 | **P3** | Lint checks (§5.5); durable access counts; audit report | Report answers "stale / orphan / contradicted / dead" without SQL |
 
 P1 delivers the largest change in behaviour and reuses the most existing

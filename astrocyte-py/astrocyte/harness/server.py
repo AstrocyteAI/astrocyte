@@ -68,11 +68,55 @@ def server_spec(python: str, config: Path) -> ServerSpec:
     return ServerSpec(command=python, args=(ISOLATED, "-m", "astrocyte.mcp", "--config", str(config)))
 
 
-def hook_prefix(python: str) -> str:
-    """Shell command prefix for ``astrocyte hook <event>`` registrations."""
-    import shlex
+class HookPathError(ValueError):
+    """The interpreter path can't be written as a shell-neutral hook command."""
 
-    return f"{shlex.quote(python)} {ISOLATED} -m astrocyte.cli"
+
+# Characters every shell an agent may use on Windows (cmd, PowerShell, Git
+# Bash) reads literally in an unquoted word.
+_SHELL_NEUTRAL = re.compile(r"^[A-Za-z0-9_.~:/-]+$")
+
+
+def hook_prefix(python: str, *, windows: bool = os.name == "nt") -> str:
+    """Shell command prefix for ``astrocyte hook <event>`` registrations.
+
+    POSIX: shell-quoted. Windows: an agent runs hooks through cmd, PowerShell
+    or Git Bash depending on the machine (Claude Code: Git Bash when present,
+    else PowerShell), and no quoting means the same in all three. So the path
+    is written unquoted with forward slashes (bash keeps them; CreateProcess
+    accepts them) and without spaces, using its 8.3 short form if it has any.
+    """
+    if not windows:
+        import shlex
+
+        return f"{shlex.quote(python)} {ISOLATED} -m astrocyte.cli"
+    path = _short_path(python) if " " in python else python
+    path = path.replace("\\", "/")
+    if not _SHELL_NEUTRAL.match(path):
+        raise HookPathError(
+            f"{python} can't be written so that cmd, PowerShell and Git Bash all run it (it has spaces or shell "
+            "characters, and no 8.3 short name). Reinstall under a plain path, e.g. "
+            "uv tool install 'astrocyte[local]' with UV_TOOL_DIR=C:/astrocyte-tools."
+        )
+    return f"{path} {ISOLATED} -m astrocyte.cli"
+
+
+def _short_path(path: str) -> str:
+    """Windows' 8.3 alias of ``path`` (no spaces), or ``path`` where there is none."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        get = ctypes.windll.kernel32.GetShortPathNameW  # type: ignore[attr-defined]
+        get.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get.restype = wintypes.DWORD
+        size = get(path, None, 0)
+        if not size:
+            return path
+        buf = ctypes.create_unicode_buffer(size)
+        return buf.value if get(path, buf, size) else path
+    except (AttributeError, OSError):  # not Windows, or no kernel32
+        return path
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +55,45 @@ def _chunk_metadata(base: dict | None, index: int, count: int) -> dict | None:
     split. ``retained_at`` can't order chunks: they are stored within one
     tick of a coarse clock (Windows: ~15 ms)."""
     return base if count < 2 or base is None else {**base, "_chunk_index": index}
+
+@dataclass(frozen=True)
+class _FactOverlay:
+    """What structured extraction learned about one chunk, to apply to its
+    stored row. ``None`` / empty means "the model said nothing": the row
+    keeps the request's values."""
+
+    metadata: dict[str, Any]
+    fact_type: str | None
+    occurred_at: datetime | None
+
+
+def _apply_fact_overlay(
+    metadata: dict | None,
+    overlay: _FactOverlay | None,
+    *,
+    fact_type: str,
+    occurred_at: datetime | None,
+    profile_fact_type: str | None,
+) -> tuple[dict | None, str, datetime | None]:
+    """Merge one chunk's extraction results into its stored fields.
+
+    Precedence: a profile that sets ``fact_type`` explicitly is an operator
+    decision and wins; otherwise the model's classification replaces the
+    default. An extracted ``occurred_start`` is event time and replaces the
+    request's timestamp, which is kept as ``_mentioned_at`` so nothing is
+    lost. The ``_fact_*`` keys are prefixed and never overwrite caller keys.
+    """
+    if overlay is None:
+        return metadata, fact_type, occurred_at
+    merged = {**overlay.metadata, **(metadata or {})} if overlay.metadata else metadata
+    if overlay.fact_type is not None and not profile_fact_type:
+        fact_type = overlay.fact_type
+    if overlay.occurred_at is not None:
+        if occurred_at is not None and overlay.occurred_at != occurred_at:
+            merged = {**(merged or {}), "_mentioned_at": occurred_at.isoformat()}
+        occurred_at = overlay.occurred_at
+    return merged, fact_type, occurred_at
+
 
 class RetainStageMixin:
     """Retain pipeline: chunk → extract → embed → persist (+ retain_many).
@@ -109,12 +149,15 @@ class RetainStageMixin:
         list[Entity] | None,
         list[tuple[int, str]] | None,  # (entity_idx_in_full_list, memory_idx) associations
         list[tuple[int, int, float]] | None,  # (source_memory_idx, target_memory_idx, confidence) caused_by
+        list[_FactOverlay] | None,  # per fact, aligned with fact_texts
     ]:
         """Run the structured 5-dim fact extraction path.
 
-        Returns ``(fact_texts, entities, associations, caused_by)`` when
-        the path is enabled and produces facts; ``(None, None, None, None)``
-        otherwise. Caller falls through to the legacy chunk_text +
+        Returns ``(fact_texts, entities, associations, caused_by, overlays)``
+        when the path is enabled and produces facts; all ``None`` otherwise.
+        ``overlays`` carries each fact's metadata, classification, and event
+        time for its stored row; before 2026-10-04 these were computed and
+        then discarded, so extraction paid for metadata nothing stored. Caller falls through to the legacy chunk_text +
         extract_entities path when None is returned.
 
         Indices in ``associations`` and ``caused_by`` reference positions
@@ -129,7 +172,7 @@ class RetainStageMixin:
         # extraction mode — the profile's metadata-entities are
         # ignored in favor of the richer SFE output.
         if not self.structured_fact_extraction_enabled or self.llm_provider is None:
-            return None, None, None, None
+            return None, None, None, None, None
 
         try:
             # Pre-chunk using the SAME strategy the legacy retain path
@@ -189,9 +232,9 @@ class RetainStageMixin:
                 "structured fact extraction failed (%s); falling back to legacy chunk + entity-extraction path.",
                 exc,
             )
-            return None, None, None, None
+            return None, None, None, None, None
         if not facts:
-            return None, None, None, None
+            return None, None, None, None, None
 
         # Materialize without embeddings here — embeddings are batched
         # later for cost. We only need the list of fact texts and the
@@ -227,7 +270,22 @@ class RetainStageMixin:
                 continue
             caused_by.append((src_idx, tgt_idx, float(link.confidence)))
 
-        return fact_texts, entities, associations, caused_by
+        # One VectorItem per fact, in order (materialize_facts), so the two
+        # zip exactly. A default fact_type is not a classification.
+        overlays = [
+            _FactOverlay(
+                metadata={
+                    k: v
+                    for k, v in (item.metadata or {}).items()
+                    if k.startswith("_fact_") and (k != "_fact_type" or fact.fact_type_classified)
+                },
+                fact_type=fact.fact_type if fact.fact_type_classified else None,
+                occurred_at=fact.occurred_start,
+            )
+            for fact, item in zip(facts, materialized.vector_items, strict=True)
+        ]
+
+        return fact_texts, entities, associations, caused_by, overlays
 
     async def _persist_semantic_links(
         self,
@@ -999,6 +1057,7 @@ class RetainStageMixin:
                 sfe_entities,
                 sfe_associations,
                 sfe_caused_by,
+                sfe_overlays,
             ) = await self._structured_fact_extraction_for_text(
                 prepared,
                 request,
@@ -1044,6 +1103,8 @@ class RetainStageMixin:
 
         chunks = [chunks[i] for i in keep_indices]
         embeddings = [embeddings[i] for i in keep_indices]
+        if sfe_overlays is not None:
+            sfe_overlays = [sfe_overlays[i] for i in keep_indices]
 
         # Remap structured-fact-extraction indices through dedup. The
         # association and caused_by lists referenced positions in the
@@ -1122,16 +1183,23 @@ class RetainStageMixin:
         for index, (chunk, embedding, chunk_id) in enumerate(zip(chunks, embeddings, chunk_ids)):
             mem_id = uuid.uuid4().hex[:16]
             memory_ids.append(mem_id)
+            item_meta, item_fact_type, item_occurred = _apply_fact_overlay(
+                _chunk_metadata(chunk_metadata, index, len(chunks)),
+                sfe_overlays[index] if sfe_overlays is not None else None,
+                fact_type=prepared.fact_type,
+                occurred_at=request.occurred_at,
+                profile_fact_type=profile.fact_type if profile is not None else None,
+            )
             items.append(
                 VectorItem(
                     id=mem_id,
                     bank_id=request.bank_id,
                     vector=embedding,
                     text=chunk,
-                    metadata=_chunk_metadata(chunk_metadata, index, len(chunks)),
+                    metadata=item_meta,
                     tags=prepared.tags,
-                    fact_type=prepared.fact_type,
-                    occurred_at=request.occurred_at,
+                    fact_type=item_fact_type,
+                    occurred_at=item_occurred,
                     retained_at=datetime.now(timezone.utc),  # M9: wall-clock store time
                     chunk_id=chunk_id,  # M10: source-chunk backreference
                 )
@@ -1252,6 +1320,7 @@ class RetainStageMixin:
                     sfe_entities,
                     sfe_associations,
                     sfe_caused_by,
+                    sfe_overlays,
                 ) = await self._structured_fact_extraction_for_text(
                     prepared,
                     request,
@@ -1288,6 +1357,7 @@ class RetainStageMixin:
                     "sfe_entities": sfe_entities,
                     "sfe_associations": sfe_associations,
                     "sfe_caused_by": sfe_caused_by,
+                    "sfe_overlays": sfe_overlays,
                 }
             )
 
@@ -1339,6 +1409,9 @@ class RetainStageMixin:
 
             chunks = [chunks[i] for i in keep_indices]
             embeddings = [embeddings[i] for i in keep_indices]
+            sfe_overlays = record["sfe_overlays"]
+            if sfe_overlays is not None:
+                sfe_overlays = [sfe_overlays[i] for i in keep_indices]
 
             # Remap SFE indices through dedup (mirrors retain() path).
             sfe_associations = record["sfe_associations"]
@@ -1396,16 +1469,23 @@ class RetainStageMixin:
             for index, (chunk, embedding, chunk_id) in enumerate(zip(chunks, embeddings, chunk_ids, strict=False)):
                 mem_id = uuid.uuid4().hex[:16]
                 memory_ids.append(mem_id)
+                item_meta, item_fact_type, item_occurred = _apply_fact_overlay(
+                    _chunk_metadata(chunk_metadata, index, len(chunks)),
+                    sfe_overlays[index] if sfe_overlays is not None else None,
+                    fact_type=prepared.fact_type,
+                    occurred_at=request.occurred_at,
+                    profile_fact_type=record["profile"].fact_type if record["profile"] is not None else None,
+                )
                 items.append(
                     VectorItem(
                         id=mem_id,
                         bank_id=request.bank_id,
                         vector=embedding,
                         text=chunk,
-                        metadata=_chunk_metadata(chunk_metadata, index, len(chunks)),
+                        metadata=item_meta,
                         tags=prepared.tags,
-                        fact_type=prepared.fact_type,
-                        occurred_at=request.occurred_at,
+                        fact_type=item_fact_type,
+                        occurred_at=item_occurred,
                         retained_at=datetime.now(timezone.utc),
                         chunk_id=chunk_id,  # M10: source-chunk backreference
                     )

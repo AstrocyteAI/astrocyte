@@ -678,14 +678,17 @@ class _OwnHookFile(HookHost):
     def _hook_entry(self, command: str, extra: dict[str, Any]) -> dict[str, Any]:
         return {"type": "command", self._COMMAND_KEY: command, **extra}
 
-    def hook_commands(self) -> dict[str, str | None]:
+    def _our_handlers(self) -> dict[str, dict[str, Any] | None]:
         events = self._entries(_read_json(self.hooks_file()))
-        found: dict[str, str | None] = dict.fromkeys(self.HOOK_EVENTS)
+        found: dict[str, dict[str, Any] | None] = dict.fromkeys(self.HOOK_EVENTS)
         for event in self.HOOK_EVENTS:
             for handler in events.get(event) or []:
                 if isinstance(handler, dict) and self._OURS.search(str(handler.get(self._COMMAND_KEY, ""))):
-                    found[event] = handler[self._COMMAND_KEY]
+                    found[event] = handler
         return found
+
+    def hook_commands(self) -> dict[str, str | None]:
+        return {event: h[self._COMMAND_KEY] if h else None for event, h in self._our_handlers().items()}
 
     def install_hooks(self, prefix: str, *, dry_run: bool = False) -> Outcome:
         label = f"{self.label} hooks"
@@ -693,10 +696,12 @@ class _OwnHookFile(HookHost):
         wanted = {event: self._hook_entry(f"{prefix} hook {sub}{flag}", extra)
                   for event, (sub, extra) in self.HOOK_EVENTS.items()}
         try:
-            current = self.hook_commands()
+            current = self._our_handlers()
         except HostConfigError as e:
             return Outcome(label, "failed", str(e))
-        if all(current[e] == wanted[e][self._COMMAND_KEY] for e in wanted):
+        # Whole entries, not just commands: a field added in an upgrade (Copilot's
+        # `powershell`) must reach existing installs.
+        if all(current[e] == wanted[e] for e in wanted):
             return Outcome(label, "unchanged", str(self.hooks_file()))
         verb: Status = "updated" if any(current.values()) else "installed"
         if dry_run:
@@ -783,6 +788,11 @@ class CopilotHost(_OwnHookFile, _JsonHost):
     }
     hook_dialect = "copilot"
     _COMMAND_KEY = "bash"
+
+    def _hook_entry(self, command: str, extra: dict[str, Any]) -> dict[str, Any]:
+        # Copilot runs `bash` on macOS/Linux and `powershell` on Windows; the
+        # command is written to mean the same in both (server.hook_prefix).
+        return {"type": "command", "bash": command, "powershell": command, **extra}
 
     def hooks_file(self) -> Path:
         return self._dir() / "hooks" / "astrocyte.json"

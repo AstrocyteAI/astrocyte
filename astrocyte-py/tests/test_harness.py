@@ -546,6 +546,107 @@ def test_doctor_reports_and_repairs_hooks_from_a_moved_install(wired_home, capsy
     assert all(not c.startswith("/old/") for c in host.hook_commands().values())
 
 
+# ── hook commands on Windows ─────────────────────────────────────────────
+
+
+def test_windows_hook_commands_mean_the_same_in_every_shell():
+    from astrocyte.harness.server import hook_prefix
+
+    assert hook_prefix(r"C:\Users\alice\AppData\Roaming\uv\tools\astrocyte\Scripts\python.exe", windows=True) == (
+        "C:/Users/alice/AppData/Roaming/uv/tools/astrocyte/Scripts/python.exe -I -m astrocyte.cli")
+    assert hook_prefix("/opt/py 3/bin/python", windows=False) == "'/opt/py 3/bin/python' -I -m astrocyte.cli", (
+        "POSIX: quoted")
+
+
+def test_windows_paths_with_spaces_use_the_short_name(monkeypatch):
+    from astrocyte.harness import server
+
+    monkeypatch.setattr(server, "_short_path", lambda p: r"C:\Users\ALICES~1\python.exe")
+    assert server.hook_prefix(r"C:\Users\Alice Smith\python.exe", windows=True).startswith(
+        "C:/Users/ALICES~1/python.exe ")
+
+
+@pytest.mark.parametrize("path", [r"C:\Users\Alice Smith\python.exe", r"C:\tools&co\python.exe",
+                                  r"C:\100%\python.exe", r"C:\$x\python.exe"])
+def test_windows_paths_no_shell_reads_the_same_are_refused(monkeypatch, path):
+    from astrocyte.harness import server
+
+    monkeypatch.setattr(server, "_short_path", lambda p: p)  # no 8.3 name on this volume
+    with pytest.raises(server.HookPathError, match="cmd, PowerShell and Git Bash"):
+        server.hook_prefix(path, windows=True)
+
+
+def test_short_path_off_windows_returns_the_path():
+    from astrocyte.harness.server import _short_path
+
+    if not WINDOWS:
+        assert _short_path("/a b/python") == "/a b/python"
+
+
+def test_setup_reports_an_unrenderable_path_instead_of_crashing(wired_home, capsys, monkeypatch):
+    from astrocyte.harness import commands, server
+
+    def refuse(_):
+        raise server.HookPathError("no shell-neutral form")
+
+    monkeypatch.setattr(commands, "hook_prefix", refuse)
+    assert cmd_setup(_ns()) == 1
+    out = capsys.readouterr().out
+    assert "Claude Code hooks failed" in " ".join(out.split()) and "no shell-neutral form" in out
+    assert ClaudeCodeHost().registration() is not None, "the memory tools are still wired"
+
+
+def test_doctor_runs_each_hook_command_through_the_shells(wired_home, monkeypatch):
+    from astrocyte.harness import doctor
+
+    cmd_setup(_ns())
+    checks = {c.area: c for c in run_checks(_cfg(wired_home), model_probes=False)}
+    assert checks["Claude Code hooks"].level == "ok", checks["Claude Code hooks"].summary
+    # A shell that can't run it: reported, not "on".
+    broken = (["sh", "-c"] if not WINDOWS else ["cmd", "/d", "/s", "/c"])
+    monkeypatch.setattr(doctor, "_probe_shells", lambda: [("broken shell", [*broken[:-1], "exit 3 &&"])])
+    checks = {c.area: c for c in run_checks(_cfg(wired_home), model_probes=False)}
+    assert checks["Claude Code hooks"].level == "fail"
+    assert "does not run under broken shell" in checks["Claude Code hooks"].summary
+
+
+def test_git_bash_is_found_wherever_git_for_windows_puts_git(tmp_path, monkeypatch):
+    """GitHub's Windows runners resolve git to Git\\bin\\git.exe, not Git\\cmd:
+    looking only two levels up from git silently dropped Git Bash."""
+    from astrocyte.harness import doctor
+
+    git_root = tmp_path / "Git"
+    for d in ("bin", "cmd"):
+        (git_root / d).mkdir(parents=True)
+    (git_root / "bin" / "bash.exe").write_text("")
+    for var in ("ProgramFiles", "ProgramFiles(x86)"):
+        monkeypatch.delenv(var, raising=False)
+    for git in (git_root / "bin" / "git.exe", git_root / "cmd" / "git.exe"):
+        monkeypatch.setattr(doctor.shutil, "which", lambda name, g=git: str(g) if name == "git" else None)
+        assert doctor._git_bash() == str(git_root / "bin" / "bash.exe")
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: None)
+    assert doctor._git_bash() is None
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    assert doctor._git_bash() == str(git_root / "bin" / "bash.exe"), "the standard install location"
+
+
+def test_on_windows_doctor_probes_git_bash_too():
+    from astrocyte.harness.doctor import _probe_shells
+
+    if WINDOWS:  # the runners have Git for Windows
+        assert "Git Bash" in {name for name, _ in _probe_shells()}
+
+
+def test_probe_needs_the_pong(monkeypatch):
+    from astrocyte.harness.doctor import _probe, _probe_shells
+
+    name, shell = _probe_shells()[0]
+    # Unquoted on Windows, like the hook commands themselves (cmd mangles escaped quotes).
+    runs = f"{sys.executable.replace(chr(92), '/')} -c print(1)" if WINDOWS else f"'{sys.executable}' -c 'print(1)'"
+    assert _probe(runs, shell) == "exit 0: 1"
+    assert _probe("x", ["/no/such/shell"]).startswith("FileNotFoundError")
+
+
 def test_every_host_class_is_registered():
     assert {c.key for c in hosts_mod.SUPPORTED_HOSTS} == {"claude", "codex", "cursor", "gemini", "windsurf", "copilot", "antigravity"}
 
