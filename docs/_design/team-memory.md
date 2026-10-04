@@ -1,6 +1,6 @@
 # Team memory
 
-Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth) and G3 (changes feed) implemented; G2 and the rest not yet.
+Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth), G2 (batch push) and G3 (changes feed) implemented; G4 and the client (C1–C3) not yet.
 
 A developer's coding agents already remember a project locally: one SQLite file, per-project banks, automatic capture and recall. Team memory shares a project's memory with the people working on it, through an Astrocyte gateway the team runs. A decision Alice's agent saved on Monday is recalled by Bob's agent on Tuesday, attributed to her. Nothing changes on the hot path: hooks and the MCP server still read and write only the local store.
 
@@ -77,7 +77,7 @@ Replication costs disk (the team's text, re-embedded locally) and buys latency, 
 
 **Duplicates across people.** The gateway's retain dedup already checks the store (#93). A pushed row that near-duplicates an existing team memory is answered with `duplicate_of: <id>`. The client records the mapping and doesn't push the row again. First writer wins, and both copies stay findable locally.
 
-**Conflicts.** Memories are immutable facts with timestamps; nobody edits a memory, so there are no write conflicts to resolve. Two teammates can still disagree ("we use SQS" vs. a later "moved to Kafka"). That is the same problem as one person changing their mind, and recall already handles it with recency (`occurred_at`) and observation supersession. Out of scope here.
+**Conflicts.** A memory's **text is immutable**: a push of an existing id with different text is rejected, and nobody edits a memory's text, so there are no write conflicts on it to resolve. Its provenance and status fields are not immutable: synced records will carry claim status, trust and "may be stale" flags that change after the record is saved. Those will be updatable through a separate endpoint (not push; a push with the same text and different metadata is answered `unchanged` and changes nothing), and every such change reaches mirrors through the changes feed as an upsert of the same id (§8, G3). Two teammates can still disagree ("we use SQS" vs. a later "moved to Kafka"). That is the same problem as one person changing their mind, and recall already handles it with recency (`occurred_at`) and observation supersession. Out of scope here.
 
 ## 5. Forgetting
 
@@ -136,7 +136,7 @@ Gateway (server side; each is useful on its own):
 | PR | Content |
 |---|---|
 | **G1** | Per-user tokens bound to principal + grants; glob/prefix grants; `team:` groups; authoritative `_actor` stamping |
-| **G2** | `POST /v1/banks/{bank}/sync/push`: batch upsert with client ids through the policy layer; no re-chunking; per-record `stored \| duplicate_of \| rejected` |
+| **G2** (implemented) | `POST /v1/banks/{bank}/sync/push`: batch upsert with client ids through the policy layer; no re-chunking; per-record `stored \| duplicate_of \| rejected` |
 | **G3** (implemented) | `GET /v1/banks/{bank}/changes?cursor=&limit=`: upserts and tombstones in order. Stores gain a `changed_at` column (last change to any synced field; backfilled as `max(retained_at, forgotten_at)`) and an index on `(bank_id, changed_at, id)` |
 | **G4** | Persisted legal holds; forget by `_actor` (DSAR) |
 
@@ -149,6 +149,24 @@ Gateway (server side; each is useful on its own):
 - **Tombstones carry nothing but `id`, `deleted` and `changed_at`**, so a forgotten memory's text never leaves the gateway again. A live entry includes `memory_layer` as well as the planned fields, so a client can tell server-side observations and mental models from teammates' memories (whether mirrors should pull those is for C1/C2).
 - **Settle window.** `changed_at` is stamped just before a write commits, so with concurrent writers a slow commit could land behind a cursor that already moved past it, and that row would never be pulled. The gateway holds back changes younger than `ASTROCYTE_CHANGES_SETTLE_SECONDS` (default 5 s; the library default is 0). This assumes commits take less than the window and that the gateway hosts' clocks agree; a feed that needs a hard guarantee would order by a commit-time sequence instead.
 - **Retention of tombstones.** Soft-deleted rows (and so tombstones) are kept indefinitely today; nothing purges them on the gateway. If a purge is added, a mirror whose cursor is older than the purge horizon must re-sync from scratch. The local SQLite store's `astrocyte memory forget` purges rows outright and so leaves no tombstone, which is fine: it doesn't serve a feed.
+
+**G2 as built.** `Astrocyte.push_records(bank_id, records, context=)` runs each `SyncPushRecord` through the retain policy layer and hands the survivors to the pipeline, which stores each as exactly one row with the client's id: no chunking, no extraction, no LLM call; the server re-embeds the text. The gateway serves it at `POST /v1/banks/{bank_id}/sync/push` (needs `write`). Two new optional store methods: `lookup_ids(ids)` (the current state of each id **in any bank**, live or tombstone) and `insert_vectors(items)` (insert-only, `ON CONFLICT (id) DO NOTHING`, returns the ids inserted); Postgres, SQLite and in-memory implement both, other stores answer 501. Per record:
+
+| Result | When |
+|---|---|
+| `stored` | New id; a row with exactly that id |
+| `unchanged` | The id holds the same text in this bank. If metadata, tags, `fact_type` or `occurred_at` differ, they are **not** applied and `reason` says "text unchanged; metadata updates are not accepted by push" (status/provenance changes get their own endpoint) |
+| `duplicate` + `duplicate_of` | A new id that near-duplicates a memory of this bank (the retain dedup check: the in-process cache, then the store's nearest neighbours, bank threshold and negation guard). Nothing stored. With `signal_quality.dedup.action: warn` it is stored instead |
+| `rejected` + `reason` | The id holds other text in this bank **or exists in another bank** (one wording for both, so a push can't probe other banks; the other bank's row is never overwritten, moved or shown); the id was forgotten in this bank (a forget is not undone by a re-push); or the policy layer refused it (size, validation, PII `reject`, `content_hash` mismatch) |
+
+Decisions the plan left open:
+
+- **Ids are global, so the write is insert-only.** Both stores key rows on `id` alone. The pipeline looks every pushed id up across banks first, and writes with `insert_vectors`, so even a race (two pushes of one id, or a push and a retain) can't overwrite: the loser is re-classified from the row that won. The same id twice in one batch: the second is `unchanged` or `rejected`.
+- **Policy, as `/v1/retain`:** input size and tag limits, content validation, the PII barrier (redact rewrites the stored text; `reject` rejects that record only, not the batch), metadata sanitization, authoritative `_actor` from the authenticated caller. Underscore-prefixed metadata keys are system-owned: a push keeps `_created_at`, `_retain_id`, `_chunk_index` (the reader regroups chunks by them) and drops the rest (`_authority_tier`, `_mip.*`, …), which a client could otherwise use to change how recall ranks its memory. MIP routing is not applied: the bank is fixed by the URL and the ids.
+- **Rate limits and quotas count a push as one call** (checked once, before anything is stored; 429 as usual), and quota usage is recorded per stored record, so a quota can be overshot by at most one batch. Counting each record against `retain_per_minute` would make a 100-record sync trip any realistic limit.
+- **Request validation is 400**, like every other gateway endpoint (the gateway translates FastAPI's 422; see `models.py`): more than 100 records, an id outside `[A-Za-z0-9_-]{8,64}`, empty text, a malformed `content_hash`, non-scalar metadata values.
+- **`content_hash`**, when sent, must equal `sha256:` + the hex SHA-256 of the UTF-8 text as sent (before any PII redaction); a mismatch rejects the record. It is not stored.
+- **"Unchanged" compares the stored text** with the pushed text after PII redaction, so a redacted record re-pushed unchanged stays `unchanged`.
 
 Client:
 

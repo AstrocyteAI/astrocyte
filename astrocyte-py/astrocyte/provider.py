@@ -109,6 +109,19 @@ class VectorStore(Protocol):
       that erases rows outright cannot report that they were forgotten.
       ``Astrocyte.list_changes`` (``GET /v1/banks/{bank_id}/changes``) raises
       :class:`~astrocyte.errors.CapabilityNotSupported` without it.
+    - ``lookup_ids(ids) -> list[MemoryChange]`` — the current state of each id
+      that exists **in any bank**: a live row (full record) or a tombstone.
+      Ids never stored (or purged) are absent. Deliberately cross-bank: both
+      SQL stores key rows on ``id`` alone, so a writer that must not take over
+      another bank's row has to be able to see it. Callers must never return
+      another bank's content.
+    - ``insert_vectors(items) -> list[str]`` — like ``store_vectors`` but
+      insert-only: an item whose id already exists in any bank, live or
+      forgotten, is skipped, never overwritten (``ON CONFLICT DO NOTHING``).
+      Returns the ids actually inserted, so a concurrent writer that got there
+      first is detected rather than clobbered.
+      ``Astrocyte.push_records`` (``POST /v1/banks/{bank_id}/sync/push``)
+      needs both, and raises ``CapabilityNotSupported`` without them.
     """
 
     SPI_VERSION: ClassVar[int] = 1

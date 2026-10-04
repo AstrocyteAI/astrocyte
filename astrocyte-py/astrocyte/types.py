@@ -146,6 +146,41 @@ class MemoryChangePage:
     has_more: bool = False
 
 
+@dataclass
+class SyncPushRecord:
+    """One memory pushed by a team-memory client (``Astrocyte.push_records``).
+
+    Stored as exactly one row with the client's ``id`` (8–64 of
+    ``[A-Za-z0-9_-]``): no chunking, no extraction, re-embedded by the server.
+    ``content_hash`` (``"sha256:<hex>"`` of the UTF-8 ``text``), when given,
+    must match the text as sent.
+    """
+
+    id: str
+    text: str
+    occurred_at: datetime | None = None
+    tags: list[str] | None = None
+    fact_type: str | None = None
+    metadata: Metadata | None = None
+    content_hash: str | None = None
+
+
+@dataclass
+class SyncPushResult:
+    """What became of one :class:`SyncPushRecord`.
+
+    ``status`` is ``stored`` (a new row with the pushed id), ``unchanged``
+    (that id already holds this text in this bank; idempotent re-push),
+    ``duplicate`` (a near-duplicate of the bank's memory ``duplicate_of``;
+    nothing stored) or ``rejected`` (``reason`` says why; nothing stored).
+    """
+
+    id: str
+    status: Literal["stored", "unchanged", "duplicate", "rejected"]
+    duplicate_of: str | None = None
+    reason: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Tier 1: Graph Store
 # ---------------------------------------------------------------------------

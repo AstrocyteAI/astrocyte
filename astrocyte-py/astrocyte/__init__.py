@@ -115,6 +115,8 @@ from astrocyte.types import (
     RetainRequest,
     RetainResult,
     RoutingDecision,
+    SyncPushRecord,
+    SyncPushResult,
     TokenUsage,
     TransportCapabilities,
     VectorFilters,
@@ -179,6 +181,8 @@ __all__ = [  # noqa: RUF022 — grouped by category, not alphabetically
     "VectorHit",
     "MemoryChange",
     "MemoryChangePage",
+    "SyncPushRecord",
+    "SyncPushResult",
     # Types — graph store
     "Entity",
     "EntityLink",

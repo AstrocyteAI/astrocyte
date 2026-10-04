@@ -122,6 +122,25 @@ class DedupDetector:
         scored = ((cosine_similarity(embedding, cached_emb), cached_text) for _, cached_emb, cached_text in entries)
         return self.matches(scored, threshold_override=threshold_override, text=text)
 
+    def find_duplicate(
+        self,
+        bank_id: str,
+        embedding: list[float],
+        threshold_override: float | None = None,
+        text: str | None = None,
+    ) -> str | None:
+        """Like :meth:`is_duplicate`, but returns the cached memory id the
+        embedding duplicates (the first match, under the same threshold and
+        negation guard), or ``None``."""
+        entries = self._cache.get(bank_id, [])
+        if entries:
+            self._touch_bank(bank_id)
+        for memory_id, cached_emb, cached_text in entries:
+            pair = [(cosine_similarity(embedding, cached_emb), cached_text)]
+            if self.matches(pair, threshold_override=threshold_override, text=text)[0]:
+                return memory_id
+        return None
+
     def matches(
         self,
         candidates: Iterable[tuple[float, str | None]],

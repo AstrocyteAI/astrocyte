@@ -24,7 +24,7 @@ shapes come from supervisor internals (``/health/ingest``, ``/v1/admin/sources``
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from astrocyte.portability import ImportResult
 from astrocyte.types import (
@@ -65,6 +65,8 @@ __all__ = [  # noqa: RUF022 — grouped: re-exported dataclasses, then wrappers
     "AllBankHealthResponse",
     "ChangeEntry",
     "ChangesResponse",
+    "SyncPushResponse",
+    "SyncPushResultEntry",
     "DebugRecallResponse",
     "DeletedResponse",
     "DsarForgetPrincipalResponse",
@@ -167,6 +169,23 @@ class ChangeEntry(BaseModel):
     fact_type: str | None = None
     memory_layer: str | None = None
     metadata: dict[str, Any] | None = None
+
+
+class SyncPushResultEntry(BaseModel):
+    """What became of one pushed record. ``duplicate_of`` only with
+    ``duplicate``; ``reason`` with ``rejected`` (and on an ``unchanged`` whose
+    metadata differed, which push does not apply)."""
+
+    id: str
+    status: Literal["stored", "unchanged", "duplicate", "rejected"]
+    duplicate_of: str | None = None
+    reason: str | None = None
+
+
+class SyncPushResponse(BaseModel):
+    """``POST /v1/banks/{bank_id}/sync/push``: one result per record, in order."""
+
+    results: list[SyncPushResultEntry]
 
 
 class ChangesResponse(BaseModel):

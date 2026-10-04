@@ -27,6 +27,7 @@ from astrocyte.errors import (
     CapabilityNotSupported,
     ConfigError,
     MipRoutingError,
+    PiiRejected,
     ProviderUnavailable,
     RateLimited,
 )
@@ -60,6 +61,8 @@ from astrocyte.types import (
     ReflectResult,
     RetainRequest,
     RetainResult,
+    SyncPushRecord,
+    SyncPushResult,
 )
 
 if TYPE_CHECKING:
@@ -543,24 +546,8 @@ class Astrocyte:
             # PII scanning (async for LLM/rules_then_llm modes)
             content, pii_matches = await self._policy.scan_pii(content, bank_id=bank_id)
             if pii_matches:
-                pii_action = self._policy.pii_action_for(bank_id)
-                self._logger.log(
-                    "astrocyte.policy.pii_detected",
-                    bank_id=bank_id,
-                    operation="retain",
-                    data={"pii_types": ",".join(m.pii_type for m in pii_matches), "action": pii_action},
-                )
-                self._metrics.inc_counter(
-                    "astrocyte_pii_detected_total",
-                    {"bank_id": bank_id, "action": pii_action},
-                )
-                await self._hook_manager.fire(
-                    "on_pii_detected",
-                    bank_id=bank_id,
-                    data={
-                        "pii_types": ",".join(m.pii_type for m in pii_matches),
-                        "action": pii_action,
-                    },
+                await self._note_pii(
+                    bank_id, [m.pii_type for m in pii_matches], self._policy.pii_action_for(bank_id), "retain"
                 )
 
             # Metadata sanitization
@@ -2379,6 +2366,178 @@ class Astrocyte:
         else:
             next_cursor = cursor
         return MemoryChangePage(changes=changes, next_cursor=next_cursor, has_more=has_more)
+
+    async def push_records(
+        self,
+        bank_id: str,
+        records: list[SyncPushRecord],
+        *,
+        context: AstrocyteContext | None = None,
+    ) -> list[SyncPushResult]:
+        """Store memories pushed by a team-memory client, each as one row with its own id.
+
+        The write side of team-memory sync (``team-memory.md`` §8, G2; served
+        as ``POST /v1/banks/{bank_id}/sync/push``). Each record goes through
+        the policy layer as a retain does (input limits, content validation,
+        the PII barrier, metadata sanitization, authoritative ``_actor``),
+        then becomes exactly one row with the client's id: no chunking, no
+        extraction, no LLM call; the text is re-embedded with this server's
+        model. One :class:`SyncPushResult` per record, in order:
+
+        - ``stored`` — new row.
+        - ``unchanged`` — the id already holds this text in this bank (an
+          idempotent re-push). Text is immutable but other fields are not:
+          differing metadata is **not** applied (``reason`` says so); those
+          fields get their own update path.
+        - ``duplicate`` — near-duplicate of the bank's memory ``duplicate_of``
+          (the retain dedup check and threshold); nothing stored.
+        - ``rejected`` — ``reason`` says why: the id holds other text, here or
+          in **another bank** (never overwritten, moved or revealed), the id
+          was forgotten here (a forget is not undone by a re-push), or the
+          policy layer refused the record.
+
+        Requires ``write`` on the bank. Rate limits and quotas are checked
+        once for the request (a push counts as one call) and quota usage is
+        recorded per stored record. Underscore-prefixed metadata keys other
+        than ``_created_at``, ``_retain_id``, ``_chunk_index`` are dropped.
+        Raises :class:`ValueError` for more than 100 records or an id outside
+        ``[A-Za-z0-9_-]{8,64}``, and :class:`CapabilityNotSupported` when the
+        vector store lacks ``lookup_ids`` / ``insert_vectors`` (or retain goes
+        to an engine provider).
+        """
+        from astrocyte._sync import MAX_PUSH_RECORDS, PUSH_ID_RE
+        from astrocyte.identity import format_principal, resolve_actor
+
+        validate_bank_id(bank_id)
+        if len(records) > MAX_PUSH_RECORDS:
+            raise ValueError(f"at most {MAX_PUSH_RECORDS} records per push ({len(records)} given)")
+        bad = [r.id for r in records if not isinstance(r.id, str) or not PUSH_ID_RE.fullmatch(r.id)]
+        if bad:
+            raise ValueError(f"invalid record id(s) {bad[:5]!r}: expected 8-64 of [A-Za-z0-9_-]")
+        self._policy.check_access(bank_id, "write", context)
+        store = self._sync_vector_store("sync_push")
+        if getattr(store, "lookup_ids", None) is None or getattr(store, "insert_vectors", None) is None:
+            raise CapabilityNotSupported(self._provider_name, "sync_push")
+        if not records:
+            return []
+
+        with span("astrocyte.sync_push", {"astrocyte.bank_id": bank_id}):
+            self._policy.check_rate_and_quota(bank_id, "retain")
+            noisy = self._policy.check_noisy_bank(bank_id)
+            if noisy is not None:
+                refusal = self._apply_noisy_bank_verdict(bank_id, noisy)
+                if refusal is not None:
+                    return [SyncPushResult(id=r.id, status="rejected", reason=refusal.error) for r in records]
+
+            actor_identity = resolve_actor(context) if context else None
+            actor = format_principal(actor_identity) if actor_identity is not None else None
+            results: list[SyncPushResult | None] = [None] * len(records)
+            prepared: list[tuple[int, SyncPushRecord]] = []
+            for i, record in enumerate(records):
+                outcome = await self._prepare_push_record(bank_id, record, actor)
+                if isinstance(outcome, SyncPushResult):
+                    results[i] = outcome
+                else:
+                    prepared.append((i, outcome))
+
+            if prepared:
+                try:
+                    self._policy.check_circuit(self._provider_name)
+                    pushed = await self._pipeline.push_records(bank_id, [r for _, r in prepared])  # type: ignore[union-attr]
+                    self._policy.record_success()
+                except ProviderUnavailable:
+                    raise
+                except Exception:
+                    self._policy.record_failure()
+                    raise
+                for (i, record), result in zip(prepared, pushed):
+                    results[i] = result
+                    await self._account_pushed(bank_id, record, result)
+                if self._compile_queue is not None and any(r.status == "stored" for r in pushed):
+                    self._compile_queue.notify_retain(bank_id)  # type: ignore[union-attr]
+            return [r for r in results if r is not None]
+
+    async def _prepare_push_record(
+        self, bank_id: str, record: SyncPushRecord, actor: str | None
+    ) -> SyncPushRecord | SyncPushResult:
+        """Run one pushed record through the retain policy layer: the record
+        to store (text possibly redacted, metadata sanitized and stamped), or
+        its rejection."""
+        from astrocyte._sync import CONTENT_HASH_RE, PUSH_SYSTEM_METADATA_KEYS, content_hash
+
+        def rejected(reason: str) -> SyncPushResult:
+            return SyncPushResult(id=record.id, status="rejected", reason=reason)
+
+        text = record.text
+        if not isinstance(text, str) or not text.strip():
+            return rejected("text is empty")
+        input_error = self._policy.validate_retain_input(text, record.tags, bank_id=bank_id)
+        if input_error:
+            return rejected(input_error)
+        if record.content_hash is not None:
+            if not CONTENT_HASH_RE.fullmatch(record.content_hash):
+                return rejected("content_hash must be sha256:<64 lowercase hex>")
+            if record.content_hash != content_hash(text):
+                return rejected("content_hash does not match text")
+        errors = self._policy.validate_content(text, "text", bank_id=bank_id)
+        if errors:
+            return rejected("; ".join(errors))
+        try:
+            text, pii_matches = await self._policy.scan_pii(text, bank_id=bank_id)
+        except PiiRejected as exc:
+            await self._note_pii(bank_id, exc.pii_types, "reject", "sync_push")
+            return rejected(f"PII detected ({', '.join(exc.pii_types)})")
+        if pii_matches:
+            await self._note_pii(
+                bank_id, [m.pii_type for m in pii_matches], self._policy.pii_action_for(bank_id), "sync_push"
+            )
+
+        metadata = {
+            k: v for k, v in (record.metadata or {}).items() if not k.startswith("_") or k in PUSH_SYSTEM_METADATA_KEYS
+        }
+        if actor is not None:
+            # Authoritative provenance, as in retain: the caller's own claim loses.
+            metadata["_actor"] = actor
+        sanitized, _warnings = self._policy.sanitize_metadata(metadata or None, bank_id=bank_id)
+        return SyncPushRecord(
+            id=record.id,
+            text=text,
+            occurred_at=record.occurred_at,
+            tags=list(record.tags) if record.tags else None,
+            fact_type=record.fact_type,
+            metadata=sanitized,
+        )
+
+    async def _note_pii(self, bank_id: str, pii_types: list[str], action: str, operation: str) -> None:
+        """Log, count and announce PII the barrier found (as retain does)."""
+        types = ",".join(pii_types)
+        self._logger.log(
+            "astrocyte.policy.pii_detected",
+            bank_id=bank_id,
+            operation=operation,
+            data={"pii_types": types, "action": action},
+        )
+        self._metrics.inc_counter("astrocyte_pii_detected_total", {"bank_id": bank_id, "action": action})
+        await self._hook_manager.fire("on_pii_detected", bank_id=bank_id, data={"pii_types": types, "action": action})
+
+    async def _account_pushed(self, bank_id: str, record: SyncPushRecord, result: SyncPushResult) -> None:
+        """Quota, analytics, noisy-bank signal, metrics and hooks for one pushed record."""
+        if result.status not in ("stored", "duplicate"):
+            return
+        deduplicated = result.status == "duplicate"
+        self._analytics.record_retain(bank_id, len(record.text), deduplicated=deduplicated)
+        self._policy.record_retain_signal(bank_id, len(record.text), deduplicated)
+        if deduplicated:
+            return
+        self._policy.record_quota(bank_id, "retain")
+        self._metrics.inc_counter(
+            "astrocyte_retain_total", {"bank_id": bank_id, "provider": self._provider_name, "status": "ok"}
+        )
+        await self._hook_manager.fire(
+            "on_retain",
+            bank_id=bank_id,
+            data={"memory_id": record.id, "content_length": len(record.text), "source": "sync_push"},
+        )
 
     # ---------------------------------------------------------------------------
     # Internal routing

@@ -269,6 +269,27 @@ async def test_change_feed_matches(stores, seed):
             )
 
 
+@pytest.mark.parametrize("seed", range(int(os.environ.get("ASTROCYTE_PARITY_SEEDS", "6"))))
+async def test_insert_only_and_lookup_match(stores, seed):
+    """Team-memory push (G2): insert_vectors skips every id that exists in
+    any bank, live or forgotten, and lookup_ids reports the same states."""
+    rng = random.Random(2000 + seed)
+    pg, lite = stores
+    items = await _seed(stores, rng, 30)
+    victims = [v.id for v in rng.sample(items, 6)]
+    for bank in BANKS:
+        assert await pg.delete(victims, bank) == await lite.delete(victims, bank)
+    attempts = [_item(rng, item_id=v.id) for v in rng.sample(items, 10)] + [_item(rng) for _ in range(5)]
+    rng.shuffle(attempts)
+    inserted = await pg.insert_vectors(attempts)
+    assert await lite.insert_vectors(attempts) == inserted
+    assert inserted == [a.id for a in attempts if a.id not in {i.id for i in items}]
+    probe = [a.id for a in attempts] + ["missing-id"]
+    assert _changes(await lite.lookup_ids(probe)) == _changes(await pg.lookup_ids(probe))
+    for bank in BANKS:
+        assert _changes(await lite.list_changes(bank, limit=1000)) == _changes(await pg.list_changes(bank, limit=1000))
+
+
 async def test_scores_are_clamped_identically(stores):
     pg, lite = stores
     # Explicit retained_at: each store would otherwise stamp its own "now".
