@@ -183,25 +183,7 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-      # Supply-chain: generate an SPDX SBOM from the pushed image and attest it
-      # to GHCR alongside the provenance (verify with `gh attestation verify` or
-      # `cosign download sbom`).
-      - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@v0
-        with:
-          image: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py@${{ steps.push.outputs.digest }}
-          format: spdx-json
-          output-file: sbom.spdx.json
-
-      - name: Attest SBOM (→ GHCR)
-        uses: actions/attest-sbom@v4
-        with:
-          subject-name: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py
-          subject-digest: ${{ steps.push.outputs.digest }}
-          sbom-path: sbom.spdx.json
-          push-to-registry: true
-
-      # One entry per platform image in the pushed index, for the scan matrix.
+      # One entry per platform image in the pushed index, for the scan and SBOM matrices.
       # Buildx's own attestation manifests (platform unknown/unknown) are skipped.
       - name: List per-platform images
         id: platforms
@@ -277,14 +259,88 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
 
+  # Supply-chain: one SPDX SBOM per platform image, attested to that image's
+  # own digest. Syft given the index resolves it to the runner's platform, so
+  # v0.17.0's index carried an amd64-only SBOM and the arm64 image had none.
+  # An SBOM describes one image's filesystem, so none is attached to the index
+  # (cosign and BuildKit treat SBOMs as per-platform too); the index keeps the
+  # build provenance. Consumers pick their platform:
+  #   gh attestation verify oci://IMAGE@<platform digest> --repo OWNER/REPO \
+  #     --predicate-type https://spdx.dev/Document/v2.3
+  #   cosign download attestation --platform linux/arm64 \
+  #     --predicate-type https://spdx.dev/Document/v2.3 IMAGE:TAG
+  sbom:
+    name: SBOM ${{ matrix.platform }}
+    needs:
+      - build-and-push
+    permissions:
+      contents: read
+      packages: write  # push the attestation to GHCR
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.build-and-push.outputs.platform_images) }}
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ needs.build-and-push.outputs.image }}@${{ matrix.digest }}
+          # With credentials the action scans straight from the registry
+          # (Syft's registry: source) instead of pulling a foreign-platform
+          # image into the runner's Docker daemon.
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.slug }}.spdx.json
+          artifact-name: sbom-${{ matrix.slug }}.spdx.json
+
+      # Never attest an SBOM to a digest it doesn't describe: Syft's root
+      # package records the manifest it scanned and its architecture.
+      - name: Check the SBOM describes this platform image
+        env:
+          SBOM: sbom-${{ matrix.slug }}.spdx.json
+          DIGEST: ${{ matrix.digest }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          root="$(jq -c '[.packages[] | select(.primaryPackagePurpose == "CONTAINER")
+            | {digest: .versionInfo,
+               arch: ([.externalRefs[]? | select(.referenceType == "purl") | .referenceLocator
+                       | capture("[?&]arch=(?<a>[^&]+)").a][0])}]' "${SBOM}")"
+          want="$(jq -cn --arg d "${DIGEST}" --arg p "${PLATFORM}" '[{digest: $d, arch: ($p | split("/")[1])}]')"
+          if [ "${root}" != "${want}" ]; then
+            echo "::error::${SBOM} describes ${root}, expected ${want}"
+            exit 1
+          fi
+          echo "${SBOM}: $(jq '.packages | length' "${SBOM}") packages, ${PLATFORM} @ ${DIGEST}"
+
+      - name: Attest SBOM (→ GHCR)
+        uses: actions/attest-sbom@v4
+        with:
+          subject-name: ${{ needs.build-and-push.outputs.image }}
+          subject-digest: ${{ matrix.digest }}
+          sbom-path: sbom-${{ matrix.slug }}.spdx.json
+          push-to-registry: true
+
   # Only a scanned, attested image gets the tags users pull — and only once
-  # every platform's scan passed. imagetools copies the multi-arch index as
-  # is, so the digest (and its attestations) is exactly what was scanned.
+  # every platform's scan and SBOM passed. imagetools copies the multi-arch
+  # index as is, so the digest (and its attestations) is exactly what was
+  # scanned.
   tag:
     name: Tag the scanned image
     needs:
       - build-and-push
       - scan
+      - sbom
     permissions:
       contents: read
       packages: write
