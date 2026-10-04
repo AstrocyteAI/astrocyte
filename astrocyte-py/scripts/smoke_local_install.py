@@ -211,14 +211,18 @@ def main() -> int:
         tool_env = {**os.environ, "UV_TOOL_DIR": str(tools), "UV_TOOL_BIN_DIR": str(bin_dir)}
         # A just-published version reaches PyPI's CDN edges at different times:
         # on v0.18.0 the index the wait step polled had it, and the install a
-        # minute later, served by another edge, did not. Retry only that case.
-        for attempt in range(1, (8 if args.pypi else 1) + 1):
+        # minute later, served by another edge, did not. Retry only that case,
+        # for longer than the index pages' cache lifetime (max-age=600: on
+        # v0.19.0 one edge was still stale five minutes after the upload).
+        attempts = 24 if args.pypi else 1
+        for attempt in range(1, attempts + 1):
             proc = run([*install, requirement], env={**tool_env, "UV_REFRESH": "1"}, check=False)
             if proc.returncode == 0:
                 break
-            if attempt == 8 or not args.pypi or "No solution found" not in proc.stdout + proc.stderr:
+            if attempt == attempts or not args.pypi or "No solution found" not in proc.stdout + proc.stderr:
                 raise SystemExit(f"✗ uv tool install… exited {proc.returncode}")
-            print(f"   {requirement} not visible to this index edge yet; retrying in 30 s ({attempt}/8)", flush=True)
+            print(f"   {requirement} not visible to this index edge yet; retrying in 30 s ({attempt}/{attempts})",
+                  flush=True)
             time.sleep(30)
         python = tools / "astrocyte" / ("Scripts/python.exe" if WINDOWS else "bin/python")
         versions = run([str(python), "-I", "-c", "import importlib.metadata as m, json; print(json.dumps("
