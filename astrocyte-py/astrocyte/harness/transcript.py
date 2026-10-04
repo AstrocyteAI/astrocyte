@@ -137,6 +137,33 @@ def antigravity_prompt(line: dict) -> str | None:
     return text or None
 
 
+# File tools by name, and the argument holding the path. The envelope —
+# PLANNER_RESPONSE ``tool_calls: [{"name", "args"}]`` with each argument value
+# JSON-encoded as a string — is measured on agy 1.2; the tool names and their
+# path arguments come from Antigravity's hook documentation (no file-tool
+# call has been recorded here yet).
+_ANTIGRAVITY_FILE_TOOLS = {"view_file": "AbsolutePath", "write_to_file": "TargetFile",
+                           "replace_file_content": "TargetFile", "multi_replace_file_content": "TargetFile"}
+
+
+def _antigravity_files(line: dict) -> list[str]:
+    if line.get("type") != "PLANNER_RESPONSE" or not isinstance(line.get("tool_calls"), list):
+        return []
+    found = []
+    for call in line["tool_calls"]:
+        if not isinstance(call, dict) or not (key := _ANTIGRAVITY_FILE_TOOLS.get(call.get("name"))):
+            continue
+        value = (call.get("args") or {}).get(key)
+        if isinstance(value, str) and value.startswith('"'):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                continue
+        if isinstance(value, str) and value:
+            found.append(value)
+    return found
+
+
 def _antigravity_reply(line: dict) -> list[str]:
     if line.get("type") != "PLANNER_RESPONSE":
         return []
@@ -184,8 +211,9 @@ def read_new_turns(path: str | Path, offset: int = 0, *, antigravity: bool = Fal
         texts = _antigravity_reply(line) if antigravity else _assistant_text(line)
         if texts and current is not None:
             current.assistant.extend(texts)
-        if current is not None and not antigravity:
-            current.files.extend(f for f in _touched_files(line) if f not in current.files)
+        if current is not None:
+            touched = _antigravity_files(line) if antigravity else _touched_files(line)
+            current.files.extend(f for f in touched if f not in current.files)
         if current is None:
             resume = pos  # nothing pending: safe to move past this line
 
