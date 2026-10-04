@@ -43,17 +43,29 @@ permissions:
   actions: write
 
 jobs:
-  # Matches `requires-python` / classifiers in astrocyte-py/pyproject.toml
+  # Python versions match `requires-python` / classifiers in
+  # astrocyte-py/pyproject.toml. The library, CLI and local install run on
+  # users' machines, so the suite also runs on macOS and Windows (one Python
+  # each: the platform, not the interpreter, is what differs there).
   astrocyte-py:
-    name: astrocyte-py (Python ${{ matrix.python-version }})
+    name: astrocyte-py (Python ${{ matrix.python-version }}${{ matrix.os != 'ubuntu-latest' && format(', {0}', matrix.os) || '' }})
     permissions:
       contents: read
       actions: write
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v7
 
@@ -69,14 +81,17 @@ jobs:
         working-directory: astrocyte-py
         run: |
           uv sync --extra dev
-          if [ "${{ matrix.python-version }}" = "3.12" ]; then
+          if [ "${{ matrix.python-version }}" = "3.12" ] && [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             uv run python -m pytest --cov=astrocyte --cov-report=json:coverage.json --cov-report=html:htmlcov --cov-report=term
-          else
+          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             uv run python -m pytest
+          else
+            # Report every platform failure in one run, not just the first (-x).
+            uv run python -m pytest --maxfail=100
           fi
 
       - name: Generate coverage badge JSON
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
         working-directory: astrocyte-py
         run: |
           TOTAL=$(python3 -c "import json; print(json.load(open('coverage.json'))['totals']['percent_covered_display'])")
@@ -99,7 +114,7 @@ jobs:
           BADGE
 
       - name: Upload coverage artifact
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
         with:
           name: coverage

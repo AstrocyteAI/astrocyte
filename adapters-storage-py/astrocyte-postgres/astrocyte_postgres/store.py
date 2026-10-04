@@ -19,7 +19,7 @@ import json
 import os
 import re
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import psycopg
 from astrocyte.tenancy import fq_function, fq_table, get_current_schema
@@ -39,7 +39,47 @@ from psycopg_pool import AsyncConnectionPool
 
 from astrocyte_postgres._vectors import parse_pgvector
 
+if TYPE_CHECKING:
+    # Imported where used: MemoryChange is newer than this package's
+    # ``astrocyte`` floor, and only an astrocyte that has it calls list_changes.
+    from astrocyte.types import MemoryChange
+
 _TABLE_SAFE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+#: A row's change-feed position: its ``changed_at`` column, the time of its
+#: last change to any synced field, which every write sets. Rows written
+#: before migration 039 have it NULL and fall back to the backfill value
+#: max(retained_at, forgotten_at) (GREATEST ignores NULL), so the migration
+#: rewrites no rows. Indexed as written by migration 039 and the bootstrap
+#: DDL; queries must use this exact expression to hit the index.
+_CHANGED_AT = "COALESCE(changed_at, GREATEST(retained_at, forgotten_at))"
+_CHANGE_COLUMNS = (
+    "id, bank_id, text, metadata, tags, fact_type, occurred_at, memory_layer, "
+    f"retained_at, forgotten_at, {_CHANGED_AT} AS changed_at"
+)
+
+
+def _row_to_change(row: dict[str, Any]) -> MemoryChange:
+    """A change-feed entry from a row selected with ``_CHANGE_COLUMNS``."""
+    from astrocyte.types import MemoryChange
+
+    if row["forgotten_at"] is not None:
+        return MemoryChange(id=row["id"], bank_id=row["bank_id"], changed_at=row["changed_at"], deleted=True)
+    md = row["metadata"]
+    if isinstance(md, str):
+        md = json.loads(md)
+    return MemoryChange(
+        id=row["id"],
+        bank_id=row["bank_id"],
+        changed_at=row["changed_at"],
+        text=row["text"],
+        occurred_at=row["occurred_at"],
+        retained_at=row["retained_at"],
+        tags=list(row["tags"]) if row["tags"] else None,
+        fact_type=row["fact_type"],
+        memory_layer=row.get("memory_layer"),
+        metadata=md,
+    )
 
 
 def _sanitize_table(name: str) -> str:
@@ -401,6 +441,9 @@ class PostgresStore:
                 # ``astrocyte_postgres.pageindex_store.PostgresPageIndexStore``,
                 # which mirrors them in its own bootstrap path.
                 #
+                # 039_vectors_changed_at.sql is mirrored at the end of this
+                # method, after the text_fts block.
+                #
                 # 038_tenant_storage_snapshots.sql is intentionally NOT
                 # mirrored here — it creates the cross-tenant
                 # ``public.astrocyte_tenant_storage_snapshots`` table read
@@ -473,6 +516,15 @@ class PostgresStore:
                     WHERE text_fts IS NULL
                     """
                 )
+                # Mirrors 039_vectors_changed_at.sql (team-memory change
+                # feed): the changed_at column, indexed through _CHANGED_AT.
+                await conn.execute(f"ALTER TABLE {vectors} ADD COLUMN IF NOT EXISTS changed_at TIMESTAMPTZ")
+                await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS {self._table}_bank_changed_idx
+                    ON {vectors} (bank_id, ({_CHANGED_AT}), id COLLATE "C")
+                    """
+                )
                 await conn.commit()
             self._bootstrapped_schemas.add(active_schema)
 
@@ -488,14 +540,15 @@ class PostgresStore:
                             f"Vector length {len(item.vector)} != embedding_dimensions {self._dim}",
                         )
                     await self._upsert_bank(cur, item.bank_id)
+                    retained_at = item.retained_at or datetime.now(UTC)
                     await cur.execute(
                         f"""
                         INSERT INTO {self._fq()}
                             (
                                 id, bank_id, embedding, text, metadata, tags, fact_type,
-                                occurred_at, memory_layer, retained_at, chunk_id, forgotten_at
+                                occurred_at, memory_layer, retained_at, chunk_id, forgotten_at, changed_at
                             )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s)
                         ON CONFLICT (id) DO UPDATE SET
                             bank_id = EXCLUDED.bank_id,
                             embedding = EXCLUDED.embedding,
@@ -507,7 +560,12 @@ class PostgresStore:
                             memory_layer = EXCLUDED.memory_layer,
                             retained_at = EXCLUDED.retained_at,
                             chunk_id = EXCLUDED.chunk_id,
-                            forgotten_at = NULL
+                            forgotten_at = NULL,
+                            -- Overwriting an existing row (a restore, a
+                            -- metadata rewrite that keeps the old
+                            -- retained_at) is a change now: the feed must
+                            -- show it after any cursor already handed out.
+                            changed_at = GREATEST(EXCLUDED.retained_at, NOW())
                         """,
                         (
                             item.id,
@@ -519,8 +577,9 @@ class PostgresStore:
                             item.fact_type,
                             item.occurred_at,
                             item.memory_layer,
-                            item.retained_at or datetime.now(UTC),
+                            retained_at,
                             item.chunk_id,  # M10 backreference; nullable, no migration risk
+                            retained_at,  # changed_at of a new row
                         ),
                     )
                     await self._upsert_temporal_facts(cur, item)
@@ -877,6 +936,120 @@ class PostgresStore:
             )
         return items
 
+    async def list_changes(
+        self,
+        bank_id: str,
+        *,
+        after: tuple[datetime, str] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryChange]:
+        """The bank's change feed: live rows and tombstones (forgotten rows),
+        ordered by ``(changed_at, id)``, strictly after ``after``.
+
+        Optional VectorStore method (team-memory sync): every change to a
+        synced row, in ``(changed_at, id)`` order. ``changed_at`` is the
+        row's last change to any synced field (every write sets it; rows
+        from before migration 039 read as max(retained_at, forgotten_at)),
+        read through the expression the migration indexes (``_CHANGED_AT``),
+        so the keyset scan below is an index scan. Ids order byte-wise
+        (``COLLATE "C"``) whatever the database locale.
+        """
+        if limit <= 0:
+            return []
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        where = "bank_id = %s"
+        params: list[Any] = [bank_id]
+        if after is not None:
+            where += f' AND ({_CHANGED_AT}, id COLLATE "C") > (%s, %s)'
+            params.extend([after[0], after[1]])
+        params.append(limit)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT {_CHANGE_COLUMNS}
+                    FROM {self._fq()}
+                    WHERE {where}
+                    ORDER BY {_CHANGED_AT}, id COLLATE "C"
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                rows = await cur.fetchall()
+        return [_row_to_change(row) for row in rows]
+
+    async def lookup_ids(self, ids: list[str]) -> list[MemoryChange]:
+        """The current state of each id held in **any** bank: a live row or a
+        tombstone; unknown ids are absent. Cross-bank on purpose: ``id`` is
+        the primary key, so a writer that must not take over another bank's
+        row has to see it. Optional VectorStore method (team-memory push)."""
+        wanted = list(dict.fromkeys(ids))
+        if not wanted:
+            return []
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"SELECT {_CHANGE_COLUMNS} FROM {self._fq()} WHERE id = ANY(%s::text[])",
+                    (wanted,),
+                )
+                rows = await cur.fetchall()
+        by_id = {row["id"]: _row_to_change(row) for row in rows}
+        return [by_id[i] for i in wanted if i in by_id]
+
+    async def insert_vectors(self, items: list[VectorItem]) -> list[str]:
+        """Insert-only ``store_vectors``: an item whose id already exists in
+        any bank, live or forgotten, is skipped, never overwritten
+        (``ON CONFLICT (id) DO NOTHING``). Returns the ids inserted, so a
+        concurrent writer that got there first is detected, not clobbered.
+        Optional VectorStore method (team-memory push)."""
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        inserted: list[str] = []
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                for item in items:
+                    if len(item.vector) != self._dim:
+                        raise ValueError(
+                            f"Vector length {len(item.vector)} != embedding_dimensions {self._dim}",
+                        )
+                for item in items:
+                    retained_at = item.retained_at or datetime.now(UTC)
+                    await cur.execute(
+                        f"""
+                        INSERT INTO {self._fq()}
+                            (
+                                id, bank_id, embedding, text, metadata, tags, fact_type,
+                                occurred_at, memory_layer, retained_at, chunk_id, forgotten_at, changed_at
+                            )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s)
+                        ON CONFLICT (id) DO NOTHING
+                        RETURNING id
+                        """,
+                        (
+                            item.id,
+                            item.bank_id,
+                            item.vector,
+                            item.text,
+                            Json(item.metadata) if item.metadata is not None else None,
+                            item.tags,
+                            item.fact_type,
+                            item.occurred_at,
+                            item.memory_layer,
+                            retained_at,
+                            item.chunk_id,
+                            retained_at,
+                        ),
+                    )
+                    if await cur.fetchone() is None:
+                        continue
+                    await self._upsert_bank(cur, item.bank_id)
+                    await self._upsert_temporal_facts(cur, item)
+                    inserted.append(item.id)
+        return inserted
+
     async def delete(self, ids: list[str], bank_id: str) -> int:
         if not ids:
             return 0
@@ -887,7 +1060,7 @@ class PostgresStore:
                 await cur.execute(
                     f"""
                     UPDATE {self._fq()}
-                    SET forgotten_at = NOW()
+                    SET forgotten_at = NOW(), changed_at = GREATEST(retained_at, NOW())
                     WHERE bank_id = %s
                       AND id = ANY(%s::text[])
                       AND forgotten_at IS NULL

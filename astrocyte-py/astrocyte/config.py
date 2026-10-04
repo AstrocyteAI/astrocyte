@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import yaml
 
+from astrocyte._text_files import read_user_text
 from astrocyte.errors import ConfigError
 from astrocyte.types import AccessGrant
 
@@ -705,6 +706,10 @@ class SourceConfig:
     # M4.1 proxy recall: GET (default) or POST JSON to ``url``
     recall_method: str | None = None  # "GET" | "POST"
     recall_body: Any | None = None  # POST JSON: dict/str with placeholders (see ``astrocyte.recall.proxy``)
+    # Per-source cap on one proxy recall request, in seconds. None = the shared
+    # deadline (``ASTROCYTE_PROXY_RECALL_DEADLINE_SECONDS``, default 0.8 s);
+    # a value above the deadline is capped by it. See federated-sources §4.
+    recall_timeout_seconds: float | None = None
 
 
 @dataclass
@@ -1151,7 +1156,7 @@ def _load_profile(profile_name: str) -> dict:
         raise ConfigError(f"Profile not found: {profile_path}")
 
     try:
-        with open(profile_path) as f:
+        with open(profile_path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {profile_path}: {exc}") from exc
@@ -1171,7 +1176,7 @@ def _load_compliance_profile(name: str) -> dict:
         raise ConfigError(f"Compliance profile not found: {profile_path}")
 
     try:
-        with open(profile_path) as f:
+        with open(profile_path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {profile_path}: {exc}") from exc
@@ -1761,8 +1766,7 @@ def load_config(path: str | Path) -> AstrocyteConfig:
         raise ConfigError(f"Config file not found: {config_path}")
 
     try:
-        with open(config_path) as f:
-            raw = yaml.safe_load(f) or {}
+        raw = yaml.safe_load(read_user_text(config_path)) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {config_path}: {exc}") from exc
 

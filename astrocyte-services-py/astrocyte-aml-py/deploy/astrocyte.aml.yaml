@@ -15,9 +15,10 @@ vector_store_config:
   bootstrap_schema: true
 
 # One provider serves both completion and embedding: OpenAIProvider implements
-# embed(), and `embedding_model` is a constructor argument. The top-level
-# `embedding_provider:` config key is NOT read on this wiring path — setting it
-# would look meaningful and do nothing, so both models are set here instead.
+# embed(), and `embedding_model` is a constructor argument. A top-level
+# `embedding_provider:` would split embedding onto a second backend (the
+# self-eval configs use that to run bge-small locally); a submission keeps
+# both on OpenAI, so it is deliberately absent here.
 llm_provider: openai
 llm_provider_config:
   model: gpt-4o-mini

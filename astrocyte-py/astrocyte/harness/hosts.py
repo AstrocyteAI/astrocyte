@@ -67,7 +67,10 @@ class Outcome:
 
 
 def _home() -> Path:
-    return Path(os.environ.get("HOME") or Path.home())
+    # $HOME on POSIX; USERPROFILE on Windows (which ignores HOME, as do the
+    # agents there: their configs live under the profile even when Git Bash
+    # sets HOME elsewhere).
+    return Path.home()
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -224,10 +227,13 @@ class HookHost:
     hooks_next_step: str = ""
     #: Do this harness's hooks save finished turns, or only recall?
     captures_turns: bool = True
+    #: Opt-in recall on file reads and edits: (event, tool matcher, extra entry
+    #: fields), or None where the harness has no such hook (yet).
+    FILE_HOOK: tuple[str, str, dict[str, Any]] | None = None
     # Matches the current ``<python> -I -m astrocyte.cli hook …`` form and the
     # earlier ``astrocyte hook …`` console-script form, with or without --host.
     _OURS = re.compile(
-        r"astrocyte(?:\.cli)?['\"]?\s+hook\s+(session-start|prompt|stop)(?:\s+--host\s+[a-z-]+)?\s*$"
+        r"astrocyte(?:\.cli)?['\"]?\s+hook\s+(session-start|prompt|stop|file)(?:\s+--host\s+[a-z-]+)?\s*$"
     )
 
     @abstractmethod
@@ -250,13 +256,32 @@ class HookHost:
                         found[event] = hook["command"]
         return found
 
-    def _wanted(self, prefix: str) -> dict[str, dict[str, Any]]:
+    def _wanted(self, prefix: str, file_recall: bool = False) -> dict[str, dict[str, Any]]:
         """``prefix`` is a ready-quoted command, e.g. ``'/py' -I -m astrocyte.cli``."""
         flag = f" --host {self.hook_dialect}" if self.hook_dialect else ""
-        return {
+        wanted = {
             event: {"type": "command", "command": f"{prefix} hook {sub}{flag}", **extra}
             for event, (sub, extra) in self.HOOK_EVENTS.items()
         }
+        if file_recall and self.FILE_HOOK is not None:
+            event, _, extra = self.FILE_HOOK
+            wanted[event] = {"type": "command", "command": f"{prefix} hook file{flag}", **extra}
+        return wanted
+
+    def _all_ours(self) -> dict[str, str]:
+        """Every event holding one of our hooks, base or file recall."""
+        hooks = _read_json(self.hooks_file()).get("hooks", {})
+        found: dict[str, str] = {}
+        for event, groups in (hooks.items() if isinstance(hooks, dict) else ()):
+            for group in groups if isinstance(groups, list) else ():
+                for hook in (group or {}).get("hooks") or []:
+                    if self._is_ours(hook):
+                        found[event] = hook["command"]
+        return found
+
+    def file_recall_command(self) -> str | None:
+        """Our file-recall hook command, if installed."""
+        return self._all_ours().get(self.FILE_HOOK[0]) if self.FILE_HOOK else None
 
     def _strip_ours(self, data: dict) -> None:
         hooks = data.get("hooks")
@@ -277,38 +302,42 @@ class HookHost:
         if not hooks:
             data.pop("hooks")
 
-    def install_hooks(self, prefix: str, *, dry_run: bool = False) -> Outcome:
+    def install_hooks(self, prefix: str, *, dry_run: bool = False, file_recall: bool = False) -> Outcome:
         label = f"{self.label} hooks"
-        wanted = self._wanted(prefix)
+        wanted = self._wanted(prefix, file_recall)
         try:
             current = self.hook_commands()
+            # Every hook of ours, so switching file recall off removes it.
+            unchanged = self._all_ours() == {e: entry["command"] for e, entry in wanted.items()}
         except HostConfigError as e:
             return Outcome(label, "failed", str(e))
-        if all(current[e] == wanted[e]["command"] for e in wanted):
+        if unchanged:
             return Outcome(label, "unchanged", str(self.hooks_file()))
         verb: Status = "updated" if any(current.values()) else "installed"
         if dry_run:
             return Outcome(label, "planned", f"would {_VERB[verb]} {self.hooks_file()}")
+        matcher = {self.FILE_HOOK[0]: self.FILE_HOOK[1]} if self.FILE_HOOK else {}
 
         def change(data: dict) -> None:
             self._strip_ours(data)  # replace stale entries; never touch the user's own hooks
             hooks = data.setdefault("hooks", {})
             for event, entry in wanted.items():
-                hooks.setdefault(event, []).append({"hooks": [entry]})
+                group = {"matcher": matcher[event], "hooks": [entry]} if event in matcher else {"hooks": [entry]}
+                hooks.setdefault(event, []).append(group)
 
         try:
             edit_json(self.hooks_file(), change)
-            after = self.hook_commands()
+            after = self._all_ours()
         except (HostConfigError, OSError) as e:
             return Outcome(label, "failed", str(e))
-        if any(after[e] != wanted[e]["command"] for e in wanted):
+        if any(after.get(e) != wanted[e]["command"] for e in wanted):
             return Outcome(label, "failed", f"wrote {self.hooks_file()} but the hooks did not take effect")
         return Outcome(label, verb, str(self.hooks_file()))
 
     def uninstall_hooks(self, *, dry_run: bool = False) -> Outcome:
         label = f"{self.label} hooks"
         try:
-            if not any(self.hook_commands().values()):
+            if not self._all_ours():
                 return Outcome(label, "absent", str(self.hooks_file()))
             if dry_run:
                 return Outcome(label, "planned", f"would remove from {self.hooks_file()}")
@@ -359,6 +388,9 @@ class ClaudeCodeHost(HookHost, _CliHost):
         "UserPromptSubmit": ("prompt", {"timeout": 5}),
         "Stop": ("stop", {"timeout": 10}),
     }
+    #: After a file tool runs, its memories are added next to the result
+    #: (``hookSpecificOutput.additionalContext``; code.claude.com/docs/en/hooks).
+    FILE_HOOK = ("PostToolUse", "Read|Edit|Write|NotebookEdit", {"timeout": 5})
 
     def hooks_file(self) -> Path:
         return self._dir() / "settings.json"
@@ -675,14 +707,17 @@ class _OwnHookFile(HookHost):
     def _hook_entry(self, command: str, extra: dict[str, Any]) -> dict[str, Any]:
         return {"type": "command", self._COMMAND_KEY: command, **extra}
 
-    def hook_commands(self) -> dict[str, str | None]:
+    def _our_handlers(self) -> dict[str, dict[str, Any] | None]:
         events = self._entries(_read_json(self.hooks_file()))
-        found: dict[str, str | None] = dict.fromkeys(self.HOOK_EVENTS)
+        found: dict[str, dict[str, Any] | None] = dict.fromkeys(self.HOOK_EVENTS)
         for event in self.HOOK_EVENTS:
             for handler in events.get(event) or []:
                 if isinstance(handler, dict) and self._OURS.search(str(handler.get(self._COMMAND_KEY, ""))):
-                    found[event] = handler[self._COMMAND_KEY]
+                    found[event] = handler
         return found
+
+    def hook_commands(self) -> dict[str, str | None]:
+        return {event: h[self._COMMAND_KEY] if h else None for event, h in self._our_handlers().items()}
 
     def install_hooks(self, prefix: str, *, dry_run: bool = False) -> Outcome:
         label = f"{self.label} hooks"
@@ -690,10 +725,12 @@ class _OwnHookFile(HookHost):
         wanted = {event: self._hook_entry(f"{prefix} hook {sub}{flag}", extra)
                   for event, (sub, extra) in self.HOOK_EVENTS.items()}
         try:
-            current = self.hook_commands()
+            current = self._our_handlers()
         except HostConfigError as e:
             return Outcome(label, "failed", str(e))
-        if all(current[e] == wanted[e][self._COMMAND_KEY] for e in wanted):
+        # Whole entries, not just commands: a field added in an upgrade (Copilot's
+        # `powershell`) must reach existing installs.
+        if all(current[e] == wanted[e] for e in wanted):
             return Outcome(label, "unchanged", str(self.hooks_file()))
         verb: Status = "updated" if any(current.values()) else "installed"
         if dry_run:
@@ -780,6 +817,11 @@ class CopilotHost(_OwnHookFile, _JsonHost):
     }
     hook_dialect = "copilot"
     _COMMAND_KEY = "bash"
+
+    def _hook_entry(self, command: str, extra: dict[str, Any]) -> dict[str, Any]:
+        # Copilot runs `bash` on macOS/Linux and `powershell` on Windows; the
+        # command is written to mean the same in both (server.hook_prefix).
+        return {"type": "command", "bash": command, "powershell": command, **extra}
 
     def hooks_file(self) -> Path:
         return self._dir() / "hooks" / "astrocyte.json"

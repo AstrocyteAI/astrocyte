@@ -52,7 +52,7 @@ _VALID_MIP = textwrap.dedent("""\
 @pytest.fixture
 def mip_path(tmp_path: Path) -> Path:
     p = tmp_path / "mip.yaml"
-    p.write_text(_VALID_MIP)
+    p.write_text(_VALID_MIP, encoding="utf-8")
     return p
 
 
@@ -234,7 +234,7 @@ class TestCliForgetGuardrails:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         path = tmp_path / "mip.yaml"
-        path.write_text(_FORGET_INVALID_MIP)
+        path.write_text(_FORGET_INVALID_MIP, encoding="utf-8")
         rc = main(["mip", "lint", str(path)])
         assert rc == 1
         err = capsys.readouterr().err
@@ -247,7 +247,7 @@ class TestCliForgetGuardrails:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         path = tmp_path / "mip.yaml"
-        path.write_text(_FORGET_VALID_MIP)
+        path.write_text(_FORGET_VALID_MIP, encoding="utf-8")
         rc = main(["mip", "lint", str(path)])
         assert rc == 0
         out = capsys.readouterr().out
@@ -289,7 +289,7 @@ class TestCliForgetGuardrails:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         path = tmp_path / "mip.yaml"
-        path.write_text(_FORGET_VALID_MIP)
+        path.write_text(_FORGET_VALID_MIP, encoding="utf-8")
         rc = main(
             [
                 "mip",

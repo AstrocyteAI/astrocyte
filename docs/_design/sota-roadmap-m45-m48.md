@@ -8,6 +8,7 @@ topic: design
 
 **Status:** PROPOSED (2026-09-01; revised same day after the AI-memory landscape survey — see §0b; revised 2026-09-02 with the local self-evaluation harness — see §4b, §9.7)
 **Predecessor:** v0.15.1 (cycle `v015w` ship-floor: LME 74.4% @ mt_8192 n=90; LoCoMo 84.5% n=200 / 82.1% n=1540)
+**Objective (north star, 2026-10-04):** wherever you use AI, Astrocyte captures and checks what it learns, under your organisation's rules — see [`design-principles.md`](design-principles.md) §0. The benchmark goal below serves it.
 **Goal:** credible SOTA positioning across the matched-harness leaderboards (AML, LongMemEval-V2, AMA-Bench, MemoryArena), with an explicit cost/latency/accuracy tiering doctrine.
 **Hard date:** AML submission cycle 2 opens **2026-09-20** (§4).
 **Implementation status:** the AML adapter + self-eval harness described in §4/§4b live on branch **`feat/aml-adapter`** (worktree `astrocyte-wt-aml`, HEAD `fd979d2`) — **not merged to `main`**, so they are invisible from a default checkout. 68 tests pass, CI-gated. Everything else in this doc is proposal.
@@ -791,7 +792,8 @@ The three items scoped after §4e, recorded honestly:
 
 | # | item | status |
 |---|---|---|
-| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h (a real-size batch measured 64 s/Add; cause and fix in §9.12). **Measured:** n=50 paired on this architecture — no accuracy penalty vs the baseline (+4.0 pts, CI [−4, +13], p = 0.69); see the paired section below. A fixed-code rerun is in flight. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
+| 1 | benchmark the **actual submission config** (postgres/pgvectorscale, gpt-4o-mini, text-embedding-3-small, `structured_fact_extraction: true`) | **blocked — OpenAI account has no credits** (2026-10-03: 12/12 calls `429 insufficient_quota`, nothing spent). The stack rebuilds at HEAD with all fixes and pgvectorscale present; a token-counting proxy is ready to measure real cost per item. The 60% above was measured on a *different retain architecture* (structured extraction off) and says nothing about the submission. **Fallback measured:** the submission architecture with haiku + bge-small (only the two model providers swapped) works end to end, but **one Add takes ~39 s** with structured extraction on, vs ~6 s on the baseline path — an n=250 run would take ~45 h (a real-size batch measured 64 s/Add; cause and fix in §9.12). **Measured:** n=50 paired on this architecture — no accuracy penalty vs the baseline (+4.0 pts, CI [−4, +13], p = 0.69); see the paired section below. The fixed-code rerun matches it (62% / 58%, one
+question different) at ~2.2× the speed. Est. OpenAI cost for item 1: ~$4 at n=50, ~$20 at n=250 (list prices, ±2×; the proxy replaces this). |
 | 2 | bound `OpenAIProvider` concurrency | **done.** `max_concurrency` / `ASTROCYTE_OPENAI_MAX_CONCURRENCY`, guarding `complete()` and `embed()`, opt-in. Negative control: `assert 20 <= 3`. |
 | 3 | `top_k` 50 vs 100 A/B | **not run** — rides on item 1. |
 
@@ -803,8 +805,8 @@ will measure it on `text-embedding-3-small` for the first time.
 
 #### Submission architecture vs baseline — paired, n=50 (2026-10-04)
 
-First measurement of the retain architecture the submission uses (Postgres +
-pgvectorscale DiskANN, `structured_fact_extraction: true`), with `claude -p`
+First measurement of the retain architecture the submission uses (Postgres with
+`bootstrap_schema`, `structured_fact_extraction: true`), with `claude -p`
 haiku + bge-small standing in for gpt-4o-mini + text-embedding-3-small. The
 first 50 items of the seed-42 sample — **all 50 are also in the n=250
 baseline**, so the comparison is paired on identical questions, with the same
@@ -826,11 +828,120 @@ extraction prompt — and was still not worse. Both runs' judges also ran the
 user's Claude Code hooks (the judge was held constant on purpose). The cost is
 speed: structured extraction made an Add ~10× slower here (64 s vs ~6 s).
 
-**Follow-up in flight:** the same 50 items on the **fixed** code (`ee58f88`:
-chunk_index alignment, thinking off, built-in tools and hooks off), same judge.
-Verified identical embeddings between the two pins (cosine 1.000000), so
-retrieval is not confounded. Smoke test on the same batch: Add 64.4 s → 36.2 s,
-extraction call 58.4 s → 25.5 s.
+**Correction (2026-10-04): no DiskANN index was involved.** The benchmark
+database had only the `vector` extension (0.8.6), no `vectorscale`, and no
+approximate-NN index on `astrocyte_vectors` — `bootstrap_schema` does not create
+one, and both this run and the fixed rerun used it. Every measurement here is an
+**exact cosine scan**. The shipped AML config uses the same bootstrap path, so
+measured and submitted setups match, and exact search is deterministic, which
+helps under the reproduction clause. Earlier text in this section said
+"pgvectorscale DiskANN"; that was wrong.
+
+#### Fixed code on the same 50 items (2026-10-04)
+
+Same 50 items, same frozen judge (two passes), on the **fixed** code (`ee58f88`:
+chunk_index alignment, thinking off, built-in tools and hooks off). Embeddings
+verified identical between the two pins (cosine 1.000000), so retrieval is not
+confounded.
+
+| | pass 1 | pass 2 |
+|---|---|---|
+| baseline | 60.0% | 56.0% |
+| submission architecture, pre-fix | 64.0% | 60.0% |
+| **submission architecture, fixed** | **62.0%** | **58.0%** |
+
+| paired difference (judge passes averaged) | pts | 95% bootstrap CI | McNemar (pass 1) |
+|---|---|---|---|
+| fixed − pre-fix | −2.0 | [−7.0, +3.0] | 1 vs 0 discordant, p = 1.0 |
+| fixed − baseline | +2.0 | [−4.0, +9.0] | 2 vs 3, p = 1.0 |
+
+**The fixes cost no accuracy.** Pre-fix and fixed disagree on exactly one
+question in pass 1 (`09ba9854`, multi-session); the other differences are the
+judge flipping between passes (4 flips per run, the same rate as before). Per
+type, the fixed run matches the pre-fix run everywhere except that one
+multi-session item.
+
+**And they made it ~2.2× faster end to end:** 16 h 18 m pre-fix vs 7 h 33 m
+fixed, even though the fixed run redid one whole chunk (an adapter died mid-chunk;
+10 items failed with ConnectError and were retried) and sat through four
+circuit-breaker pauses on `claude -p` rate limiting (up to 30 min each).
+
+**A confound, found and bounded.** Ten items timed out during those pauses and
+were retried. Killing the adapter between chunks left them half-ingested in
+Postgres, and the retry ingested them again under the same bank: **retried banks
+carried 22.5% duplicate rows vs 3.8% for clean banks** (worst bank 43%).
+Pipeline dedup missed them because its cache is in memory and was lost on each
+restart. It did not move the result: on those 10 items the fixed and pre-fix runs
+score identically (50% / 50% both passes), and on the 40 clean items the picture
+is unchanged (fixed − baseline +3.8 pts, CI [−2.5, +11.2]; fixed − pre-fix
+−2.5, CI [−8.8, +3.8]).
+
+Two consequences outside the benchmark:
+- It is the failure mode AML's retry policy creates. `/add` is now idempotent
+  under retry (`a89a99a`, in v0.18.0), but that fix is **process-local**: a
+  container restart mid-run would still duplicate. A durable check against the
+  store (content hash per bank, or the stored `aml_request_id`) is a follow-up.
+- Dedup that cannot see the store does not survive a restart. Same follow-up.
+  **Resolved:** retain consults the vector store when the in-memory cache misses
+  (`1c97dd3`, #93, in v0.18.0), so a restarted process no longer stores a
+  duplicate of a chunk the bank already holds.
+
+**What remains open:** the actual submission models (gpt-4o-mini +
+text-embedding-3-small) are still unmeasured — the OpenAI-credit blocker in item
+1 above.
+
+#### Structured extraction on vs off, with its metadata persisted (2026-10-05)
+
+**A finding first.** On 2026-10-04 we found that `retain()` had **never** stored
+structured extraction's per-chunk metadata: the fact type, event time, and
+when/where/who were computed by a paid LLM call and discarded, keeping only the
+chunk text and entities, since extraction was introduced (2026-05-02). Every
+"extraction on" number before `057ac2a`, including pg50 and pg50fix above,
+measured extraction **without** its metadata. Fixed in `057ac2a` (in v0.19.0):
+each chunk's fields reach its row through dedup; an extracted `occurred_start`
+becomes `occurred_at`, with the request time kept as `_mentioned_at`.
+
+**The measurement.** Same 50 seed-42 items, same frozen judge (two passes),
+code `78eed43` (identical to `057ac2a`), Postgres with `bootstrap_schema`,
+`claude -p` haiku with thinking off, bge-small. Two arms differing **only** in
+`structured_fact_extraction.enabled`, run back to back on fresh infrastructure.
+No item failed in either arm.
+
+| | pass 1 | pass 2 |
+|---|---|---|
+| baseline (in-memory, extraction off; for context) | 60.0% | 56.0% |
+| pg50fix (extraction on, metadata discarded) | 62.0% | 58.0% |
+| **extraction off** | **58.0%** | **56.0%** |
+| **extraction on, metadata persisted** | **64.0%** | **64.0%** |
+
+| paired difference (judge passes averaged) | pts | 95% bootstrap CI | McNemar (pass 1) |
+|---|---|---|---|
+| **on − off** (the submission decision) | **+7.0** | **[0.0, +15.0]** | 2 vs 5 discordant, p = 0.45 |
+| on, metadata persisted − on, metadata discarded | +4.0 | [−1.0, +9.0] | 2 vs 3, p = 1.0 |
+| off − baseline | −1.0 | [−8.0, +5.0] | 3 vs 2, p = 1.0 |
+
+**Reading.** Extraction on is ahead of off in both judge passes, and the
+disagreements split 5 to 2 in its favour, but the interval's lower end sits at
+zero: **suggestive, not significant at n=50.** Persisting the metadata alone
+is within noise. Storage is not the driver: extraction off on Postgres is level
+with the in-memory baseline. Per type (directional only): preference 0 → 2/5
+and multi-session 9 → 10/18 gained; temporal reasoning did not move (5/9 in
+both arms), despite event times now being stored. The extraction-on arm's judge
+flipped 6 answers between passes against 1 for extraction off, so judge noise
+is higher there.
+
+**Decision for the submission: keep structured extraction on.** The evidence
+leans that way and none points the other way; the cost is affordable at about
+$230 of gpt-4o-mini for the suite against about $30 with it off (§4d), plus
+slower Adds. The submission pins v0.19.0, which contains `057ac2a`. An n=250
+rerun of both arms would settle significance; it is not worth the quota unless
+the cost difference matters.
+
+**Caveats.** The adapter layer (`astrocyte_aml`) loaded from the main checkout
+rather than the pinned worktree in both arms (uvicorn's `--app-dir`, §9 item 12),
+identically, so the pair stands; the measured change is in the pinned core. The
+judge ran hooks-off here, unlike the earlier runs' judge, so comparisons with
+the baseline and pg50fix carry that asterisk; the on-vs-off pair does not.
 
 ## 5. M48 — Phase 3 (both sub-items gated)
 
@@ -1409,6 +1520,202 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     Rule: a benchmark runs on frozen code, its own infrastructure, and a
     hermetic provider. Anything it shares with ongoing development is a way
     for that work to invalidate it without an error.
+
+    **A fourth leak, found 2026-10-04:** uvicorn inserts its `--app-dir`
+    (default: the current directory) at the front of `sys.path`. Launched from
+    the main checkout's `astrocyte-aml-py/`, the adapter package
+    `astrocyte_aml` loaded from the main checkout whatever `PYTHONPATH` or
+    `PYTHONSAFEPATH` said; the core packages were pinned correctly. A pin
+    check with plain `python -c` cannot see this. It affected the pg50,
+    pg50fix, and sfeoff/sfefix runs, in every case identically across the
+    arms of a comparison, so the paired results stand; only the adapter
+    layer, which differs by the idempotent-retry fix, was unpinned. Fix: pass
+    `--app-dir <pinned worktree>` and verify the pin the way the server
+    imports, not the way a one-liner does.
+
+13. **"Agents don't need memory, they need documentation" — what the critique gets
+    right** (added 2026-10-04). Kevin Liao's
+    [essay](https://liao.gg/blog/agents-dont-need-memory) (2026-10-03) argues that
+    every memory plugin is "just RAG": snippets extracted from transcripts,
+    retrieved by similarity, injected on every prompt. His alternative is a
+    Markdown "brain" that the agent reads before a task and updates after it
+    ([operator-memory](https://github.com/aerovato/operator-memory)). The evidence
+    is one developer's year of use, with no measurement — the same self-report
+    caution as engrim (item 10). The diagnosis still deserves a straight answer,
+    because **it describes Astrocyte's Claude Code hook mode exactly**: the
+    `prompt` hook injects recalled memories on every non-trivial prompt.
+
+    **Where it is right, with our own evidence:**
+    - *Similar is not correct or current.* §4e defect 4 is the live example: a
+      rerank silently dropped `occurred_at`, so every recalled memory carried its
+      ingest date and nothing looked wrong until it was measured.
+    - *A vector store cannot be audited by reading it.* Trust and status fields do
+      not exist yet (item 5), and the 2026-10-04 pg50fix run carried 22.5%
+      duplicate rows in retried banks that only a SQL query revealed.
+    - *Query-driven recall cannot surface what the agent does not know to ask
+      for.* A table of contents can.
+    - *Complexity without evidence.* Structured extraction made an Add ~10×
+      slower; n=250 plus paired tests show it costs no accuracy, and nothing yet
+      shows it helps.
+
+    **Where it overreaches:**
+    - *The case is one developer and one codebase*, where the code is ground
+      truth and someone has reason to keep docs current. Conversational and
+      multi-user memory (LongMemEval: something said in session 37 of 500) has no
+      author for the docs and too much volume to read in context.
+    - *"Documentation" is memory with a different write policy:* write-time
+      consolidation by the foreground agent while it holds full context. It is the
+      same job as the background "dreamer" it rejects; it spends the tokens in the
+      main loop instead.
+    - *Docs have the failure modes it attributes to RAG:* agent-written docs drift,
+      an LLM rewrite loses information silently with no provenance, and concurrent
+      agents conflict on one file. Once the brain outgrows the context window,
+      "consult the index" is retrieval again, performed by the LLM.
+    - *"Isolated snippets" targets fact-extraction systems.* Astrocyte stores each
+      chunk verbatim with structured metadata precisely to keep context, at no
+      measured accuracy cost (§4e paired section).
+
+    **What to adopt — documents for durable, curated knowledge; memory for the
+    volume no one will curate:**
+    1. *Documents as the primary surface for coding agents.* The wiki tier and OKF
+       export (§6.1) already emit Markdown. Durable project knowledge — decisions,
+       specs, constraints — belongs there, readable and committable, with the
+       episodic store as the long tail and an index into the documents.
+    2. *Push a table of contents, not only top-k.* The composed-context MCP tool
+       proposed in §6 (one call returns a page plus top facts per entity) is that
+       idea; it answers "agents can't search for what they don't know."
+    3. *Retain the agent's own end-of-task summary,* not only facts extracted from
+       the transcript. Writing while the full picture is in context is a better
+       write policy, and it fits the existing `retain()` path.
+    4. *Validate code memories against code.* Stamp memories about a repository
+       with the git SHA and paths they describe, and mark them suspect when those
+       files change — a cheap answer to the staleness point that extends the
+       derived `stale_after` (§6.1).
+
+    None of these is a benchmark lever; they belong to the coding-agent product
+    surface and wait until after AML cycle 2. **Design:**
+    [`anchored-documents.md`](anchored-documents.md) — documents as the interface
+    and memory as the evidence: a claim model (citations, anchors, trust,
+    validity), file-touch recall, anchor checks at recall, a patch-only write
+    path, and an evaluation plan that starts by building the essay's system as
+    the baseline.
+
+14. **Federated sources — plugging into documentation and RAG systems** (added
+    2026-10-04). The follow-on to item 13: once agents read documents, most of a
+    team's documents live in GitHub, Confluence, Notion, or an existing RAG
+    index, not in Astrocyte. Design:
+    [`federated-sources.md`](federated-sources.md). It makes Astrocyte the
+    layer that governs knowledge wherever it lives (provenance, freshness,
+    trust, permissions, fusion) instead of a store everything must migrate into.
+
+    **Already here, more than expected:** proxy recall (M4.1, SSRF-guarded,
+    RRF-merged), `external_context`, ingestion adapters (document, github, s3,
+    kafka, redis), and the CocoIndex and team-memory designs.
+
+    **A defect found while scoping it:** proxy sources are queried **one after
+    another, before local retrieval starts**, each with a fixed 15 s timeout
+    (`recall/proxy.py:423`, awaited from `_astrocyte.py:662`). Recall latency is
+    local plus the sum of every remote call; three slow sources add 45 s against
+    a prompt-hook budget of 1.5 s. Proxy hits also all enter fusion at one weight.
+
+    **Decisions in the design:**
+    - *Anchor by default, federate as fallback, ingest only what Astrocyte
+      owns.* Anchoring keeps a pointer plus the source's version per item: the
+      anchored-documents git-SHA mechanism, generalized.
+    - *Latency:* federation never on the prompt hook's path; concurrent fan-out
+      alongside local retrieval under one deadline; a circuit breaker per
+      source; batched freshness checks.
+    - *Accuracy:* measured per-source weights (RRF ranks are not comparable
+      across sources); a slot budget inside the ~50-candidate cap (M30);
+      cross-source dedup that merges provenance; supersession over contradiction.
+    - *Teams:* search as the caller, never a shared service account (no
+      confused deputy); provenance on every hit; write-back as reviewed pull
+      requests or drafts; cached copies honour deletion at the source.
+    - *Boundaries:* the AML submission stays federation-free; Astrocyte does
+      not become a search engine.
+
+    **Phases:** F0, the concurrency fix, standalone and any time; F1, a
+    `RecallSource` plugin interface with GitHub, a wiki, a vector DB, and MCP as
+    first sources; F2, calibration; F3, anchored external documents; F4, team
+    permissions and write-back. None of it carries an accuracy claim until the
+    docs-augmented evaluation in the design measures it.
+
+15. **Direction committed publicly — documents people can check** (added
+    2026-10-04). Calvin's reply to the essay in item 13,
+    ["Agents Need Documents They Can Check"](https://calvinx.com/blog/2026-Oct-04/agents-need-documents-they-can-check), states Astrocyte's direction in
+    public. The eight decisions are recorded in
+    [`anchored-documents.md`](anchored-documents.md) §0; in short:
+    Astrocyte is the evidence layer behind documents, not a rival to them; the
+    every-prompt similarity hook stops being the default (table of contents at
+    session start plus claims anchored to the open file, similarity as
+    fallback); capture stays automatic; what the agent knows is readable pages;
+    agents draft and people approve **in tools teams already use** (repository
+    pull requests first, then Confluence or Notion suggestions, **no Astrocyte
+    review UI**); existing documents, **including operator-memory's
+    Markdown**, gain sources and staleness checks; existing search and RAG
+    systems are drawn on as **evidence with sources, never raw text**; and
+    results come before claims, with the documents-only baseline compared
+    and published whichever way it goes. The post says none of this is built
+    and that it follows the AML cycle 2 work.
+
+    **Positioning:** memory is low effort and low control (trusted by results);
+    documentation is high effort and high control (trusted by inspection).
+    Astrocyte aims at the empty corner: captured as easily as memory, checked
+    as easily as a document. Integrations deliver the control half only if
+    they write back for human review and carry provenance both ways.
+
+    **Build order** (supersedes the order in item 13's "what to adopt"):
+    1. *Persist per-chunk extraction metadata in `retain()`.* Found
+       2026-10-04: the fact type, event time, and when/where/who were computed
+       and discarded on the main retain path since extraction was introduced.
+       Everything below depends on dates and sources surviving storage.
+       **Fixed in `057ac2a`** (in v0.19.0). Measured 2026-10-05: extraction on
+       with its metadata beats extraction off by +7.0 pts, CI [0, +15], n=50;
+       suggestive, not significant. Kept on for the submission (§4e).
+    2. *Metadata parity for federated hits* (federated-sources F0b):
+       `_row_to_hit` drops dates and provenance and invents a 0.5 score.
+       **Done 2026-10-04**; the 0.5 turned out never to rank anything and is
+       now flagged rather than replaced (federated-sources §8).
+    3. *Federation hygiene* (F0): concurrent fan-out, a deadline well under
+       1 s, partial results, per-source caching, p50/p95 per source.
+       **Done 2026-10-04:** concurrency, one deadline, partial results,
+       per-source timeouts and breakers, late answers kept for the next recall,
+       and latency for every outcome. **Not yet:** overlap with local
+       retrieval, deferred to F1 (federated-sources §8).
+    4. *Per-caller auth passthrough* for federated sources (F4's core).
+    5. *The claim model and the file-touch hook* (anchored-documents P1).
+    6. *Write-back as pull requests,* Markdown in a repository first plus an
+       operator-memory-compatible adapter, then Confluence and Notion.
+    7. *Cross-source dedup* that merges provenance (F2).
+    8. *A fourth "federated" arm* in the anchored-documents §9 evaluation
+       (documents only, memory only, hybrid, federated), with latency p50/p95
+       alongside accuracy and confidence intervals.
+
+16. **Gaps between today and the objective** (added 2026-10-04). The
+    objective in [`design-principles.md`](design-principles.md) §0 is
+    vendor-neutral and organisation-aware: Astrocyte present in every AI tool,
+    with the same governance everywhere. Four gaps stand between today and it.
+    - **Capture differs by tool.** Claude Code (and Codex) have lifecycle hooks,
+      so capture is automatic. Over MCP alone, something is stored only when the
+      model chooses to call the tool. Consumer apps without hooks are reachable
+      only through the gateway, the LiteLLM adapter, or the LLM-wrapper
+      integration acting as an API proxy. Automatic capture everywhere needs a
+      **capture route per tool type**, and a statement of which tools get which.
+    - **One identity across tools.** The same person in Claude and ChatGPT must
+      map to one identity and the same team grants, ideally through company SSO.
+      Team memory G1 (per-user gateway tokens, glob and team grants, `#108`,
+      merged 2026-10-04) is the foundation; identity design lives in
+      [`identity-and-external-policy.md`](identity-and-external-policy.md).
+    - **Governance that travels with the documents.** Team and permission rules
+      must also hold for pages written back into a repository or Confluence, not
+      only inside Astrocyte's store: a page derived from a restricted bank must
+      not be proposed into a space with wider access
+      ([`anchored-documents.md`](anchored-documents.md) §7,
+      [`federated-sources.md`](federated-sources.md) §6).
+    - **Provenance end to end.** Dates, sources, and anchors must survive
+      `retain()` (fixed in `057ac2a`), the gateway, and federated or RAG results
+      (federated-sources F0b). Results from systems teams already run are
+      evidence with sources, never raw text handed to the agent.
 
 ## 10. Open questions (blocking-ish, cheap to resolve)
 

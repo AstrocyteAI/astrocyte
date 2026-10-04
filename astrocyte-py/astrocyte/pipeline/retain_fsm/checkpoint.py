@@ -124,7 +124,7 @@ class FileCheckpoint(Checkpoint):
         payload = _serialise(ctx)
         # Atomic-ish: write to tmp then rename.
         tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2, default=str))
+        tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         tmp.replace(path)
 
     async def load(
@@ -136,7 +136,7 @@ class FileCheckpoint(Checkpoint):
         if not path.exists():
             return None
         try:
-            raw = json.loads(path.read_text())
+            raw = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             logger.warning(
                 "checkpoint load: malformed JSON at %s: %s",

@@ -61,6 +61,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from astrocyte.pipeline._json_tolerant import first_json_value
+
 if TYPE_CHECKING:
     from astrocyte.pipeline.trend import Trend
     from astrocyte.provider import LLMProvider, VectorStore
@@ -243,27 +245,17 @@ def _build_user_prompt(
 def _parse_actions(raw: str) -> list[dict[str, Any]]:
     """Extract the JSON array from the LLM response.
 
-    The LLM is instructed to output *only* a JSON array, but may include
-    leading/trailing whitespace or a markdown code fence.  We extract the
-    first ``[...`` block.
+    The LLM is instructed to output *only* a JSON array, but may wrap it in a
+    markdown fence and keep talking after it. The first complete array wins;
+    trailing prose, even prose containing brackets, is ignored rather than
+    turning a valid answer into a parse error (see ``first_json_value``).
     """
-    text = raw.strip()
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        lines = text.splitlines()
-        text = "\n".join(line for line in lines if not line.strip().startswith("```")).strip()
-
-    # Find the first JSON array
-    start = text.find("[")
-    end = text.rfind("]")
-    if start == -1 or end == -1 or end < start:
-        logger.debug("No JSON array found in consolidation response: %r", raw[:200])
-        return []
-
-    try:
-        actions = json.loads(text[start : end + 1])
-    except json.JSONDecodeError as exc:
-        logger.warning("JSON parse error in consolidation response: %s — %r", exc, raw[:200])
+    actions = first_json_value(raw, list)
+    if actions is None:
+        if "[" in raw:
+            logger.warning("JSON parse error in consolidation response — %r", raw[:200])
+        else:
+            logger.debug("No JSON array found in consolidation response: %r", raw[:200])
         return []
 
     if not isinstance(actions, list):

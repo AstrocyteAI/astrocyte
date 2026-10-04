@@ -10,6 +10,9 @@ What is kept, per the transcript structure measured on Claude Code 2.1:
   results are not the user speaking.
 * **Assistant prose** — ``text`` blocks only. ``thinking`` is internal and
   ``tool_use`` / ``tool_result`` are bulky and can carry file contents.
+* **Files the turn touched** — the paths of the assistant's file tools
+  (``Read``, ``Edit``, ``Write``, ``MultiEdit``, ``NotebookEdit``), not their
+  contents: what ties a captured turn to the code it was about.
 
 Hook output (including memories *we* inject) lives in separate ``attachment``
 lines, so it is never re-captured: there is no feedback loop.
@@ -40,6 +43,7 @@ class Turn:
     user: str
     assistant: list[str] = field(default_factory=list)
     started_at: datetime | None = None
+    files: list[str] = field(default_factory=list)  # touched, in first-touch order
 
     def render(self) -> str:
         """Conversation-engine input (``**role**: text``)."""
@@ -91,6 +95,26 @@ def _assistant_text(line: dict) -> list[str]:
     return [b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip()]
 
 
+_FILE_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path",
+               "NotebookEdit": "notebook_path"}
+
+
+def _touched_files(line: dict) -> list[str]:
+    """Paths the assistant's file tools name in this line (Claude Code)."""
+    if line.get("type") != "assistant" or line.get("isSidechain"):
+        return []
+    content = (line.get("message") or {}).get("content")
+    if not isinstance(content, list):
+        return []
+    found = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_use" and (key := _FILE_TOOLS.get(block.get("name"))):
+            path = (block.get("input") or {}).get(key)
+            if isinstance(path, str) and path:
+                found.append(path)
+    return found
+
+
 # ── Antigravity (transcript.jsonl under brain/<conversation>/) ───────────
 #
 # Steps, measured on agy 1.2 and the Antigravity app: the user's message is a
@@ -111,6 +135,33 @@ def antigravity_prompt(line: dict) -> str | None:
     m = _USER_REQUEST.search(content)
     text = (m.group(1) if m else content).strip()
     return text or None
+
+
+# File tools by name, and the argument holding the path. The envelope —
+# PLANNER_RESPONSE ``tool_calls: [{"name", "args"}]`` with each argument value
+# JSON-encoded as a string — is measured on agy 1.2; the tool names and their
+# path arguments come from Antigravity's hook documentation (no file-tool
+# call has been recorded here yet).
+_ANTIGRAVITY_FILE_TOOLS = {"view_file": "AbsolutePath", "write_to_file": "TargetFile",
+                           "replace_file_content": "TargetFile", "multi_replace_file_content": "TargetFile"}
+
+
+def _antigravity_files(line: dict) -> list[str]:
+    if line.get("type") != "PLANNER_RESPONSE" or not isinstance(line.get("tool_calls"), list):
+        return []
+    found = []
+    for call in line["tool_calls"]:
+        if not isinstance(call, dict) or not (key := _ANTIGRAVITY_FILE_TOOLS.get(call.get("name"))):
+            continue
+        value = (call.get("args") or {}).get(key)
+        if isinstance(value, str) and value.startswith('"'):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                continue
+        if isinstance(value, str) and value:
+            found.append(value)
+    return found
 
 
 def _antigravity_reply(line: dict) -> list[str]:
@@ -160,6 +211,9 @@ def read_new_turns(path: str | Path, offset: int = 0, *, antigravity: bool = Fal
         texts = _antigravity_reply(line) if antigravity else _assistant_text(line)
         if texts and current is not None:
             current.assistant.extend(texts)
+        if current is not None:
+            touched = _antigravity_files(line) if antigravity else _touched_files(line)
+            current.files.extend(f for f in touched if f not in current.files)
         if current is None:
             resume = pos  # nothing pending: safe to move past this line
 

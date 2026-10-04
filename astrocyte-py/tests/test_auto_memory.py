@@ -9,10 +9,13 @@ embedder rather than trusting mock vectors.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from argparse import Namespace
@@ -20,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from platform_compat import WINDOWS, set_home, system_env, system_path
 
 from astrocyte.harness import agentd, hooks
 from astrocyte.harness.hosts import ClaudeCodeHost, CodexHost, HostConfigError
@@ -36,10 +40,10 @@ def env(tmp_path, monkeypatch):
     home.mkdir()
     for var in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "ASTROCYTE_CONFIG", "ASTROCYTE_HOOKS", "XDG_DATA_HOME"):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("HOME", str(home))
+    set_home(monkeypatch, home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     # Short state path: AF_UNIX socket paths are capped at ~104 bytes on macOS.
-    state = Path("/tmp") / f"astro-test-{time.time_ns()}"
+    state = Path("/tmp" if os.name != "nt" else tempfile.gettempdir()) / f"astro-test-{time.time_ns()}"
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
     cfg = home / ".config" / "astrocyte" / "astrocyte.yaml"
     cfg.parent.mkdir(parents=True)
@@ -48,7 +52,7 @@ def env(tmp_path, monkeypatch):
     # whether the test runner happens to sit under a `claude -p`.
     monkeypatch.setattr(hooks, "headless_session", lambda *_: False)
     yield Namespace(home=home, cfg=cfg, state=state / "astrocyte")
-    subprocess.run(["rm", "-rf", str(state)], check=False)
+    shutil.rmtree(state, ignore_errors=True)
 
 
 def git(cwd: Path, *args: str) -> None:
@@ -115,7 +119,7 @@ class TestTranscriptEdges:
 
     def _read(self, tmp_path, body: str, offset: int = 0):
         t = tmp_path / "t.jsonl"
-        t.write_text(body)
+        t.write_text(body, newline="\n")
         return read_new_turns(t, offset)
 
     def test_prompts_typed_as_text_blocks_count_tool_results_do_not(self, tmp_path):
@@ -162,7 +166,7 @@ class TestTranscriptEdges:
         turns, resume = self._read(tmp_path, body)
         assert [t.user for t in turns] == ["first"]
         later = body + assistant(text("two"))
-        (tmp_path / "t.jsonl").write_text(later)
+        (tmp_path / "t.jsonl").write_text(later, newline="\n")
         turns, _ = read_new_turns(tmp_path / "t.jsonl", resume)
         assert [(t.user, t.assistant) for t in turns] == [("second", ["two"])]
 
@@ -184,7 +188,8 @@ class TestTranscript:
             + assistant(text("subagent chatter"), sidechain=True)
             + _line(type="attachment", attachment={"type": "hook_success", "content": "Possibly relevant memories"})
             + _line(type="user", message={"content": "<task-notification>done</task-notification>"},
-                    origin={"kind": "task-notification"})
+                    origin={"kind": "task-notification"}),
+            newline="\n",
         )
         turns, offset = read_new_turns(t)
         assert len(turns) == 1
@@ -197,7 +202,7 @@ class TestTranscript:
 
     def test_incremental_reads_never_duplicate_or_lose_a_turn(self, tmp_path):
         t = tmp_path / "t.jsonl"
-        t.write_text(human("first question") + assistant(text("first answer")))
+        t.write_text(human("first question") + assistant(text("first answer")), newline="\n")
         turns, off = read_new_turns(t)
         assert [x.user for x in turns] == ["first question"]
         with t.open("a") as fh:
@@ -213,19 +218,19 @@ class TestTranscript:
     def test_half_written_last_line_is_left_for_next_time(self, tmp_path):
         t = tmp_path / "t.jsonl"
         full = human("q") + assistant(text("a"))
-        t.write_text(full + '{"type": "user", "mess')
+        t.write_text(full + '{"type": "user", "mess', newline="\n")
         turns, off = read_new_turns(t)
         assert len(turns) == 1 and off == len(full.encode())
 
     def test_long_messages_are_clipped(self, tmp_path):
         t = tmp_path / "t.jsonl"
-        t.write_text(human("x" * 50_000) + assistant(text("ok")))
+        t.write_text(human("x" * 50_000) + assistant(text("ok")), newline="\n")
         [turn] = read_new_turns(t)[0]
         assert len(turn.render()) < MAX_USER_CHARS + 200
 
     def test_a_rewritten_transcript_restarts_from_the_top(self, tmp_path):
         t = tmp_path / "t.jsonl"
-        t.write_text(human("q") + assistant(text("a")))
+        t.write_text(human("q") + assistant(text("a")), newline="\n")
         assert len(read_new_turns(t, offset=10_000)[0]) == 1
 
 
@@ -327,6 +332,15 @@ class TestSpool:
         hits = asyncio.run(daemon.brain.recall("staging", bank_id="proj")).hits
         assert any("Fly.io" in h.text for h in hits)
 
+    def test_captures_in_one_clock_tick_do_not_replace_each_other(self, env, daemon, monkeypatch):
+        """Windows CI: time_ns() ticks coarsely, two captures got one file
+        name, and the second replaced the first (3 turns lost)."""
+        monkeypatch.setattr(agentd.time, "time_ns", lambda: 1_791_100_000_000_000_000)
+        a = agentd.spool_capture("proj", "s1", "codex", [{"content": "first batch", "started_at": None}])
+        b = agentd.spool_capture("proj", "s2", "codex", [{"content": "second batch", "started_at": None}])
+        assert a != b and a.exists() and b.exists()
+        assert asyncio.run(daemon.drain()) == 2
+
     def test_a_failed_retain_keeps_the_remaining_turns(self, env, daemon, monkeypatch):
         path = agentd.spool_capture("proj", "s1", "claude-code", [
             {"content": "turn one", "started_at": None}, {"content": "turn two", "started_at": None}])
@@ -349,20 +363,42 @@ class TestSpool:
         assert (env.state / "spool" / "failed" / "1-1.json").exists()
 
 
+@pytest.fixture(params=["native", "tcp"])
+def transport(request, monkeypatch):
+    """Each daemon test over the platform's transport and over TCP, so the
+    Windows transport runs on every OS."""
+    if request.param == "tcp":
+        monkeypatch.setenv(agentd.TRANSPORT_ENV, "tcp")
+    else:
+        monkeypatch.delenv(agentd.TRANSPORT_ENV, raising=False)
+    return agentd.transport()
+
+
+def _serving(d: agentd.AgentDaemon):
+    """Run ``d`` in a thread until it answers; returns a stop function."""
+    sock = agentd.agentd_socket()
+    sock.parent.mkdir(parents=True, exist_ok=True)
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=lambda: loop.run_until_complete(d.serve(sock)), daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 15
+    while agentd.request("ping", timeout=0.3) is None:
+        assert time.monotonic() < deadline, "daemon did not come up"
+        time.sleep(0.1)
+
+    def stop() -> None:
+        loop.call_soon_threadsafe(d._stop.set)
+        thread.join(timeout=10)
+
+    return stop
+
+
 class TestDaemonOverSocket:
-    def test_ping_capture_recall_round_trip(self, env, monkeypatch):
+    def test_ping_capture_recall_round_trip(self, env, monkeypatch, transport):
         monkeypatch.setattr(agentd, "DRAIN_INTERVAL_SECONDS", 0.2)
         d = agentd.AgentDaemon(env.cfg)
-        sock = agentd.agentd_socket()
-        sock.parent.mkdir(parents=True, exist_ok=True)
-        loop = asyncio.new_event_loop()
-        thread = threading.Thread(target=lambda: loop.run_until_complete(d.serve(sock)), daemon=True)
-        thread.start()
+        stop = _serving(d)
         try:
-            deadline = time.monotonic() + 15
-            while agentd.request("ping", timeout=0.3) is None:
-                assert time.monotonic() < deadline, "daemon did not come up"
-                time.sleep(0.1)
             agentd.spool_capture("proj", "s1", "claude-code", [{"content": "We freeze deploys on Fridays.", "started_at": None}])
             assert agentd.request("capture", timeout=2) == {"ok": True}
             deadline = time.monotonic() + 10
@@ -373,12 +409,83 @@ class TestDaemonOverSocket:
             assert "bank `proj`" in reply["context"]
             assert agentd.request("bogus", timeout=2)["error"].startswith("unknown op")
         finally:
-            loop.call_soon_threadsafe(d._stop.set)
-            thread.join(timeout=10)
-        assert not sock.exists(), "socket is removed on exit"
+            stop()
+        endpoint = agentd.agentd_socket() if transport == "unix" else agentd.agentd_endpoint()
+        assert not endpoint.exists(), "socket / endpoint file is removed on exit"
 
-    def test_unreachable_daemon_is_none_not_an_exception(self, env):
+    def test_unreachable_daemon_is_none_not_an_exception(self, env, transport):
         assert agentd.request("ping", timeout=0.2) is None
+
+
+class TestTcpTransport:
+    """The loopback transport (Windows; forced elsewhere). The token is the
+    authentication: any local account can reach a loopback port."""
+
+    @pytest.fixture(autouse=True)
+    def _tcp(self, monkeypatch):
+        monkeypatch.setenv(agentd.TRANSPORT_ENV, "tcp")
+
+    def test_publishes_a_private_endpoint_on_loopback(self, env):
+        d = agentd.AgentDaemon(env.cfg)
+        stop = _serving(d)
+        try:
+            endpoint = json.loads(agentd.agentd_endpoint().read_text())
+            assert endpoint["transport"] == "tcp" and endpoint["pid"] == os.getpid()
+            assert endpoint["token"] == d.token and len(d.token) >= 40
+            if not WINDOWS:
+                assert oct(agentd.agentd_endpoint().stat().st_mode & 0o777) == "0o600"
+        finally:
+            stop()
+
+    @pytest.mark.parametrize("token", [None, "wrong", ""])
+    def test_a_request_without_the_token_gets_no_answer(self, env, token):
+        import socket
+
+        d = agentd.AgentDaemon(env.cfg)
+        stop = _serving(d)
+        try:
+            port = json.loads(agentd.agentd_endpoint().read_text())["port"]
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+                msg = {"op": "ping"} if token is None else {"op": "ping", "token": token}
+                s.sendall((json.dumps(msg) + "\n").encode())
+                assert s.recv(65536) == b"", "closed without a reply"
+            assert agentd.request("ping")["pid"] == os.getpid(), "the real client still gets in"
+        finally:
+            stop()
+
+    def test_a_missing_or_damaged_endpoint_is_none(self, env):
+        assert agentd.request("ping", timeout=0.2) is None  # no file
+        agentd.agentd_endpoint().parent.mkdir(parents=True, exist_ok=True)
+        agentd.agentd_endpoint().write_text("{not json")
+        assert agentd.request("ping", timeout=0.2) is None
+        agentd.agentd_endpoint().write_text(json.dumps({"port": 1}))  # no token
+        assert agentd.request("ping", timeout=0.2) is None
+
+    def test_a_stale_endpoint_is_none(self, env):
+        """A daemon that died leaves its file behind; nothing listens there now."""
+        import socket
+
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        agentd.agentd_endpoint().parent.mkdir(parents=True, exist_ok=True)
+        agentd.agentd_endpoint().write_text(json.dumps({"port": port, "token": "t"}))
+        assert agentd.request("ping", timeout=0.5) is None
+
+
+def test_the_transport_is_unix_where_there_are_unix_sockets(monkeypatch):
+    monkeypatch.delenv(agentd.TRANSPORT_ENV, raising=False)
+    assert agentd.transport() == ("tcp" if WINDOWS else "unix")
+    monkeypatch.setenv(agentd.TRANSPORT_ENV, "tcp")
+    assert agentd.transport() == "tcp"
+    monkeypatch.setenv(agentd.TRANSPORT_ENV, "unix")
+    assert agentd.transport() == ("tcp" if WINDOWS else "unix"), "unix can't be forced where there is none"
+
+
+def test_the_instance_lock_is_exclusive(tmp_path):
+    with open(tmp_path / "agentd.lock", "w") as first, open(tmp_path / "agentd.lock", "w") as second:
+        assert agentd._lock_exclusively(first) is True
+        assert agentd._lock_exclusively(second) is False, "a second daemon must leave"
 
 
 def _sqlite_daemon(env, tmp_path):
@@ -499,6 +606,54 @@ class TestDaemonOps:
         groups = agentd._groups([a[1], b[0], a[0]])  # newest first, chunks out of order
         assert [[i.id for i in g] for g in groups] == [["a-0", "a-1"], ["b-0"]]
 
+    def test_retains_within_one_clock_tick_stay_apart(self):
+        """Windows' clock ticks every ~15 ms, so turns drained in one burst
+        share ``_created_at``; ``_retain_id`` keeps them separate (found by the
+        Windows CI job: two resumed turns rendered as one)."""
+        from types import SimpleNamespace
+
+        tick = "2026-10-04T07:00:00.000000+00:00"
+        items = [SimpleNamespace(id=f"m{i}", text=f"**user**: q{i}\n**assistant**: a{i}", retained_at=None,
+                                 metadata={"_created_at": tick, "_retain_id": f"r{i}"}) for i in range(3)]
+        assert [[i.id for i in g] for g in agentd._groups(items)] == [["m0"], ["m1"], ["m2"]]
+        legacy = [SimpleNamespace(id=i.id, text=i.text, retained_at=None, metadata={"_created_at": tick})
+                  for i in items]
+        assert len(agentd._groups(legacy)) == 1, "memories stored before _retain_id still group by _created_at"
+
+    async def test_every_chunk_of_a_retain_carries_one_retain_id(self, env, tmp_path):
+        d = _sqlite_daemon(env, tmp_path)
+        await d.brain.retain("**user**: long?\n\n**assistant**: " + " ".join(f"w{i}" for i in range(150)),
+                             bank_id="proj", content_type="conversation")
+        await d.brain.retain("A separate short fact.", bank_id="proj")
+        items = await d.pipeline.vector_store.list_recent_vectors("proj", limit=20)
+        ids = {(i.metadata or {}).get("_retain_id") for i in items}
+        assert None not in ids and len(ids) == 2 and len(items) > 2
+
+    def test_chunks_stamped_within_one_clock_tick_reassemble_in_order(self):
+        """Windows CI: a retain's chunks shared retained_at, so the answer was
+        rebuilt from its pieces in the wrong order. Their recorded position wins."""
+        from types import SimpleNamespace
+
+        same = datetime(2026, 10, 4, tzinfo=timezone.utc)
+        texts = ["**user**: why?", "**assistant**: because the cache was still cold", "the cache was still cold on boot."]
+        group = [SimpleNamespace(id=f"c{i}", text=t, retained_at=same,
+                                 metadata={"_retain_id": "r", "_chunk_index": i}) for i, t in enumerate(texts)]
+        shuffled = [group[2], group[0], group[1]]
+        assert [i.id for i in agentd._groups(shuffled)[0]] == ["c0", "c1", "c2"]
+        assert agentd.render_group(agentd._groups(shuffled)[0], None) == (
+            "- Q: why? → A: because the cache was still cold on boot.")
+
+    async def test_a_split_retain_records_each_chunks_position(self, env, tmp_path):
+        d = _sqlite_daemon(env, tmp_path)
+        await d.brain.retain("**user**: long?\n\n**assistant**: " + " ".join(f"w{i}" for i in range(150)),
+                             bank_id="proj", content_type="conversation")
+        await d.brain.retain("One short fact.", bank_id="proj")
+        items = await d.pipeline.vector_store.list_recent_vectors("proj", limit=20)
+        split = sorted((i.metadata or {}).get("_chunk_index", -1) for i in items if "w1" in i.text or "long?" in i.text)
+        assert split == list(range(len(split))) and len(split) > 1
+        short = [i for i in items if i.text == "One short fact."]
+        assert short and "_chunk_index" not in (short[0].metadata or {}), "unsplit retains carry no index"
+
     def test_join_overlapping(self):
         assert agentd._join_overlapping("the quick brown fox jumps high", "brown fox jumps high over the dog") == (
             "the quick brown fox jumps high over the dog")
@@ -576,8 +731,8 @@ class TestDaemonHousekeeping:
 class TestDaemonProcess:
     """The real thing: hooks start the daemon as a detached process."""
 
-    def test_spawned_on_demand_single_instance_and_debounced(self, env):
-        assert agentd.ensure_running(env.cfg, wait=30), (env.state / "agentd.log").read_text()
+    def test_spawned_on_demand_single_instance_and_debounced(self, env, transport):
+        assert agentd.ensure_running(env.cfg, wait=30), (env.state / "agentd.stdio.log").read_text()
         pid = agentd.request("ping")["pid"]
         try:
             assert pid != os.getpid()
@@ -601,8 +756,8 @@ class TestDaemonProcess:
         assert time.monotonic() - started < 3
 
 
-class TestWithoutUnixSockets:
-    """Windows: no AF_UNIX daemon. Hooks degrade to "no memory", never errors."""
+class TestWithoutATransport:
+    """Where hooks can't reach a daemon, they degrade to "no memory", never errors."""
 
     def test_client_and_launcher_are_inert(self, env, monkeypatch, capsys):
         monkeypatch.setattr(agentd, "supported", lambda: False)
@@ -610,7 +765,7 @@ class TestWithoutUnixSockets:
         with monkeypatch.context() as m:  # scoped: fixture teardown needs the real Popen
             m.setattr(agentd.subprocess, "Popen", lambda *a, **k: pytest.fail("spawned on an unsupported OS"))
             agentd.spawn(env.cfg)
-        assert agentd.run(env.cfg) == 1 and "Unix domain sockets" in capsys.readouterr().err
+        assert agentd.run(env.cfg) == 1 and "no local transport" in capsys.readouterr().err
 
 
 # ── hooks ────────────────────────────────────────────────────────────────
@@ -663,7 +818,7 @@ class TestHooks:
         monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
         monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
         t = tmp_path / "t.jsonl"
-        t.write_text(human("what's our deploy day?") + assistant(text("Tuesdays.")))
+        t.write_text(human("what's our deploy day?") + assistant(text("Tuesdays.")), newline="\n")
         payload = json.dumps({"transcript_path": str(t), "session_id": "s1", "cwd": str(env.home)})
         hooks.run("stop", payload)
         hooks.run("stop", payload)  # nothing new
@@ -671,8 +826,173 @@ class TestHooks:
         assert len(files) == 1
         batch = json.loads(files[0].read_text())
         assert batch["bank"] == project_bank(str(env.home)) and "Tuesdays." in batch["turns"][0]["content"]
-        assert oct(files[0].stat().st_mode & 0o777) == "0o600", "captured conversations are private"
+        if not WINDOWS:  # POSIX modes; Windows: the profile's ACLs
+            assert oct(files[0].stat().st_mode & 0o777) == "0o600", "captured conversations are private"
 
+
+
+def _tool(name: str, **inp) -> dict:
+    return {"type": "tool_use", "id": f"t-{name}", "name": name, "input": inp}
+
+
+class TestTouchedFiles:
+    """A captured turn records which files it read or edited (paths, never contents)."""
+
+    def test_file_tools_are_recorded_once_in_order(self, tmp_path):
+        t = tmp_path / "t.jsonl"
+        t.write_text(
+            human("fix the retry test")
+            + assistant(_tool("Read", file_path="/repo/src/retry.py"), _tool("Bash", command="pytest -q"))
+            + assistant(_tool("Edit", file_path="/repo/src/retry.py", old_string="a", new_string="b"),
+                        _tool("NotebookEdit", notebook_path="/repo/nb/analysis.ipynb"))
+            + assistant(_tool("Write", file_path="/repo/tests/test_retry.py", content="SECRET-CONTENT"),
+                        sidechain=False)
+            + assistant(_tool("Read", file_path="/repo/elsewhere.py"), sidechain=True)
+            + assistant(text("Fixed: the backoff reset was off by one.")),
+            newline="\n",
+        )
+        [turn], _ = read_new_turns(t)
+        assert turn.files == ["/repo/src/retry.py", "/repo/nb/analysis.ipynb", "/repo/tests/test_retry.py"]
+        assert "SECRET-CONTENT" not in turn.render(), "paths only, never what was written"
+
+    def test_a_turn_without_file_tools_has_none(self, tmp_path):
+        t = tmp_path / "t.jsonl"
+        t.write_text(human("deploy day?") + assistant(text("Tuesdays.")), newline="\n")
+        [turn], _ = read_new_turns(t)
+        assert turn.files == []
+
+    def test_stop_spools_paths_relative_to_the_project(self, env, tmp_path, monkeypatch):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
+        monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        git(repo, "init", "-q")
+        t = tmp_path / "t.jsonl"
+        t.write_text(human("why does retry fail?")
+                     + assistant(_tool("Read", file_path=str(repo / "src" / "retry.py")),
+                                 _tool("Read", file_path=str(tmp_path / "outside.txt")))
+                     + assistant(text("Off by one.")), newline="\n")
+        hooks.run("stop", json.dumps({"transcript_path": str(t), "session_id": "s1", "cwd": str(repo)}))
+        [spooled] = list((env.state / "spool").glob("*.json"))
+        files = json.loads(spooled.read_text())["turns"][0]["files"]
+        assert files[0] == "src/retry.py", "inside the project: relative, so every clone names it alike"
+        assert files[1] == Path(tmp_path / "outside.txt").as_posix(), "outside it: the path as the agent gave it"
+
+    def test_shown_paths_are_capped(self, tmp_path):
+        many = [f"/r/f{i:03d}.py" for i in range(50)]
+        assert len(hooks._shown_paths(many, None)) == hooks.MAX_TOUCHED_FILES
+        long = ["/r/" + "x" * 900, "/r/" + "y" * 900]
+        assert len(hooks._shown_paths(long, None)) == 1, "the character budget holds"
+        assert hooks._project_root_of({}) is None and hooks._project_root_of({"cwd": 3}) is None
+
+    def test_drain_stores_them_on_the_memory(self, env, daemon):
+        agentd.spool_capture("proj", "s1", "claude-code", [
+            {"content": "**user**: q\n\n**assistant**: a", "started_at": None, "files": ["src/a.py", "src/b.py"]},
+            {"content": "**user**: q2\n\n**assistant**: a2", "started_at": None}])
+        stored = []
+
+        async def keep(content, **kw):
+            from astrocyte.types import RetainResult
+
+            stored.append(kw["metadata"])
+            return RetainResult(stored=True, memory_id="m")
+
+        daemon.brain.retain = keep
+        assert asyncio.run(daemon.drain()) == 2
+        assert stored[0]["files"] == "src/a.py\nsrc/b.py" and "files" not in stored[1]
+
+
+class TestFileRecall:
+    """Opt-in: after Claude Code reads or edits a file, memories of earlier
+    turns that touched it are added next to the tool result."""
+
+    def _payload(self, env, path: str, session: str = "s2") -> str:
+        return json.dumps({"session_id": session, "cwd": str(env.home), "tool_name": "Read",
+                           "tool_input": {"file_path": path}})
+
+    def test_the_hook_asks_the_daemon_and_emits_post_tool_use(self, env, monkeypatch, capsys):
+        calls = []
+
+        def fake_request(op, payload=None, **kw):
+            calls.append((op, payload))
+            return {"context": "Earlier sessions that touched src/a.py (Astrocyte):\n- Q: x → A: y"}
+
+        monkeypatch.setattr(agentd, "request", fake_request)
+        monkeypatch.setattr(sys, "stdin", io.StringIO(self._payload(env, str(env.home / "src" / "a.py"))))
+        assert hooks.main("file", "claude") == 0
+        out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+        assert out["hookEventName"] == "PostToolUse" and "src/a.py" in out["additionalContext"]
+        assert calls == [("file", {"bank": project_bank(str(env.home)), "session_id": "s2", "path": "src/a.py"})]
+
+    @pytest.mark.parametrize("host", ["codex", "antigravity", "copilot"])
+    def test_only_claude_code_for_now(self, env, monkeypatch, capsys, host):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: pytest.fail("asked the daemon"))
+        hooks.run("file", self._payload(env, "/x.py"), host)
+
+    @pytest.mark.parametrize("tool_input", [None, {}, {"file_path": ""}, {"file_path": 3}, "nope"])
+    def test_without_a_path_it_does_nothing(self, env, monkeypatch, tool_input):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: pytest.fail("asked the daemon"))
+        hooks.run("file", json.dumps({"session_id": "s", "cwd": str(env.home), "tool_input": tool_input}), "claude")
+
+    def test_an_unreachable_daemon_is_started_for_next_time(self, env, monkeypatch, capsys):
+        spawned = []
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
+        monkeypatch.setattr(agentd, "spawn", lambda cfg: spawned.append(cfg))
+        hooks.run("file", self._payload(env, "/x.py"), "claude")
+        assert spawned and capsys.readouterr().out == ""
+
+    def test_notebook_edits_count(self, env, monkeypatch):
+        calls = []
+        monkeypatch.setattr(agentd, "request", lambda op, payload=None, **k: calls.append(payload) or {"context": ""})
+        hooks.run("file", json.dumps({"session_id": "s", "cwd": str(env.home),
+                                      "tool_input": {"notebook_path": str(env.home / "nb.ipynb")}}), "claude")
+        assert calls[0]["path"] == "nb.ipynb"
+
+
+class TestDaemonFileOp:
+    def _seed(self, env, tmp_path):
+        d = _sqlite_daemon(env, tmp_path)
+        agentd.spool_capture("proj", "s1", "claude-code", [
+            {**_turn("old runbook?", "Superseded by the new one.", "2026-09-20T10:00:00+00:00"),
+             "files": ["docs/runbook.md"]},
+            {**_turn("why does retry fail?", "Off by one in the backoff.", "2026-10-01T10:00:00+00:00"),
+             "files": ["src/retry.py", "tests/test_retry.py"]},
+            {**_turn("deploy day?", "Tuesdays.", "2026-10-01T10:05:00+00:00"), "files": ["docs/deploy.md"]},
+            {**_turn("retry again?", "Jitter added.", "2026-10-02T09:00:00+00:00"), "files": ["src/retry.py"]},
+        ])
+        asyncio.run(d.drain())
+        return d
+
+    def test_turns_that_touched_the_file_newest_first(self, env, tmp_path):
+        d = self._seed(env, tmp_path)
+        ctx = asyncio.run(d.op_file({"bank": "proj", "session_id": "s2", "path": "src/retry.py"}))["context"]
+        assert ctx.startswith("Earlier sessions that touched src/retry.py")
+        assert ctx.index("Jitter") < ctx.index("Off by one") and "Tuesdays" not in ctx
+
+    def test_each_file_once_per_session_and_nothing_twice(self, env, tmp_path):
+        d = self._seed(env, tmp_path)
+        req = {"bank": "proj", "session_id": "s2", "path": "src/retry.py"}
+        assert asyncio.run(d.op_file(req))["context"]
+        assert asyncio.run(d.op_file(req))["context"] == "", "the same file again in the session"
+        other = asyncio.run(d.op_file({**req, "path": "tests/test_retry.py"}))["context"]
+        assert other == "", "its only turn is already in context"
+        assert asyncio.run(d.op_file({**req, "session_id": "s3"}))["context"], "a new session asks afresh"
+
+    def test_compaction_forgets_what_was_offered(self, env, tmp_path):
+        """After a compaction the earlier injections are gone from context, so
+        files may be answered again; turns the new session summary re-shows
+        count as in context once more and are not repeated."""
+        d = self._seed(env, tmp_path)
+        req = {"bank": "proj", "session_id": "s2", "path": "docs/runbook.md"}
+        assert asyncio.run(d.op_file(req))["context"]
+        assert d.files_offered["s2"] == {"docs/runbook.md"}
+        boot = asyncio.run(d.op_boot({"bank": "proj", "session_id": "s2", "source": "compact"}))["context"]
+        assert "s2" not in d.files_offered and "old runbook?" in boot
+        assert asyncio.run(d.op_file(req))["context"] == "", "the summary just showed it"
+
+    def test_an_untouched_file_has_nothing(self, env, tmp_path):
+        d = self._seed(env, tmp_path)
+        assert asyncio.run(d.op_file({"bank": "proj", "session_id": "s2", "path": "src/other.py"}))["context"] == ""
 
 
 class TestSessionStartHook:
@@ -730,7 +1050,7 @@ class TestAncestry:
 
     def test_finds_the_agent_through_a_shell(self, monkeypatch):
         self._ps(monkeypatch, {100: "50 /bin/zsh -c hook", 50: "1 /opt/homebrew/bin/codex exec hi"})
-        assert hooks._agent_ancestor_args("codex") == ["/opt/homebrew/bin/codex", "exec", "hi"]
+        assert hooks._posix_ancestor_args("codex", 5) == ["/opt/homebrew/bin/codex", "exec", "hi"]
 
     @pytest.mark.parametrize("table", [
         {100: "1 /bin/zsh"},  # reached init without finding it
@@ -739,18 +1059,112 @@ class TestAncestry:
     ])
     def test_not_found_is_none(self, monkeypatch, table):
         self._ps(monkeypatch, table)
-        assert hooks._agent_ancestor_args("codex") is None
+        assert hooks._posix_ancestor_args("codex", 5) is None
 
     def test_ps_failing_is_none(self, monkeypatch):
         def broken(*a, **k):
             raise OSError("no ps")
 
         monkeypatch.setattr(hooks.subprocess, "run", broken)
-        assert hooks._agent_ancestor_args("claude") is None
+        assert hooks._posix_ancestor_args("claude", 5) is None
 
     def test_depth_is_bounded(self, monkeypatch):
         self._ps(monkeypatch, {pid: f"{pid + 1} /bin/sh" for pid in range(100, 200)})
-        assert hooks._agent_ancestor_args("claude", max_depth=3) is None
+        assert hooks._posix_ancestor_args("claude", 3) is None
+
+
+class TestWindowsAncestry:
+    """Windows has no `ps`: psutil walks the parents (a fake here, so it runs
+    on every OS)."""
+
+    class _Proc:
+        def __init__(self, argv, parent=None, fail=False):
+            self.argv, self._parent, self.fail = argv, parent, fail
+
+        def cmdline(self):
+            if self.fail:
+                import psutil
+
+                raise psutil.AccessDenied()
+            return self.argv
+
+        def parent(self):
+            return self._parent
+
+    def _psutil(self, monkeypatch, chain):
+        psutil = pytest.importorskip("psutil")  # installed on Windows; a dev extra elsewhere
+        monkeypatch.setattr(psutil, "Process", lambda pid: chain)
+        return psutil
+
+    def test_finds_claude_through_cmd(self, monkeypatch):
+        claude = self._Proc([r"C:\Users\a\.local\bin\claude.exe", "-p", "hi"])
+        self._psutil(monkeypatch, self._Proc(["cmd.exe", "/c", "hook"], parent=claude))
+        assert hooks._windows_ancestor_args("claude", 5) == [r"C:\Users\a\.local\bin\claude.exe", "-p", "hi"]
+
+    def test_finds_an_npm_installed_agent_run_by_node(self, monkeypatch):
+        node = self._Proc(["node.exe", r"C:\npm\node_modules\@anthropic-ai\claude-code\cli.js", "-p", "x"])
+        self._psutil(monkeypatch, self._Proc(["pwsh.exe"], parent=node))
+        assert hooks._windows_ancestor_args("claude", 5)[1:] == ["-p", "x"]
+
+    def test_access_denied_or_top_of_tree_is_none(self, monkeypatch):
+        self._psutil(monkeypatch, self._Proc(["x.exe"], fail=True))
+        assert hooks._windows_ancestor_args("claude", 5) is None
+        self._psutil(monkeypatch, self._Proc(["explorer.exe"], parent=None))
+        assert hooks._windows_ancestor_args("claude", 5) is None
+
+    def test_without_psutil_it_is_none(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "psutil", None)  # import fails
+        assert hooks._windows_ancestor_args("claude", 5) is None
+
+
+def test_copilot_installs_from_before_powershell_are_updated(env):
+    """An entry written by 0.18 (bash only) is not "unchanged": Windows needs
+    the powershell field."""
+    from astrocyte.harness.hosts import CopilotHost
+
+    host, cli = CopilotHost(), "/opt/astro/bin/python -I -m astrocyte.cli"
+    host.install_hooks(cli)
+    data = json.loads(host.hooks_file().read_text())
+    for handlers in data["hooks"].values():
+        handlers[0].pop("powershell")
+    host.hooks_file().write_text(json.dumps(data))
+    assert host.install_hooks(cli).status == "updated"
+    assert all(h[0]["powershell"] for h in json.loads(host.hooks_file().read_text())["hooks"].values())
+
+
+def test_state_replace_retries_while_windows_holds_the_file(tmp_path, monkeypatch):
+    calls = []
+    real = os.replace
+
+    def flaky(src, dst):
+        calls.append(dst)
+        if len(calls) < 3:
+            raise PermissionError("in use")
+        real(src, dst)
+
+    monkeypatch.setattr(agentd.os, "replace", flaky)
+    monkeypatch.setattr(agentd.time, "sleep", lambda s: None)
+    agentd._atomic_write(tmp_path / "s.json", {"a": 1})
+    assert len(calls) == 3 and json.loads((tmp_path / "s.json").read_text()) == {"a": 1}
+    calls.clear()
+    monkeypatch.setattr(agentd.os, "replace", lambda s, d: (_ for _ in ()).throw(PermissionError("held")))
+    with pytest.raises(PermissionError):
+        agentd._atomic_write(tmp_path / "s.json", {"a": 2})
+
+
+class TestHookPing:
+    """`astrocyte doctor` proves a registered command reaches this code."""
+
+    @pytest.mark.parametrize("host", ["claude", "codex", "antigravity", "copilot"])
+    def test_ping_answers_pong_even_when_paused(self, env, monkeypatch, capsys, host):
+        monkeypatch.setenv("ASTROCYTE_HOOKS", "off")
+        monkeypatch.setattr(sys, "stdin", io.StringIO('{"ping": true}'))
+        assert hooks.main("stop", host) == 0
+        assert json.loads(capsys.readouterr().out) == {"astrocyte": "pong"}
+
+    @pytest.mark.parametrize("text", ["", "{}", '{"ping": "yes"}', "not json", "[1]"])
+    def test_anything_else_is_not_a_ping(self, text):
+        assert hooks._is_ping(text) is False
 
 
 class TestCodexHooks:
@@ -886,7 +1300,7 @@ class TestStaysOutOfAutomation:
         hot-reloads settings) had its whole history captured in one burst."""
         self._spy(monkeypatch)
         t = tmp_path / "t.jsonl"
-        t.write_text("".join(human(f"q{i}") + assistant(text(f"a{i}")) for i in range(40)))
+        t.write_text("".join(human(f"q{i}") + assistant(text(f"a{i}")) for i in range(40)), newline="\n")
         hooks.run("stop", json.dumps({"transcript_path": str(t), "session_id": "old", "cwd": str(env.home)}))
         [spooled] = list((env.state / "spool").glob("*.json"))
         turns = json.loads(spooled.read_text())["turns"]
@@ -934,7 +1348,7 @@ def test_registered_commands_ignore_an_inherited_pythonpath(tmp_path):
     decoy = tmp_path / "decoy" / "astrocyte"
     decoy.mkdir(parents=True)
     (decoy / "__init__.py").write_text("raise SystemExit('decoy astrocyte imported')\n")
-    env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(tmp_path / "decoy")}
+    env = {"PATH": os.pathsep.join(system_path()), "PYTHONPATH": str(tmp_path / "decoy"), **system_env()}
     # The mechanism, independent of install mode (editable installs use an
     # import finder that outranks PYTHONPATH; regular installs — the real
     # incident — do not): -I must drop PYTHONPATH from sys.path.
@@ -961,7 +1375,7 @@ def test_daemon_never_issues_background_llm_calls(env):
 def test_stop_does_not_spool_where_no_daemon_can_drain_it(env, tmp_path, monkeypatch):
     monkeypatch.setattr(agentd, "supported", lambda: False)
     t = tmp_path / "t.jsonl"
-    t.write_text(human("q") + assistant(text("a")))
+    t.write_text(human("q") + assistant(text("a")), newline="\n")
     hooks.run("stop", json.dumps({"transcript_path": str(t), "session_id": "s", "cwd": str(env.home)}))
     assert not (env.state / "spool").exists()
 
@@ -1004,7 +1418,7 @@ class TestClaudeHookInstall:
         from astrocyte.harness.server import hook_prefix
 
         host = ClaudeCodeHost()
-        host.install_hooks(hook_prefix("/Users/Jane Doe/tools/bin/python"))
+        host.install_hooks(hook_prefix("/Users/Jane Doe/tools/bin/python", windows=False))
         assert host.hook_commands()["Stop"] == "'/Users/Jane Doe/tools/bin/python' -I -m astrocyte.cli hook stop"
 
     def test_uninstall_removes_only_ours(self, env):
@@ -1129,15 +1543,22 @@ class TestCodexHookInstall:
         assert CodexHost().hooks_file() == tmp_path / "codex-home" / "config.toml"
 
     def test_installed_commands_parse(self, env):
-        """The installed command line must be accepted by `astrocyte hook`."""
+        """The installed command line must be accepted by `astrocyte hook`, in
+        every shell an agent may run it through (Windows: cmd, PowerShell and
+        Git Bash)."""
+        from astrocyte.harness.doctor import _probe_shells
         from astrocyte.harness.server import hook_prefix
 
         host = CodexHost()
         host.install_hooks(hook_prefix(sys.executable))
         cmd = host.hook_commands()["Stop"]
-        proc = subprocess.run(cmd, shell=True, input="{}", capture_output=True, text=True,
-                              env={**os.environ, "ASTROCYTE_HOOKS": "off"})
-        assert proc.returncode == 0 and proc.stdout == "", proc.stderr
+        shells = _probe_shells()
+        if WINDOWS:
+            assert {"cmd", "PowerShell", "Git Bash"} <= {name for name, _ in shells}
+        for name, shell in shells:
+            proc = subprocess.run([*shell, cmd], input="{}", capture_output=True, text=True,
+                                  env={**os.environ, "ASTROCYTE_HOOKS": "off"})
+            assert proc.returncode == 0 and proc.stdout.strip() == "", (name, proc.stderr)
 
 
 # ── MCP default bank ─────────────────────────────────────────────────────
@@ -1198,12 +1619,62 @@ class TestAntigravityTranscript:
             + _agy_step(1, "EPHEMERAL_MESSAGE", "Possibly relevant memories: …", source="SYSTEM_SDK")
             + _agy_step(2, "PLANNER_RESPONSE", None, tool_calls=[{"name": "find_by_name"}])
             + _agy_step(3, "GENERIC", "The command exited with code 0.")
-            + _agy_step(4, "PLANNER_RESPONSE", "Tuesdays.")
+            + _agy_step(4, "PLANNER_RESPONSE", "Tuesdays."),
+            newline="\n",
         )
         [turn], resume = read_new_turns(t, antigravity=True)
         assert turn.user == "what is our deploy day?" and turn.assistant == ["Tuesdays."]
         assert "Possibly relevant" not in turn.render(), "our own injection is never re-captured"
         assert turn.started_at is not None and resume == t.stat().st_size
+
+
+class TestAntigravityTouchedFiles:
+    """Antigravity records tool calls on PLANNER_RESPONSE steps, argument
+    values JSON-encoded as strings (measured on agy 1.2: find_by_name)."""
+
+    @staticmethod
+    def _call(name: str, **args) -> dict:
+        return {"name": name, "args": {k: json.dumps(v) for k, v in args.items()}}
+
+    def test_file_tools_are_recorded_and_other_tools_are_not(self, tmp_path):
+        t = tmp_path / "transcript.jsonl"
+        t.write_text(
+            _agy_user(0, "why does retry fail?")
+            + _agy_step(1, "PLANNER_RESPONSE", "", tool_calls=[
+                self._call("find_by_name", Pattern="*.py", SearchDirectory="/repo"),
+                self._call("view_file", AbsolutePath="/repo/src/retry.py")])
+            + _agy_step(2, "PLANNER_RESPONSE", "", tool_calls=[
+                self._call("replace_file_content", TargetFile="/repo/src/retry.py", ReplacementContent="SECRET"),
+                {"name": "write_to_file", "args": {"TargetFile": "/repo/tests/test_retry.py"}}])  # plain value too
+            + _agy_step(3, "PLANNER_RESPONSE", "Off by one; fixed."),
+            newline="\n",
+        )
+        [turn], _ = read_new_turns(t, antigravity=True)
+        assert turn.files == ["/repo/src/retry.py", "/repo/tests/test_retry.py"]
+        assert "SECRET" not in turn.render()
+
+    @pytest.mark.parametrize("tool_calls", [None, "nope", [None, {"name": "view_file", "args": None},
+                                                            {"name": "view_file", "args": {"AbsolutePath": '"broken'}}]])
+    def test_malformed_tool_calls_are_ignored(self, tmp_path, tool_calls):
+        t = tmp_path / "transcript.jsonl"
+        t.write_text(_agy_user(0, "q") + _agy_step(1, "PLANNER_RESPONSE", "a", tool_calls=tool_calls),
+                     newline="\n")
+        [turn], _ = read_new_turns(t, antigravity=True)
+        assert turn.files == []
+
+    def test_paths_are_relative_to_the_workspace(self, env, tmp_path, monkeypatch):
+        monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
+        monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        git(repo, "init", "-q")
+        t = tmp_path / "transcript.jsonl"
+        t.write_text(_agy_user(0, "q") + _agy_step(1, "PLANNER_RESPONSE", "a", tool_calls=[
+            self._call("view_file", AbsolutePath=str(repo / "src" / "retry.py"))]), newline="\n")
+        hooks.run("stop", json.dumps({"conversationId": "c1", "workspacePaths": [str(repo)],
+                                      "transcriptPath": str(t)}), "antigravity")
+        [spooled] = list((env.state / "spool").glob("*.json"))
+        assert json.loads(spooled.read_text())["turns"][0]["files"] == ["src/retry.py"]
 
 
 class TestAntigravityHooks:
@@ -1231,7 +1702,7 @@ class TestAntigravityHooks:
         calls = []
         self._wire(monkeypatch, calls)
         t = tmp_path / "transcript.jsonl"
-        t.write_text(_agy_user(0, "why is staging failing today?"))
+        t.write_text(_agy_user(0, "why is staging failing today?"), newline="\n")
         out = self._run(monkeypatch, capsys, "prompt", self._payload(env, t))
         assert out == {"injectSteps": [{"ephemeralMessage": "[boot]\n\n[recall]"}]} and calls == ["boot", "recall"]
         # PreInvocation fires before every model call of the turn: act once.
@@ -1249,7 +1720,7 @@ class TestAntigravityHooks:
         monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
         monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
         t = tmp_path / "transcript.jsonl"
-        t.write_text(_agy_user(0, "what is our deploy day?") + _agy_step(1, "PLANNER_RESPONSE", "Tuesdays."))
+        t.write_text(_agy_user(0, "what is our deploy day?") + _agy_step(1, "PLANNER_RESPONSE", "Tuesdays."), newline="\n")
         hooks.run("stop", self._payload(env, t), "antigravity")
         [spooled] = list((env.state / "spool").glob("*.json"))
         batch = json.loads(spooled.read_text())
@@ -1283,13 +1754,20 @@ class TestCopilotHooks:
         assert not (env.state / "spool").exists()
 
     def test_node_launched_copilot_print_mode_is_headless(self, monkeypatch):
+        # The ps-based walker, faked below; on Windows headless_session would
+        # otherwise ask psutil (covered by TestWindowsAncestry).
+        monkeypatch.setattr(hooks, "_windows_ancestor_args", hooks._posix_ancestor_args)
         def fake_run(argv, **kw):
             table = {100: "50 /bin/sh -c hook", 50: "1 /opt/homebrew/bin/node /opt/lib/node_modules/@github/copilot/index.js -p hi"}
             return subprocess.CompletedProcess(argv, 0, stdout=table.get(int(argv[-1]), ""), stderr="")
 
         monkeypatch.setattr(hooks.subprocess, "run", fake_run)
         monkeypatch.setattr(hooks.os, "getppid", lambda: 100)
-        assert hooks._agent_ancestor_args("copilot") is None, "the script is index.js, not copilot"
+        # npm runs the agent's package script by path (index.js here; cli.js under
+        # @anthropic-ai/claude-code on Windows): the agent's name is in a path
+        # component, and missing it would let a headless run into memory.
+        assert hooks._posix_ancestor_args("copilot", 5) == ["/opt/lib/node_modules/@github/copilot/index.js", "-p", "hi"]
+        assert hooks.headless_session("copilot") is True
 
         def fake_run2(argv, **kw):
             table = {100: "50 /bin/sh -c hook", 50: "1 node /opt/homebrew/bin/copilot -p hi"}
@@ -1336,8 +1814,9 @@ class TestNewHookInstalls:
         other.write_text('{"version": 1, "hooks": {}}')
         assert host.install_hooks(self.CLI).status == "installed"
         data = json.loads(host.hooks_file().read_text())
-        assert data["version"] == 1 and data["hooks"]["sessionStart"][0]["bash"] == (
-            f"{self.CLI} hook session-start --host copilot")
+        entry = data["hooks"]["sessionStart"][0]
+        assert data["version"] == 1 and entry["bash"] == f"{self.CLI} hook session-start --host copilot"
+        assert entry["powershell"] == entry["bash"], "Copilot on Windows runs the powershell field"
         assert host.install_hooks(self.CLI).status == "unchanged"
         assert host.uninstall_hooks().status == "removed"
         assert not host.hooks_file().exists() and other.read_text() == '{"version": 1, "hooks": {}}'

@@ -1,5 +1,41 @@
 # Design principles for “AI astrocyte” inspired by neuroscience
 
+## 0. Objective (north star)
+
+**Wherever you use AI, Astrocyte captures and checks what it learns, under your
+organisation's rules.**
+
+Stated by Calvin on 2026-10-04 and published in
+["Agents Need Documents They Can Check"](https://calvinx.com/blog/2026-Oct-04/agents-need-documents-they-can-check). It is the test for design
+decisions: a change that does not move Astrocyte towards it needs a reason.
+
+**The target is the "best of both" corner.** Memory is low effort and low
+control: it is trusted by its results. Documentation is high effort and high
+control: it is trusted by inspection. Astrocyte aims to be low effort and
+high control, trusted both ways: captured as easily as memory, checked as
+easily as a document.
+
+**The corner needs all four of these together:**
+
+| # | Requirement | State (2026-10-04) |
+|---|---|---|
+| 1 | **Capture with no effort.** Every conversation and task is retained as evidence, with no one writing it up. | Exists. The structured-extraction metadata that `retain()` used to discard is persisted since `057ac2a` |
+| 2 | **Show it as documents.** What the agent knows appears as pages people can read, with no database query. | Basic: wiki tier and Markdown (OKF) export |
+| 3 | **Agents draft, people approve,** in tools the team already uses: repository Markdown pull requests first, then Confluence or Notion. No Astrocyte review UI. | Designed ([`anchored-documents.md`](anchored-documents.md)), not built |
+| 4 | **Every claim checkable:** sources, anchors, trust, status, and a "may be stale" flag when what it describes changes. | Designed ([`anchored-documents.md`](anchored-documents.md)), not built |
+
+**Two properties make the corner real for an organisation:**
+- **Vendor-neutral.** Low effort means Astrocyte is present in whatever AI tool
+  people already use (Claude, ChatGPT, Gemini, or any agent), with no switching.
+- **Organisation- and team-aware.** High control means team permissions and
+  organisation policy apply the same way across every vendor, and to documents
+  written back into other systems.
+
+The gaps between today and this objective are tracked in
+[`sota-roadmap-m45-m48.md`](sota-roadmap-m45-m48.md) §9 item 16.
+
+---
+
 This document translates recurring **organizing ideas** from astrocyte biology (see `neuroscience-astrocyte.md` and the review in `references/AstrocyteFromthePhysiologytotheDisease.pdf`) into **engineering metaphors** for AI systems. It is analogy, not a claim that software should mimic wetware literally.
 
 ---

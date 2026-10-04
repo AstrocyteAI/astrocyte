@@ -30,7 +30,9 @@ COPY astrocyte-services-py/astrocyte-aml-py/ /src/astrocyte-aml-py/
 # to build. Pinning explicitly is also better provenance: the version this
 # image reports is a declared input, not a side effect of how it was cloned.
 # It surfaces in OKF exports as `generated.by: astrocyte/<version>`.
-ARG ASTROCYTE_VERSION=0.15.2
+# Bump this in the same commit that tags the submission ref, so the version
+# the evaluated image reports names the code it was built from.
+ARG ASTROCYTE_VERSION=0.18.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${ASTROCYTE_VERSION} \
     SETUPTOOLS_SCM_PRETEND_VERSION_FOR_ASTROCYTE=${ASTROCYTE_VERSION} \
     SETUPTOOLS_SCM_PRETEND_VERSION_FOR_ASTROCYTE_POSTGRES=${ASTROCYTE_VERSION}

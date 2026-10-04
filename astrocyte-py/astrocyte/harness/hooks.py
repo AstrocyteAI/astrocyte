@@ -48,7 +48,7 @@ from astrocyte.policy.barriers import redact_secrets
 
 from . import agentd
 from .paths import config_path, state_dir
-from .project import project_bank
+from .project import project_bank, project_root
 from .transcript import Turn, antigravity_prompt, read_new_turns
 
 SESSION_START_WAIT = 8.0  # cold start incl. model load measured at ~1.5 s
@@ -169,6 +169,20 @@ def dialect_for(host: str) -> Dialect | None:
     return DIALECTS.get(host) or _MORE_DIALECTS.get(host)
 
 
+def _agent_argv(argv: list[str], binary: str) -> list[str] | None:
+    """``argv`` if it is the ``binary`` agent, run directly or by Node."""
+    if argv and binary in Path(argv[0]).name.lower():
+        return argv
+    # Node CLIs run as `node /path/to/copilot …`; on Windows npm's shims run
+    # `node …/node_modules/@anthropic-ai/claude-code/cli.js`, so the agent's
+    # name is in the script's path rather than its file name.
+    if len(argv) > 1 and Path(argv[0]).name.lower().startswith("node"):
+        parts = re.split(r"[\\/]", argv[1].lower())
+        if any(binary in part for part in parts):
+            return argv[1:]
+    return None
+
+
 def _agent_ancestor_args(binary: str, max_depth: int = 5) -> list[str] | None:
     """argv of the nearest ``binary`` process above this hook, if any.
 
@@ -177,6 +191,11 @@ def _agent_ancestor_args(binary: str, max_depth: int = 5) -> list[str] | None:
     an interactive session inherits ``CLAUDE_CODE_SESSION_ATTENDED=1`` and
     ``CLAUDE_CODE_ENTRYPOINT`` unchanged (measured).
     """
+    walk = _windows_ancestor_args if os.name == "nt" else _posix_ancestor_args
+    return walk(binary, max_depth)
+
+
+def _posix_ancestor_args(binary: str, max_depth: int) -> list[str] | None:
     pid = os.getppid()
     for _ in range(max_depth):
         if pid <= 1:
@@ -189,16 +208,32 @@ def _agent_ancestor_args(binary: str, max_depth: int = 5) -> list[str] | None:
         if not out:
             return None
         ppid, _, args = out.partition(" ")
-        argv = args.split()
-        if argv and binary in Path(argv[0]).name.lower():
-            return argv
-        # Node CLIs (copilot) run as `node /path/to/copilot …`.
-        if len(argv) > 1 and Path(argv[0]).name.startswith("node") and binary in Path(argv[1]).name.lower():
-            return argv[1:]
+        if found := _agent_argv(args.split(), binary):
+            return found
         try:
             pid = int(ppid)
         except ValueError:
             return None
+    return None
+
+
+def _windows_ancestor_args(binary: str, max_depth: int) -> list[str] | None:
+    """Windows has no `ps`; psutil reads each parent's command line (the
+    headless flags live there, which process names alone don't show)."""
+    try:
+        import psutil
+    except ImportError:  # a Windows install without the dependency: treat as interactive
+        return None
+    try:
+        proc = psutil.Process(os.getppid())
+        for _ in range(max_depth):
+            if found := _agent_argv(proc.cmdline(), binary):
+                return found
+            proc = proc.parent()
+            if proc is None:
+                return None
+    except (psutil.Error, OSError):
+        return None
     return None
 
 
@@ -226,7 +261,7 @@ def _session_file(session_id: str, suffix: str = "") -> Path:
 
 def _write_state(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _session_start(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
@@ -267,7 +302,7 @@ def _prompt_from_transcript(payload: dict, cfg: Path, bank: str, session: str, d
     marker = _session_file(session, ".asked")
     try:
         first_sight = False
-        if json.loads(marker.read_text()).get("step") == step:
+        if json.loads(marker.read_text(encoding="utf-8")).get("step") == step:
             return  # a later model call in the same turn
     except (OSError, ValueError, AttributeError):
         first_sight = True
@@ -320,7 +355,7 @@ def _turns_from_transcript(payload: dict, session: str, *, antigravity: bool = F
         return [], _noop
     marker = _session_file(session)
     try:
-        offset = int(json.loads(marker.read_text())["offset"])
+        offset = int(json.loads(marker.read_text(encoding="utf-8"))["offset"])
         first_sight = False
     except (OSError, ValueError, KeyError, TypeError):
         offset, first_sight = 0, True
@@ -343,7 +378,7 @@ def _turn_from_payload(payload: dict, session: str) -> TurnSource:
         pending.unlink(missing_ok=True)
 
     try:
-        kept = json.loads(pending.read_text())
+        kept = json.loads(pending.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return [], _noop  # the prompt predates the hooks, or this turn was already taken
     answer = payload.get("last_assistant_message")
@@ -356,6 +391,37 @@ def _turn_from_payload(payload: dict, session: str) -> TurnSource:
     return [Turn(user=str(kept.get("prompt") or ""), assistant=[answer], started_at=started)], commit
 
 
+# Kept on each captured memory: enough to tie a turn to its code, small
+# enough for the metadata limit (4 KB).
+MAX_TOUCHED_FILES = 20
+MAX_TOUCHED_CHARS = 1_500
+
+
+def _project_root_of(payload: dict) -> Path | None:
+    workspaces = payload.get("workspacePaths")  # Antigravity names the workspace, not a cwd
+    cwd = payload.get("cwd") or (workspaces[0] if isinstance(workspaces, list) and workspaces else None)
+    return project_root(cwd) if isinstance(cwd, str) and cwd else None
+
+
+def _shown_paths(files: list[str], root: Path | None) -> list[str]:
+    """Touched files, relative to the project where they're inside it (so a
+    teammate's clone at another path names them the same), capped."""
+    shown, used = [], 0
+    for raw in files[:MAX_TOUCHED_FILES]:
+        path = Path(raw)
+        if root is not None:
+            try:
+                path = path.resolve().relative_to(root.resolve())
+            except (ValueError, OSError):
+                path = Path(raw)  # outside the project: as the agent gave it
+        text = path.as_posix()
+        if used + len(text) + 1 > MAX_TOUCHED_CHARS:
+            break
+        shown.append(text)
+        used += len(text) + 1
+    return shown
+
+
 def _stop(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
     if not agentd.supported() or dialect.turn_source is None:
         return  # without a daemon to drain it, the spool would only grow
@@ -366,9 +432,11 @@ def _stop(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -
     if turns:
         # Scrubbed before it touches disk: the retain barrier redacts again,
         # but the spool is plaintext and outlives a crashed daemon.
+        root = _project_root_of(payload)
         agentd.spool_capture(
             bank, session, dialect.source,
-            [{"content": redact_secrets(t.render()), "started_at": t.started_at.isoformat() if t.started_at else None}
+            [{"content": redact_secrets(t.render()), "started_at": t.started_at.isoformat() if t.started_at else None,
+              "files": _shown_paths(t.files, root)}
              for t in turns],
         )
     commit()
@@ -376,10 +444,47 @@ def _stop(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -
         agentd.spawn(cfg)
 
 
-_HANDLERS = {"session-start": _session_start, "prompt": _prompt, "stop": _stop}
+def _file(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
+    """After a file tool (opt-in): memories of earlier turns that touched this
+    file, added next to the tool's result. Claude Code only for now."""
+    if dialect.source != "claude-code" or not agentd.supported():
+        return
+    tool_input = payload.get("tool_input") or {}
+    raw = tool_input.get("file_path") or tool_input.get("notebook_path") if isinstance(tool_input, dict) else None
+    if not isinstance(raw, str) or not raw:
+        return
+    [path] = _shown_paths([raw], _project_root_of(payload)) or [None]
+    if not path:
+        return
+    reply = agentd.request("file", {"bank": bank, "session_id": session, "path": path}, timeout=PROMPT_DEADLINE)
+    if reply is None:
+        agentd.spawn(cfg)  # warm for the next file; never make this one wait
+        return
+    dialect.emit("PostToolUse", reply.get("context", ""))
+
+
+_HANDLERS = {"session-start": _session_start, "prompt": _prompt, "stop": _stop, "file": _file}
+
+
+PONG = {"astrocyte": "pong"}
+
+
+def _is_ping(stdin_text: str) -> bool:
+    try:
+        payload = json.loads(stdin_text or "{}")
+    except ValueError:
+        return False
+    return isinstance(payload, dict) and payload.get("ping") is True
 
 
 def run(event: str, stdin_text: str, host: str = "claude") -> int:
+    # `astrocyte doctor` runs each registered command through the shells an
+    # agent may use, with {"ping": true}: answering proves the command line
+    # reached this code, without touching memory. Before ASTROCYTE_HOOKS, so a
+    # paused install still checks out.
+    if _is_ping(stdin_text):
+        print(json.dumps(PONG))
+        return 0
     mode = os.environ.get("ASTROCYTE_HOOKS", "").strip().lower()
     if mode in ("0", "off", "false", "no"):
         return 0

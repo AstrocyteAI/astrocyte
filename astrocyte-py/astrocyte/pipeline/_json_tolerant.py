@@ -106,3 +106,56 @@ def tolerant_json_loads_or_raise(text: str) -> Any:
     if parsed is None:
         raise json.JSONDecodeError("no JSON value recoverable", text[:80] or " ", 0)
     return parsed
+
+
+#: Bounds the scan in :func:`first_json_value`: each candidate costs one
+#: ``raw_decode``, so a long prose reply full of brackets stays linear-ish.
+_MAX_CANDIDATES = 32
+
+
+def first_json_value(text: str, kind: type = object) -> Any | None:
+    """The first complete JSON value of type ``kind`` in ``text``, or ``None``.
+
+    Models wrap a JSON answer in a fence and then keep talking: ```` ```json
+    [] ``` ```` followed by "The new memory is a status update [...]". Slicing
+    from the first bracket to the *last* one swallows that prose whenever it
+    contains a bracket, and the whole answer is lost. ``raw_decode`` parses one
+    value and reports where it ended, so anything after the value is ignored
+    rather than fatal. Candidates are tried in order: the body of the first
+    fenced block, then each opening bracket in the text.
+    """
+    if not text:
+        return None
+    opener = "[" if kind is list else "{" if kind is dict else None
+    decoder = json.JSONDecoder()
+    candidates: list[str] = []
+    fence = text.find("```")
+    if fence != -1:
+        body_start = text.find("\n", fence)
+        body_end = text.find("```", body_start + 1) if body_start != -1 else -1
+        if body_end != -1:
+            candidates.append(text[body_start + 1 : body_end])
+    candidates.append(text)
+    for candidate in candidates:
+        tried = 0
+        idx = 0
+        while tried < _MAX_CANDIDATES:
+            if opener is None:
+                positions = [p for p in (candidate.find("[", idx), candidate.find("{", idx)) if p != -1]
+                pos = min(positions) if positions else -1
+            else:
+                pos = candidate.find(opener, idx)
+            if pos == -1:
+                break
+            tried += 1
+            try:
+                value, _end = decoder.raw_decode(candidate, pos)
+            except (json.JSONDecodeError, RecursionError):
+                # RecursionError: pathologically nested brackets. A parse
+                # failure like any other, not a crash of the caller.
+                idx = pos + 1
+                continue
+            if kind is object or isinstance(value, kind):
+                return value
+            idx = pos + 1
+    return None

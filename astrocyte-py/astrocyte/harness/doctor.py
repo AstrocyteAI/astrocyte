@@ -14,6 +14,9 @@ wire — "not wired" is reported, not "fixed".
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -142,9 +145,47 @@ def _check_host(host: Host, expected, choices: Choices | None = None) -> Check:
     return Check(host.label, "ok", f"wired ({host.config_file()})")
 
 
+def _probe_shells() -> list[tuple[str, list[str]]]:
+    """The shells an agent may run a hook command through on this machine."""
+    if os.name != "nt":
+        return [("sh", ["sh", "-c"])]
+    shells = [("cmd", ["cmd", "/d", "/s", "/c"])]
+    if ps := shutil.which("pwsh") or shutil.which("powershell"):
+        shells.append(("PowerShell", [ps, "-NoProfile", "-NonInteractive", "-Command"]))
+    # Git Bash, the bash Claude Code uses on Windows; never WSL's System32\bash.exe.
+    if bash := os.environ.get("CLAUDE_CODE_GIT_BASH_PATH") or _git_bash():
+        shells.append(("Git Bash", [bash, "-c"]))
+    return shells
+
+
+def _git_bash() -> str | None:
+    """Git for Windows' bash, found the way Claude Code looks for it: the
+    standard install locations, then beside the ``git`` on PATH (which may be
+    Git\\cmd\\git.exe or Git\\bin\\git.exe)."""
+    candidates = [Path(os.environ[var]) / "Git" / "bin" / "bash.exe"
+                  for var in ("ProgramFiles", "ProgramFiles(x86)") if os.environ.get(var)]
+    if git := shutil.which("git"):
+        here = Path(git).resolve().parent
+        candidates += [here / "bash.exe", here.parent / "bin" / "bash.exe", here.parent / "usr" / "bin" / "bash.exe"]
+    return next((str(c) for c in candidates if c.is_file()), None)
+
+
+def _probe(command: str, shell: list[str]) -> str | None:
+    """None if ``command`` answers a ping when run through ``shell``; else why not."""
+    try:
+        proc = subprocess.run([*shell, command], input='{"ping": true}', capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60)
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"{type(e).__name__}: {e}"
+    if proc.returncode == 0 and '"pong"' in proc.stdout:
+        return None
+    last = (proc.stderr or proc.stdout).strip().splitlines()[-1:]
+    return f"exit {proc.returncode}" + (f": {last[0][:160]}" if last else "")
+
+
 def _check_hooks(host, choices: Choices | None = None) -> Check:
     """One harness's lifecycle hooks (automatic memory)."""
-    from .server import hook_prefix, locate_mcp_server
+    from .server import HookPathError, hook_prefix, locate_mcp_server
 
     label = f"{host.label} hooks"
     try:
@@ -157,12 +198,24 @@ def _check_hooks(host, choices: Choices | None = None) -> Check:
         return Check(label, "info", "automatic memory off", fix=f"astrocyte setup --{host.key}")
     missing = [event for event, cmd in commands.items() if not cmd]
     found = locate_mcp_server()
-    prefix = hook_prefix(found.command) if found else None
-    stale = [event for event, cmd in commands.items() if cmd and prefix and not cmd.startswith(prefix + " ")]
+    try:
+        prefix = hook_prefix(found.command) if found else None
+    except HookPathError as e:
+        return Check(label, "fail", str(e))
+    file_cmd = host.file_recall_command() if isinstance(host, HookHost) else None
+    stale = [event for event, cmd in {**commands, "file recall": file_cmd}.items()
+             if cmd and prefix and not cmd.startswith(prefix + " ")]
     if missing or stale:
         detail = ", ".join([f"{e} missing" for e in missing] + [f"{e} points at another install" for e in stale])
         return Check(label, "fail", detail, fix="astrocyte doctor --fix", fixable=prefix is not None)
-    return Check(label, "ok", f"automatic memory on ({host.hooks_file()})")
+    # Run it for real: a command the agent's shell can't parse would fail
+    # silently in every session (the agent ignores a failing hook).
+    command = next(cmd for cmd in commands.values() if cmd)
+    broken = [f"{name}: {why}" for name, shell in _probe_shells() if (why := _probe(command, shell))]
+    if broken:
+        return Check(label, "fail", "hook command does not run under " + "; ".join(broken))
+    extra = ", with file recall" if file_cmd else ""
+    return Check(label, "ok", f"automatic memory on{extra} ({host.hooks_file()})")
 
 
 def _check_daemon() -> Check:
@@ -170,7 +223,7 @@ def _check_daemon() -> Check:
     from . import agentd
 
     if not agentd.supported():
-        return Check("agent daemon", "warn", "needs Unix sockets; automatic recall is off on this OS")
+        return Check("agent daemon", "warn", "no local transport; automatic recall is off on this OS")
     ping = agentd.request("ping", timeout=0.5)
     return Check("agent daemon", "ok" if ping else "info",
                  f"running (pid {ping['pid']})" if ping else "not running (starts with the next session)")
@@ -242,7 +295,7 @@ def apply_fixes(config_path: Path, checks: list[Check]) -> list[str]:
     found = locate_mcp_server()
     if found is None:
         return done
-    from .server import hook_prefix
+    from .server import HookPathError, hook_prefix
 
     spec = server_spec(found.command, config_path)
     broken = {c.area for c in checks if c.fixable and c.area not in ("config",)}
@@ -251,6 +304,10 @@ def apply_fixes(config_path: Path, checks: list[Check]) -> list[str]:
             outcome = host.install(spec)
             done.append(f"{host.label}: {outcome.status} {outcome.detail}".rstrip())
         if f"{host.label} hooks" in broken:
-            outcome = host.install_hooks(hook_prefix(found.command))
+            try:
+                outcome = host.install_hooks(hook_prefix(found.command))
+            except HookPathError as e:
+                done.append(f"{host.label} hooks: not repaired: {e}")
+                continue
             done.append(f"{host.label} hooks: {outcome.status} {outcome.detail}".rstrip())
     return done

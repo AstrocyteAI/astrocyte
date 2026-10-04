@@ -106,3 +106,14 @@ class LegalHoldActive(AstrocyteError):
         self.bank_id = bank_id
         self.hold_id = hold_id
         super().__init__(f"Bank '{bank_id}' is under legal hold '{hold_id}'")
+
+
+class InvalidCursor(AstrocyteError, ValueError):
+    """A change-feed cursor this server did not issue, or one that was altered.
+
+    Raised by ``Astrocyte.list_changes``; the gateway answers 400. A
+    ``ValueError`` too, since it is bad input.
+    """
+
+    def __init__(self, reason: str = "invalid cursor") -> None:
+        super().__init__(reason)

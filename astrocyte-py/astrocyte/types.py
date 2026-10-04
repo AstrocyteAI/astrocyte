@@ -103,6 +103,84 @@ class VectorHit:
             raise ValueError(f"VectorHit.score must be >= 0.0, got {self.score}")
 
 
+@dataclass
+class MemoryChange:
+    """One entry in a bank's change feed (team memory sync, ``VectorStore.list_changes``).
+
+    The changes feed is every change to a synced row, in ``(changed_at, id)``
+    order. ``changed_at`` is the row's last change to any synced field: when
+    it was stored, rewritten (metadata, and later claim status, trust or
+    staleness flags) or forgotten. A live row carries its current values, so
+    a later change shows up as an upsert of the same id. A forgotten row is a
+    **tombstone**: ``deleted`` is true and only ``id``, ``bank_id`` and
+    ``changed_at`` are set, so a forgotten memory's text never leaves the
+    store through the feed.
+    """
+
+    id: str
+    bank_id: str
+    changed_at: datetime
+    deleted: bool = False
+    text: str | None = None
+    occurred_at: datetime | None = None
+    retained_at: datetime | None = None
+    tags: list[str] | None = None
+    fact_type: str | None = None
+    memory_layer: str | None = None
+    metadata: Metadata | None = None
+
+
+@dataclass
+class MemoryChangePage:
+    """A page of :class:`MemoryChange` entries from ``Astrocyte.list_changes``.
+
+    ``next_cursor`` is the opaque position after the last change on this page
+    (the request's own cursor when the page is empty, ``None`` only when the
+    bank has no changes at all). Store it and pass it back to resume without
+    gaps or repeats. ``has_more`` is true when more changes were already
+    waiting past this page.
+    """
+
+    changes: list[MemoryChange]
+    next_cursor: str | None = None
+    has_more: bool = False
+
+
+@dataclass
+class SyncPushRecord:
+    """One memory pushed by a team-memory client (``Astrocyte.push_records``).
+
+    Stored as exactly one row with the client's ``id`` (8–64 of
+    ``[A-Za-z0-9_-]``): no chunking, no extraction, re-embedded by the server.
+    ``content_hash`` (``"sha256:<hex>"`` of the UTF-8 ``text``), when given,
+    must match the text as sent.
+    """
+
+    id: str
+    text: str
+    occurred_at: datetime | None = None
+    tags: list[str] | None = None
+    fact_type: str | None = None
+    metadata: Metadata | None = None
+    content_hash: str | None = None
+
+
+@dataclass
+class SyncPushResult:
+    """What became of one :class:`SyncPushRecord`.
+
+    ``status`` is ``stored`` (a new row with the pushed id), ``unchanged``
+    (that id already holds this text in this bank; idempotent re-push),
+    ``duplicate`` (a near-duplicate of the bank's memory ``duplicate_of``;
+    nothing stored) or ``rejected`` (``reason`` says why; nothing stored).
+    """
+
+    id: str
+    status: Literal["stored", "unchanged", "duplicate", "rejected"]
+    duplicate_of: str | None = None
+    reason: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Tier 1: Graph Store
 # ---------------------------------------------------------------------------
@@ -747,12 +825,19 @@ class AstrocyteContext:
     ``principal`` remains the backwards-compatible primary string. When ``actor``
     is set, identity resolution uses ``actor`` (and optional ``on_behalf_of`` for OBO);
     ``principal`` is still useful for logging and integrations that have not migrated.
+
+    ``groups`` are group principals the actor belongs to (e.g. ``team:api``);
+    grants to a group apply to its members. ``grants`` are extra grants bound to
+    this caller (e.g. by a gateway token) and are added to the configured ones.
+    Both are set by the code that authenticated the caller, never by the caller.
     """
 
     principal: str  # e.g. "agent:support-bot-1", "user:calvin"
     actor: ActorIdentity | None = None
     on_behalf_of: ActorIdentity | None = None
     tenant_id: str | None = None
+    groups: list[str] | None = None
+    grants: list[AccessGrant] | None = None
 
 
 # ---------------------------------------------------------------------------

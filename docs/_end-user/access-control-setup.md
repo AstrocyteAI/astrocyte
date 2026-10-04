@@ -124,9 +124,53 @@ Principals follow the `type:id` format:
 | `user:` | `user:alice`, `user:u-12345` | Human users |
 | `agent:` | `agent:support-bot`, `agent:ingester` | AI agents and automated services |
 | `service:` | `service:etl-worker` | Backend services |
+| `team:` | `team:api` | A group; grants to it apply to its members (see below) |
 | `*` | `*` | Any principal (wildcard) |
 
-In `dev` and `api_key` auth modes, the client sets the principal via the `X-Astrocyte-Principal` header. In `jwt_oidc` mode, the principal is computed from JWT claims. See [authentication setup](authentication-setup/).
+In `dev` and `api_key` auth modes, the client sets the principal via the `X-Astrocyte-Principal` header. In `token` mode, the principal comes from the token's registry entry and the header is ignored. In `jwt_oidc` mode, the principal is computed from JWT claims. See [authentication setup](authentication-setup/).
+
+---
+
+## Glob patterns
+
+A grant's `bank_id` and `principal` can be glob patterns, so one row covers a family of banks or principals:
+
+```yaml
+access_grants:
+  - bank_id: "project:*"        # every project bank
+    principal: "team:api"
+    permissions: [read, write]
+  - bank_id: "shared-*"
+    principal: "user:*"         # every user
+    permissions: [read]
+```
+
+| Pattern | Matches | Does not match |
+|---------|---------|----------------|
+| `project:*` | `project:api-1a2b3c`, `project:x`, `project:a:b` | `projectx`, `project`, `myproject:x`, `Project:x` |
+| `shard-?` | `shard-1` | `shard-10` |
+| `env-[ab]` | `env-a`, `env-b` | `env-c` |
+
+Rules: `*` matches any run of characters (including `:`), `?` exactly one, `[...]` one character from the set (fnmatch syntax). Matching is case-sensitive on every platform. A value without `*`, `?` or `[` is matched exactly, and a lone `*` matches everything, as before. Bank ids can't contain these characters, so a pattern never collides with a real bank id.
+
+---
+
+## Groups and token grants
+
+A principal can belong to `team:<name>` groups. Grants to `team:api` apply to every member of `team:api`, in addition to the member's own grants. Group membership is set by whatever authenticated the caller: with per-user gateway tokens it is the token's `--groups`; in the Python library it is `AstrocyteContext(groups=[...])`. A client can't add itself to a group.
+
+```yaml
+access_grants:
+  - bank_id: "project:*"
+    principal: "team:api"
+    permissions: [read, write]
+```
+
+```bash
+python -m astrocyte_gateway.tokens create --principal user:alice --groups team:api --file tokens.yaml
+```
+
+A per-user gateway token can also carry its own bank grants (`--banks 'project:*' --permissions read`). Those are **added** to the config grants for the token's principal; a token never takes a permission away. Effective permissions on a bank are the union of the principal's config grants, the config grants to its groups, and the token's own grants. To issue a restricted token, keep the principal's config grants narrow and put the access on the token. Groups apply to the acting identity only; with on-behalf-of they don't widen the delegating user's side of the intersection.
 
 ---
 
@@ -139,7 +183,7 @@ When an operation is called (e.g. `brain.retain(content, bank_id="b1", context=c
    - `open` policy → **allow**
    - `owner_only` or `deny` → **deny** (403)
 3. If context is provided:
-   - Collect all grants where `bank_id` matches (`"*"` or exact) **and** `principal` matches (`"*"` or exact)
+   - Collect all grants (config grants plus any bound to the caller's token) where `bank_id` matches (`"*"`, exact, or [glob](#glob-patterns)) **and** `principal` matches the caller or one of its `team:` groups (`"*"`, exact, or glob)
    - Union all matching permissions
    - If the required permission is in the set → **allow**
    - If not, and policy is `open` → **allow**

@@ -24,6 +24,7 @@ FILE_NAME = "harnesses.json"
 class Choices:
     off: set[str] = field(default_factory=set)  # not wired at all
     hooks_off: set[str] = field(default_factory=set)  # wired, without automatic memory
+    file_recall: set[str] = field(default_factory=set)  # opted in to recall on file reads/edits
 
 
 def choices_path(config: Path) -> Path:
@@ -43,15 +44,17 @@ def load_choices(config: Path) -> Choices:
         value = data.get(name)
         return {k for k in value if isinstance(k, str)} if isinstance(value, list) else set()
 
-    return Choices(off=keys("off"), hooks_off=keys("hooks_off"))
+    return Choices(off=keys("off"), hooks_off=keys("hooks_off"), file_recall=keys("file_recall"))
 
 
 def save_choices(config: Path, choices: Choices) -> None:
     path = choices_path(config)
-    if not (choices.off or choices.hooks_off or path.exists()):
-        return  # nothing switched off: no file to leave behind
+    if not (choices.off or choices.hooks_off or choices.file_recall or path.exists()):
+        return  # no choice made: no file to leave behind
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps({"off": sorted(choices.off), "hooks_off": sorted(choices.hooks_off)}, indent=2) + "\n",
-                   encoding="utf-8")
+    data = {"off": sorted(choices.off), "hooks_off": sorted(choices.hooks_off)}
+    if choices.file_recall:
+        data["file_recall"] = sorted(choices.file_recall)
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)

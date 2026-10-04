@@ -12,7 +12,7 @@ from .doctor import Check, apply_fixes, run_checks
 from .hosts import ALL_HOSTS, SUPPORTED_HOSTS, HookHost, Host, Outcome, host_by_key, hosts
 from .localconfig import SetupError, choose_providers, render_config, write_config
 from .paths import config_path, database_path
-from .server import handshake, hook_prefix, locate_mcp_server, server_spec
+from .server import HookPathError, handshake, hook_prefix, locate_mcp_server, server_spec
 
 HOST_KEYS = tuple(cls.key for cls in ALL_HOSTS)  # v0.16.0's value: part of the public API
 SUPPORTED_HOST_KEYS = tuple(cls.key for cls in SUPPORTED_HOSTS)
@@ -103,6 +103,11 @@ def cmd_setup(args: Namespace) -> int:
         for h in targets:
             choices.off.discard(h.key)
             (choices.hooks_off.add if args.no_hooks else choices.hooks_off.discard)(h.key)
+    for h in targets:  # opt-in file recall, where the harness has a file hook
+        if getattr(h, "FILE_HOOK", None) and getattr(args, "file_recall", False):
+            choices.file_recall.add(h.key)
+        elif getattr(args, "no_file_recall", False):
+            choices.file_recall.discard(h.key)
     else:
         print("\n  Detected: " + ", ".join(h.label for h in targets))
         if args.no_hooks:
@@ -117,9 +122,15 @@ def cmd_setup(args: Namespace) -> int:
     # 5. Automatic memory (lifecycle hooks, where the harness has them).
     hook_hosts = [h for h in targets if isinstance(h, HookHost)]
     auto_memory = [h for h in hook_hosts if h.key not in choices.hooks_off]
+    try:
+        prefix, prefix_error = hook_prefix(found.command), ""
+    except HookPathError as e:  # Windows: a path no shell-neutral command can name
+        prefix, prefix_error = None, str(e)
     for h in hook_hosts:
         if h in auto_memory:
-            outcomes.append(h.install_hooks(hook_prefix(found.command), dry_run=dry))
+            extra = {"file_recall": h.key in choices.file_recall} if h.FILE_HOOK else {}
+            outcomes.append(h.install_hooks(prefix, dry_run=dry, **extra) if prefix
+                            else Outcome(f"{h.label} hooks", "failed", prefix_error))
             continue
         # Off by choice (--no-hooks, now or before), including a previous install.
         outcome = h.uninstall_hooks(dry_run=dry)
@@ -160,6 +171,10 @@ def cmd_setup(args: Namespace) -> int:
             if recall_only:
                 print(f"  {_join(recall_only)}: relevant memories (saved by your other agents) are added to\n"
                       "  new prompts; its own turns are not saved yet.")
+            file_recall = [h.label for h in auto_memory if h.FILE_HOOK and h.key in choices.file_recall]
+            if file_recall:
+                print(f"  {_join(file_recall)}: after it reads or edits a file, memories of earlier turns that\n"
+                      "  touched that file are added too (file recall; off with --no-file-recall).")
             print("Headless runs (`claude -p`, `codex exec`, `agy -p`, `copilot -p`) are left alone.\n"
                   "Pause with ASTROCYTE_HOOKS=off, or remove with: astrocyte setup --no-hooks")
         seed = _seed_files(Path.cwd())
@@ -284,13 +299,17 @@ def register(sub) -> None:
     host_flags(setup)
     setup.add_argument("--config", help="config path (default: ~/.config/astrocyte/astrocyte.yaml)")
     setup.add_argument("--no-verify", action="store_true", help="skip the server start-up check")
+    setup.add_argument("--file-recall", action="store_true",
+                       help="also recall memories of earlier turns when the agent reads or edits a file "
+                       "(Claude Code; opt-in, remembered)")
+    setup.add_argument("--no-file-recall", action="store_true", help="turn file recall off again")
     setup.add_argument("--no-hooks", action="store_true",
                        help="don't enable automatic memory (Claude Code / Codex capture + recall hooks); "
                        "removes them if present")
     setup.set_defaults(func=cmd_setup)
 
     hook = sub.add_parser("hook", help="(called by agent hooks) automatic memory for one lifecycle event")
-    hook.add_argument("event", choices=["session-start", "prompt", "stop"])
+    hook.add_argument("event", choices=["session-start", "prompt", "stop", "file"])
     hook.add_argument("--host", choices=["claude", "codex", "antigravity", "copilot"], default="claude",
                       help="the agent firing the hook")
     hook.set_defaults(func=lambda a: _run_hook(a.event, a.host))

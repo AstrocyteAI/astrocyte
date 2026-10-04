@@ -22,6 +22,7 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
+from platform_compat import WINDOWS, posix_modes, set_home, system_path, write_executable
 
 from astrocyte.harness import hosts as hosts_mod
 from astrocyte.harness.commands import cmd_doctor, cmd_setup, cmd_uninstall
@@ -107,19 +108,17 @@ def home(tmp_path, monkeypatch) -> Path:
     for var in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
                 "ASTROCYTE_CONFIG", "OPENAI_API_KEY"):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("HOME", str(h))
+    set_home(monkeypatch, h)
     # Keep doctor's daemon ping away from the developer's real state dir.
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin")
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *system_path()]))
     return h
 
 
 def install_cli(home: Path, name: str) -> None:
-    path = home.parent / "bin" / name
-    path.write_text(FAKE_CLI.format(python=sys.executable, name=name))
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    write_executable(home.parent / "bin", name, FAKE_CLI.format(python=sys.executable, name=name))
 
 
 def cli_calls(home: Path) -> list[str]:
@@ -211,7 +210,8 @@ def test_json_host_preserves_other_servers_and_keeps_a_backup(home, host_cls):
     data = json.loads(path.read_text())
     assert data["mcpServers"]["other"] == original["mcpServers"]["other"]
     assert data["theme"] == "dark"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600, "file permissions must survive the rewrite"
+    if not WINDOWS:  # POSIX modes; Windows files carry the profile's ACLs
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600, "file permissions must survive the rewrite"
     assert json.loads(path.with_name(path.name + ".astrocyte-bak").read_text()) == original
     assert host.install(SPEC).status == "unchanged"
 
@@ -270,7 +270,7 @@ def test_generated_config_loads_and_keeps_native_embedding_width(home, monkeypat
     install_cli(home, "claude")
     monkeypatch.setattr("astrocyte.harness.localconfig.local_embedding_backend", lambda: "fastembed")
     path = tmp_path / "astrocyte.yaml"
-    path.write_text(render_config(choose_providers(), tmp_path / "mem dir" / "astrocyte.db"))
+    path.write_text(render_config(choose_providers(), tmp_path / "mem dir" / "astrocyte.db"), encoding="utf-8")
     cfg = load_config(str(path))
     assert cfg.vector_store == "sqlite"
     assert cfg.vector_store_config["path"] == str(tmp_path / "mem dir" / "astrocyte.db")
@@ -285,7 +285,8 @@ MINIMAL = "vector_store: in_memory\nllm_provider: mock\nbarriers:\n  pii:\n    m
 
 def _ns(**kw) -> Namespace:
     base = {k: False for k in ("claude", "codex", "cursor", "gemini", "windsurf", "copilot", "antigravity")}
-    base.update(dry_run=False, no_verify=False, no_hooks=False, config=None, fix=False, json=False, skip_models=True)
+    base.update(dry_run=False, no_verify=False, no_hooks=False, config=None, fix=False, json=False, skip_models=True,
+                file_recall=False, no_file_recall=False)
     base.update(kw)
     return Namespace(**base)
 
@@ -544,6 +545,147 @@ def test_doctor_reports_and_repairs_hooks_from_a_moved_install(wired_home, capsy
     assert "points at another install" in capsys.readouterr().out
     assert cmd_doctor(_ns(fix=True)) == 0
     assert all(not c.startswith("/old/") for c in host.hook_commands().values())
+
+
+# ── hook commands on Windows ─────────────────────────────────────────────
+
+
+def test_windows_hook_commands_mean_the_same_in_every_shell():
+    from astrocyte.harness.server import hook_prefix
+
+    assert hook_prefix(r"C:\Users\alice\AppData\Roaming\uv\tools\astrocyte\Scripts\python.exe", windows=True) == (
+        "C:/Users/alice/AppData/Roaming/uv/tools/astrocyte/Scripts/python.exe -I -m astrocyte.cli")
+    assert hook_prefix("/opt/py 3/bin/python", windows=False) == "'/opt/py 3/bin/python' -I -m astrocyte.cli", (
+        "POSIX: quoted")
+
+
+def test_windows_paths_with_spaces_use_the_short_name(monkeypatch):
+    from astrocyte.harness import server
+
+    monkeypatch.setattr(server, "_short_path", lambda p: r"C:\Users\ALICES~1\python.exe")
+    assert server.hook_prefix(r"C:\Users\Alice Smith\python.exe", windows=True).startswith(
+        "C:/Users/ALICES~1/python.exe ")
+
+
+@pytest.mark.parametrize("path", [r"C:\Users\Alice Smith\python.exe", r"C:\tools&co\python.exe",
+                                  r"C:\100%\python.exe", r"C:\$x\python.exe"])
+def test_windows_paths_no_shell_reads_the_same_are_refused(monkeypatch, path):
+    from astrocyte.harness import server
+
+    monkeypatch.setattr(server, "_short_path", lambda p: p)  # no 8.3 name on this volume
+    with pytest.raises(server.HookPathError, match="cmd, PowerShell and Git Bash"):
+        server.hook_prefix(path, windows=True)
+
+
+def test_short_path_off_windows_returns_the_path():
+    from astrocyte.harness.server import _short_path
+
+    if not WINDOWS:
+        assert _short_path("/a b/python") == "/a b/python"
+
+
+def test_setup_reports_an_unrenderable_path_instead_of_crashing(wired_home, capsys, monkeypatch):
+    from astrocyte.harness import commands, server
+
+    def refuse(_):
+        raise server.HookPathError("no shell-neutral form")
+
+    monkeypatch.setattr(commands, "hook_prefix", refuse)
+    assert cmd_setup(_ns()) == 1
+    out = capsys.readouterr().out
+    assert "Claude Code hooks failed" in " ".join(out.split()) and "no shell-neutral form" in out
+    assert ClaudeCodeHost().registration() is not None, "the memory tools are still wired"
+
+
+def test_doctor_runs_each_hook_command_through_the_shells(wired_home, monkeypatch):
+    from astrocyte.harness import doctor
+
+    cmd_setup(_ns())
+    checks = {c.area: c for c in run_checks(_cfg(wired_home), model_probes=False)}
+    assert checks["Claude Code hooks"].level == "ok", checks["Claude Code hooks"].summary
+    # A shell that can't run it: reported, not "on".
+    broken = (["sh", "-c"] if not WINDOWS else ["cmd", "/d", "/s", "/c"])
+    monkeypatch.setattr(doctor, "_probe_shells", lambda: [("broken shell", [*broken[:-1], "exit 3 &&"])])
+    checks = {c.area: c for c in run_checks(_cfg(wired_home), model_probes=False)}
+    assert checks["Claude Code hooks"].level == "fail"
+    assert "does not run under broken shell" in checks["Claude Code hooks"].summary
+
+
+def test_git_bash_is_found_wherever_git_for_windows_puts_git(tmp_path, monkeypatch):
+    """GitHub's Windows runners resolve git to Git\\bin\\git.exe, not Git\\cmd:
+    looking only two levels up from git silently dropped Git Bash."""
+    from astrocyte.harness import doctor
+
+    git_root = tmp_path / "Git"
+    for d in ("bin", "cmd"):
+        (git_root / d).mkdir(parents=True)
+    (git_root / "bin" / "bash.exe").write_text("")
+    for var in ("ProgramFiles", "ProgramFiles(x86)"):
+        monkeypatch.delenv(var, raising=False)
+    for git in (git_root / "bin" / "git.exe", git_root / "cmd" / "git.exe"):
+        monkeypatch.setattr(doctor.shutil, "which", lambda name, g=git: str(g) if name == "git" else None)
+        assert doctor._git_bash() == str(git_root / "bin" / "bash.exe")
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: None)
+    assert doctor._git_bash() is None
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    assert doctor._git_bash() == str(git_root / "bin" / "bash.exe"), "the standard install location"
+
+
+def test_on_windows_doctor_probes_git_bash_too():
+    from astrocyte.harness.doctor import _probe_shells
+
+    if WINDOWS:  # the runners have Git for Windows
+        assert "Git Bash" in {name for name, _ in _probe_shells()}
+
+
+def test_probe_needs_the_pong(monkeypatch):
+    from astrocyte.harness.doctor import _probe, _probe_shells
+
+    name, shell = _probe_shells()[0]
+    # Unquoted on Windows, like the hook commands themselves (cmd mangles escaped quotes).
+    runs = f"{sys.executable.replace(chr(92), '/')} -c print(1)" if WINDOWS else f"'{sys.executable}' -c 'print(1)'"
+    assert _probe(runs, shell) == "exit 0: 1"
+    assert _probe("x", ["/no/such/shell"]).startswith("FileNotFoundError")
+
+
+# ── opt-in file recall (Claude Code) ────────────────────────────────────
+
+
+def test_file_recall_installs_a_post_tool_use_hook_with_its_matcher(home):
+    host, cli = ClaudeCodeHost(), "/opt/astro/bin/python -I -m astrocyte.cli"
+    assert host.install_hooks(cli).status == "installed"
+    assert host.file_recall_command() is None, "off unless asked for"
+    assert host.install_hooks(cli, file_recall=True).status == "updated"
+    [group] = json.loads(host.hooks_file().read_text())["hooks"]["PostToolUse"]
+    assert group["matcher"] == "Read|Edit|Write|NotebookEdit"
+    assert group["hooks"][0]["command"] == f"{cli} hook file"
+    assert host.install_hooks(cli, file_recall=True).status == "unchanged"
+    assert host.install_hooks(cli).status == "updated", "switching it off removes it"
+    assert host.file_recall_command() is None and all(host.hook_commands().values())
+    host.install_hooks(cli, file_recall=True)
+    assert host.uninstall_hooks().status == "removed" and host.file_recall_command() is None
+
+
+def test_setup_file_recall_is_opt_in_and_remembered(wired_home, capsys):
+    cmd_setup(_ns())
+    assert ClaudeCodeHost().file_recall_command() is None
+    cmd_setup(_ns(claude=True, file_recall=True))
+    assert "after it reads or edits a file" in capsys.readouterr().out
+    assert ClaudeCodeHost().file_recall_command() is not None
+    cmd_setup(_ns())
+    assert ClaudeCodeHost().file_recall_command() is not None, "a plain setup keeps the choice"
+    checks = {c.area: c for c in run_checks(_cfg(wired_home), model_probes=False)}
+    assert checks["Claude Code hooks"].summary.startswith("automatic memory on, with file recall")
+    cmd_setup(_ns(no_file_recall=True))
+    assert ClaudeCodeHost().file_recall_command() is None
+
+
+def test_file_recall_is_ignored_where_the_harness_has_no_file_hook(wired_home):
+    install_cli(wired_home, "codex")
+    (wired_home / ".codex").mkdir()
+    cmd_setup(_ns(file_recall=True))
+    assert all(CodexHost().hook_commands().values()), "codex hooks installed as usual"
+    assert ClaudeCodeHost().file_recall_command() is not None
 
 
 def test_every_host_class_is_registered():
@@ -890,6 +1032,7 @@ def test_setup_says_copilot_only_recalls(wired_home, capsys):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+@posix_modes
 def test_doctor_reports_and_fixes_a_store_others_can_read(home, capsys, monkeypatch):
     """Stores created before v0.16.1 inherited the umask (world-readable)."""
     pytest.importorskip("astrocyte_sqlite")
@@ -914,6 +1057,7 @@ def test_doctor_reports_and_fixes_a_store_others_can_read(home, capsys, monkeypa
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+@posix_modes
 def test_a_store_in_a_directory_of_your_choosing_leaves_the_directory_alone(tmp_path, monkeypatch):
     from astrocyte.harness.privacy import make_private
 

@@ -145,6 +145,7 @@ const topicItems = {
         { label: "Innovations roadmap", link: "/design/innovations/" },
         { label: "Memory Intent Protocol (MIP)", link: "/design/memory-intent-protocol/" },
         { label: "Multi-bank orchestration", link: "/design/multi-bank-orchestration/" },
+        { label: "Team memory (proposed)", link: "/design/team-memory/" },
         { label: "Storage and data planes", link: "/design/storage-and-data-planes/" },
         { label: "Storage adapter packages", link: "/plugins/ecosystem-and-packaging/#22-tier-1-retrieval-providers" },
       ],
@@ -154,6 +155,7 @@ const topicItems = {
       label: "Integrations & Extensibility",
       items: [
         { label: "MCP server", link: "/design/mcp-server/" },
+        { label: "Automatic memory on Windows (proposed)", link: "/design/windows-local-install/" },
         { label: "Presentation layer & multimodal", link: "/design/presentation-layer-and-multimodal-services/" },
         { label: "Event hooks", link: "/design/event-hooks/" },
         { label: "Memory export sink", link: "/design/memory-export-sink/" },

@@ -43,7 +43,7 @@ import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import numpy as np
 from astrocyte.types import (
@@ -55,6 +55,11 @@ from astrocyte.types import (
     VectorHit,
     VectorItem,
 )
+
+if TYPE_CHECKING:
+    # Imported where used: MemoryChange is newer than this package's
+    # ``astrocyte`` floor, and only an astrocyte that has it calls list_changes.
+    from astrocyte.types import MemoryChange
 
 T = TypeVar("T")
 
@@ -100,12 +105,20 @@ CREATE TABLE IF NOT EXISTS astrocyte_vectors (
     memory_layer TEXT,
     retained_at  INTEGER NOT NULL,
     forgotten_at INTEGER,
-    chunk_id     TEXT
+    chunk_id     TEXT,
+    changed_at   INTEGER
 );
 CREATE INDEX IF NOT EXISTS astrocyte_vectors_bank_live
     ON astrocyte_vectors (bank_id, forgotten_at);
 CREATE INDEX IF NOT EXISTS astrocyte_vectors_bank_chunk
     ON astrocyte_vectors (bank_id, chunk_id);
+"""
+
+# Created after the upgrade step below: on a database that predates
+# ``changed_at``, the column has to exist before it can be indexed.
+_CHANGES_INDEX = """
+CREATE INDEX IF NOT EXISTS astrocyte_vectors_bank_changed
+    ON astrocyte_vectors (bank_id, changed_at, id);
 """
 
 _FTS_SCHEMA = """
@@ -131,6 +144,33 @@ END;
 """
 
 _HIT_COLUMNS = "id, text, metadata, tags, fact_type, occurred_at, memory_layer, retained_at, chunk_id"
+_CHANGE_COLUMNS = (
+    "id, bank_id, text, metadata, tags, fact_type, occurred_at, memory_layer, retained_at, forgotten_at, changed_at"
+)
+
+# ?10 reuses retained_at: a new row's changed_at. ?12 (upsert only) is the
+# write time, the changed_at of an existing row being overwritten.
+_INSERT_VECTOR = """
+    INSERT INTO astrocyte_vectors (
+        id, bank_id, embedding, text, metadata, tags, fact_type,
+        occurred_at, memory_layer, retained_at, chunk_id, forgotten_at, changed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?10)
+"""
+_ON_CONFLICT_UPSERT = """
+    ON CONFLICT(id) DO UPDATE SET
+        bank_id = excluded.bank_id,
+        embedding = excluded.embedding,
+        text = excluded.text,
+        metadata = excluded.metadata,
+        tags = excluded.tags,
+        fact_type = excluded.fact_type,
+        occurred_at = excluded.occurred_at,
+        memory_layer = excluded.memory_layer,
+        retained_at = excluded.retained_at,
+        chunk_id = excluded.chunk_id,
+        forgotten_at = NULL,
+        changed_at = MAX(excluded.retained_at, ?12)
+"""
 _ITEM_COLUMNS = "id, bank_id, embedding, text, metadata, tags, fact_type, occurred_at, memory_layer, retained_at"
 
 
@@ -211,6 +251,36 @@ def _create_private(db: Path) -> None:
             pass  # another process created it first
 
 
+def _upgrade_schema(conn: sqlite3.Connection) -> None:
+    """Bring a database created by an earlier version up to ``_SCHEMA``.
+
+    ``CREATE TABLE IF NOT EXISTS`` leaves an existing table as it was, so
+    columns added since are added here, each with a backfill, under a write
+    lock so concurrent processes opening the same old file don't race.
+
+    * ``changed_at`` (team-memory change feed): the row's last change to any
+      synced field, set by every write; backfilled as ``max(retained_at,
+      forgotten_at)``.
+    """
+
+    def has_changed_at() -> bool:
+        return any(r["name"] == "changed_at" for r in conn.execute("PRAGMA table_info(astrocyte_vectors)"))
+
+    if has_changed_at():
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if not has_changed_at():  # another process may have upgraded first
+            conn.execute("ALTER TABLE astrocyte_vectors ADD COLUMN changed_at INTEGER")
+            conn.execute(
+                "UPDATE astrocyte_vectors SET changed_at = MAX(retained_at, COALESCE(forgotten_at, retained_at))"
+            )
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+
 # ── store ────────────────────────────────────────────────────────────────
 
 
@@ -283,6 +353,8 @@ class SqliteStore:
                 # concurrent hook processes don't trip "database is locked".
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.executescript(_SCHEMA)
+                _upgrade_schema(conn)
+                conn.executescript(_CHANGES_INDEX)
                 try:
                     conn.executescript(_FTS_SCHEMA)
                     self._fts = True
@@ -375,9 +447,20 @@ class SqliteStore:
     # ── VectorStore ───────────────────────────────────────────────────
 
     async def store_vectors(self, items: list[VectorItem]) -> list[str]:
-        return await self._run(self._store_vectors, items)
+        return await self._run(self._write_vectors, items, True)
+
+    async def insert_vectors(self, items: list[VectorItem]) -> list[str]:
+        """Insert-only ``store_vectors``: an item whose id already exists in
+        any bank, live or forgotten, is skipped, never overwritten. Returns
+        the ids inserted. Optional VectorStore method (team-memory push)."""
+        return await self._run(self._write_vectors, items, False)
 
     def _store_vectors(self, items: list[VectorItem]) -> list[str]:
+        return self._write_vectors(items, True)
+
+    def _write_vectors(self, items: list[VectorItem], overwrite: bool) -> list[str]:
+        """Upsert (``overwrite``, the reference's semantics: a re-stored id
+        takes the new values and is live again) or insert-only."""
         self._ensure_schema()
         if not items:
             return []
@@ -387,6 +470,13 @@ class SqliteStore:
         for item in items:
             if len(item.vector) != dim:
                 raise ValueError(f"Vector length {len(item.vector)} != embedding_dimensions {dim}")
+        sql = _INSERT_VECTOR + (_ON_CONFLICT_UPSERT if overwrite else "ON CONFLICT(id) DO NOTHING")
+        # changed_at: a new row's is its retained_at (?10). Overwriting an
+        # existing row (a restore, a metadata rewrite that keeps the old
+        # retained_at) is a change now (?12), so the feed shows it after any
+        # cursor already handed out.
+        now = _now_us()
+        written: list[str] = []
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -401,39 +491,24 @@ class SqliteStore:
                         (str(dim),),
                     )
                 for item in items:
-                    conn.execute(
-                        """
-                        INSERT INTO astrocyte_vectors (
-                            id, bank_id, embedding, text, metadata, tags, fact_type,
-                            occurred_at, memory_layer, retained_at, chunk_id, forgotten_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-                        ON CONFLICT(id) DO UPDATE SET
-                            bank_id = excluded.bank_id,
-                            embedding = excluded.embedding,
-                            text = excluded.text,
-                            metadata = excluded.metadata,
-                            tags = excluded.tags,
-                            fact_type = excluded.fact_type,
-                            occurred_at = excluded.occurred_at,
-                            memory_layer = excluded.memory_layer,
-                            retained_at = excluded.retained_at,
-                            chunk_id = excluded.chunk_id,
-                            forgotten_at = NULL
-                        """,
-                        (
-                            item.id,
-                            item.bank_id,
-                            _encode_vector(item.vector),
-                            item.text,
-                            json.dumps(item.metadata) if item.metadata is not None else None,
-                            _encode_tags(item.tags),
-                            item.fact_type,
-                            _to_us(item.occurred_at),
-                            item.memory_layer,
-                            _to_us(item.retained_at) if item.retained_at else _now_us(),
-                            item.chunk_id,
-                        ),
-                    )
+                    params = [
+                        item.id,
+                        item.bank_id,
+                        _encode_vector(item.vector),
+                        item.text,
+                        json.dumps(item.metadata) if item.metadata is not None else None,
+                        _encode_tags(item.tags),
+                        item.fact_type,
+                        _to_us(item.occurred_at),
+                        item.memory_layer,
+                        _to_us(item.retained_at) if item.retained_at else now,
+                        item.chunk_id,
+                    ]
+                    if overwrite:
+                        params.append(now)  # ?12
+                    cur = conn.execute(sql, params)
+                    if overwrite or cur.rowcount == 1:
+                        written.append(item.id)
                 conn.execute("COMMIT")
             except BaseException:
                 conn.execute("ROLLBACK")
@@ -441,7 +516,30 @@ class SqliteStore:
         finally:
             conn.close()
         self._dim = dim
-        return [item.id for item in items]
+        return written
+
+    async def lookup_ids(self, ids: list[str]) -> list[MemoryChange]:
+        """The current state of each id held in **any** bank: a live row or a
+        tombstone; unknown (or purged) ids are absent. Cross-bank on purpose:
+        rows are keyed on id alone, so a writer that must not take over
+        another bank's row has to see it. Optional VectorStore method."""
+        return await self._run(self._lookup_ids, ids)
+
+    def _lookup_ids(self, ids: list[str]) -> list[MemoryChange]:
+        wanted = list(dict.fromkeys(ids))
+        if not wanted:
+            return []
+        self._ensure_schema()
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                f"SELECT {_CHANGE_COLUMNS} FROM astrocyte_vectors WHERE id IN ({_placeholders(len(wanted))})",
+                wanted,
+            ).fetchall()
+        finally:
+            conn.close()
+        by_id = {r["id"]: self._row_to_change(r) for r in rows}
+        return [by_id[i] for i in wanted if i in by_id]
 
     async def search_similar(
         self,
@@ -504,9 +602,11 @@ class SqliteStore:
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            # A forget is a change: the tombstone sorts into the feed at
+            # max(retained_at, forgotten_at), i.e. when it was made.
             cur = conn.execute(
-                f"UPDATE astrocyte_vectors SET forgotten_at = ? "
-                f"WHERE bank_id = ? AND forgotten_at IS NULL "
+                f"UPDATE astrocyte_vectors SET forgotten_at = ?1, changed_at = MAX(retained_at, ?1) "
+                f"WHERE bank_id = ?2 AND forgotten_at IS NULL "
                 f"AND id IN ({_placeholders(len(ids))})",
                 [_now_us(), bank_id, *ids],
             )
@@ -601,6 +701,67 @@ class SqliteStore:
         finally:
             conn.close()
         return [self._row_to_item(r) for r in rows]
+
+    async def list_changes(
+        self,
+        bank_id: str,
+        *,
+        after: tuple[datetime, str] | None = None,
+        limit: int = 100,
+    ) -> list[MemoryChange]:
+        """The bank's change feed — every change to a synced row: live rows
+        (current values) and tombstones (forgotten rows), ordered by
+        ``(changed_at, id)``, strictly after ``after``. ``changed_at`` is the
+        row's last change to any synced field; every write sets it.
+
+        Optional VectorStore method (team-memory sync). A purged row is gone
+        and has no tombstone; purging is the local store's erase, and the
+        gateway that serves the feed soft-deletes.
+        """
+        return await self._run(self._list_changes, bank_id, after, limit)
+
+    def _list_changes(self, bank_id: str, after: tuple[datetime, str] | None, limit: int) -> list[MemoryChange]:
+        self._ensure_schema()
+        if limit <= 0:
+            return []
+        where, params = "bank_id = ?", [bank_id]
+        if after is not None:
+            # Row values compare lexicographically; ids compare as BINARY,
+            # which matches Postgres's COLLATE "C".
+            where += " AND (changed_at, id) > (?, ?)"
+            params += [_to_us(after[0]), after[1]]
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                f"SELECT {_CHANGE_COLUMNS} FROM astrocyte_vectors WHERE {where} ORDER BY changed_at, id LIMIT ?",
+                [*params, limit],
+            ).fetchall()
+        finally:
+            conn.close()
+        return [self._row_to_change(r) for r in rows]
+
+    @staticmethod
+    def _row_to_change(row: sqlite3.Row) -> MemoryChange:
+        from astrocyte.types import MemoryChange
+
+        # Every write sets changed_at and the upgrade backfills it.
+        changed_at = _from_us(row["changed_at"])
+        if changed_at is None:  # pragma: no cover — defensive
+            changed_at = _EPOCH + timedelta(microseconds=row["retained_at"])
+        if row["forgotten_at"] is not None:
+            return MemoryChange(id=row["id"], bank_id=row["bank_id"], changed_at=changed_at, deleted=True)
+        return MemoryChange(
+            id=row["id"],
+            bank_id=row["bank_id"],
+            changed_at=changed_at,
+            text=row["text"],
+            occurred_at=_from_us(row["occurred_at"]),
+            retained_at=_from_us(row["retained_at"]),
+            tags=_decode_tags(row["tags"]),
+            fact_type=row["fact_type"],
+            memory_layer=row["memory_layer"],
+            metadata=_decode_metadata(row["metadata"]),
+        )
 
     async def list_banks(self) -> list[tuple[str, int, datetime | None]]:
         """Every bank holding live memories: ``(bank_id, count, newest)``.

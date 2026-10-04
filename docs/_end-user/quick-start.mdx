@@ -41,6 +41,17 @@ asked to look. A new session opens with where the previous one in that project l
 `ASTROCYTE_HOOKS=off`; turn off with `astrocyte setup --no-hooks`. Codex runs new hooks only
 once you trust them: run `/hooks` in Codex after setup.
 
+**Windows:** the memory tools (MCP) work natively, and so do the pieces of automatic memory
+(the hooks, which run the same under cmd, PowerShell and Git Bash, and the background process),
+each tested on Windows in CI. They have not yet been checked against a real agent session on
+a Windows machine, so WSL remains the recommended way to get automatic memory there for now.
+`astrocyte doctor` runs every installed hook through each shell and says if one doesn't work.
+
+**File recall (opt-in, Claude Code):** `astrocyte setup --claude --file-recall` also adds, after the agent
+reads or edits a file, the memories of earlier turns that touched that file (captured turns record the files
+they read or edited). Each file is answered once per session. It runs a hook on every file read, so it is off
+unless you turn it on; `--no-file-recall` turns it off again.
+
 Setup remembers what you switch off: after `astrocyte uninstall --claude` or
 `astrocyte setup --no-hooks`, a later `astrocyte setup` (after an upgrade, say) leaves it off.
 Name the agent to turn it back on: `astrocyte setup --claude`.

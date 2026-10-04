@@ -18,6 +18,8 @@ Complete reference for Astrocyte's core memory operations -- retain, recall, ref
 | **graph search** | Search entities in the graph store | `astrocyte.graph_search()` | `POST /v1/graph/search` |
 | **graph neighbors** | Traverse graph-linked memories | `astrocyte.graph_neighbors()` | `POST /v1/graph/neighbors` |
 | **export/import** | Move bank contents via AMA JSONL | `astrocyte.export_bank()` / `astrocyte.import_bank()` | `POST /v1/export`, `POST /v1/import` |
+| **push** | Store client-identified memories, one row each, for team-memory sync | `astrocyte.push_records()` | `POST /v1/banks/{bank_id}/sync/push` |
+| **changes** | Page a bank's change feed (stored memories and tombstones) for team-memory sync | `astrocyte.list_changes()` | `GET /v1/banks/{bank_id}/changes` |
 | **create_directive** | Author a user-curated hard rule | `astrocyte.create_directive()` | MCP: `memory_create_directive` |
 | **list/create/delete observation** | CRUD for live observations with trend tracking | `astrocyte.list_observations()` etc. | MCP: `memory_list_observations` etc. |
 | **list/create/update/delete mental model** | CRUD for curated structured summaries | `astrocyte.list_mental_models()` etc. | MCP: `memory_list_mental_models` etc. |
@@ -106,9 +108,13 @@ Authorization: Bearer <token>
   "content": "Customer prefers dark-mode UI and weekly email digests.",
   "bank_id": "user-prefs",
   "metadata": {"customer_id": "cust_8291"},
-  "tags": ["ui", "notifications"]
+  "tags": ["ui", "notifications"],
+  "occurred_at": "2026-09-30T14:00:00Z",
+  "source": "https://crm.example.com/customers/cust_8291"
 }
 ```
+
+`occurred_at` (optional, ISO 8601; a time without a zone is UTC) is when the content happened; it defaults to the time of the request. `source` (optional, up to 2,048 characters) says where it came from: a URL, a file path, a system. Both come back on recall hits (`occurred_at`, `source`).
 
 ### curl example
 
@@ -808,6 +814,131 @@ curl -X POST https://gateway.example.com/v1/forget \
     "tags": ["deprecated"]
   }'
 ```
+
+---
+
+## list_changes() -- Read a bank's change feed
+
+The read side of team-memory sync (`docs/_design/team-memory.md` §8, G3): every change to a memory in a bank (stored, rewritten or forgotten), in order, so a teammate's local mirror can pull what changed since it last looked. A forgotten memory appears as a **tombstone** that carries only its id, so the mirror can erase it; its text never leaves the gateway again.
+
+Requires `read` on the bank. Needs a pipeline (Tier 1) whose vector store implements the optional `list_changes` method: `PostgresStore`, `SqliteStore` and the in-memory store do; otherwise the call raises `CapabilityNotSupported` (HTTP 501).
+
+### Python signature
+
+```python
+async def list_changes(
+    self,
+    bank_id: str,
+    *,
+    cursor: str | None = None,   # opaque; None starts from the beginning
+    limit: int = 100,            # 1-1000
+    settle_seconds: float = 0.0, # hold back changes younger than this
+    context: AstrocyteContext | None = None,
+) -> MemoryChangePage
+```
+
+### MemoryChangePage and MemoryChange
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `changes` | `list[MemoryChange]` | Up to `limit` changes strictly after `cursor`, ordered by `(changed_at, id)` |
+| `next_cursor` | `str \| None` | Position after the last change on the page (the request's cursor when the page is empty; `None` only for a bank with no changes). Store it and pass it back |
+| `has_more` | `bool` | More changes were already waiting; fetch again now |
+
+A `MemoryChange` has `id`, `bank_id`, `deleted`, `changed_at` and, for a live memory, `text`, `occurred_at`, `retained_at`, `tags`, `fact_type`, `memory_layer` and `metadata` (including the authoritative `_actor`). The feed is **every change to a synced row**: `changed_at` is the row's last change to any synced field (stored, rewritten, forgotten), and a live entry carries the row's current values, so a memory whose metadata changes later appears again, as an upsert of the same id, after your cursor.
+
+**Ordering and resuming.** Many memories can share one `changed_at` (a retain's chunks, a batch); the id breaks the tie, compared byte-wise, so resuming from a cursor never skips or repeats one. The cursor is URL-safe base64 of `{"changed_at": …, "id": …}`, but treat it as opaque: a cursor the server can't parse is rejected (`InvalidCursor`, HTTP 400).
+
+**Settle window.** A row's `changed_at` is stamped just before its write commits, so with concurrent writers a slow commit could land behind a cursor that has already moved past its timestamp, and a puller would never see it. `settle_seconds` holds back changes younger than that so in-flight writes commit first. The library default is `0`; the gateway passes `ASTROCYTE_CHANGES_SETTLE_SECONDS` (default 5), so a memory reaches the feed a few seconds after it is stored or forgotten.
+
+### REST equivalent
+
+```
+GET /v1/banks/{bank_id}/changes?cursor=<opaque>&limit=<n>
+```
+
+`limit` defaults to 100 and is clamped into 1–1000. Response:
+
+```json
+{
+  "changes": [
+    {"id": "9f2c41d07ab3e815", "deleted": false, "changed_at": "2026-10-02T09:14:03.120391+00:00",
+     "text": "We moved the job queue from SQS to Kafka.", "occurred_at": null,
+     "retained_at": "2026-10-02T09:14:03.120391+00:00", "tags": ["decision"], "fact_type": "world",
+     "memory_layer": null, "metadata": {"_actor": "user:alice", "_created_at": "2026-10-02T09:14:03.118Z"}},
+    {"id": "1c0d5e7f9a2b4c6d", "deleted": true, "changed_at": "2026-10-02T10:01:44.902114+00:00"}
+  ],
+  "next_cursor": "eyJjaGFuZ2VkX2F0Ijoi…",
+  "has_more": false
+}
+```
+
+### curl example
+
+```bash
+curl "https://gateway.example.com/v1/banks/project:api-1a2b3c/changes?limit=500&cursor=$CURSOR" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN"
+```
+
+---
+
+## push_records() -- Push memories with client ids
+
+The write side of team-memory sync (`docs/_design/team-memory.md` §8, G2). Each record is stored as **exactly one row with the id the client gives it**: no chunking, no fact extraction, no LLM call. The server re-embeds the text with its own embedding model (vectors are never sent). Records go through the same policy layer as `retain()`: size limits, content validation, the PII barrier, metadata sanitization and the authoritative `_actor`.
+
+Requires `write` on the bank, and a pipeline (Tier 1) whose vector store implements the optional `lookup_ids` and `insert_vectors` methods (`PostgresStore`, `SqliteStore`, the in-memory store); otherwise `CapabilityNotSupported` (HTTP 501).
+
+### Python signature
+
+```python
+async def push_records(
+    self,
+    bank_id: str,
+    records: list[SyncPushRecord],   # at most 100
+    *,
+    context: AstrocyteContext | None = None,
+) -> list[SyncPushResult]            # one per record, in order
+```
+
+`SyncPushRecord` has `id` (8–64 of `[A-Za-z0-9_-]`; local stores mint 16 hex characters), `text`, and optional `occurred_at`, `tags`, `fact_type`, `metadata` and `content_hash` (`sha256:<hex>` of the UTF-8 text; a mismatch rejects the record). Of the underscore-prefixed metadata keys only `_created_at`, `_retain_id` and `_chunk_index` are kept; `_actor` is set from the caller.
+
+### SyncPushResult
+
+| `status` | Meaning |
+|---|---|
+| `stored` | A new row with this id |
+| `unchanged` | This bank already holds this id with this text: an idempotent re-push. A memory's text is immutable, but its other fields are not edited by push: if they differ, nothing changes and `reason` is `text unchanged; metadata updates are not accepted by push` |
+| `duplicate` | Near-duplicate of the bank's memory `duplicate_of` (the retain dedup check); nothing stored. Record the mapping and don't push it again |
+| `rejected` | Nothing stored; `reason` says why: the id is in use with different text (in this bank, or in another bank, whose row is never touched or revealed), the id was forgotten (a forget can't be undone by a re-push), or the policy layer refused the record (PII `reject`, size, validation, `content_hash`) |
+
+Rate limits and quotas count a push as one call; quota usage is recorded per stored record.
+
+### REST equivalent
+
+```
+POST /v1/banks/{bank_id}/sync/push
+```
+
+```json
+{"records": [
+  {"id": "9f2c41d07ab3e815", "text": "We moved the job queue from SQS to Kafka.",
+   "occurred_at": "2026-10-02T09:14:03Z", "tags": ["decision"], "fact_type": "world",
+   "metadata": {"_created_at": "2026-10-02T09:14:03.118Z", "_retain_id": "5be1…", "session_id": "…", "source": "codex"},
+   "content_hash": "sha256:…"}
+]}
+```
+
+Response (`duplicate_of` and `reason` only when set):
+
+```json
+{"results": [
+  {"id": "9f2c41d07ab3e815", "status": "stored"},
+  {"id": "1c0d5e7f9a2b4c6d", "status": "duplicate", "duplicate_of": "77aa88bb99cc00dd"},
+  {"id": "0a1b2c3d4e5f6071", "status": "rejected", "reason": "id was forgotten; a forgotten memory can't be pushed again"}
+]}
+```
+
+A malformed body is 400 (more than 100 records, a bad id, empty text, a malformed `content_hash`, non-scalar metadata), like every other gateway endpoint.
 
 ---
 

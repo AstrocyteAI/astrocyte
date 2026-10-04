@@ -177,3 +177,101 @@ def _assert_reference_stack_rows(dsn: str, bank: str) -> None:
             LIMIT 1
             """
         ).fetchone() is not None
+
+
+def _minimal_postgres_config(tmp_path: Path) -> Path:
+    migrated = os.environ.get("ASTROCYTE_GATEWAY_E2E_MIGRATED", "").strip().lower() in ("1", "true", "yes")
+    dims = _embedding_dimensions_for_database(os.environ["DATABASE_URL"])
+    cfg = tmp_path / "sync.yaml"
+    cfg.write_text(
+        f"""
+provider_tier: storage
+vector_store: postgres
+llm_provider: mock
+llm_provider_config:
+  embedding_dimensions: {dims}
+vector_store_config:
+  embedding_dimensions: {dims}
+  bootstrap_schema: {str(not migrated).lower()}
+barriers:
+  pii:
+    mode: disabled
+access_control:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    return cfg
+
+
+def test_gateway_changes_feed_postgres(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Team memory G3 over real Postgres: retains appear in order, a forget as a tombstone."""
+    import uuid
+
+    monkeypatch.setenv("ASTROCYTE_CONFIG_PATH", str(_minimal_postgres_config(tmp_path)))
+    monkeypatch.setenv("ASTROCYTE_CHANGES_SETTLE_SECONDS", "0")
+    from astrocyte_gateway.app import create_app
+
+    bank = f"project:e2e-changes-{uuid.uuid4().hex[:8]}"
+    headers = {"X-Astrocyte-Principal": "user:alice"}
+    with TestClient(create_app()) as client:
+        ids = []
+        for text in ("We use SQS for the job queue.", "Deploys happen on Tuesdays."):
+            r = client.post("/v1/retain", json={"content": text, "bank_id": bank}, headers=headers)
+            assert r.status_code == 200 and r.json()["stored"], r.text
+            ids.append(r.json()["memory_id"])
+
+        page = client.get(f"/v1/banks/{bank}/changes", headers=headers).json()
+        assert [c["id"] for c in page["changes"]] == ids
+        assert all(not c["deleted"] and c["changed_at"] == c["retained_at"] for c in page["changes"])
+        first = client.get(f"/v1/banks/{bank}/changes", params={"limit": 1}, headers=headers).json()
+        assert [c["id"] for c in first["changes"]] == ids[:1] and first["has_more"] is True
+
+        r = client.post("/v1/forget", json={"bank_id": bank, "memory_ids": [ids[0]]}, headers=headers)
+        assert r.status_code == 200, r.text
+        after = client.get(f"/v1/banks/{bank}/changes", params={"cursor": page["next_cursor"]}, headers=headers)
+        [tomb] = after.json()["changes"]
+        assert set(tomb) == {"id", "deleted", "changed_at"} and (tomb["id"], tomb["deleted"]) == (ids[0], True)
+        bad = client.get(f"/v1/banks/{bank}/changes", params={"cursor": "nope"}, headers=headers)
+        assert bad.status_code == 400
+
+
+def test_gateway_sync_push_postgres(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Team memory G2 over real Postgres, where ``id`` is the primary key across banks."""
+    import uuid
+
+    monkeypatch.setenv("ASTROCYTE_CONFIG_PATH", str(_minimal_postgres_config(tmp_path)))
+    monkeypatch.setenv("ASTROCYTE_CHANGES_SETTLE_SECONDS", "0")
+    from astrocyte_gateway.app import create_app
+
+    run = uuid.uuid4().hex[:8]
+    bank, other = f"project:e2e-push-{run}", f"project:e2e-other-{run}"
+    mine, theirs = uuid.uuid4().hex[:16], uuid.uuid4().hex[:16]
+    headers = {"X-Astrocyte-Principal": "user:alice"}
+
+    def push(bank_id: str, *records: dict) -> list[dict]:
+        r = client.post(f"/v1/banks/{bank_id}/sync/push", json={"records": list(records)}, headers=headers)
+        assert r.status_code == 200, r.text
+        return r.json()["results"]
+
+    with TestClient(create_app()) as client:
+        assert push(other, {"id": theirs, "text": "The web team deploys on Thursdays."})[0]["status"] == "stored"
+        results = push(
+            bank,
+            {"id": mine, "text": "We moved the job queue from SQS to Kafka.", "metadata": {"_retain_id": "r1"}},
+            {"id": theirs, "text": "takeover attempt"},
+        )
+        assert [r["status"] for r in results] == ["stored", "rejected"]
+        assert push(bank, {"id": mine, "text": "We moved the job queue from SQS to Kafka."})[0]["status"] == "unchanged"
+
+        hits = client.post("/v1/recall", json={"query": "job queue", "bank_id": bank}, headers=headers).json()["hits"]
+        assert mine in [h["memory_id"] for h in hits]
+        [change] = client.get(f"/v1/banks/{bank}/changes", headers=headers).json()["changes"]
+        assert change["id"] == mine and change["metadata"]["_actor"] == "user:alice"
+
+        assert client.post("/v1/forget", json={"bank_id": bank, "memory_ids": [mine]}, headers=headers).status_code == 200
+        assert push(bank, {"id": mine, "text": "We moved the job queue from SQS to Kafka."})[0]["status"] == "rejected"
+
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        row = conn.execute("SELECT bank_id, text FROM astrocyte_vectors WHERE id = %s", (theirs,)).fetchone()
+        assert row == (other, "The web team deploys on Thursdays.")

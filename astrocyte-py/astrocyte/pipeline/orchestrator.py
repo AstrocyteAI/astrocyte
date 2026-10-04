@@ -41,6 +41,7 @@ from astrocyte.pipeline.link_expansion import LinkExpansionParams
 from astrocyte.pipeline.recall_stage import RecallStageMixin
 from astrocyte.pipeline.reflect_stage import ReflectStageMixin
 from astrocyte.pipeline.retain_stage import RetainStageMixin
+from astrocyte.pipeline.sync_push import SyncPushStageMixin
 from astrocyte.policy.signal_quality import DedupDetector
 from astrocyte.types import (
     Completion,
@@ -257,7 +258,7 @@ class _TrackingLLMProvider:
         return total
 
 
-class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin):
+class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin, SyncPushStageMixin):
     """Orchestrates the Tier 1 built-in intelligence pipeline.
 
     Coordinates async stages: chunk → embed → store → retrieve → fuse → rerank.
