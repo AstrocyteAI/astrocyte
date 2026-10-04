@@ -2075,18 +2075,29 @@ class Astrocyte:
 
         Uses in-memory operation counters collected since process start.
         Optionally enriches with memory count from the vector store.
+
+        The VectorStore SPI has no count method, so the count pages
+        through ``list_vectors``: cost grows with bank size.
         """
         counters = self._analytics.get_counters(bank_id)
         memory_count = 0
         if self._pipeline and self._pipeline.vector_store:
+            store = self._pipeline.vector_store
             try:
-                items = await self._pipeline.vector_store.list_vectors(bank_id, limit=0)
-                memory_count = len(items)
+                batch = 1000
+                offset = 0
+                while True:
+                    page = await store.list_vectors(bank_id, offset=offset, limit=batch)
+                    memory_count += len(page)
+                    offset += len(page)
+                    if len(page) < batch:
+                        break
             except Exception:
                 logger.debug(
-                    "list_vectors(limit=0) failed or unsupported; bank_health memory_count=0",
+                    "list_vectors failed or unsupported; bank_health memory_count=0",
                     exc_info=True,
                 )
+                memory_count = 0
         return compute_bank_health(bank_id, counters, memory_count)
 
     async def all_bank_health(self) -> list["BankHealth"]:
