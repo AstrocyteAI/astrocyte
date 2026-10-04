@@ -48,6 +48,13 @@ _STORE_DEDUP_NEIGHBOURS = 3
 _NOT_RETAINED_LAYERS = frozenset({"observation", "model"})
 
 
+
+def _chunk_metadata(base: dict | None, index: int, count: int) -> dict | None:
+    """A chunk's metadata: the retain's, plus its position when the text was
+    split. ``retained_at`` can't order chunks: they are stored within one
+    tick of a coarse clock (Windows: ~15 ms)."""
+    return base if count < 2 or base is None else {**base, "_chunk_index": index}
+
 class RetainStageMixin:
     """Retain pipeline: chunk → extract → embed → persist (+ retain_many).
 
@@ -1099,7 +1106,7 @@ class RetainStageMixin:
         # 4. Store vectors
         memory_ids: list[str] = []
         items: list[VectorItem] = []
-        for chunk, embedding, chunk_id in zip(chunks, embeddings, chunk_ids):
+        for index, (chunk, embedding, chunk_id) in enumerate(zip(chunks, embeddings, chunk_ids)):
             mem_id = uuid.uuid4().hex[:16]
             memory_ids.append(mem_id)
             items.append(
@@ -1108,7 +1115,7 @@ class RetainStageMixin:
                     bank_id=request.bank_id,
                     vector=embedding,
                     text=chunk,
-                    metadata=chunk_metadata,
+                    metadata=_chunk_metadata(chunk_metadata, index, len(chunks)),
                     tags=prepared.tags,
                     fact_type=prepared.fact_type,
                     occurred_at=request.occurred_at,
@@ -1362,6 +1369,7 @@ class RetainStageMixin:
             if mip_pipeline and mip_pipeline.version is not None:
                 chunk_metadata["_mip.pipeline_version"] = int(mip_pipeline.version)
             chunk_metadata.setdefault("_created_at", datetime.now(timezone.utc).isoformat())
+            chunk_metadata.setdefault("_retain_id", uuid.uuid4().hex)  # see the single-retain path
 
             # M10 source-aware retain — same helper as the single-retain path.
             chunk_ids = await self._provision_source_provenance(
@@ -1372,7 +1380,7 @@ class RetainStageMixin:
 
             memory_ids: list[str] = []
             items: list[VectorItem] = []
-            for chunk, embedding, chunk_id in zip(chunks, embeddings, chunk_ids, strict=False):
+            for index, (chunk, embedding, chunk_id) in enumerate(zip(chunks, embeddings, chunk_ids, strict=False)):
                 mem_id = uuid.uuid4().hex[:16]
                 memory_ids.append(mem_id)
                 items.append(
@@ -1381,7 +1389,7 @@ class RetainStageMixin:
                         bank_id=request.bank_id,
                         vector=embedding,
                         text=chunk,
-                        metadata=chunk_metadata,
+                        metadata=_chunk_metadata(chunk_metadata, index, len(chunks)),
                         tags=prepared.tags,
                         fact_type=prepared.fact_type,
                         occurred_at=request.occurred_at,

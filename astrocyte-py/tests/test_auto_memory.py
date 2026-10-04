@@ -527,6 +527,31 @@ class TestDaemonOps:
         ids = {(i.metadata or {}).get("_retain_id") for i in items}
         assert None not in ids and len(ids) == 2 and len(items) > 2
 
+    def test_chunks_stamped_within_one_clock_tick_reassemble_in_order(self):
+        """Windows CI: a retain's chunks shared retained_at, so the answer was
+        rebuilt from its pieces in the wrong order. Their recorded position wins."""
+        from types import SimpleNamespace
+
+        same = datetime(2026, 10, 4, tzinfo=timezone.utc)
+        texts = ["**user**: why?", "**assistant**: because the cache was still cold", "the cache was still cold on boot."]
+        group = [SimpleNamespace(id=f"c{i}", text=t, retained_at=same,
+                                 metadata={"_retain_id": "r", "_chunk_index": i}) for i, t in enumerate(texts)]
+        shuffled = [group[2], group[0], group[1]]
+        assert [i.id for i in agentd._groups(shuffled)[0]] == ["c0", "c1", "c2"]
+        assert agentd.render_group(agentd._groups(shuffled)[0], None) == (
+            "- Q: why? → A: because the cache was still cold on boot.")
+
+    async def test_a_split_retain_records_each_chunks_position(self, env, tmp_path):
+        d = _sqlite_daemon(env, tmp_path)
+        await d.brain.retain("**user**: long?\n\n**assistant**: " + " ".join(f"w{i}" for i in range(150)),
+                             bank_id="proj", content_type="conversation")
+        await d.brain.retain("One short fact.", bank_id="proj")
+        items = await d.pipeline.vector_store.list_recent_vectors("proj", limit=20)
+        split = sorted((i.metadata or {}).get("_chunk_index", -1) for i in items if "w1" in i.text or "long?" in i.text)
+        assert split == list(range(len(split))) and len(split) > 1
+        short = [i for i in items if i.text == "One short fact."]
+        assert short and "_chunk_index" not in (short[0].metadata or {}), "unsplit retains carry no index"
+
     def test_join_overlapping(self):
         assert agentd._join_overlapping("the quick brown fox jumps high", "brown fox jumps high over the dog") == (
             "the quick brown fox jumps high over the dog")

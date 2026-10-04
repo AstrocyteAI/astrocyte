@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import yaml
 
+from astrocyte._text_files import read_user_text
 from astrocyte.errors import ConfigError
 from astrocyte.types import AccessGrant
 
@@ -1761,8 +1762,7 @@ def load_config(path: str | Path) -> AstrocyteConfig:
         raise ConfigError(f"Config file not found: {config_path}")
 
     try:
-        with open(config_path, encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
+        raw = yaml.safe_load(read_user_text(config_path)) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {config_path}: {exc}") from exc
 

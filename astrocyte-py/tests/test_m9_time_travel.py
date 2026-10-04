@@ -393,7 +393,9 @@ class TestBrainHistory:
         """End-to-end: retain via brain, then history at a checkpoint."""
         brain, _ = self._brain()
 
-        checkpoint = datetime.now(UTC)
+        # A millisecond back: on a coarse clock (Windows: ~15 ms ticks) the
+        # retain below can be stamped with this very instant.
+        checkpoint = datetime.now(UTC) - timedelta(milliseconds=1)
 
         # Retain after checkpoint
         await brain.retain("Alice now works at Google.", bank_id="bank1")

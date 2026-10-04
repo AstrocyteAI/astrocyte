@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from astrocyte._text_files import read_user_text
 from astrocyte.config import _substitute_env_recursive
 from astrocyte.errors import ConfigError
 from astrocyte.mip.presets import (
@@ -73,8 +74,7 @@ def load_mip_config(path: str | Path) -> MipConfig:
     if not config_path.exists():
         raise ConfigError(f"MIP config file not found: {config_path}")
 
-    with open(config_path, encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+    raw = yaml.safe_load(read_user_text(config_path)) or {}
 
     raw = _substitute_env_recursive(raw)
     return _parse_mip_config(raw)

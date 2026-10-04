@@ -270,7 +270,7 @@ def test_generated_config_loads_and_keeps_native_embedding_width(home, monkeypat
     install_cli(home, "claude")
     monkeypatch.setattr("astrocyte.harness.localconfig.local_embedding_backend", lambda: "fastembed")
     path = tmp_path / "astrocyte.yaml"
-    path.write_text(render_config(choose_providers(), tmp_path / "mem dir" / "astrocyte.db"))
+    path.write_text(render_config(choose_providers(), tmp_path / "mem dir" / "astrocyte.db"), encoding="utf-8")
     cfg = load_config(str(path))
     assert cfg.vector_store == "sqlite"
     assert cfg.vector_store_config["path"] == str(tmp_path / "mem dir" / "astrocyte.db")

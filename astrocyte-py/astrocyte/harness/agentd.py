@@ -114,8 +114,7 @@ def _groups(items: list[Any]) -> list[list[Any]]:
 
     A long captured turn is stored as several chunks (the question, then
     overlapping pieces of the answer) that share one ``_retain_id`` and come
-    back in no useful order; ``retained_at`` follows the order they were
-    written."""
+    back in no useful order; ``_chunk_index`` gives the order they were written."""
     groups: dict[str, list[Any]] = {}
     for item in items:
         meta = item.metadata or {}
@@ -125,7 +124,9 @@ def _groups(items: list[Any]) -> list[list[Any]]:
         groups.setdefault(str(key), []).append(item)
     out = []
     for group in groups.values():
-        group.sort(key=lambda i: (i.retained_at is None, i.retained_at or 0))
+        # _chunk_index where stored (since 0.18); retained_at for older chunks.
+        group.sort(key=lambda i: ((i.metadata or {}).get("_chunk_index", 0), i.retained_at is None,
+                                  i.retained_at or 0))
         out.append(group)
     return out
 
