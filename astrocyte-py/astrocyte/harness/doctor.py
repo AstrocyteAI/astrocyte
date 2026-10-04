@@ -79,7 +79,19 @@ async def _check_store(config) -> list[Check]:
     if store is None:
         return [Check("store", "fail", "no vector_store configured", fix="set vector_store (e.g. sqlite)")]
     status = await store.health()
-    return [Check("store", "ok" if status.healthy else "fail", status.message or type(store).__name__)]
+    out = [Check("store", "ok" if status.healthy else "fail", status.message or type(store).__name__)]
+    path = getattr(store, "path", None)
+    if isinstance(path, str) and path:
+        from .privacy import exposed
+
+        if open_to_others := exposed(Path(path)):
+            out.append(Check(
+                "store", "warn",
+                "other accounts on this machine can read your memories: "
+                + ", ".join(p.name or str(p) for p in open_to_others),
+                fix="astrocyte doctor --fix", fixable=True,
+            ))
+    return out
 
 
 async def _check_models(config) -> list[Check]:
@@ -190,6 +202,22 @@ def run_checks(config_path: Path, *, model_probes: bool = True) -> list[Check]:
     return checks
 
 
+def _make_store_private(config_path: Path) -> list[str]:
+    from astrocyte.config import load_config
+    from astrocyte.wiring import resolve_store
+
+    from .privacy import make_private
+
+    try:
+        store = resolve_store(load_config(str(config_path)), "vector_store")
+    except Exception as e:  # noqa: BLE001
+        return [f"could not open the store to fix permissions: {e}"]
+    path = getattr(store, "path", None)
+    if not isinstance(path, str) or not path:
+        return []
+    return [f"made private: {p}" for p in make_private(Path(path))]
+
+
 def apply_fixes(config_path: Path, checks: list[Check]) -> list[str]:
     """Repair what setup owns. Returns a line per action taken."""
     from .localconfig import SetupError, choose_providers, render_config, write_config
@@ -202,6 +230,8 @@ def apply_fixes(config_path: Path, checks: list[Check]) -> list[str]:
             done.append(f"wrote {config_path}")
         except SetupError as e:
             done.append(f"could not write config: {e}")
+    if any(c.area == "store" and c.fixable for c in checks):
+        done += _make_store_private(config_path)
     found = locate_mcp_server()
     if found is None:
         return done

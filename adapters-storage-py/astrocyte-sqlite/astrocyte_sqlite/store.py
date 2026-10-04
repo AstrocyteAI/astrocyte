@@ -195,6 +195,22 @@ def _placeholders(n: int) -> str:
     return ",".join("?" * n)
 
 
+def _create_private(db: Path) -> None:
+    """Create the database owner-only, before SQLite does with the umask
+    (typically world-readable). Memories hold conversations; on a shared
+    machine every account could read them. SQLite gives its -wal / -shm
+    files the database file's permissions, so they follow. An existing file
+    is left as it is — `astrocyte doctor --fix` tightens those.
+    """
+    if not db.parent.exists():
+        db.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not db.exists():
+        try:
+            os.close(os.open(db, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        except FileExistsError:
+            pass  # another process created it first
+
+
 # ── store ────────────────────────────────────────────────────────────────
 
 
@@ -204,7 +220,7 @@ class SqliteStore:
     Args:
         path: Database file. Defaults to ``ASTROCYTE_SQLITE_PATH`` or
             ``~/.local/share/astrocyte/astrocyte.db``. Parent directories are
-            created. ``:memory:`` is rejected: every call opens its own
+            created owner-only (0700 / 0600). ``:memory:`` is rejected: every call opens its own
             connection, so an in-memory database would vanish between calls.
         embedding_dimensions: Expected vector length. When omitted, the first
             write records it and every later write/query is checked against
@@ -260,7 +276,7 @@ class SqliteStore:
         with self._schema_lock:
             if self._schema_ready:
                 return
-            Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+            _create_private(Path(self._path))
             conn = self._connect()
             try:
                 # WAL persists in the file: readers never block the writer, and

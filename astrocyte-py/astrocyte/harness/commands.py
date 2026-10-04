@@ -78,6 +78,17 @@ def cmd_setup(args: Namespace) -> int:
                   "                 nothing was wired. Fix the above, then re-run.", file=sys.stderr)
             return 1
         print(f"  ✓ server       starts and answers ({result.detail}, {result.seconds:.1f}s)")
+        warmed = _warm_embeddings(cfg_path)
+        if warmed:
+            print(f"  ✓ model        {warmed}")
+
+    # Memories hold conversations: a store other accounts can read (created
+    # before stores were made private) is tightened here.
+    if not dry:
+        from .doctor import _make_store_private
+
+        for line in _make_store_private(cfg_path):
+            print(f"  ✓ store        {line}")
 
     # 4. Harnesses.
     targets, explicit = _selected_hosts(args)
@@ -129,9 +140,49 @@ def cmd_setup(args: Namespace) -> int:
                       "  new prompts; its own turns are not saved yet.")
             print("Headless runs (`claude -p`, `codex exec`, `agy -p`, `copilot -p`) are left alone.\n"
                   "Pause with ASTROCYTE_HOOKS=off, or remove with: astrocyte setup --no-hooks")
+        seed = _seed_files(Path.cwd())
+        if seed:
+            print("\nGive this project's memory a head start from its agent instructions:\n"
+                  f"  astrocyte memory import {' '.join(seed)}")
         print("\nDone. Start a new session in your agent to load the Astrocyte memory tools.\n"
               "Verify any time with: astrocyte doctor")
     return 1 if failed else 0
+
+
+# Instruction files coding agents already read: importing them means memory
+# starts with the project's conventions instead of empty.
+SEED_FILES = ("CLAUDE.md", "AGENTS.md", "GEMINI.md", ".github/copilot-instructions.md", ".cursorrules")
+
+
+def _seed_files(cwd: Path) -> list[str]:
+    from .project import project_root
+
+    root = project_root(str(cwd))
+    if not (root / ".git").exists():
+        return []  # not standing in a project
+    return [name for name in SEED_FILES if (root / name).is_file()]
+
+
+def _warm_embeddings(cfg_path: Path) -> str:
+    """Fetch and load a local embedding model now (bge-small, ~130 MB on first
+    run), so the first session doesn't wait for the download. Best effort:
+    the server already started; a failure here only means a slower first use."""
+    import asyncio
+    import time
+
+    from astrocyte.config import load_config
+    from astrocyte.wiring import resolve_llm_provider
+
+    try:
+        config = load_config(str(cfg_path))
+        if config.embedding_provider != "local_embeddings":
+            return ""
+        started = time.perf_counter()
+        print("  … model        loading the local embedding model (downloaded once, ~130 MB)", flush=True)
+        asyncio.run(resolve_llm_provider(config).embed(["warm"]))
+        return f"local embedding model ready ({time.perf_counter() - started:.1f}s)"
+    except Exception as e:  # noqa: BLE001 — never fail setup over a warm-up
+        return f"could not load the embedding model yet ({type(e).__name__}); it will load on first use"
 
 
 def cmd_uninstall(args: Namespace) -> int:

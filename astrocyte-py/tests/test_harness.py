@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 import tomllib
 from argparse import Namespace
@@ -762,3 +763,100 @@ def test_setup_says_copilot_only_recalls(wired_home, capsys):
     out = capsys.readouterr().out
     assert "Copilot CLI: relevant memories (saved by your other agents)" in out
     assert "its own turns are not saved yet" in out
+
+
+# ── the store is private to its owner ────────────────────────────────────
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+def test_doctor_reports_and_fixes_a_store_others_can_read(home, capsys, monkeypatch):
+    """Stores created before v0.16.1 inherited the umask (world-readable)."""
+    pytest.importorskip("astrocyte_sqlite")
+    data = home / ".local" / "share" / "astrocyte"
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    data.mkdir(parents=True, mode=0o755)
+    db = data / "astrocyte.db"
+    db.touch(mode=0o644)
+    db.chmod(0o644)
+    data.chmod(0o755)
+    cfg = home / ".config" / "astrocyte" / "astrocyte.yaml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(MINIMAL.replace("vector_store: in_memory", "vector_store: sqlite")
+                   + f"vector_store_config:\n  path: {db}\n")
+    cmd_doctor(_ns())
+    assert "other accounts on this machine can read your memories" in capsys.readouterr().out
+    cmd_doctor(_ns(fix=True))
+    assert "made private" in capsys.readouterr().out
+    assert oct(db.stat().st_mode & 0o777) == "0o600" and oct(data.stat().st_mode & 0o777) == "0o700"
+    cmd_doctor(_ns())
+    assert "can read your memories" not in capsys.readouterr().out
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+def test_a_store_in_a_directory_of_your_choosing_leaves_the_directory_alone(tmp_path, monkeypatch):
+    from astrocyte.harness.privacy import make_private
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    shared = tmp_path / "team-share"
+    shared.mkdir(mode=0o755)
+    db = shared / "mem.db"
+    db.touch()
+    db.chmod(0o644)
+    assert make_private(db) == [db]
+    assert oct(shared.stat().st_mode & 0o777) == "0o755"
+
+
+# ── first-run conveniences ───────────────────────────────────────────────
+
+
+def test_setup_suggests_importing_the_projects_agent_files(wired_home, capsys, monkeypatch, tmp_path):
+    repo = tmp_path / "proj"
+    (repo / ".github").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "CLAUDE.md").write_text("# Conventions")
+    (repo / ".github" / "copilot-instructions.md").write_text("# More")
+    monkeypatch.chdir(repo)
+    cmd_setup(_ns())
+    assert "astrocyte memory import CLAUDE.md .github/copilot-instructions.md" in capsys.readouterr().out
+
+
+def test_setup_outside_a_project_suggests_nothing(wired_home, capsys, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    cmd_setup(_ns())
+    assert "memory import" not in capsys.readouterr().out
+
+
+def _local_embeddings_config(home, monkeypatch):
+    """The wired_home config, as if it named local_embeddings (without
+    needing the model installed in the test environment)."""
+    import astrocyte.config as config_mod
+
+    loaded = config_mod.load_config(str(home / ".config" / "astrocyte" / "astrocyte.yaml"))
+    loaded.embedding_provider = "local_embeddings"
+    monkeypatch.setattr(config_mod, "load_config", lambda path: loaded)
+
+
+def test_setup_loads_the_local_embedding_model_up_front(wired_home, capsys, monkeypatch):
+    """The ~130 MB download otherwise happens during the first session's first prompt."""
+    _local_embeddings_config(wired_home, monkeypatch)
+    warmed = []
+
+    class Embedder:
+        async def embed(self, texts, model=None):
+            warmed.append(texts)
+            return [[0.0]]
+
+    monkeypatch.setattr("astrocyte.wiring.resolve_llm_provider", lambda config: Embedder())
+    cmd_setup(_ns())
+    assert warmed and "local embedding model ready" in capsys.readouterr().out
+
+
+def test_a_failed_warm_up_does_not_fail_setup(wired_home, capsys, monkeypatch):
+    _local_embeddings_config(wired_home, monkeypatch)
+
+    def offline(config):
+        raise ConnectionError("no network")
+
+    monkeypatch.setattr("astrocyte.wiring.resolve_llm_provider", offline)
+    assert cmd_setup(_ns()) == 0
+    assert "will load on first use" in capsys.readouterr().out

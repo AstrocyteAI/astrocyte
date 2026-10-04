@@ -9,6 +9,7 @@ dimension pinning, the no-FTS5 fallback, and hostile keyword input.
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
 
@@ -354,3 +355,25 @@ async def test_a_dimension_recorded_by_another_process_is_enforced(db):
     fresh._dim = None  # as if it opened before the other process's first write
     with pytest.raises(ValueError, match="embedding_dimensions"):
         await fresh.store_vectors([_item("b", [1.0, 0.0, 0.0])])
+
+
+# ── privacy ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+async def test_a_new_store_is_private_to_its_owner(tmp_path):
+    """Memories hold conversations: other accounts must not read them."""
+    db = tmp_path / "fresh" / "mem.db"
+    await SqliteStore(path=str(db)).store_vectors([_item("a", [1.0, 0.0], "said in passing")])
+    assert oct(db.parent.stat().st_mode & 0o777) == "0o700"
+    for f in db.parent.iterdir():  # the database and its -wal / -shm files
+        assert oct(f.stat().st_mode & 0o777) == "0o600", f.name
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+async def test_an_existing_store_keeps_its_permissions(tmp_path):
+    db = tmp_path / "mem.db"
+    await SqliteStore(path=str(db)).store_vectors([_item("a", [1.0, 0.0])])
+    db.chmod(0o640)  # an operator's deliberate choice
+    await SqliteStore(path=str(db)).store_vectors([_item("b", [0.0, 1.0])])
+    assert oct(db.stat().st_mode & 0o777) == "0o640"

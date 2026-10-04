@@ -84,6 +84,7 @@ In Codex, trust the three astrocyte hooks once with `/hooks`.
 
 `astrocyte memory` lists what is remembered about the current project; `astrocyte memory search`,
 `astrocyte memory forget <id>` (erases from disk) and `astrocyte memory banks` cover the rest.
+Seed a project's memory with `astrocyte memory import CLAUDE.md AGENTS.md docs/`.
 
 ## Updating
 
