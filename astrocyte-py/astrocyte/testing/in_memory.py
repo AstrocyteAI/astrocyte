@@ -211,6 +211,29 @@ class InMemoryVectorStore:
             metadata=item.metadata,
         )
 
+    async def lookup_ids(self, ids: list[str]) -> list[MemoryChange]:
+        """The current state of each id held in any bank: a live row or a
+        tombstone. Unknown ids are absent (see ``VectorStore`` optional methods)."""
+        found: list[MemoryChange] = []
+        for vid in dict.fromkeys(ids):
+            if vid in self._vectors:
+                found.append(self._live_change(vid, self._vectors[vid]))
+            elif vid in self._tombstones:
+                tomb_bank, forgotten_at = self._tombstones[vid]
+                found.append(MemoryChange(id=vid, bank_id=tomb_bank, changed_at=forgotten_at, deleted=True))
+        return found
+
+    async def insert_vectors(self, items: list[VectorItem]) -> list[str]:
+        """Store items whose id is new to the store; never overwrite. Returns
+        the ids inserted (see ``VectorStore`` optional methods)."""
+        inserted: list[str] = []
+        for item in items:
+            if item.id in self._vectors or item.id in self._tombstones:
+                continue
+            await self.store_vectors([item])
+            inserted.append(item.id)
+        return inserted
+
     async def get_by_chunk_ids(
         self,
         chunk_ids: list[str],

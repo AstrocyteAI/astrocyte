@@ -2096,6 +2096,188 @@
         "title": "RetainResult",
         "type": "object"
       },
+      "SyncPushBody": {
+        "description": "``POST /v1/banks/{bank_id}/sync/push``: at most 100 records.",
+        "properties": {
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/SyncPushRecordBody"
+            },
+            "maxItems": 100,
+            "title": "Records",
+            "type": "array"
+          }
+        },
+        "required": [
+          "records"
+        ],
+        "title": "SyncPushBody",
+        "type": "object"
+      },
+      "SyncPushRecordBody": {
+        "description": "One pushed memory: stored as exactly one row with this ``id``.",
+        "properties": {
+          "content_hash": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
+          "fact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Type"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9_-]{8,64}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "SyncPushRecordBody",
+        "type": "object"
+      },
+      "SyncPushResponse": {
+        "description": "``POST /v1/banks/{bank_id}/sync/push``: one result per record, in order.",
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SyncPushResultEntry"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "SyncPushResponse",
+        "type": "object"
+      },
+      "SyncPushResultEntry": {
+        "description": "What became of one pushed record. ``duplicate_of`` only with\n``duplicate``; ``reason`` with ``rejected`` (and on an ``unchanged`` whose\nmetadata differed, which push does not apply).",
+        "properties": {
+          "duplicate_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicate Of"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "stored",
+              "unchanged",
+              "duplicate",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "SyncPushResultEntry",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -3385,6 +3567,117 @@
           }
         },
         "summary": "List Changes"
+      }
+    },
+    "/v1/banks/{bank_id}/sync/push": {
+      "post": {
+        "description": "Push memories into a bank, each stored as one row with the client's id (team memory G2).\n\nBody: ``{\"records\": [{id, text, occurred_at?, tags?, fact_type?,\nmetadata?, content_hash?}, ...]}``, at most 100. ``id`` is 8-64 of\n``[A-Za-z0-9_-]``. Each record goes through the same policy layer as\n``/v1/retain`` (validation, PII, metadata, authoritative ``_actor``)\nand is stored without chunking or extraction; the server re-embeds\nthe text. One result per record: ``stored``, ``unchanged`` (same id\nand text already here; differing metadata is not applied),\n``duplicate`` (with ``duplicate_of``) or ``rejected`` (with\n``reason``: the id holds other text here or in another bank, the id\nwas forgotten, or policy refused it). Requires ``write`` on the bank;\na malformed body (too many records, a bad id) is 400.",
+        "operationId": "sync_push_v1_banks__bank_id__sync_push_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bank_id",
+            "required": true,
+            "schema": {
+              "title": "Bank Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Api-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Astrocyte-Principal",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Astrocyte-Principal"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncPushBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncPushResponse",
+                  "additionalProperties": true,
+                  "title": "Response Sync Push V1 Banks  Bank Id  Sync Push Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid request body"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Unprocessable (e.g. feature not configured)"
+          }
+        },
+        "summary": "Sync Push"
       }
     },
     "/v1/compile": {

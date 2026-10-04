@@ -55,6 +55,9 @@ __all__ = [  # noqa: RUF022 — grouped by API area, not alphabetically
     "MentalModelCreateBody",
     "MentalModelRefreshBody",
     "ObservationsInvalidateBody",
+    # team memory sync
+    "SyncPushBody",
+    "SyncPushRecordBody",
 ]
 
 
@@ -125,6 +128,26 @@ class ForgetBody(BaseModel):
     memory_ids: list[str] | None = None
     tags: list[str] | None = None
     scope: Literal["all"] | None = None
+
+
+class SyncPushRecordBody(BaseModel):
+    """One pushed memory: stored as exactly one row with this ``id``."""
+
+    #: 8-64 of [A-Za-z0-9_-]; local stores mint 16 hex characters.
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{8,64}$")
+    text: str = Field(min_length=1)
+    occurred_at: datetime | None = None
+    tags: list[str] | None = None
+    fact_type: str | None = None
+    metadata: dict[str, str | int | float | bool | None] | None = None
+    #: ``sha256:`` + 64 lowercase hex digits of the UTF-8 text, when sent.
+    content_hash: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class SyncPushBody(BaseModel):
+    """``POST /v1/banks/{bank_id}/sync/push``: at most 100 records."""
+
+    records: list[SyncPushRecordBody] = Field(max_length=100)
 
 
 class DsarForgetPrincipalBody(BaseModel):

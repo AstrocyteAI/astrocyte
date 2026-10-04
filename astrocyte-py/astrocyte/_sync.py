@@ -1,4 +1,4 @@
-"""Team-memory sync helpers: the change-feed cursor (``team-memory.md`` §8, G3).
+"""Team-memory sync helpers (``team-memory.md`` §8): the change-feed cursor (G3) and push limits (G2).
 
 The cursor is opaque to clients: URL-safe base64 of the JSON object
 ``{"changed_at": <ISO 8601>, "id": <memory id>}`` — the ``(changed_at, id)``
@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
+import re
 from datetime import datetime, timezone
 
 from astrocyte.errors import InvalidCursor
@@ -41,3 +43,28 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
     if not isinstance(memory_id, str) or not memory_id or changed_at.tzinfo is None:
         raise InvalidCursor()
     return changed_at, memory_id
+
+
+# ── push (G2) ─────────────────────────────────────────────────────────────
+
+#: Most records one ``push_records`` call accepts.
+MAX_PUSH_RECORDS = 100
+
+#: A pushed id: 8–64 of ``[A-Za-z0-9_-]``. Local stores mint 16 hex
+#: characters (``uuid4().hex[:16]``); the wider set leaves room for other
+#: clients' schemes while keeping ids safe in URLs, logs and SQL.
+PUSH_ID_RE = re.compile(r"[A-Za-z0-9_-]{8,64}")
+
+#: ``sha256:`` and 64 lowercase hex digits.
+CONTENT_HASH_RE = re.compile(r"sha256:[0-9a-f]{64}")
+
+#: Underscore-prefixed metadata keys are the system's own. A push keeps only
+#: these from the client: the reader regroups a turn's chunks by
+#: ``_retain_id`` / ``_chunk_index`` and dates them by ``_created_at``.
+#: ``_actor`` is stamped from the authenticated caller (a client's is kept
+#: only without a context, as retain does).
+PUSH_SYSTEM_METADATA_KEYS = frozenset({"_created_at", "_retain_id", "_chunk_index", "_actor"})
+
+
+def content_hash(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()

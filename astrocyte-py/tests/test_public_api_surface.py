@@ -95,6 +95,8 @@ EXPECTED_PUBLIC_API = frozenset([
     "RetainRequest",
     "RetainResult",
     "RoutingDecision",
+    "SyncPushRecord",
+    "SyncPushResult",
     "TokenUsage",
     "TransportCapabilities",
     "VectorFilters",

@@ -14,7 +14,7 @@ the docs, and the surface itself is pinned by
 gate. For usage-oriented documentation see the
 [Memory API reference](memory-api-reference/).
 
-## Classes & types (64)
+## Classes & types (66)
 
 | Name | Summary |
 |---|---|
@@ -76,6 +76,8 @@ gate. For usage-oriented documentation see the
 | `RetainRequest` | RetainRequest(content: 'str', bank_id: 'str', metadata: 'Metadata \| None' = None, tags: 'list[str] \| None' = None, occurred_at: 'datetime \| None' = None, source: 'str \| None' = None, content_type: 'str' = 'text', extraction_profile: 'str \| None' = None, mip_pipeline: 'PipelineSpec \| None' = None, mip_rule_name: 'str \| None' = None) |
 | `RetainResult` | RetainResult(stored: 'bool', memory_id: 'str \| None' = None, deduplicated: 'bool' = False, error: 'str \| None' = None, retention_action: 'str \| None' = None, curated: 'bool' = False, memory_layer: 'str \| None' = None) |
 | `RoutingDecision` | Output of MIP routing — tells Astrocyte where/how to store |
+| `SyncPushRecord` | One memory pushed by a team-memory client (``Astrocyte.push_records``) |
+| `SyncPushResult` | What became of one :class:`SyncPushRecord` |
 | `TokenUsage` | TokenUsage(input_tokens: 'int', output_tokens: 'int') |
 | `TransportCapabilities` | TransportCapabilities(supports_proxy: 'bool' = False, supports_custom_ca: 'bool' = False, supports_client_cert: 'bool' = False, supports_headers: 'bool' = False) |
 | `VectorFilters` | VectorFilters(bank_id: 'str \| None' = None, tags: 'list[str] \| None' = None, fact_types: 'list[str] \| None' = None, time_range: 'tuple[datetime, datetime] \| None' = None, metadata_filters: 'Metadata \| None' = None, as_of: 'datetime \| None' = None, session_id: 'str \| None' = None) |

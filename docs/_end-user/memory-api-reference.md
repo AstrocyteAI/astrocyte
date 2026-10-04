@@ -18,6 +18,7 @@ Complete reference for Astrocyte's core memory operations -- retain, recall, ref
 | **graph search** | Search entities in the graph store | `astrocyte.graph_search()` | `POST /v1/graph/search` |
 | **graph neighbors** | Traverse graph-linked memories | `astrocyte.graph_neighbors()` | `POST /v1/graph/neighbors` |
 | **export/import** | Move bank contents via AMA JSONL | `astrocyte.export_bank()` / `astrocyte.import_bank()` | `POST /v1/export`, `POST /v1/import` |
+| **push** | Store client-identified memories, one row each, for team-memory sync | `astrocyte.push_records()` | `POST /v1/banks/{bank_id}/sync/push` |
 | **changes** | Page a bank's change feed (stored memories and tombstones) for team-memory sync | `astrocyte.list_changes()` | `GET /v1/banks/{bank_id}/changes` |
 | **create_directive** | Author a user-curated hard rule | `astrocyte.create_directive()` | MCP: `memory_create_directive` |
 | **list/create/delete observation** | CRUD for live observations with trend tracking | `astrocyte.list_observations()` etc. | MCP: `memory_list_observations` etc. |
@@ -874,6 +875,66 @@ GET /v1/banks/{bank_id}/changes?cursor=<opaque>&limit=<n>
 curl "https://gateway.example.com/v1/banks/project:api-1a2b3c/changes?limit=500&cursor=$CURSOR" \
   -H "Authorization: Bearer $ASTROCYTE_TOKEN"
 ```
+
+---
+
+## push_records() -- Push memories with client ids
+
+The write side of team-memory sync (`docs/_design/team-memory.md` §8, G2). Each record is stored as **exactly one row with the id the client gives it**: no chunking, no fact extraction, no LLM call. The server re-embeds the text with its own embedding model (vectors are never sent). Records go through the same policy layer as `retain()`: size limits, content validation, the PII barrier, metadata sanitization and the authoritative `_actor`.
+
+Requires `write` on the bank, and a pipeline (Tier 1) whose vector store implements the optional `lookup_ids` and `insert_vectors` methods (`PostgresStore`, `SqliteStore`, the in-memory store); otherwise `CapabilityNotSupported` (HTTP 501).
+
+### Python signature
+
+```python
+async def push_records(
+    self,
+    bank_id: str,
+    records: list[SyncPushRecord],   # at most 100
+    *,
+    context: AstrocyteContext | None = None,
+) -> list[SyncPushResult]            # one per record, in order
+```
+
+`SyncPushRecord` has `id` (8–64 of `[A-Za-z0-9_-]`; local stores mint 16 hex characters), `text`, and optional `occurred_at`, `tags`, `fact_type`, `metadata` and `content_hash` (`sha256:<hex>` of the UTF-8 text; a mismatch rejects the record). Of the underscore-prefixed metadata keys only `_created_at`, `_retain_id` and `_chunk_index` are kept; `_actor` is set from the caller.
+
+### SyncPushResult
+
+| `status` | Meaning |
+|---|---|
+| `stored` | A new row with this id |
+| `unchanged` | This bank already holds this id with this text: an idempotent re-push. A memory's text is immutable, but its other fields are not edited by push: if they differ, nothing changes and `reason` is `text unchanged; metadata updates are not accepted by push` |
+| `duplicate` | Near-duplicate of the bank's memory `duplicate_of` (the retain dedup check); nothing stored. Record the mapping and don't push it again |
+| `rejected` | Nothing stored; `reason` says why: the id is in use with different text (in this bank, or in another bank, whose row is never touched or revealed), the id was forgotten (a forget can't be undone by a re-push), or the policy layer refused the record (PII `reject`, size, validation, `content_hash`) |
+
+Rate limits and quotas count a push as one call; quota usage is recorded per stored record.
+
+### REST equivalent
+
+```
+POST /v1/banks/{bank_id}/sync/push
+```
+
+```json
+{"records": [
+  {"id": "9f2c41d07ab3e815", "text": "We moved the job queue from SQS to Kafka.",
+   "occurred_at": "2026-10-02T09:14:03Z", "tags": ["decision"], "fact_type": "world",
+   "metadata": {"_created_at": "2026-10-02T09:14:03.118Z", "_retain_id": "5be1…", "session_id": "…", "source": "codex"},
+   "content_hash": "sha256:…"}
+]}
+```
+
+Response (`duplicate_of` and `reason` only when set):
+
+```json
+{"results": [
+  {"id": "9f2c41d07ab3e815", "status": "stored"},
+  {"id": "1c0d5e7f9a2b4c6d", "status": "duplicate", "duplicate_of": "77aa88bb99cc00dd"},
+  {"id": "0a1b2c3d4e5f6071", "status": "rejected", "reason": "id was forgotten; a forgotten memory can't be pushed again"}
+]}
+```
+
+A malformed body is 400 (more than 100 records, a bad id, empty text, a malformed `content_hash`, non-scalar metadata), like every other gateway endpoint.
 
 ---
 

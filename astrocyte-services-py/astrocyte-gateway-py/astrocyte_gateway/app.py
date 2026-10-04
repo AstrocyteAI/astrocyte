@@ -30,7 +30,7 @@ from astrocyte.ingest.supervisor import IngestSupervisor, merge_source_health
 from astrocyte.ingest.webhook import handle_webhook_ingest
 from astrocyte.pipeline.mental_model import MentalModelService
 from astrocyte.tenancy import TenantExtension
-from astrocyte.types import AstrocyteContext, MemoryChange
+from astrocyte.types import AstrocyteContext, MemoryChange, SyncPushRecord, SyncPushResult
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,6 +58,7 @@ from astrocyte_gateway.models import (
     RecallBody,
     ReflectBody,
     RetainBody,
+    SyncPushBody,
 )
 from astrocyte_gateway.observability import AccessContextMiddleware, maybe_instrument_otel
 from astrocyte_gateway.rate_limit import SlidingWindowRateLimitMiddleware, rate_limit_max_from_env
@@ -631,6 +632,50 @@ def create_app(
             "has_more": page.has_more,
         }
 
+    @app.post(
+        "/v1/banks/{bank_id}/sync/push",
+        responses={200: {"model": rm.SyncPushResponse}, **rm.VALIDATION_ERROR},
+    )
+    async def sync_push(
+        bank_id: str,
+        body: SyncPushBody,
+        ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
+    ) -> dict[str, Any]:
+        """Push memories into a bank, each stored as one row with the client's id (team memory G2).
+
+        Body: ``{"records": [{id, text, occurred_at?, tags?, fact_type?,
+        metadata?, content_hash?}, ...]}``, at most 100. ``id`` is 8-64 of
+        ``[A-Za-z0-9_-]``. Each record goes through the same policy layer as
+        ``/v1/retain`` (validation, PII, metadata, authoritative ``_actor``)
+        and is stored without chunking or extraction; the server re-embeds
+        the text. One result per record: ``stored``, ``unchanged`` (same id
+        and text already here; differing metadata is not applied),
+        ``duplicate`` (with ``duplicate_of``) or ``rejected`` (with
+        ``reason``: the id holds other text here or in another bank, the id
+        was forgotten, or policy refused it). Requires ``write`` on the bank;
+        a malformed body (too many records, a bad id) is 400.
+        """
+        records = []
+        for r in body.records:
+            metadata = r.metadata
+            # As /v1/retain: without an authenticated caller a client's
+            # ``_actor`` is only a claim, so it is dropped.
+            if ctx is None and metadata and "_actor" in metadata:
+                metadata = {k: v for k, v in metadata.items() if k != "_actor"}
+            records.append(
+                SyncPushRecord(
+                    id=r.id,
+                    text=r.text,
+                    occurred_at=r.occurred_at,
+                    tags=r.tags,
+                    fact_type=r.fact_type,
+                    metadata=metadata,
+                    content_hash=r.content_hash,
+                )
+            )
+        results = await brain.push_records(bank_id, records, context=ctx)
+        return {"results": [_push_result_to_json(x) for x in results]}
+
     @app.post("/v1/dsar/forget_principal", responses={200: {"model": rm.DsarForgetPrincipalResponse}, **rm.VALIDATION_ERROR})
     async def dsar_forget_principal(
         body: DsarForgetPrincipalBody,
@@ -1197,6 +1242,16 @@ def create_app(
 
     maybe_instrument_otel(app)
     return app
+
+
+def _push_result_to_json(result: SyncPushResult) -> dict[str, Any]:
+    """A push result as served: ``duplicate_of`` / ``reason`` only when set."""
+    out: dict[str, Any] = {"id": result.id, "status": result.status}
+    if result.duplicate_of is not None:
+        out["duplicate_of"] = result.duplicate_of
+    if result.reason is not None:
+        out["reason"] = result.reason
+    return out
 
 
 def _change_to_json(change: MemoryChange) -> dict[str, Any]:

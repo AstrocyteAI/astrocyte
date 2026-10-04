@@ -150,6 +150,7 @@ In **`dev`** mode, send optional header **`X-Astrocyte-Principal`** (for example
 | `POST` | `/v1/recall` | `query`; `bank_id` or `banks`; optional `max_results`, `max_tokens`, `tags` |
 | `POST` | `/v1/reflect` | `query`, `bank_id`; optional `max_tokens`, `include_sources` |
 | `POST` | `/v1/forget` | `bank_id`; optional `memory_ids`, `tags` |
+| `POST` | `/v1/banks/{bank_id}/sync/push` | `records` (≤100): `id` (8–64 of `[A-Za-z0-9_-]`), `text`; optional `occurred_at`, `tags`, `fact_type`, `metadata`, `content_hash`. One row per record with the client's id, through the retain policy layer; per-record `stored` / `unchanged` / `duplicate` / `rejected`; needs `write` |
 | `GET` | `/v1/banks/{bank_id}/changes` | Query: optional `cursor`, `limit` (1–1000, default 100). Changes feed for team-memory sync: every change to a synced memory (upserts with current values, and tombstones) in `(changed_at, id)` order; needs `read` |
 | `POST` | `/v1/compile` | `bank_id`; optional `scope` (requires `wiki_store`) |
 | `POST` | `/v1/audit` | `scope`, `bank_id`; optional `max_memories`, `max_tokens`, `tags` |

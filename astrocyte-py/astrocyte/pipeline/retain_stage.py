@@ -882,7 +882,20 @@ class RetainStageMixin:
         embeddings: list[list[float]],
         threshold_override: float | None,
     ) -> list[bool]:
-        """Which chunks are near-duplicates of memories the bank already holds.
+        """Which chunks are near-duplicates of memories the bank already holds
+        (see :meth:`_find_duplicate_ids`)."""
+        found = await self._find_duplicate_ids(bank_id, chunks, embeddings, threshold_override)
+        return [memory_id is not None for memory_id in found]
+
+    async def _find_duplicate_ids(
+        self,
+        bank_id: str,
+        chunks: list[str],
+        embeddings: list[list[float]],
+        threshold_override: float | None,
+    ) -> list[str | None]:
+        """For each chunk, the id of a memory the bank already holds that it
+        near-duplicates, or ``None``.
 
         The in-process ``DedupDetector`` cache only knows what this process
         retained, so a restarted daemon, a CLI run or a gateway restart would
@@ -908,12 +921,12 @@ class RetainStageMixin:
             enabled = getattr(self, "dedup_enabled", True)
             consult_store = getattr(self, "dedup_consult_store", True)
         if not enabled:
-            return [False] * len(chunks)
+            return [None] * len(chunks)
         dups = [
-            self._dedup.is_duplicate(bank_id, emb, threshold_override=threshold_override, text=chunk)[0]
+            self._dedup.find_duplicate(bank_id, emb, threshold_override=threshold_override, text=chunk)
             for chunk, emb in zip(chunks, embeddings)
         ]
-        misses = [i for i, dup in enumerate(dups) if not dup]
+        misses = [i for i, dup in enumerate(dups) if dup is None]
         if not misses or not consult_store or self.vector_store is None:
             return dups
 
@@ -930,12 +943,12 @@ class RetainStageMixin:
         async with self._profiler.time("dedup_store"):
             neighbours = [await nearest(i) for i in misses]
         for i, hits in zip(misses, neighbours):
-            candidates = (
-                (hit.score, hit.text)
-                for hit in hits
-                if hit.fact_type not in _NOT_RETAINED_LAYERS and hit.memory_layer not in _NOT_RETAINED_LAYERS
-            )
-            dups[i] = self._dedup.matches(candidates, threshold_override=threshold_override, text=chunks[i])[0]
+            for hit in hits:
+                if hit.fact_type in _NOT_RETAINED_LAYERS or hit.memory_layer in _NOT_RETAINED_LAYERS:
+                    continue
+                if self._dedup.matches([(hit.score, hit.text)], threshold_override=threshold_override, text=chunks[i])[0]:
+                    dups[i] = hit.id
+                    break
         return dups
 
     async def retain(self, request: RetainRequest) -> RetainResult:
