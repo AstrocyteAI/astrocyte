@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Antigravity turns record the files they read or edited too.** Antigravity logs tool calls on its reply steps (`tool_calls`, argument values JSON-encoded, measured on agy 1.2); capture now keeps the paths of `view_file` (`AbsolutePath`) and `write_to_file`, `replace_file_content`, `multi_replace_file_content` (`TargetFile`), relative to the workspace (`workspacePaths`). The file-tool names and arguments come from Antigravity's hook documentation: no file-tool call has been recorded on this machine yet (agy returns 403 for the account's project).
+
 ## [0.19.0] — 2026-10-04 — automatic memory on native Windows; gateway tokens and team-sync endpoints; provenance kept
 
 Tagged at `f89997b`. This section was committed after the tag, so the released source still lists these entries under Unreleased.
