@@ -814,7 +814,7 @@ curl -X POST https://gateway.example.com/v1/forget \
 
 ## list_changes() -- Read a bank's change feed
 
-The read side of team-memory sync (`docs/_design/team-memory.md` §8, G3): every memory stored in a bank and every memory forgotten from it, in order, so a teammate's local mirror can pull what changed since it last looked. A forgotten memory appears as a **tombstone** that carries only its id, so the mirror can erase it; its text never leaves the gateway again.
+The read side of team-memory sync (`docs/_design/team-memory.md` §8, G3): every change to a memory in a bank (stored, rewritten or forgotten), in order, so a teammate's local mirror can pull what changed since it last looked. A forgotten memory appears as a **tombstone** that carries only its id, so the mirror can erase it; its text never leaves the gateway again.
 
 Requires `read` on the bank. Needs a pipeline (Tier 1) whose vector store implements the optional `list_changes` method: `PostgresStore`, `SqliteStore` and the in-memory store do; otherwise the call raises `CapabilityNotSupported` (HTTP 501).
 
@@ -840,7 +840,7 @@ async def list_changes(
 | `next_cursor` | `str \| None` | Position after the last change on the page (the request's cursor when the page is empty; `None` only for a bank with no changes). Store it and pass it back |
 | `has_more` | `bool` | More changes were already waiting; fetch again now |
 
-A `MemoryChange` has `id`, `bank_id`, `deleted`, `changed_at` and, for a live memory, `text`, `occurred_at`, `retained_at`, `tags`, `fact_type`, `memory_layer` and `metadata` (including the authoritative `_actor`). `changed_at` is `max(retained_at, forgotten_at)`: when the memory was stored, or when it was forgotten.
+A `MemoryChange` has `id`, `bank_id`, `deleted`, `changed_at` and, for a live memory, `text`, `occurred_at`, `retained_at`, `tags`, `fact_type`, `memory_layer` and `metadata` (including the authoritative `_actor`). The feed is **every change to a synced row**: `changed_at` is the row's last change to any synced field (stored, rewritten, forgotten), and a live entry carries the row's current values, so a memory whose metadata changes later appears again, as an upsert of the same id, after your cursor.
 
 **Ordering and resuming.** Many memories can share one `changed_at` (a retain's chunks, a batch); the id breaks the tie, compared byte-wise, so resuming from a cursor never skips or repeats one. The cursor is URL-safe base64 of `{"changed_at": …, "id": …}`, but treat it as opaque: a cursor the server can't parse is rejected (`InvalidCursor`, HTTP 400).
 

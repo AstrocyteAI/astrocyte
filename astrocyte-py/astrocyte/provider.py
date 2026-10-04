@@ -93,10 +93,15 @@ class VectorStore(Protocol):
     - ``get_by_chunk_ids(chunk_ids, bank_id)`` — sibling chunks of a source
       chunk, for chunk expansion at recall.
     - ``list_changes(bank_id, *, after, limit) -> list[MemoryChange]`` — the
-      bank's change feed for team-memory sync: live rows **and** forgotten
-      rows (tombstones, ``deleted=True``, no text) ordered by
-      ``(changed_at, id)`` ascending, where ``changed_at`` is
-      ``max(retained_at, forgotten_at)``. ``after`` is a ``(changed_at, id)``
+      bank's change feed for team-memory sync: **every change to a synced
+      row, in (changed_at, id) order**. Live rows carry their current values
+      (so a later metadata or status change shows up as an upsert of the same
+      id); forgotten rows are tombstones (``deleted=True``, no text).
+      ``changed_at`` is the row's last change to any synced field: the store
+      must set it on **every** write that changes a row (insert: its
+      ``retained_at``; overwrite, restore or any field update: the time of
+      the change; forget: the time of the forget), and rows that predate it
+      backfill as ``max(retained_at, forgotten_at)``. ``after`` is a ``(changed_at, id)``
       position; only entries strictly after it are returned, so paging by the
       last entry's position never skips or repeats a row, even when many rows
       share one ``changed_at``. Ids compare byte-wise (``COLLATE "C"`` on

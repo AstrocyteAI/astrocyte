@@ -231,8 +231,9 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
     columns added since are added here, each with a backfill, under a write
     lock so concurrent processes opening the same old file don't race.
 
-    * ``changed_at`` (team-memory change feed): ``max(retained_at,
-      forgotten_at)``, kept by every write; backfilled for existing rows.
+    * ``changed_at`` (team-memory change feed): the row's last change to any
+      synced field, set by every write; backfilled as ``max(retained_at,
+      forgotten_at)``.
     """
 
     def has_changed_at() -> bool:
@@ -444,6 +445,11 @@ class SqliteStore:
                         "INSERT OR IGNORE INTO astrocyte_meta(key, value) VALUES ('embedding_dimensions', ?)",
                         (str(dim),),
                     )
+                # changed_at: a new row's is its retained_at (?10). Overwriting
+                # an existing row (a restore, a metadata rewrite that keeps the
+                # old retained_at) is a change now (?12), so the feed shows it
+                # after any cursor already handed out.
+                now = _now_us()
                 for item in items:
                     conn.execute(
                         """
@@ -463,7 +469,7 @@ class SqliteStore:
                             retained_at = excluded.retained_at,
                             chunk_id = excluded.chunk_id,
                             forgotten_at = NULL,
-                            changed_at = excluded.retained_at
+                            changed_at = MAX(excluded.retained_at, ?12)
                         """,
                         (
                             item.id,
@@ -475,8 +481,9 @@ class SqliteStore:
                             item.fact_type,
                             _to_us(item.occurred_at),
                             item.memory_layer,
-                            _to_us(item.retained_at) if item.retained_at else _now_us(),
+                            _to_us(item.retained_at) if item.retained_at else now,
                             item.chunk_id,
+                            now,
                         ),
                     )
                 conn.execute("COMMIT")
@@ -549,8 +556,8 @@ class SqliteStore:
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            # changed_at = max(retained_at, forgotten_at): a tombstone sorts
-            # into the change feed when it was made.
+            # A forget is a change: the tombstone sorts into the feed at
+            # max(retained_at, forgotten_at), i.e. when it was made.
             cur = conn.execute(
                 f"UPDATE astrocyte_vectors SET forgotten_at = ?1, changed_at = MAX(retained_at, ?1) "
                 f"WHERE bank_id = ?2 AND forgotten_at IS NULL "
@@ -656,8 +663,10 @@ class SqliteStore:
         after: tuple[datetime, str] | None = None,
         limit: int = 100,
     ) -> list[MemoryChange]:
-        """The bank's change feed: live rows and tombstones (forgotten rows),
-        ordered by ``(changed_at, id)``, strictly after ``after``.
+        """The bank's change feed — every change to a synced row: live rows
+        (current values) and tombstones (forgotten rows), ordered by
+        ``(changed_at, id)``, strictly after ``after``. ``changed_at`` is the
+        row's last change to any synced field; every write sets it.
 
         Optional VectorStore method (team-memory sync). A purged row is gone
         and has no tombstone; purging is the local store's erase, and the

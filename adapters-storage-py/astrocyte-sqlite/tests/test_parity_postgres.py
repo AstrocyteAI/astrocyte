@@ -194,8 +194,10 @@ async def test_randomised_operation_sequences_match(stores, seed):
 
 
 def _changes(changes: list[Any]) -> list[tuple]:
-    """Change-feed entries, compared exactly — except a tombstone's
-    ``changed_at``, which is each store's own clock at forget time."""
+    """Change-feed entries, compared exactly — except ``changed_at`` where a
+    store stamped it with its own clock: a tombstone (forget time) and a row
+    overwritten after it was first stored (restore time). Their order still
+    has to match."""
     return [
         (c.id, c.bank_id, True, None)
         if c.deleted
@@ -203,7 +205,16 @@ def _changes(changes: list[Any]) -> list[tuple]:
             c.id,
             c.bank_id,
             False,
-            (c.changed_at, c.text, c.metadata, c.tags, c.fact_type, c.occurred_at, c.memory_layer, c.retained_at),
+            (
+                c.changed_at if c.changed_at == c.retained_at else "overwritten",
+                c.text,
+                c.metadata,
+                c.tags,
+                c.fact_type,
+                c.occurred_at,
+                c.memory_layer,
+                c.retained_at,
+            ),
         )
         for c in changes
     ]
@@ -250,8 +261,8 @@ async def test_change_feed_matches(stores, seed):
         for limit in (1, 3, 17):
             assert _changes(await _page_all(lite, bank, limit)) == _changes(pg_all)
             assert _changes(await _page_all(pg, bank, limit)) == _changes(pg_all)
-        # Resuming from any live entry's position (identical in both stores).
-        for start in rng.sample([c for c in pg_all if not c.deleted], 5):
+        # Resuming from the position of any entry both stores stamped alike.
+        for start in rng.sample([c for c in pg_all if not c.deleted and c.changed_at == c.retained_at], 5):
             after = (start.changed_at, start.id)
             assert _changes(await lite.list_changes(bank, after=after, limit=7)) == _changes(
                 await pg.list_changes(bank, after=after, limit=7)

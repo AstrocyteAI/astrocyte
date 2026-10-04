@@ -80,19 +80,26 @@ class InMemoryVectorStore:
         # Change-feed bookkeeping (``list_changes``). Deletes stay hard in
         # ``_vectors``; a forgotten id is remembered here as a tombstone
         # ``(bank_id, forgotten_at)`` the way the SQL stores keep the row with
-        # ``forgotten_at`` set. ``_stored_at`` is each live row's effective
-        # ``retained_at`` (the item's own, else the time it was stored).
+        # ``forgotten_at`` set. ``_retained_at`` is each live row's effective
+        # ``retained_at`` (the item's own, else the time it was stored) and
+        # ``_changed_at`` its last change to any synced field.
         self._tombstones: dict[str, tuple[str, datetime]] = {}
-        self._stored_at: dict[str, datetime] = {}
+        self._retained_at: dict[str, datetime] = {}
+        self._changed_at: dict[str, datetime] = {}
 
     async def store_vectors(self, items: list[VectorItem]) -> list[str]:
         ids = []
+        now = datetime.now(UTC)
         for item in items:
+            existed = item.id in self._vectors or item.id in self._tombstones
             self._vectors[item.id] = item
             # Upsert semantics match the SQL stores: a re-stored id is live
-            # again (their ``forgotten_at = NULL``).
+            # again (their ``forgotten_at = NULL``), and overwriting an
+            # existing row is a change now, whatever its retained_at.
             self._tombstones.pop(item.id, None)
-            self._stored_at[item.id] = _utc(item.retained_at) if item.retained_at else datetime.now(UTC)
+            retained_at = _utc(item.retained_at) if item.retained_at else now
+            self._retained_at[item.id] = retained_at
+            self._changed_at[item.id] = max(retained_at, now) if existed else retained_at
             ids.append(item.id)
         return ids
 
@@ -162,8 +169,9 @@ class InMemoryVectorStore:
         for vid in ids:
             if vid in self._vectors and self._vectors[vid].bank_id == bank_id:
                 del self._vectors[vid]
-                stored_at = self._stored_at.pop(vid, now)
-                self._tombstones[vid] = (bank_id, max(stored_at, now))
+                self._changed_at.pop(vid, None)
+                retained_at = self._retained_at.pop(vid, now)
+                self._tombstones[vid] = (bank_id, max(retained_at, now))
                 count += 1
         return count
 
@@ -174,27 +182,10 @@ class InMemoryVectorStore:
         after: tuple[datetime, str] | None = None,
         limit: int = 100,
     ) -> list[MemoryChange]:
-        """Live rows and tombstones ordered by ``(changed_at, id)``, strictly
-        after ``after`` (see ``VectorStore`` optional methods)."""
-        changes: list[MemoryChange] = []
-        for vid, item in self._vectors.items():
-            if item.bank_id != bank_id:
-                continue
-            stored_at = self._stored_at.get(vid) or datetime.now(UTC)
-            changes.append(
-                MemoryChange(
-                    id=vid,
-                    bank_id=bank_id,
-                    changed_at=stored_at,
-                    text=item.text,
-                    occurred_at=item.occurred_at,
-                    retained_at=stored_at,
-                    tags=list(item.tags) if item.tags else None,
-                    fact_type=item.fact_type,
-                    memory_layer=item.memory_layer,
-                    metadata=item.metadata,
-                )
-            )
+        """Every change to a synced row: live rows (current values) and
+        tombstones, ordered by ``(changed_at, id)``, strictly after ``after``
+        (see ``VectorStore`` optional methods)."""
+        changes = [self._live_change(vid, item) for vid, item in self._vectors.items() if item.bank_id == bank_id]
         for vid, (tomb_bank, forgotten_at) in self._tombstones.items():
             if tomb_bank == bank_id:
                 changes.append(MemoryChange(id=vid, bank_id=bank_id, changed_at=forgotten_at, deleted=True))
@@ -203,6 +194,22 @@ class InMemoryVectorStore:
             changes = [c for c in changes if (c.changed_at, c.id) > position]
         changes.sort(key=lambda c: (c.changed_at, c.id))
         return changes[: max(limit, 0)]
+
+    def _live_change(self, vid: str, item: VectorItem) -> MemoryChange:
+        now = datetime.now(UTC)  # only for rows placed in _vectors directly
+        retained_at = self._retained_at.get(vid) or now
+        return MemoryChange(
+            id=vid,
+            bank_id=item.bank_id,
+            changed_at=self._changed_at.get(vid) or retained_at,
+            text=item.text,
+            occurred_at=item.occurred_at,
+            retained_at=retained_at,
+            tags=list(item.tags) if item.tags else None,
+            fact_type=item.fact_type,
+            memory_layer=item.memory_layer,
+            metadata=item.metadata,
+        )
 
     async def get_by_chunk_ids(
         self,

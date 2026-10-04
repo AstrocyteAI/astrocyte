@@ -2329,12 +2329,15 @@ class Astrocyte:
         settle_seconds: float = 0.0,
         context: AstrocyteContext | None = None,
     ) -> MemoryChangePage:
-        """Read a bank's change feed: stored memories and tombstones, in order.
+        """Read a bank's changes feed: every change to a synced row, in order.
 
         The read side of team-memory sync (``team-memory.md`` §8, G3; served
         as ``GET /v1/banks/{bank_id}/changes``). Returns up to ``limit``
         (1–1000) changes strictly after ``cursor``, ordered by
-        ``(changed_at, id)``. Pass the returned ``next_cursor`` back to
+        ``(changed_at, id)``, where ``changed_at`` is a row's last change to
+        any synced field. A live entry carries the row's current values, so a
+        row changed again later reappears as an upsert of the same id after
+        the cursor. Pass the returned ``next_cursor`` back to
         resume; ``has_more`` says whether to fetch again now. A forgotten
         memory appears as a tombstone (``deleted=True``) carrying only its
         id and ``changed_at``, so mirrors can erase it.

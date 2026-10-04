@@ -46,10 +46,13 @@ if TYPE_CHECKING:
 
 _TABLE_SAFE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
-#: A row's change-feed position: when it was stored or, if later, forgotten
-#: (GREATEST ignores NULL). Indexed as written by migration 039 and the
-#: bootstrap DDL; queries must use this exact expression to hit the index.
-_CHANGED_AT = "GREATEST(retained_at, forgotten_at)"
+#: A row's change-feed position: its ``changed_at`` column, the time of its
+#: last change to any synced field, which every write sets. Rows written
+#: before migration 039 have it NULL and fall back to the backfill value
+#: max(retained_at, forgotten_at) (GREATEST ignores NULL), so the migration
+#: rewrites no rows. Indexed as written by migration 039 and the bootstrap
+#: DDL; queries must use this exact expression to hit the index.
+_CHANGED_AT = "COALESCE(changed_at, GREATEST(retained_at, forgotten_at))"
 
 
 def _sanitize_table(name: str) -> str:
@@ -487,7 +490,8 @@ class PostgresStore:
                     """
                 )
                 # Mirrors 039_vectors_changed_at.sql (team-memory change
-                # feed): changed_at is the indexed expression _CHANGED_AT.
+                # feed): the changed_at column, indexed through _CHANGED_AT.
+                await conn.execute(f"ALTER TABLE {vectors} ADD COLUMN IF NOT EXISTS changed_at TIMESTAMPTZ")
                 await conn.execute(
                     f"""
                     CREATE INDEX IF NOT EXISTS {self._table}_bank_changed_idx
@@ -509,14 +513,15 @@ class PostgresStore:
                             f"Vector length {len(item.vector)} != embedding_dimensions {self._dim}",
                         )
                     await self._upsert_bank(cur, item.bank_id)
+                    retained_at = item.retained_at or datetime.now(UTC)
                     await cur.execute(
                         f"""
                         INSERT INTO {self._fq()}
                             (
                                 id, bank_id, embedding, text, metadata, tags, fact_type,
-                                occurred_at, memory_layer, retained_at, chunk_id, forgotten_at
+                                occurred_at, memory_layer, retained_at, chunk_id, forgotten_at, changed_at
                             )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s)
                         ON CONFLICT (id) DO UPDATE SET
                             bank_id = EXCLUDED.bank_id,
                             embedding = EXCLUDED.embedding,
@@ -528,7 +533,12 @@ class PostgresStore:
                             memory_layer = EXCLUDED.memory_layer,
                             retained_at = EXCLUDED.retained_at,
                             chunk_id = EXCLUDED.chunk_id,
-                            forgotten_at = NULL
+                            forgotten_at = NULL,
+                            -- Overwriting an existing row (a restore, a
+                            -- metadata rewrite that keeps the old
+                            -- retained_at) is a change now: the feed must
+                            -- show it after any cursor already handed out.
+                            changed_at = GREATEST(EXCLUDED.retained_at, NOW())
                         """,
                         (
                             item.id,
@@ -540,8 +550,9 @@ class PostgresStore:
                             item.fact_type,
                             item.occurred_at,
                             item.memory_layer,
-                            item.retained_at or datetime.now(UTC),
+                            retained_at,
                             item.chunk_id,  # M10 backreference; nullable, no migration risk
+                            retained_at,  # changed_at of a new row
                         ),
                     )
                     await self._upsert_temporal_facts(cur, item)
@@ -908,11 +919,13 @@ class PostgresStore:
         """The bank's change feed: live rows and tombstones (forgotten rows),
         ordered by ``(changed_at, id)``, strictly after ``after``.
 
-        Optional VectorStore method (team-memory sync). ``changed_at`` is
-        ``max(retained_at, forgotten_at)``, computed by the same expression
-        migration 039 indexes (``_CHANGED_AT``), so the keyset scan below is
-        an index scan; ids order byte-wise (``COLLATE "C"``) whatever the
-        database locale.
+        Optional VectorStore method (team-memory sync): every change to a
+        synced row, in ``(changed_at, id)`` order. ``changed_at`` is the
+        row's last change to any synced field (every write sets it; rows
+        from before migration 039 read as max(retained_at, forgotten_at)),
+        read through the expression the migration indexes (``_CHANGED_AT``),
+        so the keyset scan below is an index scan. Ids order byte-wise
+        (``COLLATE "C"``) whatever the database locale.
         """
         from astrocyte.types import MemoryChange
 
@@ -976,7 +989,7 @@ class PostgresStore:
                 await cur.execute(
                     f"""
                     UPDATE {self._fq()}
-                    SET forgotten_at = NOW()
+                    SET forgotten_at = NOW(), changed_at = GREATEST(retained_at, NOW())
                     WHERE bank_id = %s
                       AND id = ANY(%s::text[])
                       AND forgotten_at IS NULL

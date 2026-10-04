@@ -107,12 +107,14 @@ class VectorHit:
 class MemoryChange:
     """One entry in a bank's change feed (team memory sync, ``VectorStore.list_changes``).
 
-    ``changed_at`` is ``max(retained_at, forgotten_at)``: when the row was
-    stored, or when it was forgotten. A forgotten row is a **tombstone**:
-    ``deleted`` is true and only ``id``, ``bank_id`` and ``changed_at`` are
-    set, so a forgotten memory's text never leaves the store through the feed.
-    A live row carries the full record. The feed is ordered by
-    ``(changed_at, id)``.
+    The changes feed is every change to a synced row, in ``(changed_at, id)``
+    order. ``changed_at`` is the row's last change to any synced field: when
+    it was stored, rewritten (metadata, and later claim status, trust or
+    staleness flags) or forgotten. A live row carries its current values, so
+    a later change shows up as an upsert of the same id. A forgotten row is a
+    **tombstone**: ``deleted`` is true and only ``id``, ``bank_id`` and
+    ``changed_at`` are set, so a forgotten memory's text never leaves the
+    store through the feed.
     """
 
     id: str

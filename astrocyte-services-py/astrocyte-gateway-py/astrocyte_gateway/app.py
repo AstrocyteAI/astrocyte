@@ -602,12 +602,13 @@ def create_app(
         cursor: str | None = None,
         limit: int = _CHANGES_DEFAULT_LIMIT,
     ) -> dict[str, Any]:
-        """Change feed of a bank: stored memories and tombstones, in order (team memory G3).
+        """Changes feed of a bank: every change to a synced memory, in order (team memory G3).
 
         Returns up to ``limit`` changes (default 100; clamped into 1–1000)
         strictly after ``cursor``, ordered by ``(changed_at, id)``, where
-        ``changed_at`` is when a memory was stored or, for a tombstone, when
-        it was forgotten. Omit ``cursor`` to start from the beginning; pass
+        ``changed_at`` is a memory's last change to any synced field (stored,
+        rewritten, forgotten). A live entry carries the memory's current
+        values, so a later change reappears as an upsert of the same id. Omit ``cursor`` to start from the beginning; pass
         ``next_cursor`` back to resume without gaps or repeats. ``has_more``
         says more changes are already waiting. A tombstone is
         ``{"id", "deleted": true, "changed_at"}``. Changes younger than

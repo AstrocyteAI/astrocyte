@@ -83,6 +83,20 @@ async def test_forget_is_a_tombstone_and_a_restore_is_live_again(tmp_path):
     assert not (await store.list_changes("b"))[-1].deleted
 
 
+async def test_overwriting_a_row_is_a_change_now(tmp_path):
+    """Every change to a synced row is in the feed: a rewrite that keeps the
+    old retained_at (a metadata update) moves the row past existing cursors."""
+    store = SqliteStore(path=str(tmp_path / "m.db"))
+    await store.store_vectors([_item("a"), _item("b")])
+    [_, b] = await store.list_changes("b")
+    rewritten = _item("a")
+    rewritten.metadata = {"status": "stale"}
+    await store.store_vectors([rewritten])
+    [a] = await store.list_changes("b", after=(b.changed_at, b.id))
+    assert a.id == "a" and a.metadata == {"status": "stale"}
+    assert a.retained_at == T0 and a.changed_at > T0
+
+
 async def test_purge_erases_without_a_tombstone(tmp_path):
     # The local store's `memory forget` erases; the gateway (Postgres) soft-deletes.
     store = SqliteStore(path=str(tmp_path / "m.db"))

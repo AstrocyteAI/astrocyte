@@ -1,10 +1,12 @@
 """PostgresStore.list_changes (team-memory change feed) and migration 039.
 
 The SQLite adapter's parity suite checks list_changes against this store with
-randomised operations; these pin the Postgres side on its own: the generated
-``changed_at`` column, tombstones, keyset paging, byte-wise id order whatever
-the database locale, and migration 039's index (``changed_at`` is an indexed
-expression, so rows written before the migration need no backfill).
+randomised operations; these pin the Postgres side on its own: ``changed_at``
+is bumped by every write that changes a row (insert, overwrite, metadata
+rewrite, forget, restore), tombstones, keyset paging, byte-wise id order
+whatever the database locale, and migration 039 (rows written before it read
+as max(retained_at, forgotten_at) through the indexed expression, so the
+migration rewrites no rows).
 """
 
 from __future__ import annotations
@@ -69,6 +71,19 @@ class TestListChanges:
         assert (await _ids(store))[-1] == ("a", False)
         assert (await store.list_changes("bank-1"))[-1].changed_at == later
 
+    async def test_every_change_to_a_row_moves_it_to_the_end(self, store: PostgresStore):
+        """The feed is every change to a synced row: a later rewrite of an
+        existing row (here metadata, keeping the old retained_at, as the
+        temporal-normalisation task does) shows up as an upsert of the same id
+        after any cursor already handed out."""
+        await store.store_vectors([make_item("a", retained_at=T0), make_item("b", retained_at=T0)])
+        [_, b] = await store.list_changes("bank-1")
+        cursor = (b.changed_at, b.id)
+        await store.store_vectors([make_item("a", retained_at=T0, metadata={"status": "stale"})])
+        [a] = await store.list_changes("bank-1", after=cursor)
+        assert a.id == "a" and a.metadata == {"status": "stale"}
+        assert a.retained_at == T0 and a.changed_at > T0
+
 
 class TestMigration039:
     """Applies the migration file to a pre-039 ``astrocyte_vectors`` in a scratch schema."""
@@ -125,9 +140,13 @@ class TestMigration039:
             ("gone", T0 + timedelta(hours=3)),
             ("skew", T0 + timedelta(hours=5)),
         ]
-        # Later writes are reflected without touching any changed_at column.
-        forget = "UPDATE astrocyte_vectors SET forgotten_at = %s WHERE id = 'live'"
-        await conn.execute(forget, (T0 + timedelta(days=1),))
+        # The column was added NULL: no row was rewritten.
+        cur = await conn.execute("SELECT count(*) FROM astrocyte_vectors WHERE changed_at IS NOT NULL")
+        assert (await cur.fetchone())[0] == 0
+        # A write that sets the column takes precedence over the fallback.
+        await conn.execute(
+            "UPDATE astrocyte_vectors SET changed_at = %s WHERE id = 'live'", (T0 + timedelta(days=1),)
+        )
         cur = await conn.execute(feed_sql)
         assert (await cur.fetchall())[-1] == ("live", T0 + timedelta(days=1))
 
@@ -137,7 +156,8 @@ class TestMigration039:
             (schema,),
         )
         [(indexdef,)] = await cur.fetchall()
-        assert 'GREATEST(retained_at, forgotten_at)' in indexdef and 'COLLATE "C"' in indexdef
+        assert "COALESCE(changed_at, GREATEST(retained_at, forgotten_at))" in indexdef
+        assert 'COLLATE "C"' in indexdef
         # The store's keyset query is served by it (seqscan off: the table is tiny).
         await conn.execute("SET enable_seqscan = off")
         cur = await conn.execute(

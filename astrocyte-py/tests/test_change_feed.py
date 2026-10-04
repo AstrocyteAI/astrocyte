@@ -150,6 +150,20 @@ class TestInMemoryListChanges:
         await store.store_vectors([_item("a", at=later)])
         assert [(c.id, c.deleted) for c in await store.list_changes("bank-1")] == [("b", False), ("a", False)]
 
+    async def test_rewriting_a_row_is_a_change_now(self):
+        """The feed is every change to a synced row: rewriting an existing row
+        (here its metadata, keeping the old retained_at) moves it past any
+        cursor already handed out, carrying its current metadata."""
+        store = InMemoryVectorStore()
+        await store.store_vectors([_item("a"), _item("b")])
+        [_, b] = await store.list_changes("bank-1")
+        rewritten = _item("a")
+        rewritten.metadata = {"status": "stale"}
+        await store.store_vectors([rewritten])
+        [a] = await store.list_changes("bank-1", after=(b.changed_at, b.id))
+        assert a.id == "a" and a.metadata == {"status": "stale"}
+        assert a.retained_at == T0 and a.changed_at > T0
+
 
 # ── Astrocyte.list_changes ───────────────────────────────────────────────
 
