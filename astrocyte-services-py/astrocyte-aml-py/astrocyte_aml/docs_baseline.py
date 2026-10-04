@@ -182,6 +182,12 @@ class DocsOnlyMemory:
             created = [
                 t for t in plan.get("create", []) if isinstance(t, str) and t.strip()
             ]
+            # A "new" document whose slug already exists would overwrite one the
+            # agent never read. An Operator agent sees it in the catalog and
+            # opens it, so open it here too rather than write over it blind.
+            for title in created:
+                if _slugify(title) in known and _slugify(title) not in opened:
+                    opened.append(_slugify(title))
             if not opened and not created:
                 return 0
             docs = "\n\n".join(
@@ -209,6 +215,12 @@ class DocsOnlyMemory:
                     covers=str(doc.get("covers") or "").strip(),
                     open_if=str(doc.get("open_if") or "").strip(),
                 )
+                if entry.slug in known and entry.slug not in opened:
+                    # Never overwrite a document the agent did not read.
+                    logger.warning(
+                        "docs baseline: skipped unseen overwrite of %s", entry.slug
+                    )
+                    continue
                 content = str(doc["content"])
                 if len(content) > 2 * TARGET_DOC_CHARS:
                     logger.info(

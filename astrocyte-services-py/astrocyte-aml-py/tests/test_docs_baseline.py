@@ -212,3 +212,38 @@ class TestContract:
         c = self._client(_ScriptedModel([]), tmp_path)
         body = {"request_id": "r1", "user_id": "u1", "session_id": "s1", "messages": []}
         assert c.post("/add", json=body).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_creating_a_document_that_already_exists_opens_it_first(tmp_path):
+    """No blind overwrite: the existing content is shown before rewriting."""
+    model = _ScriptedModel(
+        [
+            {"open": [], "create": ["Settings"]},
+            {"documents": [_doc("settings", "- retries: 3")]},
+            {"open": [], "create": ["Settings"]},  # asks to "create" it again
+            {"documents": [_doc("settings", "- retries: 3\n- port: 8080")]},
+        ]
+    )
+    mem = DocsOnlyMemory(model, tmp_path)
+    await mem.add("u1", "a")
+    await mem.add("u1", "b")
+    assert "- retries: 3" in model.prompts[3], (
+        "existing document was opened, not overwritten blind"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_write_to_an_unread_existing_document_is_skipped(tmp_path):
+    model = _ScriptedModel(
+        [
+            {"open": [], "create": ["Settings"]},
+            {"documents": [_doc("settings", "- retries: 3")]},
+            {"open": [], "create": ["Other"]},
+            {"documents": [_doc("other", "x"), _doc("settings", "clobbered")]},
+        ]
+    )
+    mem = DocsOnlyMemory(model, tmp_path)
+    await mem.add("u1", "a")
+    await mem.add("u1", "b")
+    assert mem.brain("u1").read("settings") == "- retries: 3"
