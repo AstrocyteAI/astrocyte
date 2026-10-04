@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **`astrocyte memory import`** seeds a project's memory from what it already tells agents: `astrocyte memory import CLAUDE.md AGENTS.md docs/`. Markdown and text files are split at their headings into one memory per section (code fences respected; long sections split at paragraphs); directories are walked, skipping hidden, vendored and build directories. Re-importing a file syncs it: new sections are added, sections no longer in the file are removed and erased, unchanged ones are kept. Sections that repeat a stored memory are skipped the same way on every run (the pipeline's own duplicate check only sees one process). No model calls: this repo's 348 end-user doc sections import in ~30 s. `astrocyte setup` suggests the instruction files it finds (CLAUDE.md, AGENTS.md, GEMINI.md, .github/copilot-instructions.md, .cursorrules).
+- **`astrocyte memory export FILE`** writes a bank as an AMA archive, read straight from the store, and `astrocyte memory import FILE.ama.jsonl` restores it into any bank — moving a project's memory between machines.
+- **`astrocyte setup` loads the local embedding model** (the ~130 MB first download) instead of leaving it to the first prompt of the first session.
+
+### Security
+
+- **The local memory store is private to its owner.** SQLite files were created with the umask — on most systems readable by every account on the machine — and they hold conversations. `astrocyte-sqlite` now creates the database 0600 (its -wal/-shm files follow) and the directory 0700; `astrocyte doctor` reports a store others can read and `--fix` (or re-running `setup`) tightens it. A database in a directory of your choosing keeps that directory's permissions. Exports are written 0600 too.
+
 ## [0.16.0] — 2026-10-03 — local install for coding agents
 
 ### Fixed

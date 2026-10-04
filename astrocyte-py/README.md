@@ -42,6 +42,7 @@ anything is stored.
 ```bash
 astrocyte doctor          # check everything end to end (--fix repairs it)
 astrocyte memory          # what is remembered about the project you're in
+astrocyte memory import CLAUDE.md AGENTS.md docs/   # start with what the project already says
 astrocyte memory forget <id>
 ```
 
