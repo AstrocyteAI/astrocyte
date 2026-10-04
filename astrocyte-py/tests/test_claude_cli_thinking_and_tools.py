@@ -19,10 +19,9 @@ records the argv and environment the provider really passes.
 from __future__ import annotations
 
 import json
-import stat
-import sys
 
 import pytest
+from platform_compat import write_executable
 
 from astrocyte.providers.claude_cli import ClaudeCliProvider
 from astrocyte.types import Message
@@ -31,16 +30,14 @@ from astrocyte.types import Message
 @pytest.fixture
 def fake_claude(tmp_path):
     record = tmp_path / "call.json"
-    fake = tmp_path / "claude"
-    fake.write_text(
-        f"#!{sys.executable}\n"
+    fake = write_executable(
+        tmp_path, "claude",
         "import json, os, sys\n"
         "sys.stdin.read()\n"
         f"json.dump({{'argv': sys.argv[1:], 'thinking': os.environ.get('MAX_THINKING_TOKENS')}},"
         f" open({str(record)!r}, 'w'))\n"
-        "print('OK')\n"
+        "print('OK')\n",
     )
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
 
     async def call(**kwargs) -> dict:
         reply = await ClaudeCliProvider(model="haiku", binary=str(fake), **kwargs).complete(

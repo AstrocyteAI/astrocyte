@@ -1947,7 +1947,8 @@ class InMemorySourceStore:
         from datetime import UTC
         from datetime import datetime as _dt
 
-        docs.sort(key=lambda d: d.created_at or _dt.fromtimestamp(0, UTC), reverse=True)
+        order = {id(d): i for i, d in enumerate(docs)}  # insertion order breaks clock ties
+        docs.sort(key=lambda d: (d.created_at or _dt.fromtimestamp(0, UTC), order[id(d)]), reverse=True)
         return docs[:limit]
 
     async def delete_document(self, document_id: str, bank_id: str) -> bool:

@@ -276,11 +276,14 @@ class TestPathContainment:
 
     async def test_unknown_home_directory_is_a_value_error(self):
         """``~nosuchuser`` makes expanduser raise RuntimeError; callers (the
-        gateway maps ValueError to 422) must see a ValueError, not a crash."""
+        gateway maps ValueError to 422) must see a ValueError, not a crash.
+        Windows guesses a sibling profile instead of raising, which the
+        containment check then refuses: a ValueError either way."""
         brain, _ = _make_brain()
-        with pytest.raises(ValueError, match="cannot be resolved"):
+        why = "cannot be resolved|escapes allowed roots|containment is required"
+        with pytest.raises(ValueError, match=why):
             await brain.export_bank("b1", "~astrocyte-no-such-user-0")
-        with pytest.raises(ValueError, match="cannot be resolved"):
+        with pytest.raises(ValueError, match=why):
             await brain.import_bank("b1", "~astrocyte-no-such-user-0")
 
     async def test_export_allows_uncontained_when_opted_in(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -36,6 +36,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -113,16 +114,20 @@ def _groups(items: list[Any]) -> list[list[Any]]:
     """Memories regrouped into what was retained together, newest first.
 
     A long captured turn is stored as several chunks (the question, then
-    overlapping pieces of the answer) that share one ``_created_at`` stamp and
-    come back in no useful order; ``retained_at`` follows the order they were
-    written."""
+    overlapping pieces of the answer) that share one ``_retain_id`` and come
+    back in no useful order; ``_chunk_index`` gives the order they were written."""
     groups: dict[str, list[Any]] = {}
     for item in items:
-        key = (item.metadata or {}).get("_created_at") or item.id
+        meta = item.metadata or {}
+        # _retain_id since 0.18; _created_at alone for memories stored before
+        # (it can merge retains made within one clock tick).
+        key = meta.get("_retain_id") or meta.get("_created_at") or item.id
         groups.setdefault(str(key), []).append(item)
     out = []
     for group in groups.values():
-        group.sort(key=lambda i: (i.retained_at is None, i.retained_at or 0))
+        # _chunk_index where stored (since 0.18); retained_at for older chunks.
+        group.sort(key=lambda i: ((i.metadata or {}).get("_chunk_index", 0), i.retained_at is None,
+                                  i.retained_at or 0))
         out.append(group)
     return out
 
@@ -404,7 +409,10 @@ def spool_capture(bank: str, session_id: str, source: str, turns: list[dict]) ->
     """Durably queue turns for the daemon (atomic rename, 0600)."""
     d = spool_dir()
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path = d / f"{time.time_ns()}-{os.getpid()}.json"
+    # Time first so the drain keeps order; the random tail because a coarse
+    # clock (Windows: ~15 ms) gives two captures in one tick the same name,
+    # and the second would replace the first.
+    path = d / f"{time.time_ns()}-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
     tmp = path.with_suffix(".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:

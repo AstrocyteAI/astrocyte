@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import yaml
 
+from astrocyte._text_files import read_user_text
 from astrocyte.errors import ConfigError
 from astrocyte.types import AccessGrant
 
@@ -1151,7 +1152,7 @@ def _load_profile(profile_name: str) -> dict:
         raise ConfigError(f"Profile not found: {profile_path}")
 
     try:
-        with open(profile_path) as f:
+        with open(profile_path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {profile_path}: {exc}") from exc
@@ -1171,7 +1172,7 @@ def _load_compliance_profile(name: str) -> dict:
         raise ConfigError(f"Compliance profile not found: {profile_path}")
 
     try:
-        with open(profile_path) as f:
+        with open(profile_path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {profile_path}: {exc}") from exc
@@ -1761,8 +1762,7 @@ def load_config(path: str | Path) -> AstrocyteConfig:
         raise ConfigError(f"Config file not found: {config_path}")
 
     try:
-        with open(config_path) as f:
-            raw = yaml.safe_load(f) or {}
+        raw = yaml.safe_load(read_user_text(config_path)) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {config_path}: {exc}") from exc
 
