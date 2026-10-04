@@ -1607,7 +1607,7 @@ class TestCodexHookInstall:
         del earlier["PostToolUse"]
         text = host.config_file().read_text()
         start = text.index("\n[[hooks.PostToolUse]]")
-        host.config_file().write_text(text[:start] + text[text.index("\n[[hooks.Stop]]"):])
+        host.config_file().write_text(text[:start] + text[text.index("\n# <<< astrocyte hooks"):])
         assert host.hook_commands() == {**earlier, "PostToolUse": None}
         assert host.install_hooks(CLI).status == "updated"
         assert host.hook_commands() == self.WANT

@@ -156,7 +156,7 @@ def cmd_setup(args: Namespace) -> int:
     else:
         fresh = {o.host for o in outcomes if o.status in ("installed", "updated")}
         notes = [h.next_step for h in targets if h.label in fresh and h.next_step]
-        notes += [h.hooks_next_step for h in hook_hosts if f"{h.label} hooks" in fresh and h.hooks_next_step]
+        notes += [h.hooks_hint() for h in hook_hosts if f"{h.label} hooks" in fresh and h.hooks_hint()]
         if notes:
             print("\nOne more step in some agents:")
             for note in notes:
