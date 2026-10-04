@@ -354,7 +354,9 @@ class AgentDaemon:
                         bank_id=bank,
                         content_type="conversation",
                         occurred_at=datetime.fromisoformat(started) if started else None,
-                        metadata={"session_id": batch.get("session_id") or "", "source": batch.get("source") or ""},
+                        metadata={"session_id": batch.get("session_id") or "", "source": batch.get("source") or "",
+                                  # Files the turn read or edited, one per line (metadata is flat).
+                                  **({"files": "\n".join(turn["files"])} if turn.get("files") else {})},
                         tags=["captured"],
                         source=batch.get("source") or "agent",
                     )
