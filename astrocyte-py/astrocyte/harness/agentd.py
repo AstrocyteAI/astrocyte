@@ -14,8 +14,8 @@ directory; a request without that token gets no reply.
 
 Lifecycle: started on demand by the hooks, one instance per user (a lock file),
 exits after ``ASTROCYTE_AGENTD_IDLE`` seconds without a request (default
-1800) or as soon as its config file changes, so the next hook restarts it on
-the new config. Captures arrive through a durable on-disk spool, so a daemon
+1800) or as soon as its config file changes or the package is upgraded, so the
+next hook restarts it on the new config and code. Captures arrive through a durable on-disk spool, so a daemon
 that is down or restarting loses nothing.
 
 Relevance gating: recall's fused ``score`` is a ranking value, not a
@@ -213,12 +213,26 @@ def _cosine(a: list[float], b: list[float]) -> float:
 # ── daemon ───────────────────────────────────────────────────────────────
 
 
+def installed_version() -> str | None:
+    """The astrocyte version installed now, read from disk: an upgrade
+    replaces it under a running daemon, whose code stays the old one."""
+    import importlib
+    import importlib.metadata
+
+    importlib.invalidate_caches()
+    try:
+        return importlib.metadata.version("astrocyte")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
 class AgentDaemon:
     def __init__(self, cfg_path: Path) -> None:
         from .memories import open_local
 
         self.cfg_path = cfg_path
         self.cfg_mtime = cfg_path.stat().st_mtime
+        self.version = installed_version()
         # No recall-time query expansion (an LLM call of 5–9 s via a CLI
         # provider; a hook on the prompt path cannot afford it) and no
         # observation consolidation (an LLM call per captured turn in the
@@ -440,6 +454,9 @@ class AgentDaemon:
                 changed = True
             if changed:
                 logger.info("config changed; exiting so the next hook restarts on it")
+                self._stop.set()
+            elif (now := installed_version()) != self.version:
+                logger.info("astrocyte %s -> %s; exiting so the next hook restarts on it", self.version, now)
                 self._stop.set()
             elif time.monotonic() - self.last_activity > IDLE_EXIT_SECONDS:
                 logger.info("idle; exiting")
