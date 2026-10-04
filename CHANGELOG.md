@@ -14,6 +14,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - **The local memory store is private to its owner.** SQLite files were created with the umask — on most systems readable by every account on the machine — and they hold conversations. `astrocyte-sqlite` now creates the database 0600 (its -wal/-shm files follow) and the directory 0700; `astrocyte doctor` reports a store others can read and `--fix` (or re-running `setup`) tightens it. A database in a directory of your choosing keeps that directory's permissions. Exports are written 0600 too.
 
+### Fixed
+
+- **The MCP server advertised tools it had not registered.** Its instructions told every agent to use `memory_reflect` and `memory_forget`, but `memory_forget` is only registered with `mcp.expose_forget: true` (off by default, and off in configs written by `astrocyte setup`), so an agent asked to forget something went looking for a tool that does not exist. The instructions now list only the registered tools; without forget, they tell the agent to give the user the `memory_id` from `memory_recall` for `astrocyte memory forget <memory_id> --bank <bank_id>`, which erases it from disk.
+
 ## [0.16.0] — 2026-10-03 — local install for coding agents
 
 ### Fixed

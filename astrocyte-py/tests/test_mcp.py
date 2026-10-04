@@ -84,6 +84,26 @@ class TestToolRegistration:
 # ---------------------------------------------------------------------------
 
 
+class TestServerInstructions:
+    """The agent reads these to decide what it can do: advertising a tool the
+    server does not register sent agents looking for memory_forget."""
+
+    def test_only_registered_tools_are_advertised(self):
+        mcp, _, _ = _make_mcp(expose_reflect=False, expose_forget=False)
+        assert "memory_reflect" not in mcp.instructions
+        assert "memory_forget" not in mcp.instructions
+
+    def test_without_forget_the_user_is_pointed_at_the_cli(self):
+        mcp, _, _ = _make_mcp(expose_forget=False)
+        assert "cannot delete" in mcp.instructions
+        assert "astrocyte memory forget <memory_id>" in mcp.instructions
+
+    def test_with_forget_it_is_advertised(self):
+        mcp, _, _ = _make_mcp(expose_forget=True)
+        assert "memory_forget to remove memories" in mcp.instructions
+        assert "cannot delete" not in mcp.instructions
+
+
 class TestMemoryRetain:
     async def test_retain_basic(self):
         mcp, _, _ = _make_mcp()
