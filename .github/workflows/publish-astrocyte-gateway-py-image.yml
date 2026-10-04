@@ -6,11 +6,21 @@
 #
 # Invoked by `release.yml` after PyPI publishes (`publish.yml` → `publish-astrocyte-postgres.yml`).
 # Image uses `Dockerfile.release` (astrocyte + astrocyte-postgres from PyPI at this tag’s version).
+# Run by hand with `version` to rebuild a released version's image from the
+# branch you dispatch on (e.g. after an image-only fix), without re-tagging.
 name: Publish astrocyte-gateway-py image to GHCR
 
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to build (e.g. 0.17.0); empty = the dispatched tag"
+        required: false
+      tag_latest:
+        description: "Also move :latest to this image"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -58,7 +68,11 @@ jobs:
     steps:
       - name: Version from tag
         id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          V="${INPUT_VERSION:-${GITHUB_REF_NAME}}"
+          echo "version=${V#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v7
         with:
@@ -105,9 +119,12 @@ jobs:
 
       - name: Version from tag (for Docker build-args)
         id: meta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
+          V="${INPUT_VERSION:-${GITHUB_REF_NAME}}"
+          VERSION="${V#v}"
+          TAG="v${VERSION}"
           {
             echo "tag=${TAG}"
             echo "version=${VERSION}"
@@ -214,6 +231,10 @@ jobs:
           IMAGE: ghcr.io/${{ steps.meta.outputs.repository_lc }}/astrocyte-gateway-py
           TAG: ${{ steps.meta.outputs.tag }}
           DIGEST: ${{ steps.push.outputs.digest }}
+          # Unset (release.yml's call) means true.
+          TAG_LATEST: ${{ inputs.tag_latest }}
         run: |
-          docker buildx imagetools create -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+          LATEST=(-t "${IMAGE}:latest")
+          [ "${TAG_LATEST}" = "false" ] && LATEST=()
+          docker buildx imagetools create -t "${IMAGE}:${TAG}" "${LATEST[@]}" "${IMAGE}@${DIGEST}"
           docker buildx imagetools inspect "${IMAGE}:${TAG}"
