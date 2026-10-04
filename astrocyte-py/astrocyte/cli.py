@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -221,7 +222,21 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _utf8_stdio(windows: bool = os.name == "nt") -> None:
+    """Speak UTF-8 on Windows. Output piped there (an agent running the CLI,
+    CI, a redirect) is encoded with the ANSI code page, cp1252, which has no
+    ✓ or ─: every status line would raise UnicodeEncodeError. And hook
+    payloads arrive on stdin as UTF-8 JSON."""
+    if not windows:
+        return
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    _utf8_stdio()
     parser = _build_parser()
     args = parser.parse_args(argv)
     return int(args.func(args) or 0)

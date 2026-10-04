@@ -5,10 +5,14 @@ on:
   push:
     paths:
       - "adapters-storage-py/**"
+      # astrocyte-sqlite tests run against this checkout's astrocyte (editable).
+      - "astrocyte-py/**"
       - ".github/workflows/adapters-storage-ci.yml"
   pull_request:
     paths:
       - "adapters-storage-py/**"
+      - "astrocyte-py/**"
+      - ".github/workflows/adapters-storage-ci.yml"
   workflow_dispatch:
 
 permissions:
@@ -121,6 +125,38 @@ jobs:
       ASTROCYTE_PARITY_PG_DSN: postgresql://postgres:parity@localhost:5432/parity
       ASTROCYTE_PARITY_SEEDS: "20"
 
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: astrocyte-sqlite
+        working-directory: adapters-storage-py/astrocyte-sqlite
+        run: |
+          uv sync --extra dev
+          uv run pytest tests -v --override-ini="addopts="
+
+  sqlite-cross-platform:
+    # The local store runs on users' machines: macOS and Windows too. No
+    # Postgres service there (service containers are Linux-only), so the
+    # parity suite skips; it runs in the Linux job above.
+    name: sqlite (${{ matrix.os }})
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 

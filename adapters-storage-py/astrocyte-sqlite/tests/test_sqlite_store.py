@@ -12,6 +12,7 @@ import multiprocessing as mp
 import os
 import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from astrocyte.types import VectorFilters, VectorItem
@@ -50,7 +51,7 @@ def test_path_defaults_to_env_then_xdg(monkeypatch, tmp_path):
     monkeypatch.setenv("ASTROCYTE_SQLITE_PATH", str(tmp_path / "env.db"))
     assert SqliteStore().path == str(tmp_path / "env.db")
     monkeypatch.delenv("ASTROCYTE_SQLITE_PATH")
-    assert SqliteStore().path.endswith(".local/share/astrocyte/astrocyte.db")
+    assert Path(SqliteStore().path).parts[-4:] == (".local", "share", "astrocyte", "astrocyte.db")
 
 
 def test_memory_path_is_rejected_with_guidance():

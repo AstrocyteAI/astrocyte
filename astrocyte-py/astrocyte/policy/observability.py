@@ -190,8 +190,9 @@ def timed() -> Generator[dict[str, float], None, None]:
         print(f"Took {t['elapsed_ms']:.1f}ms")
     """
     result: dict[str, float] = {"elapsed_ms": 0.0}
-    start = time.monotonic()
+    # perf_counter: monotonic() ticks every ~15 ms on Windows.
+    start = time.perf_counter()
     try:
         yield result
     finally:
-        result["elapsed_ms"] = (time.monotonic() - start) * 1000
+        result["elapsed_ms"] = (time.perf_counter() - start) * 1000

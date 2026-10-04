@@ -39,17 +39,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS (where most coding agents run) for published versions (release
-        # tags, or a dispatch naming one); Linux always.
-        os: ${{ fromJSON((github.ref_type == 'tag' || inputs.pypi_version != '') && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        # Every platform users install on, on every change and release.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           version: "latest"
+
+      # The smoke script itself; the install under test brings its own Python.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
 
       - name: Resolve what to install
         id: target
@@ -78,7 +85,7 @@ jobs:
             ok=1
             for pkg in astrocyte astrocyte-sqlite; do
               curl -sf -H "Accept: application/vnd.pypi.simple.v1+json" "https://pypi.org/simple/$pkg/" \
-                | python3 -c 'import json, os, sys; sys.exit(os.environ["VERSION"] not in json.load(sys.stdin)["versions"])' \
+                | python -c 'import json, os, sys; sys.exit(os.environ["VERSION"] not in json.load(sys.stdin)["versions"])' \
                 || ok=0
             done
             [ "$ok" = 1 ] && exit 0
@@ -92,8 +99,8 @@ jobs:
         env:
           VERSION: ${{ steps.target.outputs.version }}
         # UV_REFRESH: uv's cache may hold a "not found" from moments ago.
-        run: UV_REFRESH=1 python3 astrocyte-py/scripts/smoke_local_install.py --pypi "$VERSION" --with-models
+        run: UV_REFRESH=1 python astrocyte-py/scripts/smoke_local_install.py --pypi "$VERSION" --with-models
 
       - name: Smoke test (wheels from this checkout)
         if: steps.target.outputs.version == ''
-        run: python3 astrocyte-py/scripts/smoke_local_install.py --build
+        run: python astrocyte-py/scripts/smoke_local_install.py --build

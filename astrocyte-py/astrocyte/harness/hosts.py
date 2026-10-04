@@ -67,7 +67,10 @@ class Outcome:
 
 
 def _home() -> Path:
-    return Path(os.environ.get("HOME") or Path.home())
+    # $HOME on POSIX; USERPROFILE on Windows (which ignores HOME, as do the
+    # agents there: their configs live under the profile even when Git Bash
+    # sets HOME elsewhere).
+    return Path.home()
 
 
 def _read_json(path: Path) -> dict[str, Any]:

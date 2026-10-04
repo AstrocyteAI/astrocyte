@@ -226,7 +226,7 @@ def _session_file(session_id: str, suffix: str = "") -> Path:
 
 def _write_state(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _session_start(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
@@ -267,7 +267,7 @@ def _prompt_from_transcript(payload: dict, cfg: Path, bank: str, session: str, d
     marker = _session_file(session, ".asked")
     try:
         first_sight = False
-        if json.loads(marker.read_text()).get("step") == step:
+        if json.loads(marker.read_text(encoding="utf-8")).get("step") == step:
             return  # a later model call in the same turn
     except (OSError, ValueError, AttributeError):
         first_sight = True
@@ -320,7 +320,7 @@ def _turns_from_transcript(payload: dict, session: str, *, antigravity: bool = F
         return [], _noop
     marker = _session_file(session)
     try:
-        offset = int(json.loads(marker.read_text())["offset"])
+        offset = int(json.loads(marker.read_text(encoding="utf-8"))["offset"])
         first_sight = False
     except (OSError, ValueError, KeyError, TypeError):
         offset, first_sight = 0, True
@@ -343,7 +343,7 @@ def _turn_from_payload(payload: dict, session: str) -> TurnSource:
         pending.unlink(missing_ok=True)
 
     try:
-        kept = json.loads(pending.read_text())
+        kept = json.loads(pending.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return [], _noop  # the prompt predates the hooks, or this turn was already taken
     answer = payload.get("last_assistant_message")
