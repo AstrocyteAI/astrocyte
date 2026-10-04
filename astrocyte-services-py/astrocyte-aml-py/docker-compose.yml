@@ -46,6 +46,11 @@ services:
       # Optional shared secret. When set, the service requires it on every
       # request via X-Api-Key or an Authorization: Bearer/Token header.
       ASTROCYTE_AML_API_KEY: ${ASTROCYTE_AML_API_KEY:-}
+      # Optional cap on concurrent OpenAI calls (0 = unbounded, the default).
+      # Set it below your account's rate limit if the evaluator's Add
+      # concurrency produces 429s: a bounded queue is cheaper than the SDK's
+      # retry backoff, and every exhausted retry is an Add the platform resends.
+      ASTROCYTE_OPENAI_MAX_CONCURRENCY: ${ASTROCYTE_OPENAI_MAX_CONCURRENCY:-0}
     ports:
       # Host port is overridable: 8080 is a busy default on developer machines,
       # and a collision silently routes probes to whatever else is listening.

@@ -24,6 +24,9 @@ Wait for the `adapter` container to report **healthy**, then evaluate against
 | `/add` | POST | `{request_id, session_id, user_id, messages[]}` |
 | `/search` | POST | `{query, user_id, top_k, options?}` |
 
+What is being run and why it should reproduce, the internal self-evaluation,
+and attribution are in [`../SUBMISSION.md`](../SUBMISSION.md).
+
 Set `ASTROCYTE_AML_API_KEY` to require a shared secret on every request
 (`X-Api-Key`, or `Authorization: Bearer|Token`). Leave it unset for open
 access. Set `AML_HOST_PORT` to publish on a different host port — 8080 is a
@@ -54,33 +57,45 @@ converts one batched extraction call into roughly one per chunk (~40 for a
 between \$230 and \$720 of gpt-4o-mini spend. Turn it on only if a measured
 accuracy gain justifies the cost.
 
+**`/add` is idempotent under retry.** The platform retries 408/429/500/524
+up to 32 times. A retry joins an in-flight attempt or replays a recorded
+success, so a batch is never ingested twice; a failure is never recorded, so
+its retry genuinely re-runs. The replay memory is process-local and bounded
+(`ASTROCYTE_AML_ADD_REPLAY_CAPACITY`, default 200,000 entries — a full suite
+fits). After a restart a retry simply re-runs, and pipeline dedup still applies.
+
+**`ASTROCYTE_OPENAI_MAX_CONCURRENCY` caps concurrent OpenAI calls** (0, the
+default, is unbounded). Set it below your account's rate limit if the
+evaluator's concurrency produces 429s.
+
 **Versions are pinned via `ASTROCYTE_VERSION`.** `astrocyte` and
 `astrocyte-postgres` derive their version from git, and the build context has
 no `.git`. Pinning is also better provenance — the version the image reports
 is a declared input rather than a side effect of how the repo was cloned, and
 it appears in OKF exports as `generated.by: astrocyte/<version>`.
 
-## Known limitation: index type
+## Index type: exact search, deliberately
 
-`bootstrap_schema: true` creates a working schema using pgvector's `vector`
-type. It does **not** create the pgvectorscale DiskANN indexes that this
-project standardised on, which are owned by migrations rather than by
-bootstrap. Retrieval is correct either way, but index-dependent latency will
-not match the benchmark configuration. For a run where that matters, use the
-migration path (`astrocyte-services-py` runbook + `config.runbook.example.yaml`)
-instead of `bootstrap_schema`.
+`bootstrap_schema: true` creates the schema with pgvector's `vector` type and
+**no approximate-nearest-neighbour index**, so similarity search is an exact
+cosine scan. The pgvectorscale DiskANN indexes are owned by migrations, not
+bootstrap. For this workload exact search is the better choice: banks are
+per-user and small, an exact scan is deterministic (which matters under the
+reproduction clause), and its recall is at least an ANN index's. Every
+internal self-evaluation of this configuration used the same exact scan, so
+the measured and submitted setups match.
 
 ## Verified
 
-Built and run end to end on 2026-09-07:
+Rebuilt and run end to end on 2026-10-04 from a clean checkout:
 
-- image builds from a clean context; stack comes up; adapter reports healthy
-- `/add` and `/search` execute the full retain/recall path and fail **only**
-  on API-key authentication when given a dummy key — i.e. everything up to
-  OpenAI is wired
-- Postgres verified independently of OpenAI: schema bootstraps (4 tables),
-  the `vector` extension is present, and `astrocyte_vectors.embedding` is
-  `vector(1536)`, matching the configured embedding model
+- image builds from a clean context; both containers report healthy; the image
+  reports `astrocyte 0.17.0`
+- `/add` executes the full retain path and fails **only** on OpenAI
+  authentication under a dummy key; a repeat of the failed request re-runs
+  rather than replaying the failure
+- Postgres verified independently of OpenAI: bootstrap creates 4 tables, the
+  `vector` extension, and `astrocyte_vectors.embedding vector(1536)`, with
+  B-tree and full-text indexes and no ANN index
 
-Not yet verified: a full run against a funded key, which is what the
-calibration run in the roadmap (§4d) is for.
+Not yet verified: a full run against a funded key.
