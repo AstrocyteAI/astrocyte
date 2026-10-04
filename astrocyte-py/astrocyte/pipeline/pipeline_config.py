@@ -17,11 +17,11 @@ of those flags from config now has a single, testable owner.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from astrocyte.config import AstrocyteConfig, ExtractionProfileConfig, RecallAuthorityConfig
+    from astrocyte.config import AstrocyteConfig, DedupConfig, ExtractionProfileConfig, RecallAuthorityConfig
     from astrocyte.pipeline.agentic_reflect import AgenticReflectParams
     from astrocyte.pipeline.cross_encoder_rerank import CrossEncoderProtocol
     from astrocyte.pipeline.link_expansion import LinkExpansionParams
@@ -113,6 +113,19 @@ class PipelineConfig:
     # Mental-model service — wires agentic reflect to the configured store.
     mental_model_service: object | None
 
+    # Retain-time dedup (``signal_quality.dedup``). A matched MIP rule's
+    # ``dedup.threshold`` / ``dedup.action`` override these per retain.
+    # Defaulted and last so the dataclass stays positionally compatible.
+    dedup_enabled: bool = True
+    dedup_similarity_threshold: float = 0.95
+    #: In the pipeline's vocabulary (``DedupConfig.pipeline_action``).
+    dedup_action: str = "skip_chunk"
+    # Retain-time dedup against the store, not only this process's cache.
+    dedup_consult_store: bool = True
+    # Banks with their own ``banks.<id>.signal_quality`` block: the resolved
+    # dedup settings (already merged over the top-level block) for that bank.
+    dedup_by_bank: dict[str, DedupConfig] = field(default_factory=dict)
+
     @classmethod
     def from_config(
         cls,
@@ -182,6 +195,7 @@ class PipelineConfig:
         coocc_cfg = config.entity_cooccurrence
         qa_cfg = config.query_analyzer
         sar_cfg = config.source_aware_retrieval
+        dedup_cfg = config.signal_quality.dedup
 
         return cls(
             extraction_profiles=merged_extraction_profiles(config),
@@ -191,6 +205,15 @@ class PipelineConfig:
             causal_links_enabled=cl_cfg.enabled,
             causal_max_pairs_per_memory=cl_cfg.max_pairs_per_memory,
             causal_min_confidence=cl_cfg.min_confidence,
+            dedup_enabled=dedup_cfg.enabled,
+            dedup_similarity_threshold=dedup_cfg.similarity_threshold,
+            dedup_action=dedup_cfg.pipeline_action,
+            dedup_consult_store=dedup_cfg.consult_store,
+            dedup_by_bank={
+                bank_id: bank.signal_quality.dedup
+                for bank_id, bank in (config.banks or {}).items()
+                if bank.signal_quality is not None
+            },
             semantic_link_graph_enabled=slg_cfg.enabled,
             semantic_link_graph_top_k=slg_cfg.top_k,
             semantic_link_graph_threshold=slg_cfg.similarity_threshold,
@@ -205,9 +228,7 @@ class PipelineConfig:
             entity_cooccurrence_max_entities=coocc_cfg.max_entities_per_memory,
             query_analyzer_enabled=qa_cfg.enabled,
             query_analyzer_allow_llm_fallback=qa_cfg.allow_llm_fallback,
-            query_analyzer_enable_temporal_expansion=_temporal_expansion_flag(
-                qa_cfg.enable_temporal_expansion
-            ),
+            query_analyzer_enable_temporal_expansion=_temporal_expansion_flag(qa_cfg.enable_temporal_expansion),
             link_expansion_params=link_expansion_params,
             bm25_idf_enabled=config.bm25_idf.enabled,
             source_store=source_store,

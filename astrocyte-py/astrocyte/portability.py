@@ -61,7 +61,7 @@ def _portability_roots() -> list[Path]:
     return [Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p]
 
 
-def _safe_resolve(
+def _resolve_contained(
     path: str | Path,
     *,
     allowed_roots: list[str | Path] | None = None,
@@ -109,6 +109,25 @@ def _safe_resolve(
         if resolved == root or resolved.is_relative_to(root):
             return resolved
     raise ValueError(f"Portability path escapes allowed roots: {resolved!s} not in {[str(r) for r in roots]}")
+
+
+def _safe_resolve(
+    path: str | Path,
+    *,
+    allowed_roots: list[str | Path] | None = None,
+    allow_uncontained: bool = False,
+) -> Path:
+    """:func:`_resolve_contained`, with every rejection as a ``ValueError``.
+
+    ``Path.expanduser()`` raises ``RuntimeError`` for a home directory it
+    cannot find (``~nosuchuser``), and ``resolve()`` can for a symlink loop.
+    Callers — the gateway maps ``ValueError`` to 422 — must see a rejected
+    path, not an unhandled error.
+    """
+    try:
+        return _resolve_contained(path, allowed_roots=allowed_roots, allow_uncontained=allow_uncontained)
+    except RuntimeError as exc:
+        raise ValueError(f"Portability path cannot be resolved: {os.fspath(path)!r} ({exc})") from exc
 
 
 # ---------------------------------------------------------------------------

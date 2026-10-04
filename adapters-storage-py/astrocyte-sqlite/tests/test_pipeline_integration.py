@@ -44,6 +44,20 @@ async def test_memories_persist_across_brains(tmp_path):
     assert any("Go" in h.text for h in hits)
 
 
+async def test_a_restarted_brain_does_not_store_a_duplicate(tmp_path):
+    """Dedup used to see only one process's retains, so a restarted daemon or a
+    new CLI run stored the same memory again."""
+    db = tmp_path / "m.db"
+    cfg = write_config(tmp_path, str(db))
+    first = build_astrocyte(load_config(cfg))
+    assert (await first.retain("The billing service is written in Go.", bank_id="proj")).stored
+
+    second = build_astrocyte(load_config(cfg))  # a fresh process, in effect
+    again = await second.retain("The billing service is written in Go.", bank_id="proj")
+    assert again.deduplicated and not again.stored
+    assert len(await second._pipeline.vector_store.list_vectors("proj")) == 1  # noqa: SLF001
+
+
 async def test_banks_are_isolated(tmp_path):
     brain = build_astrocyte(load_config(write_config(tmp_path, str(tmp_path / "m.db"))))
     await brain.retain("Project Alpha uses Kafka.", bank_id="alpha")
