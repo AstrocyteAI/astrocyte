@@ -2124,14 +2124,30 @@ class Astrocyte:
         export refuses to run — set ``ASTROCYTE_PORTABILITY_ROOTS``,
         pass ``allowed_roots=[<dir>]``, or set ``allow_uncontained=True``.
 
+        Memories are enumerated with the pipeline vector store's paged
+        ``list_vectors`` whenever retain writes there (a pipeline and no
+        engine provider), so every live memory is exported. Engine
+        providers expose no listing API; for them the export falls back
+        to one capped ``query="*"`` recall, which is incomplete for banks
+        larger than one batch (a warning is logged).
+
         Returns the number of memories exported.
         """
         from astrocyte.portability import export_bank as _export
 
         self._policy.check_access(bank_id, "admin", context)
 
+        # Retain only lands in the pipeline's vector store when no engine
+        # provider is set (see ProviderDispatcher.retain).
+        list_fn = None
+        if self._dispatcher.engine_provider is None and self._pipeline is not None:
+            store = self._pipeline.vector_store
+            if store is not None and hasattr(store, "list_vectors"):
+                list_fn = store.list_vectors
+
         count = await _export(
             recall_fn=self._dispatcher.recall,
+            list_fn=list_fn,
             bank_id=bank_id,
             path=path,
             provider_name=self._provider_name,

@@ -15,9 +15,9 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Awaitable, Callable, Literal
 
-from astrocyte.types import MemoryHit, Metadata, RecallRequest, RecallResult, RetainRequest
+from astrocyte.types import Metadata, RecallRequest, RecallResult, RetainRequest, VectorItem
 
 logger = logging.getLogger("astrocyte.portability")
 
@@ -171,7 +171,7 @@ class AmaMemory:
 
 
 async def export_bank(
-    recall_fn,
+    recall_fn: Callable[[RecallRequest], Awaitable[RecallResult]] | None,
     bank_id: str,
     path: str | Path,
     provider_name: str = "unknown",
@@ -179,20 +179,36 @@ async def export_bank(
     include_entities: bool = True,
     batch_size: int = 100,
     *,
+    list_fn: Callable[[str, int, int], Awaitable[list[VectorItem]]] | None = None,
     allowed_roots: list[str | Path] | None = None,
     allow_uncontained: bool = False,
 ) -> int:
     """Export a memory bank to AMA JSONL format.
 
+    Memories are enumerated in one of two ways:
+
+    * ``list_fn`` (preferred) — a vector store's ``list_vectors(bank_id,
+      offset, limit)``. Paged by offset over the store's stable order, so
+      every live memory in the bank is exported.
+    * ``recall_fn`` (fallback) — a single relevance-ranked
+      ``query="*"`` recall capped at ``batch_size`` hits. ``RecallRequest``
+      has no offset, so this cannot page: a bank larger than
+      ``batch_size`` is exported **incompletely**. It exists only for
+      engine providers that expose no listing API; a warning is logged
+      when the result may be truncated.
+
     Args:
-        recall_fn: Async callable that takes a RecallRequest and returns RecallResult.
-                   Typically ``brain._do_recall``.
+        recall_fn: Async callable that takes a RecallRequest and returns
+            RecallResult. Used only when ``list_fn`` is ``None``.
         bank_id: Bank to export.
         path: Output file path.
         provider_name: Provider identifier for the header.
         include_embeddings: Include vector embeddings (not portable across models).
         include_entities: Include extracted entities.
-        batch_size: Number of memories per recall batch.
+        batch_size: Page size for ``list_fn``; hit cap for ``recall_fn``.
+        list_fn: Async ``(bank_id, offset, limit) -> list[VectorItem]``,
+            typically ``vector_store.list_vectors``. Must return a stable
+            order (see ``VectorStore.list_vectors``).
         allowed_roots: Optional list of directory roots; the resolved
             ``path`` must fall under one of them.  When ``None``, falls
             back to ``ASTROCYTE_PORTABILITY_ROOTS`` env var.
@@ -204,39 +220,17 @@ async def export_bank(
     Returns:
         Number of memories exported.
     """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    if list_fn is None and recall_fn is None:
+        raise ValueError("export_bank requires list_fn or recall_fn")
     path = _safe_resolve(path, allowed_roots=allowed_roots, allow_uncontained=allow_uncontained)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Collect all memories via recall with large limit
-    all_hits: list[MemoryHit] = []
-    offset = 0
-    while True:
-        result: RecallResult = await recall_fn(
-            RecallRequest(
-                query="*",  # Wildcard — retrieve everything
-                bank_id=bank_id,
-                max_results=batch_size,
-            )
-        )
-        if not result.hits:
-            break
-        all_hits.extend(result.hits)
-        # If we got fewer than batch_size, we've exhausted the bank
-        if len(result.hits) < batch_size:
-            break
-        offset += batch_size
-        # Safety: prevent infinite loops for providers that always return results
-        if offset > 100000:
-            break
-
-    # Deduplicate by memory_id
-    seen: set[str] = set()
-    unique_hits: list[MemoryHit] = []
-    for hit in all_hits:
-        key = hit.memory_id or hit.text
-        if key not in seen:
-            seen.add(key)
-            unique_hits.append(hit)
+    if list_fn is not None:
+        records = await _records_from_listing(list_fn, bank_id, batch_size)
+    else:
+        records = await _records_from_recall(recall_fn, bank_id, batch_size)
 
     # Write AMA file
     now = datetime.now(timezone.utc).isoformat()
@@ -245,33 +239,133 @@ async def export_bank(
         "bank_id": bank_id,
         "exported_at": now,
         "provider": provider_name,
-        "memory_count": len(unique_hits),
+        "memory_count": len(records),
     }
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(json.dumps(header, default=str) + "\n")
-        for hit in unique_hits:
-            record: dict = {
-                "id": hit.memory_id or "",
-                "text": hit.text,
-            }
-            if hit.fact_type:
-                record["fact_type"] = hit.fact_type
-            if hit.tags:
-                record["tags"] = hit.tags
-            if hit.metadata:
-                record["metadata"] = hit.metadata
-            if hit.occurred_at:
-                record["occurred_at"] = hit.occurred_at.isoformat()
-            if hit.source:
-                record["source"] = hit.source
-            if hit.bank_id:
-                record["bank_id"] = hit.bank_id
-            # Embeddings and entities would come from provider-specific data
-            # For Phase 1, we export what's available in MemoryHit
+        for record in records:
             f.write(json.dumps(record, default=str) + "\n")
 
-    return len(unique_hits)
+    return len(records)
+
+
+async def _records_from_listing(
+    list_fn: Callable[[str, int, int], Awaitable[list[VectorItem]]],
+    bank_id: str,
+    batch_size: int,
+) -> list[dict]:
+    """Page through ``list_fn`` until it is exhausted."""
+    records: list[dict] = []
+    seen: set[str] = set()
+    offset = 0
+    while True:
+        page = await list_fn(bank_id, offset, batch_size)
+        if not page:
+            break
+        new = [item for item in page if item.id not in seen]
+        if not new:
+            # A store that ignores ``offset`` would otherwise loop forever.
+            raise RuntimeError(
+                f"export_bank: list_vectors returned no new memories at offset {offset} "
+                f"for bank {bank_id!r}; the store's pagination is not stable"
+            )
+        for item in new:
+            seen.add(item.id)
+            records.append(
+                _ama_record(
+                    memory_id=item.id,
+                    text=item.text,
+                    fact_type=item.fact_type,
+                    tags=item.tags,
+                    metadata=item.metadata,
+                    occurred_at=item.occurred_at,
+                    source=None,
+                    bank_id=item.bank_id,
+                )
+            )
+        offset += len(page)
+        if len(page) < batch_size:
+            break
+    return records
+
+
+async def _records_from_recall(
+    recall_fn: Callable[[RecallRequest], Awaitable[RecallResult]],
+    bank_id: str,
+    batch_size: int,
+) -> list[dict]:
+    """Best-effort enumeration for providers with no listing API.
+
+    One ``query="*"`` recall, capped at ``batch_size``. Results are
+    relevance-ranked and cannot be paged, so a full page means the
+    bank may hold more than was exported.
+    """
+    result: RecallResult = await recall_fn(
+        RecallRequest(
+            query="*",
+            bank_id=bank_id,
+            max_results=batch_size,
+        )
+    )
+    if len(result.hits) >= batch_size:
+        logger.warning(
+            "export_bank: provider has no listing API; recall returned a full page of %d "
+            "for bank %r, so the export may be incomplete",
+            batch_size,
+            bank_id,
+        )
+
+    records: list[dict] = []
+    seen: set[str] = set()
+    for hit in result.hits:
+        key = hit.memory_id or hit.text
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(
+            _ama_record(
+                memory_id=hit.memory_id or "",
+                text=hit.text,
+                fact_type=hit.fact_type,
+                tags=hit.tags,
+                metadata=hit.metadata,
+                occurred_at=hit.occurred_at,
+                source=hit.source,
+                bank_id=hit.bank_id,
+            )
+        )
+    return records
+
+
+def _ama_record(
+    *,
+    memory_id: str,
+    text: str,
+    fact_type: str | None,
+    tags: list[str] | None,
+    metadata: Metadata | None,
+    occurred_at: datetime | None,
+    source: str | None,
+    bank_id: str | None,
+) -> dict:
+    """Build one AMA memory line. Optional fields are omitted when empty."""
+    record: dict = {"id": memory_id, "text": text}
+    if fact_type:
+        record["fact_type"] = fact_type
+    if tags:
+        record["tags"] = tags
+    if metadata:
+        record["metadata"] = metadata
+    if occurred_at:
+        record["occurred_at"] = occurred_at.isoformat()
+    if source:
+        record["source"] = source
+    if bank_id:
+        record["bank_id"] = bank_id
+    # Embeddings and entities would come from provider-specific data;
+    # Phase 1 exports only the fields above.
+    return record
 
 
 # ---------------------------------------------------------------------------

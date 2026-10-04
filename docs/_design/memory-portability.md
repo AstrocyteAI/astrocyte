@@ -108,6 +108,11 @@ await brain.export_bank(
 )
 ```
 
+How the bank is enumerated depends on where retain writes:
+
+- **Storage pipeline** (a pipeline and no engine provider, e.g. PostgreSQL or in-memory vector store): export pages the vector store's `list_vectors(bank_id, offset, limit)` in its stable order, so every live (not forgotten) memory is exported and the header's `memory_count` is the bank's full size.
+- **Engine provider** (Mem0, Mystique, …): there is no listing SPI, so export falls back to a single relevance-ranked `query="*"` recall capped at one batch (100). Banks larger than that are exported **incompletely**; a warning is logged when the recall returns a full page. See §6.
+
 ### 3.2 Import
 
 ```python
@@ -180,6 +185,7 @@ On import, embeddings are always regenerated via the target provider's LLM — t
 
 - **Provider-specific features are lost.** Mystique's internal entity links, spreading activation weights, and observation hierarchies are not captured in the AMA format. After import, the new provider rebuilds these from the raw memories.
 - **Consolidation state resets.** Observations are preserved as memories, but the relationships between observations and source facts are not. The new provider will re-consolidate over time.
+- **Engine-provider export is capped.** Engine providers expose only recall, which is relevance-ranked and has no offset, so `export_bank` on an engine-backed brain returns at most one batch (100 memories). Pipeline-backed brains page `list_vectors` and are not affected.
 - **Import is not instant.** Re-embedding and re-extracting entities can take significant time for large banks. Provide progress callbacks.
 
 ---
