@@ -35,7 +35,8 @@ class _FakeProc:
         self.killed = False
 
     async def communicate(self, data: bytes | None = None) -> tuple[bytes, bytes]:
-        self.stdin_seen = data
+        if data is not None:
+            self.stdin_seen = data
         if self._hang:
             await asyncio.sleep(3600)
         return self._stdout, self._stderr
@@ -55,6 +56,9 @@ def spawn(monkeypatch):
     def _install(proc_factory):
         async def _fake_exec(*argv, **kwargs):
             proc = proc_factory(len(calls))
+            stdin = kwargs.get("stdin")
+            if hasattr(stdin, "read"):  # the prompt is handed over as a file
+                proc.stdin_seen = stdin.read()
             calls.append({"argv": argv, "env": kwargs.get("env", {}),
                           "cwd": kwargs.get("cwd"), "proc": proc})
             return proc

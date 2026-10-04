@@ -380,30 +380,42 @@ class ClaudeCliProvider:
             # letting the pipeline grind on with failing ingest.
             await self._breaker.await_closed()
             try:
+                # The prompt goes in through a file, not a pipe written after
+                # spawn: `claude -p` waits only 3 s for stdin and then fails
+                # with "no stdin data received". Any event-loop stall between
+                # spawn and the write (a CPU-bound embedding, a GC pause) lost
+                # that race about once per benchmark chunk, and each failure
+                # fed the rate-limit breaker. A file has the whole prompt
+                # readable at exec. TemporaryFile is unlinked on POSIX, so the
+                # prompt (user memory) never sits on disk under a name.
                 async with self._sem:
-                    proc = await asyncio.create_subprocess_exec(
-                        self._bin,
-                        "-p",
-                        "--model", self._model,
-                        "--output-format", "text",
-                        "--max-turns", "1",
-                        *HERMETIC_ARGS,
-                        *_BUILTIN_TOOLS_OFF,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        cwd=self._cwd,
-                        env=env,
-                    )
-                    try:
-                        stdout, stderr = await asyncio.wait_for(
-                            proc.communicate(prompt.encode("utf-8")),
-                            timeout=self._timeout,
+                    with tempfile.TemporaryFile() as prompt_file:
+                        prompt_file.write(prompt.encode("utf-8"))
+                        prompt_file.flush()
+                        prompt_file.seek(0)
+                        proc = await asyncio.create_subprocess_exec(
+                            self._bin,
+                            "-p",
+                            "--model", self._model,
+                            "--output-format", "text",
+                            "--max-turns", "1",
+                            *HERMETIC_ARGS,
+                            *_BUILTIN_TOOLS_OFF,
+                            stdin=prompt_file,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            cwd=self._cwd,
+                            env=env,
                         )
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                        await proc.wait()
-                        raise
+                        try:
+                            stdout, stderr = await asyncio.wait_for(
+                                proc.communicate(),
+                                timeout=self._timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            proc.kill()
+                            await proc.wait()
+                            raise
                 if proc.returncode == 0:
                     text = stdout.decode("utf-8", "replace").strip()
                     if response_format is not None:
