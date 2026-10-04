@@ -820,11 +820,11 @@ def test_setup_outside_a_project_suggests_nothing(wired_home, capsys, monkeypatc
 def _local_embeddings_config(home, monkeypatch):
     """The wired_home config, as if it named local_embeddings (without
     needing the model installed in the test environment)."""
-    import astrocyte.config as config_mod
+    from astrocyte.config import load_config
 
-    loaded = config_mod.load_config(str(home / ".config" / "astrocyte" / "astrocyte.yaml"))
+    loaded = load_config(str(home / ".config" / "astrocyte" / "astrocyte.yaml"))
     loaded.embedding_provider = "local_embeddings"
-    monkeypatch.setattr(config_mod, "load_config", lambda path: loaded)
+    monkeypatch.setattr("astrocyte.config.load_config", lambda path: loaded)
 
 
 def test_setup_loads_the_local_embedding_model_up_front(wired_home, capsys, monkeypatch):
