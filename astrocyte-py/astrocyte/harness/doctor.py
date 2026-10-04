@@ -202,7 +202,9 @@ def _check_hooks(host, choices: Choices | None = None) -> Check:
         prefix = hook_prefix(found.command) if found else None
     except HookPathError as e:
         return Check(label, "fail", str(e))
-    stale = [event for event, cmd in commands.items() if cmd and prefix and not cmd.startswith(prefix + " ")]
+    file_cmd = host.file_recall_command() if isinstance(host, HookHost) else None
+    stale = [event for event, cmd in {**commands, "file recall": file_cmd}.items()
+             if cmd and prefix and not cmd.startswith(prefix + " ")]
     if missing or stale:
         detail = ", ".join([f"{e} missing" for e in missing] + [f"{e} points at another install" for e in stale])
         return Check(label, "fail", detail, fix="astrocyte doctor --fix", fixable=prefix is not None)
@@ -212,7 +214,8 @@ def _check_hooks(host, choices: Choices | None = None) -> Check:
     broken = [f"{name}: {why}" for name, shell in _probe_shells() if (why := _probe(command, shell))]
     if broken:
         return Check(label, "fail", "hook command does not run under " + "; ".join(broken))
-    return Check(label, "ok", f"automatic memory on ({host.hooks_file()})")
+    extra = ", with file recall" if file_cmd else ""
+    return Check(label, "ok", f"automatic memory on{extra} ({host.hooks_file()})")
 
 
 def _check_daemon() -> Check:

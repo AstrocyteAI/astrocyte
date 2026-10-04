@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **File recall in Claude Code (opt-in).** `astrocyte setup --claude --file-recall` adds a `PostToolUse` hook on `Read|Edit|Write|NotebookEdit`: after the agent reads or edits a file, up to three earlier captured turns that touched it (from their recorded `files`) are added next to the tool result, newest first. Each file is answered once per session, turns already in context are skipped, and a compaction resets both. Off by default because it runs a hook process on every file read; remembered like the other setup choices (`--no-file-recall` turns it off); `astrocyte doctor` says when it is on. The first working piece of recall anchored to the file the agent opens; the per-prompt hook stays the default.
+
 ## [0.19.0] — 2026-10-04 — automatic memory on native Windows; gateway tokens and team-sync endpoints; provenance kept
 
 Tagged at `f89997b`. This section was committed after the tag, so the released source still lists these entries under Unreleased.

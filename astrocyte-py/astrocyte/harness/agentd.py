@@ -64,6 +64,10 @@ BOOT_MAX_CHARS = 3_000
 ITEM_MAX_CHARS = 360
 # Where you left off: the closing turns of the project's previous session.
 # The last answer gets the most room: that is where conclusions and next steps are.
+# Opt-in file recall: earlier turns that touched the file the agent just
+# read or edited (their `files` metadata, recorded at capture).
+FILE_MAX_TURNS = 3
+FILE_SCAN = 400
 RESUME_MAX_TURNS = 3
 RESUME_LAST_MAX_CHARS = 700
 RESUME_SCAN = 60
@@ -222,6 +226,7 @@ class AgentDaemon:
         # queued 32 of them).
         self.pipeline, self.brain = open_local(cfg_path)
         self.injected: dict[str, set[str]] = {}
+        self.files_offered: dict[str, set[str]] = {}  # session → paths already answered
         self.token: str | None = None  # set when serving over TCP
         self.last_activity = time.monotonic()
         self._drain_lock = asyncio.Lock()
@@ -262,6 +267,7 @@ class AgentDaemon:
         bank, session = req["bank"], req.get("session_id") or ""
         if req.get("source") in ("clear", "compact"):
             self.injected.pop(session, None)  # earlier injections left the context
+            self.files_offered.pop(session, None)
         seen = self.injected.setdefault(session, set())
         sections: list[str] = []
         used = 0
@@ -322,6 +328,31 @@ class AgentDaemon:
             return {"context": "", "best_similarity": round(best, 3)}
         text = "Possibly relevant memories from earlier sessions (Astrocyte):\n" + "\n".join(lines)
         return {"context": text, "best_similarity": round(best, 3)}
+
+    async def op_file(self, req: dict) -> dict:
+        """Earlier captured turns that read or edited ``path``, newest first;
+        each file once per session, and nothing already in context."""
+        from astrocyte.types import VectorFilters
+
+        bank, session, path = req["bank"], req.get("session_id") or "", req["path"]
+        offered = self.files_offered.setdefault(session, set())
+        recent = getattr(self.pipeline.vector_store, "list_recent_vectors", None)
+        if path in offered or recent is None:
+            return {"context": ""}
+        offered.add(path)
+        seen = self.injected.setdefault(session, set())
+        groups = []
+        for group in _groups(await recent(bank, limit=FILE_SCAN, filters=VectorFilters(tags=["captured"]))):
+            touched = {f for item in group for f in str((item.metadata or {}).get("files") or "").splitlines()}
+            if path in touched and not any(item.id in seen for item in group):
+                groups.append(group)
+                if len(groups) == FILE_MAX_TURNS:
+                    break
+        body = _budget([render_group(g, g[0].occurred_at or g[0].retained_at) for g in groups], PROMPT_MAX_CHARS)
+        if not body:
+            return {"context": ""}
+        seen.update(item.id for g in groups[: len(body)] for item in g)
+        return {"context": f"Earlier sessions that touched {path} (Astrocyte):\n" + "\n".join(body)}
 
     async def op_capture(self, _: dict) -> dict:
         asyncio.get_running_loop().create_task(self.drain())

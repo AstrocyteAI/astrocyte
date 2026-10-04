@@ -443,7 +443,26 @@ def _stop(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -
         agentd.spawn(cfg)
 
 
-_HANDLERS = {"session-start": _session_start, "prompt": _prompt, "stop": _stop}
+def _file(payload: dict, cfg: Path, bank: str, session: str, dialect: Dialect) -> None:
+    """After a file tool (opt-in): memories of earlier turns that touched this
+    file, added next to the tool's result. Claude Code only for now."""
+    if dialect.source != "claude-code" or not agentd.supported():
+        return
+    tool_input = payload.get("tool_input") or {}
+    raw = tool_input.get("file_path") or tool_input.get("notebook_path") if isinstance(tool_input, dict) else None
+    if not isinstance(raw, str) or not raw:
+        return
+    [path] = _shown_paths([raw], _project_root_of(payload)) or [None]
+    if not path:
+        return
+    reply = agentd.request("file", {"bank": bank, "session_id": session, "path": path}, timeout=PROMPT_DEADLINE)
+    if reply is None:
+        agentd.spawn(cfg)  # warm for the next file; never make this one wait
+        return
+    dialect.emit("PostToolUse", reply.get("context", ""))
+
+
+_HANDLERS = {"session-start": _session_start, "prompt": _prompt, "stop": _stop, "file": _file}
 
 
 PONG = {"astrocyte": "pong"}
