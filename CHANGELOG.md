@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **The agent daemon runs on Windows** (Windows plan W1). Where there are no Unix domain sockets it serves on 127.0.0.1 at a port the OS picks and publishes the port with a random token in `agentd.json` in the state directory; a request without the token gets no reply (any local account can reach a loopback port, so the token is the authentication). `ASTROCYTE_AGENTD_TRANSPORT=tcp` forces this transport anywhere, and the daemon tests run over both transports on every OS. The single-instance lock uses `msvcrt` on Windows, and the daemon starts detached (no console window, out of the agent's job where allowed). Automatic memory is still off on native Windows: hook commands are POSIX-quoted and headless detection uses `ps` (plans W2, W3); WSL remains the way to get it there today.
+
+### Changed
+
+- **The daemon's own stdout/stderr go to `agentd.stdio.log`**, not `agentd.log`, which the daemon rotates (Windows can't rename a file another handle holds open).
+
 ## [0.18.0] — 2026-10-04 — where you left off; Windows fixes; tested on Linux, macOS and Windows
 
 ### Added

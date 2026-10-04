@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from platform_compat import needs_unix_socket, posix_shell, set_home, system_env, system_path
+from platform_compat import WINDOWS, posix_shell, set_home, system_env, system_path
 
 from astrocyte.harness import agentd, hooks
 from astrocyte.harness.hosts import ClaudeCodeHost, CodexHost, HostConfigError
@@ -362,21 +362,42 @@ class TestSpool:
         assert (env.state / "spool" / "failed" / "1-1.json").exists()
 
 
-@needs_unix_socket
+@pytest.fixture(params=["native", "tcp"])
+def transport(request, monkeypatch):
+    """Each daemon test over the platform's transport and over TCP, so the
+    Windows transport runs on every OS."""
+    if request.param == "tcp":
+        monkeypatch.setenv(agentd.TRANSPORT_ENV, "tcp")
+    else:
+        monkeypatch.delenv(agentd.TRANSPORT_ENV, raising=False)
+    return agentd.transport()
+
+
+def _serving(d: agentd.AgentDaemon):
+    """Run ``d`` in a thread until it answers; returns a stop function."""
+    sock = agentd.agentd_socket()
+    sock.parent.mkdir(parents=True, exist_ok=True)
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=lambda: loop.run_until_complete(d.serve(sock)), daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 15
+    while agentd.request("ping", timeout=0.3) is None:
+        assert time.monotonic() < deadline, "daemon did not come up"
+        time.sleep(0.1)
+
+    def stop() -> None:
+        loop.call_soon_threadsafe(d._stop.set)
+        thread.join(timeout=10)
+
+    return stop
+
+
 class TestDaemonOverSocket:
-    def test_ping_capture_recall_round_trip(self, env, monkeypatch):
+    def test_ping_capture_recall_round_trip(self, env, monkeypatch, transport):
         monkeypatch.setattr(agentd, "DRAIN_INTERVAL_SECONDS", 0.2)
         d = agentd.AgentDaemon(env.cfg)
-        sock = agentd.agentd_socket()
-        sock.parent.mkdir(parents=True, exist_ok=True)
-        loop = asyncio.new_event_loop()
-        thread = threading.Thread(target=lambda: loop.run_until_complete(d.serve(sock)), daemon=True)
-        thread.start()
+        stop = _serving(d)
         try:
-            deadline = time.monotonic() + 15
-            while agentd.request("ping", timeout=0.3) is None:
-                assert time.monotonic() < deadline, "daemon did not come up"
-                time.sleep(0.1)
             agentd.spool_capture("proj", "s1", "claude-code", [{"content": "We freeze deploys on Fridays.", "started_at": None}])
             assert agentd.request("capture", timeout=2) == {"ok": True}
             deadline = time.monotonic() + 10
@@ -387,12 +408,83 @@ class TestDaemonOverSocket:
             assert "bank `proj`" in reply["context"]
             assert agentd.request("bogus", timeout=2)["error"].startswith("unknown op")
         finally:
-            loop.call_soon_threadsafe(d._stop.set)
-            thread.join(timeout=10)
-        assert not sock.exists(), "socket is removed on exit"
+            stop()
+        endpoint = agentd.agentd_socket() if transport == "unix" else agentd.agentd_endpoint()
+        assert not endpoint.exists(), "socket / endpoint file is removed on exit"
 
-    def test_unreachable_daemon_is_none_not_an_exception(self, env):
+    def test_unreachable_daemon_is_none_not_an_exception(self, env, transport):
         assert agentd.request("ping", timeout=0.2) is None
+
+
+class TestTcpTransport:
+    """The loopback transport (Windows; forced elsewhere). The token is the
+    authentication: any local account can reach a loopback port."""
+
+    @pytest.fixture(autouse=True)
+    def _tcp(self, monkeypatch):
+        monkeypatch.setenv(agentd.TRANSPORT_ENV, "tcp")
+
+    def test_publishes_a_private_endpoint_on_loopback(self, env):
+        d = agentd.AgentDaemon(env.cfg)
+        stop = _serving(d)
+        try:
+            endpoint = json.loads(agentd.agentd_endpoint().read_text())
+            assert endpoint["transport"] == "tcp" and endpoint["pid"] == os.getpid()
+            assert endpoint["token"] == d.token and len(d.token) >= 40
+            if not WINDOWS:
+                assert oct(agentd.agentd_endpoint().stat().st_mode & 0o777) == "0o600"
+        finally:
+            stop()
+
+    @pytest.mark.parametrize("token", [None, "wrong", ""])
+    def test_a_request_without_the_token_gets_no_answer(self, env, token):
+        import socket
+
+        d = agentd.AgentDaemon(env.cfg)
+        stop = _serving(d)
+        try:
+            port = json.loads(agentd.agentd_endpoint().read_text())["port"]
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+                msg = {"op": "ping"} if token is None else {"op": "ping", "token": token}
+                s.sendall((json.dumps(msg) + "\n").encode())
+                assert s.recv(65536) == b"", "closed without a reply"
+            assert agentd.request("ping")["pid"] == os.getpid(), "the real client still gets in"
+        finally:
+            stop()
+
+    def test_a_missing_or_damaged_endpoint_is_none(self, env):
+        assert agentd.request("ping", timeout=0.2) is None  # no file
+        agentd.agentd_endpoint().parent.mkdir(parents=True, exist_ok=True)
+        agentd.agentd_endpoint().write_text("{not json")
+        assert agentd.request("ping", timeout=0.2) is None
+        agentd.agentd_endpoint().write_text(json.dumps({"port": 1}))  # no token
+        assert agentd.request("ping", timeout=0.2) is None
+
+    def test_a_stale_endpoint_is_none(self, env):
+        """A daemon that died leaves its file behind; nothing listens there now."""
+        import socket
+
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        agentd.agentd_endpoint().parent.mkdir(parents=True, exist_ok=True)
+        agentd.agentd_endpoint().write_text(json.dumps({"port": port, "token": "t"}))
+        assert agentd.request("ping", timeout=0.5) is None
+
+
+def test_the_transport_is_unix_where_there_are_unix_sockets(monkeypatch):
+    monkeypatch.delenv(agentd.TRANSPORT_ENV, raising=False)
+    assert agentd.transport() == ("tcp" if WINDOWS else "unix")
+    monkeypatch.setenv(agentd.TRANSPORT_ENV, "tcp")
+    assert agentd.transport() == "tcp"
+    monkeypatch.setenv(agentd.TRANSPORT_ENV, "unix")
+    assert agentd.transport() == ("tcp" if WINDOWS else "unix"), "unix can't be forced where there is none"
+
+
+def test_the_instance_lock_is_exclusive(tmp_path):
+    with open(tmp_path / "agentd.lock", "w") as first, open(tmp_path / "agentd.lock", "w") as second:
+        assert agentd._lock_exclusively(first) is True
+        assert agentd._lock_exclusively(second) is False, "a second daemon must leave"
 
 
 def _sqlite_daemon(env, tmp_path):
@@ -635,12 +727,11 @@ class TestDaemonHousekeeping:
         assert daemon._stop.is_set()
 
 
-@needs_unix_socket
 class TestDaemonProcess:
     """The real thing: hooks start the daemon as a detached process."""
 
-    def test_spawned_on_demand_single_instance_and_debounced(self, env):
-        assert agentd.ensure_running(env.cfg, wait=30), (env.state / "agentd.log").read_text()
+    def test_spawned_on_demand_single_instance_and_debounced(self, env, transport):
+        assert agentd.ensure_running(env.cfg, wait=30), (env.state / "agentd.stdio.log").read_text()
         pid = agentd.request("ping")["pid"]
         try:
             assert pid != os.getpid()
@@ -664,8 +755,8 @@ class TestDaemonProcess:
         assert time.monotonic() - started < 3
 
 
-class TestWithoutUnixSockets:
-    """Windows: no AF_UNIX daemon. Hooks degrade to "no memory", never errors."""
+class TestWithoutATransport:
+    """Where hooks can't reach a daemon, they degrade to "no memory", never errors."""
 
     def test_client_and_launcher_are_inert(self, env, monkeypatch, capsys):
         monkeypatch.setattr(agentd, "supported", lambda: False)
@@ -673,7 +764,7 @@ class TestWithoutUnixSockets:
         with monkeypatch.context() as m:  # scoped: fixture teardown needs the real Popen
             m.setattr(agentd.subprocess, "Popen", lambda *a, **k: pytest.fail("spawned on an unsupported OS"))
             agentd.spawn(env.cfg)
-        assert agentd.run(env.cfg) == 1 and "Unix domain sockets" in capsys.readouterr().err
+        assert agentd.run(env.cfg) == 1 and "no local transport" in capsys.readouterr().err
 
 
 # ── hooks ────────────────────────────────────────────────────────────────
@@ -722,7 +813,6 @@ class TestHooks:
                                               "additionalContext": "Possibly relevant memories:\n- x"}}
         assert seen["op"] == "recall" and seen["bank"] == project_bank(str(env.home)) and seen["session_id"] == "s1"
 
-    @needs_unix_socket
     def test_stop_spools_new_turns_once(self, env, tmp_path, monkeypatch):
         monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
         monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
@@ -735,7 +825,8 @@ class TestHooks:
         assert len(files) == 1
         batch = json.loads(files[0].read_text())
         assert batch["bank"] == project_bank(str(env.home)) and "Tuesdays." in batch["turns"][0]["content"]
-        assert oct(files[0].stat().st_mode & 0o777) == "0o600", "captured conversations are private"
+        if not WINDOWS:  # POSIX modes; Windows: the profile's ACLs
+            assert oct(files[0].stat().st_mode & 0o777) == "0o600", "captured conversations are private"
 
 
 
@@ -829,7 +920,6 @@ class TestCodexHooks:
     def _spooled(self, env) -> list[dict]:
         return [json.loads(f.read_text()) for f in sorted((env.state / "spool").glob("*.json"))]
 
-    @needs_unix_socket
     def test_a_turn_is_the_kept_prompt_plus_the_reply(self, env, monkeypatch, capsys):
         self._capture(monkeypatch)
         base = {"session_id": "c1", "cwd": str(env.home), "turn_id": "t1"}
@@ -843,7 +933,6 @@ class TestCodexHooks:
         # Codex fails a Stop hook that emits additionalContext (observed).
         assert capsys.readouterr().out == ""
 
-    @needs_unix_socket
     def test_each_turn_is_captured_once(self, env, monkeypatch):
         self._capture(monkeypatch)
         base = {"session_id": "c1", "cwd": str(env.home)}
@@ -859,7 +948,6 @@ class TestCodexHooks:
                   "codex")
         assert not (env.state / "spool").exists()
 
-    @needs_unix_socket
     def test_slight_prompts_skip_recall_but_still_make_a_turn(self, env, monkeypatch):
         calls = []
         monkeypatch.setattr(agentd, "request", lambda op, *a, **k: calls.append(op) or None)
@@ -877,7 +965,6 @@ class TestCodexHooks:
         assert json.loads(capsys.readouterr().out) == {"hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit", "additionalContext": "Possibly relevant memories:\n- x"}}
 
-    @needs_unix_socket
     def test_credentials_never_reach_the_spool(self, env, monkeypatch):
         """The spool is plaintext on disk and is replayed into other agents'
         prompts later; a pasted key must be gone before it is written."""
@@ -898,7 +985,6 @@ class TestCodexHooks:
         assert not (env.state / "spool").exists()
         assert not list((env.state / "sessions").glob("*.prompt.json")), "a stale prompt must not pair with a later reply"
 
-    @needs_unix_socket
     def test_a_damaged_kept_prompt_still_makes_a_turn(self, env, monkeypatch):
         self._capture(monkeypatch)
         base = {"session_id": "c1", "cwd": str(env.home)}
@@ -950,7 +1036,6 @@ class TestStaysOutOfAutomation:
         hooks.run("session-start", json.dumps({"cwd": str(scratch)}))
         assert calls == []
 
-    @needs_unix_socket
     def test_first_capture_of_a_session_takes_only_the_latest_turn(self, env, tmp_path, monkeypatch):
         """A session already running when hooks were installed (Claude Code
         hot-reloads settings) had its whole history captured in one burst."""
@@ -1317,7 +1402,6 @@ class TestAntigravityHooks:
         monkeypatch.setenv("ASTROCYTE_HOOKS", "off")
         assert self._run(monkeypatch, capsys, "stop", "{}") == {}
 
-    @needs_unix_socket
     def test_stop_captures_the_finished_turn(self, env, tmp_path, monkeypatch):
         monkeypatch.setattr(agentd, "request", lambda *a, **k: None)
         monkeypatch.setattr(agentd, "spawn", lambda cfg: None)
