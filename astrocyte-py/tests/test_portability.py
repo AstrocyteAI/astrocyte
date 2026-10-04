@@ -331,3 +331,22 @@ class TestPortabilityHooks:
         assert len(events) == 1
         assert events[0].type == "on_import"
         assert events[0].data["imported"] >= 1
+
+
+class TestLogSafety:
+    async def test_incomplete_export_warning_cannot_forge_log_lines(self, tmp_path: Path, caplog):
+        """bank_id reaches the full-page warning from a request; a newline in
+        it must not start a second, forged log line (CWE-117)."""
+        from astrocyte.portability import export_bank
+        from astrocyte.types import MemoryHit, RecallResult
+
+        async def full_page(request):
+            hits = [MemoryHit(text=f"m{i}", score=1.0, memory_id=f"id{i}") for i in range(request.max_results)]
+            return RecallResult(hits=hits, total_available=len(hits), truncated=False)
+
+        bank = "b1\nERROR forged entry"
+        with caplog.at_level("WARNING", logger="astrocyte.portability"):
+            await export_bank(full_page, bank, tmp_path / "out.jsonl", batch_size=3, allow_uncontained=True)
+        [record] = [r for r in caplog.records if "export may be incomplete" in r.getMessage()]
+        assert "\n" not in record.getMessage()
+        assert "b1 ERROR forged entry" in record.getMessage()
