@@ -866,7 +866,7 @@ class RetainStageMixin:
         setting if it has one, else the top-level one. Used when no matched MIP
         rule sets ``dedup.action``."""
         bank = getattr(self, "dedup_by_bank", {}).get(bank_id)
-        return bank.action if bank is not None else getattr(self, "dedup_action", "skip_chunk")
+        return bank.pipeline_action if bank is not None else getattr(self, "dedup_action", "skip_chunk")
 
     async def _find_duplicate_chunks(
         self,

@@ -353,8 +353,8 @@ class PipelineOrchestrator(RetainStageMixin, RecallStageMixin, ReflectStageMixin
         #: they cannot turn it on).
         self.dedup_enabled: bool = True
         #: What a duplicate chunk does to the retain when no matched MIP rule
-        #: sets ``dedup.action``; set from ``signal_quality.dedup.action`` (see
-        #: ``astrocyte.config.DEDUP_ACTIONS``).
+        #: sets ``dedup.action``; set from ``signal_quality.dedup.action``,
+        #: mapped to the pipeline's vocabulary (``DedupConfig.pipeline_action``).
         self.dedup_action: str = "skip_chunk"
         #: Also check each chunk against its nearest neighbours in the vector
         #: store when the in-process cache has no match, so dedup holds across

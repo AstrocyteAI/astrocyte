@@ -138,13 +138,13 @@ signal_quality:
   dedup:
     enabled: true
     similarity_threshold: 0.95     # Cosine similarity for near-match
-    action: skip_chunk             # "skip_chunk" | "skip" | "warn" | "update"
+    action: skip                   # "skip" | "warn" | "update"
     consult_store: true            # also check the bank's stored memories (pipeline)
 ```
 
-`action` decides what a duplicate chunk does to the retain: `skip_chunk` (default) drops the duplicate chunks and stores the rest; `skip` rejects the whole retain if any chunk is a duplicate; `warn` stores everything; `update` is not implemented and behaves as `skip_chunk`. A retain with nothing left to store returns a RetainResult marked deduplicated, not stored.
+In the storage pipeline a retain is split into chunks and each chunk is checked. `skip` (default) drops the duplicate chunks and stores the rest — the MIP vocabulary calls this `skip_chunk`, which is accepted here as an alias; `warn` stores everything; `update` is not implemented and behaves as `skip`.
 
-`enabled: false` turns the retain-time check off entirely (MIP `dedup` rules can tune the check but not switch it back on). A matched MIP rule's `dedup.threshold` and `dedup.action` override `similarity_threshold` and `action` for that retain. A bank's own `banks.<id>.signal_quality.dedup` block (or its `profile:`) replaces these settings for that bank; see §6.
+`enabled: false` turns the retain-time check off entirely (MIP `dedup` rules can tune the check but not switch it back on). A matched MIP rule's `dedup.threshold` and `dedup.action` override `similarity_threshold` and `action` for that retain. Note the vocabularies differ on one word: MIP's `dedup.action: skip` rejects the *whole* retain when any chunk is a duplicate, which is available per MIP rule only. A bank's own `banks.<id>.signal_quality.dedup` block (or its `profile:`) replaces these settings for that bank; see §6.
 
 In the storage pipeline, each chunk is compared first with an in-process cache of recently retained embeddings and then, on a miss, with its nearest neighbours in the vector store — so dedup holds across processes (a restarted daemon, a CLI run, a gateway restart). A pair that differs by a negator ("allergic" vs "not allergic") is never a duplicate, and consolidated observations are not treated as originals. `consult_store: false` keeps the cache-only check and saves one `search_similar` per chunk, which on SQLite is a scan of the bank.
 

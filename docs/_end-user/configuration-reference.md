@@ -218,7 +218,7 @@ Deduplication and noise detection.
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | Enable retain-time duplicate detection. `false` turns it off entirely, MIP `dedup` rules included |
 | `similarity_threshold` | float | `0.95` | Cosine similarity threshold for duplicates (0–1). A matched MIP rule's `dedup.threshold` overrides it |
-| `action` | string | `"skip_chunk"` | What a duplicate chunk does: `skip_chunk` (drop it, store the rest), `skip` (reject the whole retain), `warn` (store everything), `update` (not implemented; as `skip_chunk`). A matched MIP rule's `dedup.action` overrides it |
+| `action` | string | `"skip"` | What a duplicate chunk does: `skip` (drop it, store the rest; alias `skip_chunk`), `warn` (store everything), `update` (not implemented; as `skip`). A matched MIP rule's `dedup.action` overrides it — and MIP's own `skip` rejects the whole retain |
 | `consult_store` | bool | `true` | Also check each chunk against its nearest stored memories, so dedup holds across processes. One extra vector search per chunk |
 
 A bank can override any of these under `banks.<id>.signal_quality.dedup`; keys it leaves out inherit the top-level block.

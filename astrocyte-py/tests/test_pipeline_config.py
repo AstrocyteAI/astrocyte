@@ -335,9 +335,9 @@ def _orch_with(tmp_path, yaml_text: str, vs: InMemoryVectorStore | None = None) 
 @pytest.mark.parametrize(
     ("action", "stored", "rows"),
     [
-        ("skip_chunk", True, 2),  # duplicate chunk dropped, new chunk kept
-        ("update", True, 2),  # not implemented: behaves as skip_chunk
-        ("skip", False, 1),  # whole retain rejected
+        ("skip", True, 2),  # the default: duplicate chunk dropped, new chunk kept
+        ("skip_chunk", True, 2),  # alias of skip
+        ("update", True, 2),  # not implemented: behaves as skip
         ("warn", True, 3),  # duplicate kept too
     ],
 )
@@ -350,10 +350,13 @@ async def test_config_dedup_action_decides_what_a_duplicate_does(tmp_path, actio
 
 
 @pytest.mark.asyncio
-async def test_default_dedup_action_is_skip_chunk(tmp_path) -> None:
+async def test_default_dedup_action_drops_only_duplicate_chunks(tmp_path) -> None:
+    """Config default ``skip`` is the pipeline's ``skip_chunk`` — the behaviour
+    retain had before the config action was read at all."""
     vs = InMemoryVectorStore()
     orch = PipelineOrchestrator(vs, MockLLMProvider(), max_chunk_size=30)
     assert orch.dedup_action == "skip_chunk"
+    assert AstrocyteConfig().signal_quality.dedup.action == "skip"
     orch.apply_config(PipelineConfig.from_config(AstrocyteConfig()))
     assert orch.dedup_action == "skip_chunk"
     assert (await _retain_with_one_duplicate_chunk(orch)).stored is True
@@ -365,31 +368,35 @@ async def test_mip_dedup_action_overrides_config_action(tmp_path) -> None:
     from astrocyte.mip.schema import DedupSpec, PipelineSpec
 
     vs = InMemoryVectorStore()
-    orch = _orch_with(tmp_path, "signal_quality:\n  dedup:\n    action: skip\n", vs)
+    orch = _orch_with(tmp_path, "signal_quality:\n  dedup:\n    action: warn\n", vs)
     r = await _retain_with_one_duplicate_chunk(
-        orch, mip_pipeline=PipelineSpec(version=1, dedup=DedupSpec(action="warn"))
+        orch, mip_pipeline=PipelineSpec(version=1, dedup=DedupSpec(action="skip"))
     )
-    assert r.stored is True
-    assert len(await vs.list_vectors("b1")) == 3
+    assert r.stored is False and r.deduplicated is True, "MIP skip rejects the whole retain"
+    assert len(await vs.list_vectors("b1")) == 1
 
 
 @pytest.mark.asyncio
 async def test_mip_rule_without_action_falls_back_to_config_action(tmp_path) -> None:
     from astrocyte.mip.schema import DedupSpec, PipelineSpec
 
-    orch = _orch_with(tmp_path, "signal_quality:\n  dedup:\n    action: skip\n")
+    vs = InMemoryVectorStore()
+    orch = _orch_with(tmp_path, "signal_quality:\n  dedup:\n    action: warn\n", vs)
     r = await _retain_with_one_duplicate_chunk(
         orch, mip_pipeline=PipelineSpec(version=1, dedup=DedupSpec(threshold=0.95))
     )
-    assert r.stored is False and r.deduplicated is True
+    assert r.stored is True
+    assert len(await vs.list_vectors("b1")) == 3, "config warn applied: duplicate kept"
 
 
 @pytest.mark.asyncio
 async def test_bank_dedup_action_applies_only_to_that_bank(tmp_path) -> None:
     vs = InMemoryVectorStore()
-    orch = _orch_with(tmp_path, "banks:\n  strict:\n    signal_quality:\n      dedup:\n        action: skip\n", vs)
-    assert (await _retain_with_one_duplicate_chunk(orch, "strict")).stored is False
-    assert (await _retain_with_one_duplicate_chunk(orch, "other")).stored is True
+    orch = _orch_with(tmp_path, "banks:\n  keep:\n    signal_quality:\n      dedup:\n        action: warn\n", vs)
+    await _retain_with_one_duplicate_chunk(orch, "keep")
+    await _retain_with_one_duplicate_chunk(orch, "other")
+    assert len(await vs.list_vectors("keep")) == 3, "warn keeps the duplicate chunk"
+    assert len(await vs.list_vectors("other")) == 2, "top-level skip drops it"
 
 
 @pytest.mark.asyncio
@@ -397,11 +404,11 @@ async def test_config_dedup_action_applies_in_retain_many(tmp_path) -> None:
     from astrocyte.types import RetainRequest
 
     vs = InMemoryVectorStore()
-    orch = _orch_with(tmp_path, "signal_quality:\n  dedup:\n    action: skip\n", vs)
+    orch = _orch_with(tmp_path, "signal_quality:\n  dedup:\n    action: warn\n", vs)
     await orch.retain(RetainRequest(content="Deploys happen on Tuesdays.", bank_id="b1"))
     results = await orch.retain_many([RetainRequest(content=_TWO_CHUNKS, bank_id="b1")])
-    assert results[0].stored is False and results[0].deduplicated is True
-    assert len(await vs.list_vectors("b1")) == 1
+    assert results[0].stored is True
+    assert len(await vs.list_vectors("b1")) == 3
 
 
 def test_source_store_and_mental_model_store_thread_through() -> None:

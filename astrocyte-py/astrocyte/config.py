@@ -88,11 +88,15 @@ class BarrierConfig:
     metadata: MetadataSanitizationConfig = field(default_factory=MetadataSanitizationConfig)
 
 
-#: Retain-time dedup actions. ``skip_chunk`` drops duplicate chunks and keeps
-#: the rest; ``skip`` rejects the whole retain if any chunk is a duplicate;
-#: ``warn`` keeps everything; ``update`` is not implemented and behaves as
-#: ``skip_chunk``. Shared with MIP ``dedup.action``, which overrides it per rule.
-DEDUP_ACTIONS = ("skip_chunk", "skip", "warn", "update")
+#: ``signal_quality.dedup.action`` values, mapped to the retain pipeline's
+#: (MIP ``dedup.action``) vocabulary. Config ``skip`` keeps its documented
+#: meaning — duplicates are dropped — which is the pipeline's ``skip_chunk``
+#: (drop duplicate chunks, store the rest); ``skip_chunk`` is accepted as an
+#: alias. ``warn`` stores everything; ``update`` is not implemented and behaves
+#: as ``skip_chunk``. Rejecting a whole retain when any chunk is a duplicate is
+#: MIP's ``skip``, available per rule only.
+DEDUP_ACTION_TO_PIPELINE = {"skip": "skip_chunk", "skip_chunk": "skip_chunk", "warn": "warn", "update": "update"}
+DEDUP_ACTIONS = tuple(DEDUP_ACTION_TO_PIPELINE)
 NOISY_BANK_ACTIONS = ("warn", "throttle", "reject")
 
 
@@ -100,7 +104,13 @@ NOISY_BANK_ACTIONS = ("warn", "throttle", "reject")
 class DedupConfig:
     enabled: bool = True
     similarity_threshold: float = 0.95
-    action: str = "skip_chunk"  # see DEDUP_ACTIONS
+    action: str = "skip"  # "skip" | "skip_chunk" | "warn" | "update" — see DEDUP_ACTION_TO_PIPELINE
+
+    @property
+    def pipeline_action(self) -> str:
+        """``action`` in the retain pipeline's vocabulary (``skip`` -> ``skip_chunk``)."""
+        return DEDUP_ACTION_TO_PIPELINE.get(self.action, "skip_chunk")
+
     #: Retain-time dedup also checks each chunk against its nearest stored
     #: neighbours, so it holds across processes (a restarted daemon, a CLI
     #: run, a gateway restart) and not only within one. One extra

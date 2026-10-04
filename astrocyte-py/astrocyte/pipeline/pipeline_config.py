@@ -17,7 +17,7 @@ of those flags from config now has a single, testable owner.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -63,17 +63,6 @@ class PipelineConfig:
     causal_links_enabled: bool
     causal_max_pairs_per_memory: int
     causal_min_confidence: float
-
-    # Retain-time dedup (``signal_quality.dedup``). A matched MIP rule's
-    # ``dedup.threshold`` / ``dedup.action`` override these per retain.
-    dedup_enabled: bool
-    dedup_similarity_threshold: float
-    dedup_action: str
-    # Retain-time dedup against the store, not only this process's cache.
-    dedup_consult_store: bool
-    # Banks with their own ``banks.<id>.signal_quality`` block: the resolved
-    # dedup settings (already merged over the top-level block) for that bank.
-    dedup_by_bank: dict[str, DedupConfig]
 
     # Semantic-kNN graph at retain time (C3a).
     semantic_link_graph_enabled: bool
@@ -123,6 +112,19 @@ class PipelineConfig:
 
     # Mental-model service — wires agentic reflect to the configured store.
     mental_model_service: object | None
+
+    # Retain-time dedup (``signal_quality.dedup``). A matched MIP rule's
+    # ``dedup.threshold`` / ``dedup.action`` override these per retain.
+    # Defaulted and last so the dataclass stays positionally compatible.
+    dedup_enabled: bool = True
+    dedup_similarity_threshold: float = 0.95
+    #: In the pipeline's vocabulary (``DedupConfig.pipeline_action``).
+    dedup_action: str = "skip_chunk"
+    # Retain-time dedup against the store, not only this process's cache.
+    dedup_consult_store: bool = True
+    # Banks with their own ``banks.<id>.signal_quality`` block: the resolved
+    # dedup settings (already merged over the top-level block) for that bank.
+    dedup_by_bank: dict[str, DedupConfig] = field(default_factory=dict)
 
     @classmethod
     def from_config(
@@ -205,7 +207,7 @@ class PipelineConfig:
             causal_min_confidence=cl_cfg.min_confidence,
             dedup_enabled=dedup_cfg.enabled,
             dedup_similarity_threshold=dedup_cfg.similarity_threshold,
-            dedup_action=dedup_cfg.action,
+            dedup_action=dedup_cfg.pipeline_action,
             dedup_consult_store=dedup_cfg.consult_store,
             dedup_by_bank={
                 bank_id: bank.signal_quality.dedup
