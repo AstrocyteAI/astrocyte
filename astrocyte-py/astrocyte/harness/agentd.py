@@ -76,6 +76,8 @@ RESUME_SCAN = 60
 SOURCE_LABELS = {"claude-code": "Claude Code", "codex": "Codex", "antigravity": "Antigravity",
                  "copilot": "Copilot CLI"}
 DRAIN_INTERVAL_SECONDS = 20.0
+#: Background team sync (`astrocyte team join`): every joined project, this often.
+TEAM_SYNC_SECONDS = float(os.environ.get("ASTROCYTE_TEAM_SYNC_SECONDS", "300"))
 IDLE_EXIT_SECONDS = float(os.environ.get("ASTROCYTE_AGENTD_IDLE", "1800"))
 
 # The conversation pipeline stores turns with single newlines between roles,
@@ -109,16 +111,31 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def render_memory(text: str, when: datetime | None, *, limit: int = ITEM_MAX_CHARS) -> str:
+def who_saved(metadata: Any) -> str | None:
+    """A teammate's name from the ``_actor`` the gateway stamped: ``user:alice``
+    reads as ``alice``; other principals (``service:ci``) as they are."""
+    actor = (metadata or {}).get("_actor")
+    if not isinstance(actor, str) or not actor:
+        return None
+    kind, _, name = actor.partition(":")
+    return name if kind == "user" and name else actor
+
+
+def _line(body: str, when: datetime | None, who: str | None) -> str:
+    return "- " + (f"[{when.date().isoformat()}] " if when else "") + (f"({who}) " if who else "") + body
+
+
+def render_memory(text: str, when: datetime | None, *, limit: int = ITEM_MAX_CHARS, who: str | None = None) -> str:
     """One line per memory. Captured turns become "Q … → A …"; the answer
-    gets most of the room because that is where conclusions live."""
+    gets most of the room because that is where conclusions live. ``who``
+    names the teammate a memory came from; your own carry no label."""
     m = _TURN.match(text.strip())
     if m:
         q = _clip(m["q"], 110)
         body = f"Q: {q} → A: {_clip(m['a'], limit - len(q) - 12)}"
     else:
         body = _clip(text, limit)
-    return f"- [{when.date().isoformat()}] {body}" if when else f"- {body}"
+    return _line(body, when, who)
 
 
 def _clip_left(text: str, limit: int) -> str:
@@ -160,14 +177,15 @@ def _groups(items: list[Any]) -> list[list[Any]]:
     return out
 
 
-def render_group(group: list[Any], when: datetime | None, *, limit: int = ITEM_MAX_CHARS) -> str:
+def render_group(group: list[Any], when: datetime | None, *, limit: int = ITEM_MAX_CHARS,
+                 who: str | None = None) -> str:
     """One line for memories retained together. A chunked turn shows its
     question and the end of its answer; other text, its beginning."""
     if len(group) == 1:
-        return render_memory(group[0].text, when, limit=limit)
+        return render_memory(group[0].text, when, limit=limit, who=who)
     question = next((i.text for i in group if i.text.lstrip().startswith("**user**")), None)
     if question is None:
-        return render_memory(group[0].text, when, limit=limit)
+        return render_memory(group[0].text, when, limit=limit, who=who)
     m = _TURN.match(question.strip())
     q = _clip(m["q"] if m else question.split(":", 1)[-1], 110)
     answer = ""
@@ -178,7 +196,7 @@ def render_group(group: list[Any], when: datetime | None, *, limit: int = ITEM_M
             answer = _join_overlapping(answer, item.text.strip())
     answer = re.sub(r"^\*\*assistant\*\*:\s*", "", answer.strip())
     body = f"Q: {q} → A: {_clip_left(answer, limit - len(q) - 12)}"
-    return f"- [{when.date().isoformat()}] {body}" if when else f"- {body}"
+    return _line(body, when, who)
 
 
 def _budget(lines: list[str], limit: int) -> list[str]:
@@ -245,6 +263,9 @@ class AgentDaemon:
         self.files_offered: dict[str, set[str]] = {}  # session → paths already answered
         self.token: str | None = None  # set when serving over TCP
         self.last_activity = time.monotonic()
+        self.next_team_sync = 0.0  # due at the first housekeeping pass
+        self._sync_brain: Any = None
+        self._teammates: dict[str, tuple[float, set[str]]] = {}  # bank → (state mtime, pulled ids)
         import asyncio  # daemon side only: hook processes import this module too
 
         self._drain_lock = asyncio.Lock()
@@ -260,6 +281,23 @@ class AgentDaemon:
     async def op_ping(self, _: dict) -> dict:
         return {"ok": True, "pid": os.getpid(), "config": str(self.cfg_path)}
 
+    def teammates(self, bank: str) -> set[str]:
+        """Ids of memories pulled from teammates (re-read when sync changes them)."""
+        from .team import SyncState
+
+        try:
+            mtime = SyncState.path(bank).stat().st_mtime
+        except OSError:
+            return set()
+        cached = self._teammates.get(bank)
+        if cached is None or cached[0] != mtime:
+            cached = (mtime, set(SyncState.load(bank).pulled))
+            self._teammates[bank] = cached
+        return cached[1]
+
+    def _who(self, group: list[Any], teammates: set[str]) -> str | None:
+        return who_saved(group[0].metadata) if group[0].id in teammates else None
+
     async def _previous_session(self, bank: str, session: str) -> list[list[Any]]:
         """The closing captured turns (oldest first) of the newest session in
         ``bank`` other than ``session``. Sessions running side by side
@@ -270,10 +308,13 @@ class AgentDaemon:
         if recent is None:
             return []
         previous, turns = None, []
+        teammates = self.teammates(bank)  # where *you* left off: a teammate's shared turns aren't it
         items = await recent(bank, limit=RESUME_SCAN, filters=VectorFilters(tags=["captured"]))
         for group in _groups(items):
             sid = (group[0].metadata or {}).get("session_id") or ""
             if not sid or sid == session or (previous is not None and sid != previous):
+                continue
+            if any(i.id in teammates for i in group):
                 continue
             previous = sid
             turns.append(group)
@@ -306,8 +347,9 @@ class AgentDaemon:
         if recent is not None:
             items = await recent(bank, limit=(BOOT_MAX_ITEMS + RESUME_MAX_TURNS) * 4)
             recent_groups = [g for g in _groups(items) if not shown & {i.id for i in g}][:BOOT_MAX_ITEMS]  # not twice
-        body = _budget([render_group(g, g[0].occurred_at or g[0].retained_at) for g in recent_groups],
-                       BOOT_MAX_CHARS - used)
+        teammates = self.teammates(bank)
+        body = _budget([render_group(g, g[0].occurred_at or g[0].retained_at, who=self._who(g, teammates))
+                        for g in recent_groups], BOOT_MAX_CHARS - used)
         seen.update(i.id for g in recent_groups[: len(body)] for i in g)  # only what was shown counts as injected
         header = (
             f"Astrocyte memory is active for this project (bank `{bank}`). Relevant memories from "
@@ -330,6 +372,7 @@ class AgentDaemon:
         scored = sorted(((_cosine(vectors[0], v), h) for v, h in zip(vectors[1:], hits)), key=lambda p: -p[0])
         best = scored[0][0]
         seen = self.injected.setdefault(session, set())
+        teammates = self.teammates(bank)
         lines = []
         for sim, hit in scored:
             if sim < INJECT_MIN_SIMILARITY or sim < best - INJECT_RELATIVE_WINDOW:
@@ -337,7 +380,8 @@ class AgentDaemon:
             key = hit.memory_id or hit.text
             if key in seen:
                 continue
-            lines.append(render_memory(hit.text, hit.occurred_at or hit.retained_at))
+            who = who_saved(hit.metadata) if hit.memory_id in teammates else None
+            lines.append(render_memory(hit.text, hit.occurred_at or hit.retained_at, who=who))
             seen.add(key)
             if len(lines) == PROMPT_MAX_HITS:
                 break
@@ -366,7 +410,9 @@ class AgentDaemon:
                 groups.append(group)
                 if len(groups) == FILE_MAX_TURNS:
                     break
-        body = _budget([render_group(g, g[0].occurred_at or g[0].retained_at) for g in groups], PROMPT_MAX_CHARS)
+        teammates = self.teammates(bank)
+        body = _budget([render_group(g, g[0].occurred_at or g[0].retained_at, who=self._who(g, teammates))
+                        for g in groups], PROMPT_MAX_CHARS)
         if not body:
             return {"context": ""}
         seen.update(item.id for g in groups[: len(body)] for item in g)
@@ -446,6 +492,36 @@ class AgentDaemon:
             await writer.drain()
             writer.close()
 
+    async def team_sync(self) -> None:
+        """Push and pull every joined project (`astrocyte team join`). A sync
+        already running elsewhere is skipped; failures are logged and kept in
+        the project's sync state for `astrocyte team status`."""
+        from . import team
+
+        memberships = team.load_memberships(self.cfg_path)
+        if not memberships:
+            return
+        if self._sync_brain is None:
+            # The daemon's own brain refuses a burst of writes as a noisy bank;
+            # a first pull of a team's memories is exactly such a burst.
+            from astrocyte import Astrocyte
+            from astrocyte.config import load_config
+
+            from .memories import without_noisy_bank_detection
+
+            self._sync_brain = Astrocyte(without_noisy_bank_detection(load_config(str(self.cfg_path))))
+            self._sync_brain.set_pipeline(self.pipeline)
+        for bank, entry in memberships.items():
+            try:
+                report = await team.sync_bank(entry, bank, self.pipeline, self._sync_brain)
+                logger.info("team sync %s: %s", bank, report.summary())
+            except team.SyncBusy:
+                logger.info("team sync %s: skipped, another sync is running", bank)
+            except team.TeamError as e:
+                logger.warning("team sync %s failed: %s", bank, e)
+            except Exception:  # noqa: BLE001 — never let one project's sync stop the daemon
+                logger.exception("team sync %s failed", bank)
+
     async def housekeeping(self) -> None:
         import asyncio
 
@@ -458,6 +534,9 @@ class AgentDaemon:
                 await self.drain()
             except Exception:  # noqa: BLE001
                 logger.exception("drain failed")
+            if time.monotonic() >= self.next_team_sync:
+                self.next_team_sync = time.monotonic() + TEAM_SYNC_SECONDS
+                await self.team_sync()
             try:
                 changed = self.cfg_path.stat().st_mtime != self.cfg_mtime
             except OSError:

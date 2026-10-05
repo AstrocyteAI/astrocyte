@@ -79,11 +79,15 @@ astrocyte team leave                                        # stop; erases teamm
 
 What an agent saved and what you imported are shared; captured conversation stays on your
 machine unless you join with `--share-captured`, and a memory tagged `private` never leaves it.
-Teammates' memories are copied into your local store under the same ids, marked with who saved
-them, so recall stays local and works offline. A memory forgotten on the gateway is erased from
-every teammate's machine at their next sync. Syncing is manual for now; the token goes to the OS
-keychain when the `keyring` package is installed, else to `team.json` beside your config (readable
-only by you).
+Teammates' memories are copied into your local store under the same ids, so recall stays local
+and works offline, and they are labelled with who saved them: `- [2026-10-02] (alice) Deploys go
+out on Tuesdays.` "Where you left off" only ever shows your own sessions. While an agent is open,
+the background process syncs every joined project every five minutes
+(`ASTROCYTE_TEAM_SYNC_SECONDS`); `astrocyte team sync` does it now. Forgetting a shared memory asks
+for the scope: `astrocyte memory forget <id> --team` erases it for everyone (it needs the forget
+permission on the gateway; each teammate's copy goes at their next sync), `--local` on this machine
+only. The token goes to the OS keychain when the `keyring` package is installed, else to `team.json`
+beside your config (readable only by you).
 
 The rest of this page covers embedding Astrocyte in your own application or
 running it as a shared service.

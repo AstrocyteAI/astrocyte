@@ -147,7 +147,10 @@ class SyncState:
     #: id → "stored" | "unchanged" | "duplicate:<id>" | "rejected:<reason>" | "forgotten"
     pushed: dict[str, str] = field(default_factory=dict)
     pulled: list[str] = field(default_factory=list)
+    #: ids erased here with ``forget --local``: a later pull must not bring them back
+    suppressed: list[str] = field(default_factory=list)
     last_sync: str | None = None
+    last_error: str | None = None
 
     @staticmethod
     def path(bank: str) -> Path:
@@ -159,7 +162,8 @@ class SyncState:
         try:
             data = json.loads(cls.path(bank).read_text(encoding="utf-8"))
             return cls(cursor=data.get("cursor"), pushed=dict(data.get("pushed") or {}),
-                       pulled=list(data.get("pulled") or []), last_sync=data.get("last_sync"))
+                       pulled=list(data.get("pulled") or []), suppressed=list(data.get("suppressed") or []),
+                       last_sync=data.get("last_sync"), last_error=data.get("last_error"))
         except (OSError, ValueError, AttributeError, TypeError):
             return cls()
 
@@ -168,8 +172,46 @@ class SyncState:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(json.dumps({"cursor": self.cursor, "pushed": self.pushed, "pulled": self.pulled,
-                                   "last_sync": self.last_sync}), encoding="utf-8")
+                                   "suppressed": self.suppressed, "last_sync": self.last_sync,
+                                   "last_error": self.last_error}), encoding="utf-8")
         os.replace(tmp, path)
+
+    def shared(self, memory_id: str) -> bool:
+        """Is this id on the gateway: pulled from a teammate, or pushed and kept?"""
+        return memory_id in self.pulled or self.pushed.get(memory_id) in ("stored", "unchanged")
+
+
+def pulled_ids(bank: str) -> set[str]:
+    """Ids of teammates' memories in ``bank`` on this machine (empty when the
+    project isn't shared)."""
+    return set(SyncState.load(bank).pulled)
+
+
+class SyncBusy(TeamError):
+    """Another process (the agent daemon, or a second `astrocyte team`) is syncing this bank."""
+
+
+class _BankLock:
+    """One sync per bank at a time across processes: the daemon's background
+    sync and a manual `astrocyte team sync` would otherwise interleave pages
+    of the feed and both write the ledger."""
+
+    def __init__(self, bank: str) -> None:
+        self.path = SyncState.path(bank).with_suffix(".lock")
+        self.fh: Any = None
+
+    def __enter__(self) -> _BankLock:
+        from .agentd import _lock_exclusively
+
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.fh = open(self.path, "w")  # noqa: SIM115 — held until __exit__
+        if not _lock_exclusively(self.fh):
+            self.fh.close()
+            raise SyncBusy("another sync of this project is running (the agent daemon syncs in the background)")
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.fh.close()
 
 
 # ── what is shared ───────────────────────────────────────────────────────
@@ -337,7 +379,7 @@ async def pull(client: Any, pipeline: Any, brain: Any, bank: str, state: SyncSta
                     erase.append(cid)
                     continue
                 own = cid in state.pushed and not state.pushed[cid].startswith(("duplicate:", "rejected:"))
-                if own or (c.get("memory_layer") or "fact") != "fact" or not c.get("text"):
+                if own or cid in state.suppressed or (c.get("memory_layer") or "fact") != "fact" or not c.get("text"):
                     continue  # ours already; server-made observations and models aren't mirrored
                 incoming.append(SyncPushRecord(
                     id=cid, text=c["text"], occurred_at=_parse_time(c.get("occurred_at")),
@@ -400,6 +442,30 @@ def _parse_time(value: Any) -> datetime | None:
         return None
 
 
+async def forget_shared(entry: dict[str, Any], bank: str, ids: list[str], pipeline: Any, brain: Any, *,
+                        team_wide: bool) -> int:
+    """Erase ``ids`` here; with ``team_wide``, first on the gateway too, so
+    every teammate's next sync erases them (needs ``forget`` on the bank).
+    Without it, the ids are suppressed so a later pull doesn't bring them
+    back. Returns how many memories were erased here."""
+    with _BankLock(bank):
+        state = SyncState.load(bank)
+        shared = [i for i in ids if state.shared(i)]
+        if team_wide and shared:
+            async with _connect(bank, entry) as client:
+                await _call(client, "POST", "/v1/forget", json={"bank_id": bank, "memory_ids": shared})
+        erased = await _erase_local(pipeline, brain, bank, ids)
+        for mid in ids:
+            if mid in state.pulled:
+                state.pulled.remove(mid)
+            if team_wide and mid in state.pushed:
+                state.pushed[mid] = "forgotten"
+            if not team_wide and mid in shared and mid not in state.suppressed:
+                state.suppressed.append(mid)
+        state.save(bank)
+        return erased
+
+
 # ── commands ─────────────────────────────────────────────────────────────
 
 
@@ -432,22 +498,40 @@ def _preview(items: list[Any]) -> None:
         print(f"    … and {len(items) - PREVIEW_SAMPLE} more")
 
 
+async def sync_bank(entry: dict[str, Any], bank: str, pipeline: Any, brain: Any) -> SyncReport:
+    """Push, then pull, one joined bank; the state records the outcome either
+    way. Raises :class:`SyncBusy` if another process is syncing it."""
+    with _BankLock(bank):
+        state = SyncState.load(bank)
+        report = SyncReport()
+        try:
+            async with _connect(bank, entry) as client:
+                await push(client, pipeline.vector_store, bank, state,
+                           share_captured=bool(entry.get("share_captured")), report=report)
+                await pull(client, pipeline, brain, bank, state, report)
+        except TeamError as e:
+            state = SyncState.load(bank)  # keep what push and pull saved as they went
+            state.last_error = str(e)
+            state.save(bank)
+            raise
+        state.last_sync = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        state.last_error = None
+        state.save(bank)
+        return report
+
+
 async def _sync(entry: dict[str, Any], bank: str, pipeline: Any, brain: Any, *, dry_run: bool) -> int:
-    state = SyncState.load(bank)
-    share_captured = bool(entry.get("share_captured"))
-    async with _connect(bank, entry) as client:
-        if dry_run:
-            items = await pending_push(pipeline.vector_store, bank, state, share_captured=share_captured)
+    if dry_run:
+        state = SyncState.load(bank)
+        async with _connect(bank, entry) as client:
+            items = await pending_push(pipeline.vector_store, bank, state,
+                                       share_captured=bool(entry.get("share_captured")))
             print(f"Would push {len(items)} memories to {entry['url']}:")
             _preview(items)
             waiting = await pull(client, pipeline, brain, bank, state, SyncReport(), apply=False)
             print(f"Would pull {waiting} changes from the team.")
-            return 0
-        report = SyncReport()
-        await push(client, pipeline.vector_store, bank, state, share_captured=share_captured, report=report)
-        await pull(client, pipeline, brain, bank, state, report)
-    state.last_sync = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    state.save(bank)
+        return 0
+    report = await sync_bank(entry, bank, pipeline, brain)
     print(f"Synced {bank}: {report.summary()}.")
     return 0
 
@@ -500,6 +584,8 @@ async def _status(args: Namespace, cfg: Path, pipeline: Any, _brain: Any) -> int
         outcomes[key] = outcomes.get(key, 0) + 1
     print(f"{bank} ↔ {entry['url']}")
     print(f"  last sync      {state.last_sync or 'never'}")
+    if state.last_error:
+        print(f"  last error     {state.last_error}")
     print(f"  pushed         {sum(outcomes.values())}" + (f" ({_counts(outcomes)})" if outcomes else ""))
     print(f"  waiting to go  {len(waiting)}")
     print(f"  from the team  {len(state.pulled)}")

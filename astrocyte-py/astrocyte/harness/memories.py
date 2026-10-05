@@ -50,10 +50,7 @@ def open_local(cfg_path: Path, *, noisy_bank_detection: bool = True) -> tuple[An
 
     config = load_config(str(cfg_path))
     if not noisy_bank_detection:
-        config.signal_quality.noisy_bank.enabled = False
-        for bank in (config.banks or {}).values():
-            if bank.signal_quality is not None:
-                bank.signal_quality.noisy_bank.enabled = False
+        without_noisy_bank_detection(config)
     # Recall-time query expansion calls the LLM (5–9 s via a CLI provider).
     # Observation consolidation issues an LLM call per retained memory in the
     # background — on a CLI provider, the user's subscription.
@@ -61,6 +58,15 @@ def open_local(cfg_path: Path, *, noisy_bank_detection: bool = True) -> tuple[An
     brain = Astrocyte(config)
     brain.set_pipeline(pipeline)
     return pipeline, brain
+
+
+def without_noisy_bank_detection(config: Any) -> Any:
+    """``config`` with noisy-bank detection off everywhere (in place)."""
+    config.signal_quality.noisy_bank.enabled = False
+    for bank in (config.banks or {}).values():
+        if bank.signal_quality is not None:
+            bank.signal_quality.noisy_bank.enabled = False
+    return config
 
 
 def _bank(args: Namespace) -> str:
@@ -98,6 +104,11 @@ async def _list(args: Namespace, pipeline: Any, _brain: Any) -> int:
     store, bank = pipeline.vector_store, _bank(args)
     recent = getattr(store, "list_recent_vectors", None)
     items = await recent(bank, limit=args.limit) if recent else (await store.list_vectors(bank, limit=args.limit))
+    from . import team
+    from .agentd import who_saved
+
+    teammates = team.pulled_ids(bank)
+    saved_by = {i.id: who_saved(i.metadata) for i in items if i.id in teammates}
     if args.json:
         print(
             json.dumps(
@@ -106,6 +117,7 @@ async def _list(args: Namespace, pipeline: Any, _brain: Any) -> int:
                         "id": i.id,
                         "text": i.text,
                         "source": _source(i.metadata),
+                        "saved_by": saved_by.get(i.id),
                         "when": (i.occurred_at or i.retained_at).isoformat()
                         if (i.occurred_at or i.retained_at)
                         else None,
@@ -122,7 +134,8 @@ async def _list(args: Namespace, pipeline: Any, _brain: Any) -> int:
     count = f"{len(items)} memor{'y' if len(items) == 1 else 'ies'}"
     print(f"{bank} — {len(items)} most recent" if len(items) == args.limit else f"{bank} — {count}")
     for i in items:
-        print(f"  {i.id[:8]}  {_when(i.occurred_at or i.retained_at)}  {_source(i.metadata):<11}  {_line(i.text)}")
+        who = f"({saved_by[i.id]}) " if saved_by.get(i.id) else ""
+        print(f"  {i.id[:8]}  {_when(i.occurred_at or i.retained_at)}  {_source(i.metadata):<11}  {who}{_line(i.text)}")
     print("\nRemove one with: astrocyte memory forget <id>")
     return 0
 
@@ -155,6 +168,14 @@ async def _forget(args: Namespace, pipeline: Any, brain: Any) -> int:
                 file=sys.stderr,
             )
             return 1
+        joined = _joined(args, bank)
+        if joined is not None:
+            # This machine's copy only; the team's stays (and isn't pulled back).
+            erased = await joined[0].forget_shared(joined[1], bank, [i.id for i in items], pipeline, brain,
+                                                   team_wide=False)
+            print(f"Removed {erased} memories from {bank} on this machine. The team's copies stay on the "
+                  "gateway; erase one for everyone with: astrocyte memory forget <id> --team")
+            return 0
         result = await brain.forget(bank, scope="all")
         print(f"Removed {result.deleted_count} memories from {bank}.{await _erase(pipeline, bank, None)}")
         return 0
@@ -172,10 +193,43 @@ async def _forget(args: Namespace, pipeline: Any, brain: Any) -> int:
             print(f"  ✗ {prefix}: {why}", file=sys.stderr)
             return 1
         chosen.append(matches[0])
+    joined = _joined(args, bank)
+    if joined is not None:
+        team, entry = joined
+        shared = [i for i in chosen if team.SyncState.load(bank).shared(i)]
+        team_wide, local = getattr(args, "team", False), getattr(args, "local", False)
+        if shared and not (team_wide or local):
+            who = {i.id: i for i in items}
+            print("Shared with the team: " + ", ".join(f"{i[:8]}" + _by(who[i], team) for i in shared) + ".\n"
+                  "Erase for everyone with --team (needs forget permission on the gateway), "
+                  "or on this machine only with --local.", file=sys.stderr)
+            return 1
+        if shared or local:
+            erased = await team.forget_shared(entry, bank, chosen, pipeline, brain, team_wide=bool(team_wide))
+            where = "for everyone on the team" if team_wide and shared else "on this machine"
+            noun = "memory" if erased == 1 else "memories"
+            print(f"Removed {erased} {noun} from {bank} {where}. Erased from disk.")
+            return 0
     result = await brain.forget(bank, memory_ids=chosen)
     noun = "memory" if result.deleted_count == 1 else "memories"
     print(f"Removed {result.deleted_count} {noun} from {bank}.{await _erase(pipeline, bank, chosen)}")
     return 0
+
+
+def _joined(args: Namespace, bank: str) -> tuple[Any, dict[str, Any]] | None:
+    """``(team module, membership)`` when this bank is shared with a team."""
+    from . import team
+
+    cfg = getattr(args, "config", None)
+    entry = team.load_memberships(Path(cfg).expanduser() if cfg else config_path()).get(bank)
+    return (team, entry) if entry is not None else None
+
+
+def _by(item: Any, team: Any) -> str:
+    from .agentd import who_saved
+
+    who = who_saved(item.metadata) if item.id in team.pulled_ids(item.bank_id) else None
+    return f" (saved by {who})" if who else ""
 
 
 async def _erase(pipeline: Any, bank: str, ids: list[str] | None) -> str:
@@ -441,6 +495,11 @@ def register(sub) -> None:
     forget.add_argument("ids", nargs="*", help="ids or unique prefixes, from `astrocyte memory`")
     forget.add_argument("--all", action="store_true", help="every memory in the bank")
     forget.add_argument("--yes", action="store_true", help="confirm --all")
+    scope_ = forget.add_mutually_exclusive_group()
+    scope_.add_argument("--team", action="store_true",
+                        help="a memory shared with the team: erase it for everyone (needs forget permission)")
+    scope_.add_argument("--local", action="store_true",
+                        help="a memory shared with the team: erase it on this machine only")
     scope(forget)
     scope(cmds.add_parser("banks", help="every bank with memories, this project's marked →"))
     imp = cmds.add_parser(
