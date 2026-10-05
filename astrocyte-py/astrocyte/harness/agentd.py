@@ -30,7 +30,6 @@ gap; ``ASTROCYTE_INJECT_MIN_SIMILARITY`` overrides.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import contextlib
 import hmac
 import json
@@ -47,7 +46,10 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import asyncio
 
 from .paths import agentd_endpoint, agentd_socket, config_path, spool_dir, state_dir
 
@@ -243,6 +245,8 @@ class AgentDaemon:
         self.files_offered: dict[str, set[str]] = {}  # session → paths already answered
         self.token: str | None = None  # set when serving over TCP
         self.last_activity = time.monotonic()
+        import asyncio  # daemon side only: hook processes import this module too
+
         self._drain_lock = asyncio.Lock()
         self._stop = asyncio.Event()
 
@@ -369,6 +373,8 @@ class AgentDaemon:
         return {"context": f"Earlier sessions that touched {path} (Astrocyte):\n" + "\n".join(body)}
 
     async def op_capture(self, _: dict) -> dict:
+        import asyncio
+
         asyncio.get_running_loop().create_task(self.drain())
         return {"ok": True}
 
@@ -420,6 +426,8 @@ class AgentDaemon:
     # ── server ────────────────────────────────────────────────────────
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        import asyncio
+
         self.last_activity = time.monotonic()
         try:
             line = await asyncio.wait_for(reader.readline(), timeout=5)
@@ -439,6 +447,8 @@ class AgentDaemon:
             writer.close()
 
     async def housekeeping(self) -> None:
+        import asyncio
+
         while not self._stop.is_set():
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=DRAIN_INTERVAL_SECONDS)
@@ -463,6 +473,8 @@ class AgentDaemon:
                 self._stop.set()
 
     async def serve(self, sock_path: Path) -> None:
+        import asyncio
+
         await self.warm()
         if transport() == "tcp":
             self.token = secrets.token_urlsafe(32)
@@ -640,6 +652,8 @@ def run(cfg: Path) -> int:
     lock = open(d / "agentd.lock", "w")  # noqa: SIM115 — held for the process lifetime
     if not _lock_exclusively(lock):
         return 0  # another daemon owns the socket
+    import asyncio
+
     try:
         asyncio.run(AgentDaemon(cfg).serve(agentd_socket()))
     except Exception:  # noqa: BLE001

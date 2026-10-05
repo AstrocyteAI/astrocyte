@@ -145,3 +145,32 @@ def test_every_exported_name_resolves() -> None:
 
 def test_no_duplicate_exports() -> None:
     assert len(astrocyte.__all__) == len(set(astrocyte.__all__))
+
+
+def test_lazy_exports_cover_all_and_the_type_checking_imports() -> None:
+    """Names load on first use (PEP 562). The import map, __all__ and the
+    TYPE_CHECKING imports that type checkers and griffe read must agree."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path(astrocyte.__file__).read_text(encoding="utf-8"))
+    guarded = next(n for n in tree.body if isinstance(n, ast.If) and ast.unparse(n.test) == "TYPE_CHECKING")
+    imported = {
+        (node.module, alias.name, alias.asname or alias.name)
+        for node in guarded.body if isinstance(node, ast.ImportFrom) for alias in node.names
+    }
+    assert {(m, a, n) for n, (m, a) in astrocyte._EXPORTS.items()} == imported
+    assert set(astrocyte._EXPORTS) == set(astrocyte.__all__)
+
+
+def test_star_import_and_dir_see_every_name() -> None:
+    namespace: dict = {}
+    exec("from astrocyte import *", namespace)
+    assert set(astrocyte.__all__) <= set(namespace) and set(astrocyte.__all__) <= set(dir(astrocyte))
+
+
+def test_an_unknown_name_is_an_attribute_error() -> None:
+    import pytest
+
+    with pytest.raises(AttributeError, match="no_such_name"):
+        astrocyte.no_such_name  # noqa: B018

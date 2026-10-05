@@ -48,8 +48,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from astrocyte.policy.barriers import redact_secrets
-
 from . import agentd
 from .paths import config_path, state_dir
 from .project import project_bank, project_root
@@ -400,6 +398,14 @@ def _turn_from_payload(payload: dict, session: str) -> TurnSource:
     except OSError:
         files = []
     return [Turn(user=str(kept.get("prompt") or ""), assistant=[answer], started_at=started, files=files)], commit
+
+
+def redact_secrets(text: str) -> str:
+    """The retain barrier's credential scrub, imported only when a turn is
+    kept: the barrier module pulls in every type (~20 ms on each hook)."""
+    from astrocyte.policy.barriers import redact_secrets as scrub
+
+    return scrub(text)
 
 
 # Kept on each captured memory: enough to tie a turn to its code, small

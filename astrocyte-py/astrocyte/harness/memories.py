@@ -17,7 +17,6 @@ file; where the store can purge, the forgotten rows are then erased from disk.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -409,6 +408,8 @@ def run(args: Namespace) -> int:
             close = getattr(pipeline.vector_store, "close", None)
             if close is not None:
                 await close()
+
+    import asyncio  # here, not at import: `astrocyte hook` builds this parser too
 
     return asyncio.run(go())
 

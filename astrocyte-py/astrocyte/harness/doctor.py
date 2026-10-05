@@ -13,7 +13,6 @@ wire — "not wired" is reported, not "fixed".
 
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
 import subprocess
@@ -237,6 +236,8 @@ def run_checks(config_path: Path, *, model_probes: bool = True) -> list[Check]:
     expected = server_spec(found.command, config_path) if found else None
 
     if config is not None:
+        import asyncio  # here, not at import: every agent hook loads this module
+
         checks += asyncio.run(_check_store(config))
         if model_probes:
             checks += asyncio.run(_check_models(config))
