@@ -200,7 +200,11 @@ async def _forget(args: Namespace, pipeline: Any, brain: Any) -> int:
                   "or on this machine only with --local.", file=sys.stderr)
             return 1
         if shared or local:
-            erased = await team.forget_shared(entry, bank, chosen, pipeline, brain, team_wide=bool(team_wide))
+            try:
+                erased = await team.forget_shared(entry, bank, chosen, pipeline, brain, team_wide=bool(team_wide))
+            except team.TeamError as e:
+                print(f"astrocyte memory forget: {e}", file=sys.stderr)
+                return 1
             where = "for everyone on the team" if team_wide and shared else "on this machine"
             noun = "memory" if erased == 1 else "memories"
             print(f"Removed {erased} {noun} from {bank} {where}. Erased from disk.")

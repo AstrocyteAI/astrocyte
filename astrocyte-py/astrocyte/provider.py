@@ -130,6 +130,13 @@ class VectorStore(Protocol):
       forget. Returns how many were erased. ``Astrocyte.erase`` (a gateway
       forget with ``erase: true``, a DSAR erasure) raises
       ``CapabilityNotSupported`` without it.
+    - ``save_legal_hold(hold)``, ``delete_legal_hold(bank_id, hold_id) -> bool``,
+      ``list_legal_holds(bank_id) -> list[LegalHold]`` — persisted legal
+      holds, so a hold survives restarts and binds every process and replica
+      sharing the store. ``save`` replaces a hold with the same
+      ``(bank_id, hold_id)``. ``Astrocyte.place_legal_hold`` uses them, and
+      ``forget`` / ``run_lifecycle`` re-read them before checking; without
+      them, holds are kept in the process only.
     """
 
     SPI_VERSION: ClassVar[int] = 1

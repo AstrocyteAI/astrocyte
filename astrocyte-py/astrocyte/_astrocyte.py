@@ -1404,6 +1404,7 @@ class Astrocyte:
             # legal-hold check so that a rule with respect_legal_hold=True wins
             # over the caller's compliance bypass, and so audit logs fire even
             # on policy refusal.
+            await self._load_holds(bank_id)
             mip_forget = self._mip_router.resolve_forget_for_bank(bank_id) if self._mip_router else None
             if mip_forget is not None:
                 # max_per_call: cap blast radius for selective deletes by id
@@ -1939,8 +1940,66 @@ class Astrocyte:
     # ---------------------------------------------------------------------------
 
     def set_legal_hold(self, bank_id: str, hold_id: str, reason: str, *, set_by: str = "user:api") -> LegalHold:
-        """Place a bank under legal hold. Blocks forget() until released."""
+        """Place a bank under legal hold in this process only. Blocks forget() until released.
+
+        Kept in memory: lost on restart and unseen by other processes. Use
+        :meth:`place_legal_hold` to persist a hold in the store."""
         return self._lifecycle.set_legal_hold(bank_id, hold_id, reason, set_by=set_by)
+
+    def _hold_store(self) -> Any | None:
+        """The vector store when it persists legal holds (optional methods)."""
+        store = self._pipeline.vector_store if self._pipeline is not None else None
+        if store is None or getattr(store, "list_legal_holds", None) is None:
+            return None
+        return store
+
+    async def _load_holds(self, bank_id: str) -> None:
+        """Refresh the bank's persisted holds before a check: another process
+        or replica may have placed or lifted one since."""
+        store = self._hold_store()
+        if store is not None:
+            self._lifecycle.set_stored_holds(bank_id, await store.list_legal_holds(bank_id))
+
+    async def place_legal_hold(
+        self, bank_id: str, hold_id: str, reason: str, *, set_by: str = "user:api"
+    ) -> LegalHold:
+        """Place a bank under legal hold, persisted in the store: it survives
+        restarts and every process and replica sharing the store honours it.
+        Blocks forget() and lifecycle deletion until lifted; a compliance
+        forget (right to erasure) is not blocked unless a MIP rule says
+        ``respect_legal_hold``. Without a store that persists holds (the
+        optional ``save_legal_hold`` / ``delete_legal_hold`` /
+        ``list_legal_holds``), the hold is kept in this process only."""
+        validate_bank_id(bank_id)
+        store = self._hold_store()
+        if store is None:
+            return self._lifecycle.set_legal_hold(bank_id, hold_id, reason, set_by=set_by)
+        hold = LegalHold(hold_id=hold_id, bank_id=bank_id, reason=reason,
+                         set_at=datetime.now(timezone.utc), set_by=set_by)
+        await store.save_legal_hold(hold)
+        await self._load_holds(bank_id)
+        self._logger.log("astrocyte.legal_hold.placed", bank_id=bank_id,
+                         data={"hold_id": hold_id, "set_by": set_by, "reason": reason}, level=logging.WARNING)
+        return hold
+
+    async def lift_legal_hold(self, bank_id: str, hold_id: str) -> bool:
+        """Lift a legal hold, persisted or set in this process. Returns
+        whether it existed."""
+        validate_bank_id(bank_id)
+        released = self._lifecycle.release_legal_hold(bank_id, hold_id)
+        store = self._hold_store()
+        if store is not None:
+            released = await store.delete_legal_hold(bank_id, hold_id) or released
+            await self._load_holds(bank_id)
+        if released:
+            self._logger.log("astrocyte.legal_hold.lifted", bank_id=bank_id, data={"hold_id": hold_id},
+                             level=logging.WARNING)
+        return released
+
+    async def legal_holds(self, bank_id: str) -> list[LegalHold]:
+        """The bank's active legal holds, persisted and in-process."""
+        await self._load_holds(bank_id)
+        return self._lifecycle.get_holds(bank_id)
 
     def release_legal_hold(self, bank_id: str, hold_id: str) -> bool:
         """Release a legal hold from a bank. Returns True if hold existed."""
@@ -1962,6 +2021,7 @@ class Astrocyte:
         if not self._config.lifecycle.enabled:
             return LifecycleRunResult(archived_count=0, deleted_count=0, skipped_count=0, actions=[])
 
+        await self._load_holds(bank_id)  # a persisted hold blocks TTL deletion too
         now = datetime.now(timezone.utc)
         actions: list[LifecycleAction] = []
         to_delete: list[str] = []

@@ -160,6 +160,8 @@ class HoldReleasedResponse(BaseModel):
 class HoldStatusResponse(BaseModel):
     bank_id: str
     under_hold: bool
+    #: The active holds, persisted and in-process.
+    holds: list[LegalHold] = []
 
 
 class AllBankHealthResponse(BaseModel):

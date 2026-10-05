@@ -202,3 +202,18 @@ class TestErase:
                                    make_item("c", bank_id="bank-2", retained_at=T0)])
         await store.delete(["b"], "bank-1")
         assert [(b, n) for b, n, _ in await store.list_banks()] == [("bank-1", 1), ("bank-2", 1)]
+
+
+class TestLegalHolds:
+    async def test_save_list_replace_delete(self, store: PostgresStore):
+        from astrocyte.types import LegalHold
+
+        await store.save_legal_hold(LegalHold(hold_id="case-7", bank_id="bank-1", reason="litigation",
+                                              set_at=T0, set_by="user:counsel"))
+        await store.save_legal_hold(LegalHold(hold_id="case-7", bank_id="bank-1", reason="extended",
+                                              set_at=T0, set_by="user:counsel"))
+        [hold] = await store.list_legal_holds("bank-1")
+        assert (hold.hold_id, hold.reason, hold.set_at) == ("case-7", "extended", T0)
+        assert await store.list_legal_holds("bank-2") == []
+        assert await store.delete_legal_hold("bank-1", "case-7") is True
+        assert await store.delete_legal_hold("bank-1", "case-7") is False

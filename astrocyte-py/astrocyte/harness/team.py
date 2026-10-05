@@ -299,6 +299,8 @@ async def _call(client: Any, method: str, path: str, **kw: Any) -> Any:
         raise TeamError("the gateway refused the token (401): check it, or ask for a new one")
     if response.status_code == 403:
         raise TeamError(f"the token has no access to this project's bank (403): {_detail(response)}")
+    if response.status_code == 423:
+        raise TeamError(f"the project is under a legal hold on the gateway, so nothing was forgotten: {_detail(response)}")
     if response.status_code == 501:
         raise TeamError("this gateway's storage doesn't support team sync (501): it needs the Postgres or "
                         "SQLite store")

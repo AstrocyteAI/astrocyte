@@ -118,3 +118,35 @@ class TestDsarByActor:
         assert {d["bank_id"]: (d["deleted"], d["erased"]) for d in body["details"]} == {
             "project:a": (1, 1), "project:b": (1, 1)}
         assert _feed(gw, bob, "project:a") == [("bob-a-001", False), ("alice-a-1", True)]
+
+
+class TestLegalHolds:
+    """Holds are persisted in the store (G4) and a held bank refuses a forget with 423."""
+
+    def test_a_hold_blocks_a_team_forget_until_it_is_lifted(self, gw, monkeypatch):
+        monkeypatch.setenv("ASTROCYTE_ADMIN_TOKEN", "admin-secret")
+        admin = {"X-Admin-Token": "admin-secret", **gw.login("user:counsel", permissions=("read", "admin"))}
+        alice = gw.login("user:alice")
+        _push(gw, alice, "project:a", ("aaaaaaaa1", "The old key rotation runbook."))
+        placed = gw.post("/v1/admin/banks/project:a/hold",
+                         json={"hold_id": "case-7", "reason": "pending litigation", "set_by": "user:counsel"},
+                         headers=admin)
+        assert placed.status_code == 200, placed.text
+        forget = {"bank_id": "project:a", "memory_ids": ["aaaaaaaa1"], "erase": True}
+        blocked = gw.post("/v1/forget", json=forget, headers=alice)
+        assert blocked.status_code == 423 and blocked.json()["hold_id"] == "case-7"
+        status = gw.get("/v1/admin/banks/project:a/hold", headers=admin).json()
+        assert status["under_hold"] is True and [h["hold_id"] for h in status["holds"]] == ["case-7"]
+        assert gw.delete("/v1/admin/banks/project:a/hold/case-7", headers=admin).json()["released"] is True
+        assert gw.post("/v1/forget", json=forget, headers=alice).json()["erased_count"] == 1
+
+    def test_a_hold_does_not_block_a_dsar(self, gw, monkeypatch):
+        monkeypatch.setenv("ASTROCYTE_ADMIN_TOKEN", "admin-secret")
+        _push(gw, gw.login("user:alice"), "project:a", ("alice-a-1", "Alice: deploys on Tuesdays."))
+        placed = gw.post("/v1/admin/banks/project:a/hold", json={"hold_id": "case-7", "reason": "litigation"},
+                         headers={"X-Admin-Token": "admin-secret", **gw.login("user:counsel", permissions=("read",))})
+        assert placed.status_code == 200, placed.text
+        dpo = gw.login("user:dpo", permissions=("read", "write", "forget", "admin"))
+        body = gw.post("/v1/dsar/forget_principal", json={"tenant_id": "project", "principal": "user:alice"},
+                       headers=dpo).json()
+        assert body["memories_deleted"] == 1 and body["memories_erased"] == 1

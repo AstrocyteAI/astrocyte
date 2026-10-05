@@ -549,6 +549,19 @@ class PostgresStore:
                     ON {self._tombstones()} (bank_id, changed_at, id COLLATE "C")
                     """
                 )
+                # Mirrors 041_legal_holds.sql (persisted legal holds).
+                await conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self._fq("astrocyte_legal_holds")} (
+                        bank_id TEXT NOT NULL,
+                        hold_id TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        set_by TEXT NOT NULL,
+                        set_at TIMESTAMPTZ NOT NULL,
+                        PRIMARY KEY (bank_id, hold_id)
+                    )
+                    """
+                )
                 await conn.commit()
             self._bootstrapped_schemas.add(active_schema)
 
@@ -1148,6 +1161,50 @@ class PostgresStore:
         with contextlib.suppress(Exception):
             await self.refresh_bm25_views()
         return len(gone)
+
+    async def save_legal_hold(self, hold: Any) -> None:
+        """Persist a legal hold (replacing one with the same bank and id).
+        Optional VectorStore method; ``Astrocyte.place_legal_hold`` uses it."""
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            await conn.execute(
+                f"""
+                INSERT INTO {self._fq("astrocyte_legal_holds")} (bank_id, hold_id, reason, set_by, set_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (bank_id, hold_id) DO UPDATE SET
+                    reason = EXCLUDED.reason, set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at
+                """,
+                (hold.bank_id, hold.hold_id, hold.reason, hold.set_by, hold.set_at),
+            )
+
+    async def delete_legal_hold(self, bank_id: str, hold_id: str) -> bool:
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                f'DELETE FROM {self._fq("astrocyte_legal_holds")} WHERE bank_id = %s AND hold_id = %s',
+                (bank_id, hold_id),
+            )
+            return (cur.rowcount or 0) > 0
+
+    async def list_legal_holds(self, bank_id: str) -> list[Any]:
+        from astrocyte.types import LegalHold
+
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    SELECT bank_id, hold_id, reason, set_by, set_at
+                    FROM {self._fq("astrocyte_legal_holds")} WHERE bank_id = %s ORDER BY hold_id
+                    """,
+                    (bank_id,),
+                )
+                rows = await cur.fetchall()
+        return [LegalHold(hold_id=r["hold_id"], bank_id=r["bank_id"], reason=r["reason"], set_by=r["set_by"],
+                          set_at=r["set_at"]) for r in rows]
 
     async def list_banks(self) -> list[tuple[str, int, datetime | None]]:
         """Every bank holding live memories: ``(bank_id, count, newest)``.
