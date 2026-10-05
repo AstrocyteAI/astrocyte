@@ -112,6 +112,16 @@ CREATE INDEX IF NOT EXISTS astrocyte_vectors_bank_live
     ON astrocyte_vectors (bank_id, forgotten_at);
 CREATE INDEX IF NOT EXISTS astrocyte_vectors_bank_chunk
     ON astrocyte_vectors (bank_id, chunk_id);
+-- What ``erase`` leaves of a forgotten memory: its id, bank and the time of
+-- the forget, so the change feed keeps serving the tombstone and the id is
+-- never stored again; text, embedding and metadata are gone.
+CREATE TABLE IF NOT EXISTS astrocyte_tombstones (
+    id         TEXT    PRIMARY KEY,
+    bank_id    TEXT    NOT NULL,
+    changed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS astrocyte_tombstones_bank_changed
+    ON astrocyte_tombstones (bank_id, changed_at, id);
 """
 
 # Created after the upgrade step below: on a database that predates
@@ -491,6 +501,10 @@ class SqliteStore:
                         (str(dim),),
                     )
                 for item in items:
+                    if not overwrite and conn.execute(
+                        "SELECT 1 FROM astrocyte_tombstones WHERE id = ?", (item.id,)
+                    ).fetchone():
+                        continue  # erased: the id stays forgotten
                     params = [
                         item.id,
                         item.bank_id,
@@ -536,9 +550,14 @@ class SqliteStore:
                 f"SELECT {_CHANGE_COLUMNS} FROM astrocyte_vectors WHERE id IN ({_placeholders(len(wanted))})",
                 wanted,
             ).fetchall()
+            erased = conn.execute(
+                f"SELECT id, bank_id, changed_at FROM astrocyte_tombstones WHERE id IN ({_placeholders(len(wanted))})",
+                wanted,
+            ).fetchall()
         finally:
             conn.close()
-        by_id = {r["id"]: self._row_to_change(r) for r in rows}
+        by_id = {r["id"]: self._tombstone(r) for r in erased}
+        by_id.update({r["id"]: self._row_to_change(r) for r in rows})
         return [by_id[i] for i in wanted if i in by_id]
 
     async def search_similar(
@@ -633,7 +652,19 @@ class SqliteStore:
         """
         return await self._run(self._purge, bank_id, ids)
 
-    def _purge(self, bank_id: str, ids: list[str] | None) -> int:
+    async def erase(self, bank_id: str, ids: list[str]) -> int:
+        """Erase forgotten memories from disk but keep their tombstones;
+        returns how many were erased.
+
+        Optional VectorStore method: what a gateway's erase calls (a DSAR, a
+        team forget). Unlike :meth:`purge`, the change feed still serves each
+        id as deleted, so mirrors erase it too, and the id is never stored
+        again (``insert_vectors`` skips it). Only already-forgotten rows of
+        ``ids`` are erased, so erase never bypasses forget.
+        """
+        return await self._run(self._purge, bank_id, list(ids), True)
+
+    def _purge(self, bank_id: str, ids: list[str] | None, keep_tombstones: bool = False) -> int:
         self._ensure_schema()
         conn = self._connect()
         try:
@@ -653,6 +684,13 @@ class SqliteStore:
                 sql += f" AND id IN ({_placeholders(len(ids))})"
                 params += ids
             conn.execute("BEGIN IMMEDIATE")
+            if keep_tombstones:
+                conn.execute(
+                    "INSERT OR IGNORE INTO astrocyte_tombstones (id, bank_id, changed_at) "
+                    "SELECT id, bank_id, COALESCE(changed_at, forgotten_at) FROM astrocyte_vectors"
+                    + sql.removeprefix("DELETE FROM astrocyte_vectors"),
+                    params,
+                )
             erased = conn.execute(sql, params).rowcount or 0
             conn.execute("COMMIT")
             if erased:
@@ -714,9 +752,9 @@ class SqliteStore:
         ``(changed_at, id)``, strictly after ``after``. ``changed_at`` is the
         row's last change to any synced field; every write sets it.
 
-        Optional VectorStore method (team-memory sync). A purged row is gone
-        and has no tombstone; purging is the local store's erase, and the
-        gateway that serves the feed soft-deletes.
+        Optional VectorStore method (team-memory sync). An erased row
+        (:meth:`erase`) is still served as a tombstone; a purged one
+        (:meth:`purge`, the local store's own erase) is gone.
         """
         return await self._run(self._list_changes, bank_id, after, limit)
 
@@ -736,9 +774,23 @@ class SqliteStore:
                 f"SELECT {_CHANGE_COLUMNS} FROM astrocyte_vectors WHERE {where} ORDER BY changed_at, id LIMIT ?",
                 [*params, limit],
             ).fetchall()
+            erased = conn.execute(
+                f"SELECT id, bank_id, changed_at FROM astrocyte_tombstones WHERE {where} "
+                "ORDER BY changed_at, id LIMIT ?",
+                [*params, limit],
+            ).fetchall()
         finally:
             conn.close()
-        return [self._row_to_change(r) for r in rows]
+        # Two ordered runs merged: the first ``limit`` of both is the first ``limit`` of the union.
+        changes = [self._row_to_change(r) for r in rows] + [self._tombstone(r) for r in erased]
+        changes.sort(key=lambda c: (c.changed_at, c.id))
+        return changes[:limit]
+
+    @staticmethod
+    def _tombstone(row: sqlite3.Row) -> MemoryChange:
+        from astrocyte.types import MemoryChange
+
+        return MemoryChange(id=row["id"], bank_id=row["bank_id"], changed_at=_from_us(row["changed_at"]), deleted=True)
 
     @staticmethod
     def _row_to_change(row: sqlite3.Row) -> MemoryChange:

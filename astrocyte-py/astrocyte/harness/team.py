@@ -468,7 +468,8 @@ async def forget_shared(entry: dict[str, Any], bank: str, ids: list[str], pipeli
         shared = [i for i in ids if state.shared(i)]
         if team_wide and shared:
             async with _connect(bank, entry) as client:
-                await _call(client, "POST", "/v1/forget", json={"bank_id": bank, "memory_ids": shared})
+                # Erased, not only forgotten: the text leaves the gateway's storage too.
+                await _call(client, "POST", "/v1/forget", json={"bank_id": bank, "memory_ids": shared, "erase": True})
         erased = await _erase_local(pipeline, brain, bank, ids)
         for mid in ids:
             if mid in state.pulled:
@@ -526,7 +527,8 @@ async def unshare(entry: dict[str, Any] | None, bank: str, ids: list[str], store
             if entry is None:
                 raise TeamError("these memories are on the team's gateway, but this project isn't joined any more")
             async with _connect(bank, entry) as client:
-                await _call(client, "POST", "/v1/forget", json={"bank_id": bank, "memory_ids": on_gateway})
+                await _call(client, "POST", "/v1/forget",
+                            json={"bank_id": bank, "memory_ids": on_gateway, "erase": True})
         for mid in ids:
             if mid in state.promoted:
                 state.promoted.remove(mid)

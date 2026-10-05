@@ -133,6 +133,9 @@ class ForgetBody(BaseModel):
     memory_ids: list[str] | None = None
     tags: list[str] | None = None
     scope: Literal["all"] | None = None
+    #: Also erase the forgotten memories from storage for good (keeping their
+    #: tombstones). Only with ``memory_ids``.
+    erase: bool = False
 
 
 class SyncPushRecordBody(BaseModel):

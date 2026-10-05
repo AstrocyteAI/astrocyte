@@ -106,6 +106,27 @@ async def test_purge_erases_without_a_tombstone(tmp_path):
     assert await _ids(store) == [("b", False)]
 
 
+async def test_erase_keeps_the_tombstone_in_the_feed_and_the_id_forgotten(tmp_path):
+    """A gateway erase: the text goes from disk, the feed still says deleted, and
+    the id is never stored again (a forget is never undone by a re-push)."""
+    store = SqliteStore(path=str(tmp_path / "m.db"))
+    await store.store_vectors([_item("a", T0), _item("b", T0 + timedelta(seconds=1)),
+                               _item("c", T0 + timedelta(seconds=3))])
+    await store.delete(["b"], "b")
+    assert await store.erase("b", ["a", "b"]) == 1, "only forgotten rows are erased"
+    assert [(c.id, c.deleted) for c in await store.list_changes("b")] == [("a", False), ("c", False), ("b", True)]
+    assert [c.id for c in await store.list_changes("b", after=(T0, "a"), limit=1)] == ["c"]
+    assert [c.id for c in await store.list_changes("b", after=(T0, "a"), limit=2)] == ["c", "b"], \
+        "tombstones merge into keyset pages in order"
+    assert [(c.id, c.deleted) for c in await store.lookup_ids(["b", "a"])] == [("b", True), ("a", False)]
+    assert await store.insert_vectors([_item("b", T0 + timedelta(seconds=5), text="again")]) == []
+    assert [i.id for i in await store.list_vectors("b")] == ["a", "c"]
+    conn = sqlite3.connect(tmp_path / "m.db")
+    assert conn.execute("SELECT count(*) FROM astrocyte_vectors WHERE id = 'b'").fetchone()[0] == 0
+    fts = "SELECT count(*) FROM astrocyte_vectors_fts WHERE astrocyte_vectors_fts MATCH 'b'"
+    assert conn.execute(fts).fetchone()[0] == 0
+
+
 async def test_upgrades_a_database_created_before_changed_at(tmp_path):
     """A store file from an earlier version gains the column, a backfill and the index."""
     path = tmp_path / "old.db"

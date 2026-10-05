@@ -168,3 +168,37 @@ class TestMigration039:
         )
         plan = "\n".join(r[0] for r in await cur.fetchall())
         assert "astrocyte_vectors_bank_changed_idx" in plan, plan
+
+
+class TestErase:
+    """Erase (team memory G4): the forgotten row and its text leave the
+    table; the tombstone stays in the feed and the id stays forgotten."""
+
+    async def test_erase_keeps_the_tombstone_and_the_id_forgotten(self, store: PostgresStore):
+        await store.store_vectors([
+            make_item("a", retained_at=T0), make_item("b", retained_at=T0 + timedelta(seconds=1)),
+            make_item("c", retained_at=T0 + timedelta(seconds=3)),
+        ])
+        await store.delete(["b"], "bank-1")
+        assert await store.erase("bank-1", ["a", "b"]) == 1, "only forgotten rows are erased"
+        assert await _ids(store) == [("a", False), ("c", False), ("b", True)]
+        assert [c.id for c in await store.list_changes("bank-1", after=(T0, "a"), limit=1)] == ["c"]
+        assert [c.id for c in await store.list_changes("bank-1", after=(T0, "a"), limit=2)] == ["c", "b"]
+        assert [(c.id, c.deleted) for c in await store.lookup_ids(["b", "a"])] == [("b", True), ("a", False)]
+        assert await store.insert_vectors([make_item("b", retained_at=T0 + timedelta(seconds=9))]) == []
+        pool = await store._ensure_pool()
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(f"SELECT count(*) FROM {store._fq()} WHERE id = 'b'")
+            assert (await cur.fetchone())[0] == 0, "the row, with its text and embedding, is gone"
+
+    async def test_erase_is_scoped_to_the_bank(self, store: PostgresStore):
+        await store.store_vectors([make_item("x", bank_id="bank-2", retained_at=T0)])
+        await store.delete(["x"], "bank-2")
+        assert await store.erase("bank-1", ["x"]) == 0
+        assert await store.erase("bank-2", ["x"]) == 1
+
+    async def test_list_banks(self, store: PostgresStore):
+        await store.store_vectors([make_item("a", retained_at=T0), make_item("b", retained_at=T0),
+                                   make_item("c", bank_id="bank-2", retained_at=T0)])
+        await store.delete(["b"], "bank-1")
+        assert [(b, n) for b, n, _ in await store.list_banks()] == [("bank-1", 1), ("bank-2", 1)]

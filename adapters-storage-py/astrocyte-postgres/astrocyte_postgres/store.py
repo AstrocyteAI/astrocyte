@@ -15,6 +15,7 @@ its vector+lexical layer.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -57,6 +58,13 @@ _CHANGE_COLUMNS = (
     "id, bank_id, text, metadata, tags, fact_type, occurred_at, memory_layer, "
     f"retained_at, forgotten_at, {_CHANGED_AT} AS changed_at"
 )
+
+
+def _tombstone(row: dict[str, Any]) -> MemoryChange:
+    """A change-feed tombstone from the tombstone table (an erased memory)."""
+    from astrocyte.types import MemoryChange
+
+    return MemoryChange(id=row["id"], bank_id=row["bank_id"], changed_at=row["changed_at"], deleted=True)
 
 
 def _row_to_change(row: dict[str, Any]) -> MemoryChange:
@@ -525,6 +533,22 @@ class PostgresStore:
                     ON {vectors} (bank_id, ({_CHANGED_AT}), id COLLATE "C")
                     """
                 )
+                # Mirrors 040_vectors_tombstones.sql (erase keeps tombstones).
+                await conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self._tombstones()} (
+                        id TEXT PRIMARY KEY,
+                        bank_id TEXT NOT NULL,
+                        changed_at TIMESTAMPTZ NOT NULL
+                    )
+                    """
+                )
+                await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS {self._table}_tombstones_bank_changed_idx
+                    ON {self._tombstones()} (bank_id, changed_at, id COLLATE "C")
+                    """
+                )
                 await conn.commit()
             self._bootstrapped_schemas.add(active_schema)
 
@@ -977,7 +1001,22 @@ class PostgresStore:
                     params,
                 )
                 rows = await cur.fetchall()
-        return [_row_to_change(row) for row in rows]
+                # Erased memories: their tombstones live in their own table.
+                tomb_where = "bank_id = %s" + (' AND (changed_at, id COLLATE "C") > (%s, %s)' if after else "")
+                await cur.execute(
+                    f"""
+                    SELECT id, bank_id, changed_at FROM {self._tombstones()}
+                    WHERE {tomb_where}
+                    ORDER BY changed_at, id COLLATE "C"
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                erased = await cur.fetchall()
+        # Two ordered runs merged: the first ``limit`` of both is the first ``limit`` of the union.
+        changes = [_row_to_change(row) for row in rows] + [_tombstone(row) for row in erased]
+        changes.sort(key=lambda c: (c.changed_at, c.id.encode()))
+        return changes[:limit]
 
     async def lookup_ids(self, ids: list[str]) -> list[MemoryChange]:
         """The current state of each id held in **any** bank: a live row or a
@@ -996,7 +1035,13 @@ class PostgresStore:
                     (wanted,),
                 )
                 rows = await cur.fetchall()
-        by_id = {row["id"]: _row_to_change(row) for row in rows}
+                await cur.execute(
+                    f"SELECT id, bank_id, changed_at FROM {self._tombstones()} WHERE id = ANY(%s::text[])",
+                    (wanted,),
+                )
+                erased = await cur.fetchall()
+        by_id = {row["id"]: _tombstone(row) for row in erased}
+        by_id.update({row["id"]: _row_to_change(row) for row in rows})
         return [by_id[i] for i in wanted if i in by_id]
 
     async def insert_vectors(self, items: list[VectorItem]) -> list[str]:
@@ -1016,6 +1061,9 @@ class PostgresStore:
                             f"Vector length {len(item.vector)} != embedding_dimensions {self._dim}",
                         )
                 for item in items:
+                    await cur.execute(f"SELECT 1 FROM {self._tombstones()} WHERE id = %s", (item.id,))
+                    if await cur.fetchone() is not None:
+                        continue  # erased: the id stays forgotten
                     retained_at = item.retained_at or datetime.now(UTC)
                     await cur.execute(
                         f"""
@@ -1049,6 +1097,72 @@ class PostgresStore:
                     await self._upsert_temporal_facts(cur, item)
                     inserted.append(item.id)
         return inserted
+
+    def _tombstones(self) -> str:
+        return self._fq(f"{self._table}_tombstones")
+
+    async def erase(self, bank_id: str, ids: list[str]) -> int:
+        """Erase forgotten memories for good, keeping their tombstones.
+
+        Optional VectorStore method (a DSAR, a team forget with ``erase``).
+        Deletes each already-forgotten row of ``ids`` and its temporal facts,
+        and records ``(id, bank_id, changed_at)`` in the tombstone table, so
+        the change feed still serves it as deleted and ``insert_vectors``
+        never stores the id again. Live rows are untouched. The BM25 views
+        are refreshed afterwards (best effort) so no lexemes of the text stay
+        searchable; dead row versions are reclaimed by (auto)vacuum.
+        """
+        wanted = list(dict.fromkeys(ids))
+        if not wanted:
+            return 0
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    DELETE FROM {self._fq()}
+                    WHERE bank_id = %s AND forgotten_at IS NOT NULL AND id = ANY(%s::text[])
+                    RETURNING id, bank_id, {_CHANGED_AT} AS changed_at
+                    """,
+                    (bank_id, wanted),
+                )
+                gone = await cur.fetchall()
+                if not gone:
+                    return 0
+                for row in gone:
+                    await cur.execute(
+                        f"""
+                        INSERT INTO {self._tombstones()} (id, bank_id, changed_at) VALUES (%s, %s, %s)
+                        ON CONFLICT (id) DO NOTHING
+                        """,
+                        (row["id"], row["bank_id"], row["changed_at"]),
+                    )
+                with contextlib.suppress(psycopg.errors.UndefinedTable):
+                    async with conn.transaction():  # a savepoint: a store without the table keeps the rest
+                        await cur.execute(
+                            f"DELETE FROM {self._fq('astrocyte_temporal_facts')} "
+                            "WHERE bank_id = %s AND memory_id = ANY(%s::text[])",
+                            (bank_id, [r["id"] for r in gone]),
+                        )
+        with contextlib.suppress(Exception):
+            await self.refresh_bm25_views()
+        return len(gone)
+
+    async def list_banks(self) -> list[tuple[str, int, datetime | None]]:
+        """Every bank holding live memories: ``(bank_id, count, newest)``.
+        Optional (``Astrocyte.forget_principal`` sweeps a tenant's banks with it)."""
+        pool = await self._ensure_pool()
+        await self._ensure_schema(pool)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT bank_id, count(*), max(COALESCE(occurred_at, retained_at))
+                    FROM {self._fq()} WHERE forgotten_at IS NULL GROUP BY bank_id ORDER BY bank_id
+                    """
+                )
+                return [(r[0], int(r[1]), r[2]) for r in await cur.fetchall()]
 
     async def delete(self, ids: list[str], bank_id: str) -> int:
         if not ids:

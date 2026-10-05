@@ -1,6 +1,6 @@
 # Team memory
 
-Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth), G2 (batch push), G3 (changes feed), C1 (`astrocyte team`), C2 (background sync, attribution, forget scopes) and C3 (share/unshare, doctor) implemented; G4 not yet.
+Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth), G2 (batch push), G3 (changes feed), C1 (`astrocyte team`), C2 (background sync, attribution, forget scopes) and C3 (share/unshare, doctor) implemented; G4: erasure implemented, persisted legal holds not yet.
 
 A developer's coding agents already remember a project locally: one SQLite file, per-project banks, automatic capture and recall. Team memory shares a project's memory with the people working on it, through an Astrocyte gateway the team runs. A decision Alice's agent saved on Monday is recalled by Bob's agent on Tuesday, attributed to her. Nothing changes on the hot path: hooks and the MCP server still read and write only the local store.
 
@@ -139,6 +139,14 @@ Gateway (server side; each is useful on its own):
 | **G2** (implemented) | `POST /v1/banks/{bank}/sync/push`: batch upsert with client ids through the policy layer; no re-chunking; per-record `stored \| duplicate_of \| rejected` |
 | **G3** (implemented) | `GET /v1/banks/{bank}/changes?cursor=&limit=`: upserts and tombstones in order. Stores gain a `changed_at` column (last change to any synced field; backfilled as `max(retained_at, forgotten_at)`) and an index on `(bank_id, changed_at, id)` |
 | **G4** | Persisted legal holds; forget by `_actor` (DSAR) |
+
+**G4 erasure as built** (decided 2026-10-05: erase from disk; a DSAR overrides a hold; holds in the gateway's database). A forget on the SQL stores is a soft delete, which kept a forgotten memory's text on the gateway's disk even after a team forget or a DSAR, while mirrors erased theirs. Now:
+
+- **`VectorStore.erase(bank_id, ids)`** (optional): already-forgotten rows leave the table, their tombstone (`id`, `bank_id`, `changed_at`) moves to a tombstone table (Postgres migration `040_vectors_tombstones.sql`; SQLite `astrocyte_tombstones`), which `list_changes` merges into its `(changed_at, id)` order and `lookup_ids` reads, and `insert_vectors` refuses an id found there, so mirrors still see the deletion and the id stays forgotten. Postgres also deletes the memory's temporal facts and refreshes the BM25 views; SQLite rebuilds the file (`VACUUM`) as `purge` does. Rows aren't blanked in place: every read path (`as_of` included) would then have to skip empty rows. The SQLite/Postgres parity suite covers erase.
+- **`Astrocyte.erase`** (needs `forget`, audit-logged) and **`/v1/forget` with `"erase": true`** (only with `memory_ids`). Other callers keep the soft delete and its `as_of` history.
+- **The team client erases**: `forget --team` and `unshare` send `erase: true`.
+- **DSAR by actor**: `Astrocyte.forget_principal` sweeps the tenant's banks (configured, plus `list_banks` where the store has it, which finds `project:*` banks), matching `_actor` or the `principal:` tag, forgets with `compliance=True` (a hold doesn't block it, as before) and erases. `/v1/dsar/forget_principal` uses it; behind an engine provider it falls back to the tag sweep. Known gap: memories soft-deleted before are no longer listed, so a sweep can't find them by actor.
+- **Not erased**: rows derived elsewhere from a memory (entity links in a graph store, wiki pages, mental models, source documents a retain stored); the `observations/invalidate` and mental-model endpoints remove those.
 
 **G3 as built.** `Astrocyte.list_changes(bank_id, cursor=, limit=, settle_seconds=)` over an optional `VectorStore.list_changes(bank_id, *, after, limit)`; the gateway serves it at `GET /v1/banks/{bank_id}/changes` (needs `read`; 501 when the store has no feed). Decisions the plan left open:
 

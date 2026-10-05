@@ -252,6 +252,12 @@ async def test_change_feed_matches(stores, seed):
             assert await pg.delete(ids, bank) == await lite.delete(ids, bank)
     resurrected = [_item(rng, item_id=v.id) for v in rng.sample(items, 4)]
     assert await pg.store_vectors(resurrected) == await lite.store_vectors(resurrected)
+    # Erase (G4): forgotten rows leave the table; the feed keeps their
+    # tombstones, merged into the same (changed_at, id) order. Live and
+    # unknown ids are untouched.
+    for bank in BANKS:
+        ids = [v.id for v in rng.sample(items, 10)] + ["missing-id"]
+        assert await pg.erase(bank, ids) == await lite.erase(bank, ids)
 
     for bank in BANKS:
         pg_all = await pg.list_changes(bank, limit=1000)
@@ -279,6 +285,8 @@ async def test_insert_only_and_lookup_match(stores, seed):
     victims = [v.id for v in rng.sample(items, 6)]
     for bank in BANKS:
         assert await pg.delete(victims, bank) == await lite.delete(victims, bank)
+        # An erased id stays forgotten exactly as a soft-deleted one does.
+        assert await pg.erase(bank, victims[:3]) == await lite.erase(bank, victims[:3])
     attempts = [_item(rng, item_id=v.id) for v in rng.sample(items, 10)] + [_item(rng) for _ in range(5)]
     rng.shuffle(attempts)
     inserted = await pg.insert_vectors(attempts)

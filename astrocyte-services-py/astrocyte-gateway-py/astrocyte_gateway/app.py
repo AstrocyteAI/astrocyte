@@ -585,11 +585,20 @@ def create_app(
         deleted = await consolidator.invalidate_sources(body.source_ids, body.bank_id, vector_store)
         return {"deleted": deleted}
 
-    @app.post("/v1/forget", responses={200: {"model": rm.ForgetResult}, **rm.VALIDATION_ERROR})
+    @app.post("/v1/forget", responses={200: {"model": rm.ForgetResponse}, **rm.VALIDATION_ERROR})
     async def forget(
         body: ForgetBody,
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
+        """Forget memories by id, tag or ``scope: "all"``. A forget is a soft
+        delete: the text stays in storage for point-in-time recall. With
+        ``erase: true`` (only with ``memory_ids``) the forgotten memories are
+        then erased from storage for good, keeping only their tombstones (the
+        changes feed still reports them deleted, and their ids can't be
+        stored again); ``erased_count`` says how many. Requires ``forget``;
+        501 when the store can't erase."""
+        if body.erase and not body.memory_ids:
+            raise HTTPException(status_code=400, detail="erase needs memory_ids")
         result = await brain.forget(
             body.bank_id,
             memory_ids=body.memory_ids,
@@ -597,7 +606,11 @@ def create_app(
             scope=body.scope,
             context=ctx,
         )
-        return to_jsonable(result)
+        out = to_jsonable(result)
+        if body.erase:
+            out["erased_count"] = await brain.erase(body.bank_id, body.memory_ids or [], context=ctx,
+                                                    reason="forget with erase")
+        return out
 
     # ── team memory sync (team-memory.md §8) ──────────────────────────────
 
@@ -689,18 +702,22 @@ def create_app(
         """DSAR right-to-erasure for a single principal across a tenant's banks.
 
         Called from Cerebro's ``Synapse.DSAR.DeletionWorker`` when an erasure
-        request is approved. Sweeps every configured bank whose name starts
-        with ``{tenant_id}:`` (Cerebro's multi-tenant naming convention) and
-        deletes memories tagged ``principal:{principal}``.
+        request is approved. Sweeps every bank whose name starts with
+        ``{tenant_id}:`` (the configured banks, and every bank the store holds
+        when it can list them, such as team-memory ``project:*`` banks) and
+        forgets, then erases from storage, the memories the principal saved
+        or that carry their tag.
 
-        ## Tag convention
+        ## What is matched
 
-        For a memory to be erasable by this endpoint, it must have been
-        retained with the tag ``principal:{principal}`` (e.g.
-        ``principal:user:alice``). Callers that want their data covered by
-        DSAR must apply this tag at retain time. Memories without the tag
-        are NOT deleted — by design — and are reported as ``deleted: 0`` in
-        the per-bank breakdown.
+        - Memories saved by the principal: ``metadata._actor`` equals it, as
+          stamped by an authenticated retain or team-memory push.
+        - Memories tagged ``principal:{principal}`` (e.g.
+          ``principal:user:alice``), the convention for content about a
+          principal that someone else saved.
+
+        Memories forgotten before the request (soft-deleted) are not listed
+        any more and are not found by this sweep.
 
         ## Response
 
@@ -718,54 +735,37 @@ def create_app(
 
         ## Compliance bypass
 
-        Calls into ``forget`` with ``compliance=True`` so legal holds are
-        bypassed (right-to-erasure overrides retention obligations) AND the
-        actor is recorded in the audit log for proof-of-deletion.
+        Forgets with ``compliance=True`` so legal holds are bypassed
+        (right-to-erasure overrides retention obligations) and the actor is
+        recorded in the audit log for proof-of-deletion; the erase is logged
+        too. ``erased`` is null for a bank whose store can't erase.
         """
         tenant_id = body.tenant_id
         principal = body.principal
-
-        configured_banks = brain.config.banks or {}
-        tenant_banks = sorted(
-            bid for bid in configured_banks.keys() if bid.startswith(f"{tenant_id}:")
-        )
-
         principal_tag = f"principal:{principal}"
-        deleted_total = 0
-        details: list[dict[str, Any]] = []
-
-        for bank_id in tenant_banks:
-            try:
-                result = await brain.forget(
-                    bank_id,
-                    tags=[principal_tag],
-                    compliance=True,
-                    reason=f"DSAR erasure for {principal}",
-                    context=ctx,
-                )
-                deleted = getattr(result, "deleted_count", 0) or 0
-                details.append({"bank_id": bank_id, "deleted": deleted})
-                deleted_total += deleted
-            except Exception as exc:
-                # Don't fail the whole sweep on a single-bank error — record
-                # it and continue. Cerebro can re-run the request to retry.
-                # Log full detail server-side; surface only a stable
-                # error code to the caller.  Raw ``str(exc)`` could leak
-                # cross-tenant schema names or internal SQL state (CWE-209).
-                _logger.warning(
-                    "dsar_forget_principal: bank %s failed: %s",
-                    bank_id,
-                    exc,
-                    exc_info=True,
-                )
-                details.append({"bank_id": bank_id, "deleted": 0, "error": "internal_error"})
+        try:
+            swept = await brain.forget_principal(
+                principal, bank_prefix=f"{tenant_id}:", context=ctx, reason=f"DSAR erasure for {principal}"
+            )
+            details: list[dict[str, Any]] = [
+                {"bank_id": bank_id, "deleted": deleted, "erased": erased} for bank_id, deleted, erased in swept
+            ]
+        except (AccessDenied, CapabilityNotSupported):
+            raise
+        except Exception as exc:
+            # Log full detail server-side; surface only a stable error code to
+            # the caller: raw ``str(exc)`` could leak cross-tenant schema names
+            # or internal SQL state (CWE-209). Cerebro can re-run the request.
+            _logger.warning("dsar_forget_principal failed: %s", exc, exc_info=True)
+            details = [{"bank_id": f"{tenant_id}:*", "deleted": 0, "error": "internal_error"}]
 
         return {
             "tenant_id": tenant_id,
             "principal": principal,
             "tag_convention": principal_tag,
-            "banks_processed": len(tenant_banks),
-            "memories_deleted": deleted_total,
+            "banks_processed": len(details),
+            "memories_deleted": sum(d["deleted"] for d in details),
+            "memories_erased": sum(d.get("erased") or 0 for d in details),
             "details": details,
         }
 

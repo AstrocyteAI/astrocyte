@@ -48,6 +48,7 @@ class Gateway:
         self.requests: list[str] = []
         self.status: int | None = None  # force every answer to this status
         self.posts = 0
+        self.erased = 0  # memories /v1/forget was asked to erase, and did
         self.fail_post: int | None = None  # answer this push (1-based) with a 500
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -65,6 +66,8 @@ class Gateway:
         if request.url.path == "/v1/forget":
             body = json.loads(request.content)
             result = await self.brain.forget(body["bank_id"], memory_ids=body["memory_ids"], context=ctx)
+            self.erased += body.get("erase") and await self.brain.erase(body["bank_id"], body["memory_ids"],
+                                                                       context=ctx) or 0
             return httpx.Response(200, json={"deleted_count": result.deleted_count})
         bank = request.url.path.split("/")[3].replace("%3A", ":")
         if request.url.path.endswith("/changes"):
@@ -398,6 +401,7 @@ class TestForgetScopes:
         await bob.join("tok-bob")
         assert await _forget(bob, [A1], team=True) == 0
         assert A1 not in await bob.items() and await gateway.texts() == set()
+        assert gateway.erased == 1, "erased from the gateway's storage, not only forgotten"
         await alice.sync()
         assert A1 not in await alice.items(), "the author's copy goes too"
 
