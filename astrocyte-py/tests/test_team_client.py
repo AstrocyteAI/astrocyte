@@ -516,3 +516,130 @@ def test_who_saved():
     assert who_saved({"_actor": "user:alice"}) == "alice"
     assert who_saved({"_actor": "service:ci"}) == "service:ci"
     assert who_saved({}) is None and who_saved(None) is None
+
+
+# ── C3: share / unshare, re-join settings, doctor ────────────────────────
+
+
+async def _memory(user: User, command: str, ids: list[str]) -> int:
+    from astrocyte.harness import memories
+
+    args = Namespace(bank=BANK, project=None, config=str(user.cfg), ids=ids, json=False)
+    with user:
+        return await memories._COMMANDS[command](args, user.pipeline, user.brain)
+
+
+class TestShare:
+    async def test_share_sends_a_captured_turn_with_all_its_chunks(self, gateway, alice):
+        await alice.save(A1, "**user**: why Kafka?", tags=["captured"], _retain_id="r1", _chunk_index=0)
+        await alice.save(A2, "**assistant**: Ordering per key.", tags=["captured"], _retain_id="r1", _chunk_index=1)
+        await alice.save(A3, "**user**: lunch?", tags=["captured"], _retain_id="r2")
+        await alice.join("tok-alice")
+        assert await gateway.texts() == set(), "captured turns stay here by default"
+        assert await _memory(alice, "share", [A1[:6]]) == 0
+        await alice.sync()
+        assert await gateway.texts() == {"**user**: why Kafka?", "**assistant**: Ordering per key."}
+
+    async def test_share_overrides_private(self, gateway, alice):
+        await alice.save(A1, "Deploys go out on Tuesdays.", tags=["private"])
+        await alice.join("tok-alice")
+        await _memory(alice, "share", [A1])
+        await alice.sync()
+        assert await gateway.texts() == {"Deploys go out on Tuesdays."}
+
+    async def test_unshare_before_the_push_keeps_it_here(self, gateway, alice):
+        await alice.save(A1, "Deploys go out on Tuesdays.")
+        await _memory(alice, "unshare", [A1])  # before joining: remembered for when it does
+        await alice.save(A2, "Staging is at staging.example.com.")
+        await alice.join("tok-alice")
+        assert await gateway.texts() == {"Staging is at staging.example.com."}
+
+    async def test_unshare_after_the_push_takes_it_off_the_team_but_not_off_this_machine(self, gateway, alice, bob):
+        await alice.save(A1, "Deploys go out on Tuesdays.")
+        await alice.join("tok-alice")
+        await bob.join("tok-bob")
+        assert A1 in await bob.items()
+        assert await _memory(alice, "unshare", [A1]) == 0
+        assert await gateway.texts() == set()
+        await alice.sync()
+        await bob.sync()
+        assert A1 in await alice.items(), "your copy stays"
+        assert A1 not in await bob.items(), "teammates' copies go"
+
+    async def test_a_teammates_memory_cannot_be_unshared(self, gateway, alice, bob, capsys):
+        await alice.save(A1, "Deploys go out on Tuesdays.")
+        await alice.join("tok-alice")
+        await bob.join("tok-bob")
+        assert await _memory(bob, "unshare", [A1]) == 1
+        assert "forget <id> --local" in capsys.readouterr().err
+
+    async def test_an_unshared_memory_cannot_be_shared_again(self, gateway, alice, capsys):
+        await alice.save(A1, "Deploys go out on Tuesdays.")
+        await alice.join("tok-alice")
+        await _memory(alice, "unshare", [A1])
+        assert await _memory(alice, "share", [A1]) == 1
+        assert "can't be shared again" in capsys.readouterr().err
+
+    async def test_joining_again_changes_the_settings_after_a_new_preview(self, gateway, alice, capsys):
+        await alice.save(A1, "**user**: why Kafka?", tags=["captured"])
+        await alice.join("tok-alice")
+        assert await gateway.texts() == set()
+        capsys.readouterr()
+        await alice.join("tok-alice", share_captured=True)
+        out = capsys.readouterr().out
+        assert "Updating" in out and "captured conversation included" in out
+        assert await gateway.texts() == {"**user**: why Kafka?"}
+
+
+class TestDoctor:
+    def _checks(self, user: User) -> list:
+        from astrocyte.harness import doctor
+
+        with user:
+            return doctor._check_team(user.cfg)
+
+    def test_nothing_when_no_project_is_shared(self, gateway, alice):
+        assert self._checks(alice) == []
+
+    def test_a_synced_project_is_ok(self, gateway, alice):
+        import asyncio
+
+        asyncio.run(alice.join("tok-alice"))
+        [check] = self._checks(alice)
+        assert check.level == "ok" and check.area == f"team {BANK}" and URL in check.summary
+
+    def test_an_unreachable_gateway_fails(self, gateway, alice):
+        import asyncio
+
+        asyncio.run(alice.join("tok-alice"))
+        gateway.status = 401
+        [check] = self._checks(alice)
+        assert check.level == "fail" and "refused the token" in check.summary
+
+    def test_a_failed_last_sync_warns(self, gateway, alice):
+        import asyncio
+
+        asyncio.run(alice.join("tok-alice"))
+        with alice:
+            state = team.SyncState.load(BANK)
+            state.last_error = "the gateway answered 503: busy"
+            state.save(BANK)
+        [check] = self._checks(alice)
+        assert check.level == "warn" and "503" in check.summary and check.fix == "astrocyte team sync"
+
+    def test_a_missing_token_says_how_to_join_again(self, gateway, alice):
+        with alice:
+            team.save_memberships(alice.cfg, {BANK: {"url": URL}})
+        [check] = self._checks(alice)
+        assert check.level == "fail" and "astrocyte team join" in check.fix
+
+    def test_a_long_unsynced_project_warns(self, gateway, alice):
+        import asyncio
+
+        asyncio.run(alice.join("tok-alice"))
+        with alice:
+            state = team.SyncState.load(BANK)
+            state.last_sync = "2026-01-01T00:00:00+00:00"
+            state.save(BANK)
+        [check] = self._checks(alice)
+        assert check.level == "warn" and "days ago" in check.summary

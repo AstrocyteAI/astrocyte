@@ -78,7 +78,11 @@ astrocyte team leave                                        # stop; erases teamm
 ```
 
 What an agent saved and what you imported are shared; captured conversation stays on your
-machine unless you join with `--share-captured`, and a memory tagged `private` never leaves it.
+machine unless you join with `--share-captured` (run `team join` again to change it; it previews
+first), and a memory tagged `private` never leaves it. For one memory, `astrocyte memory share <id>`
+sends it anyway (a captured turn goes with all its chunks), and `astrocyte memory unshare <id>` keeps
+it here: one already on the gateway is taken off it, so teammates' copies go at their next sync,
+while yours stays. `astrocyte doctor` checks each shared project's token, gateway and last sync.
 Teammates' memories are copied into your local store under the same ids, so recall stays local
 and works offline, and they are labelled with who saved them: `- [2026-10-02] (alice) Deploys go
 out on Tuesdays.` "Where you left off" only ever shows your own sessions. While an agent is open,

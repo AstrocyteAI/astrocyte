@@ -217,6 +217,53 @@ def _check_hooks(host, choices: Choices | None = None) -> Check:
     return Check(label, "ok", f"automatic memory on{extra} ({host.hooks_file()})")
 
 
+#: A joined project not synced for this long is reported: the daemon syncs it
+#: every few minutes while an agent is open.
+TEAM_STALE_HOURS = 24
+
+
+def _check_team(cfg_path: Path) -> list[Check]:
+    """Each project shared with a team: token, gateway, last sync."""
+    from datetime import datetime, timezone
+
+    from . import team
+
+    checks = []
+    for bank, entry in team.load_memberships(cfg_path).items():
+        area = f"team {bank}"
+        state = team.SyncState.load(bank)
+        if not team.token_for(bank, entry):
+            checks.append(Check(area, "fail", f"no token for {entry['url']}",
+                                fix=f"astrocyte team join {entry['url']} --token … --bank {bank}"))
+            continue
+        import asyncio
+
+        try:
+            asyncio.run(team.check(bank, entry))
+        except team.TeamError as e:
+            checks.append(Check(area, "fail", str(e)))
+            continue
+        if state.last_error:
+            checks.append(Check(area, "warn", f"last sync failed: {state.last_error}", fix="astrocyte team sync"))
+            continue
+        if not state.last_sync:
+            checks.append(Check(area, "info", f"{entry['url']} reachable; not synced yet", fix="astrocyte team sync"))
+            continue
+        try:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(state.last_sync)
+        except ValueError:
+            age = None
+        hours = age.total_seconds() / 3600 if age is not None else 0
+        summary = (f"{entry['url']}: {len(state.pulled)} from the team, last sync {state.last_sync}"
+                   + ("" if entry.get("share_captured") is not True else "; captured turns shared"))
+        if hours > TEAM_STALE_HOURS:
+            checks.append(Check(area, "warn", summary + f" ({int(hours // 24)} days ago)",
+                                fix="astrocyte team sync (the daemon syncs while an agent is open)"))
+        else:
+            checks.append(Check(area, "ok", summary))
+    return checks
+
+
 def _check_daemon() -> Check:
     """The per-user daemon every harness's hooks talk to."""
     from . import agentd
@@ -260,6 +307,7 @@ def run_checks(config_path: Path, *, model_probes: bool = True) -> list[Check]:
     checks += hook_checks
     if any(c.level != "info" for c in hook_checks):
         checks.append(_check_daemon())
+    checks += _check_team(config_path)
     return checks
 
 

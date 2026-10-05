@@ -149,6 +149,10 @@ class SyncState:
     pulled: list[str] = field(default_factory=list)
     #: ids erased here with ``forget --local``: a later pull must not bring them back
     suppressed: list[str] = field(default_factory=list)
+    #: ids shared with ``memory share`` that the rules would keep here (a captured turn, ``private``)
+    promoted: list[str] = field(default_factory=list)
+    #: ids kept here with ``memory unshare``: never pushed, and their tombstone doesn't erase them here
+    withheld: list[str] = field(default_factory=list)
     last_sync: str | None = None
     last_error: str | None = None
 
@@ -163,6 +167,7 @@ class SyncState:
             data = json.loads(cls.path(bank).read_text(encoding="utf-8"))
             return cls(cursor=data.get("cursor"), pushed=dict(data.get("pushed") or {}),
                        pulled=list(data.get("pulled") or []), suppressed=list(data.get("suppressed") or []),
+                       promoted=list(data.get("promoted") or []), withheld=list(data.get("withheld") or []),
                        last_sync=data.get("last_sync"), last_error=data.get("last_error"))
         except (OSError, ValueError, AttributeError, TypeError):
             return cls()
@@ -172,7 +177,8 @@ class SyncState:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(json.dumps({"cursor": self.cursor, "pushed": self.pushed, "pulled": self.pulled,
-                                   "suppressed": self.suppressed, "last_sync": self.last_sync,
+                                   "suppressed": self.suppressed, "promoted": self.promoted,
+                                   "withheld": self.withheld, "last_sync": self.last_sync,
                                    "last_error": self.last_error}), encoding="utf-8")
         os.replace(tmp, path)
 
@@ -220,13 +226,14 @@ class _BankLock:
 def shareable(item: Any, state: SyncState, *, share_captured: bool) -> bool:
     """Would this local memory go to the team? Saved and imported memories
     do; captured turns only where the project opted in; ``private`` never;
-    nor anything pulled from a teammate."""
+    nor anything pulled from a teammate. ``memory share`` and ``unshare``
+    override the rules for one memory."""
     from astrocyte._sync import PUSH_ID_RE
 
-    tags = set(item.tags or ())
-    if "private" in tags or ("captured" in tags and not share_captured):
+    if item.id in state.withheld or item.id in state.pulled or (item.memory_layer or "fact") != "fact":
         return False
-    if item.id in state.pulled or (item.memory_layer or "fact") != "fact":
+    tags = set(item.tags or ())
+    if item.id not in state.promoted and ("private" in tags or ("captured" in tags and not share_captured)):
         return False
     return bool(PUSH_ID_RE.fullmatch(item.id))
 
@@ -312,6 +319,12 @@ async def probe(client: Any, bank: str) -> None:
     await _call(client, "GET", _bank_path(bank, "changes"), params={"limit": 1})
 
 
+async def check(bank: str, entry: dict[str, Any]) -> None:
+    """:func:`probe` a joined project's gateway with its saved token."""
+    async with _connect(bank, entry) as client:
+        await probe(client, bank)
+
+
 @dataclass
 class SyncReport:
     pushed: dict[str, int] = field(default_factory=dict)  # status → count
@@ -376,6 +389,8 @@ async def pull(client: Any, pipeline: Any, brain: Any, bank: str, state: SyncSta
                 if not isinstance(cid, str):
                     continue
                 if c.get("deleted"):
+                    if cid in state.withheld:
+                        continue  # our own memory, taken off the team with `unshare`: it stays here
                     erase.append(cid)
                     continue
                 own = cid in state.pushed and not state.pushed[cid].startswith(("duplicate:", "rejected:"))
@@ -466,6 +481,63 @@ async def forget_shared(entry: dict[str, Any], bank: str, ids: list[str], pipeli
         return erased
 
 
+def _same_retain(items: list[Any], ids: list[str]) -> list[str]:
+    """``ids`` plus every chunk retained with them: a long turn is several
+    rows sharing a ``_retain_id``, and sharing half of one makes no sense."""
+    chosen = set(ids)
+    keys = {(i.metadata or {}).get("_retain_id") for i in items if i.id in chosen} - {None}
+    return [i.id for i in items if i.id in chosen or (i.metadata or {}).get("_retain_id") in keys]
+
+
+async def share(bank: str, ids: list[str], store: Any) -> list[str]:
+    """Share these memories (and their chunks) at the next push, whatever the
+    rules say. Returns the ids that will go up; a teammate's are skipped."""
+    with _BankLock(bank):
+        state = SyncState.load(bank)
+        ids = [i for i in _same_retain(await _all_items(store, bank), ids) if i not in state.pulled]
+        gone = [i for i in ids if state.pushed.get(i) in ("unshared", "forgotten")]
+        if gone:
+            # The gateway keeps a forgotten id forgotten: a re-push is rejected.
+            raise TeamError(f"{gone[0][:8]} was taken off the team's gateway, and a forgotten memory can't be "
+                            "shared again under its id")
+        for mid in ids:
+            if mid in state.withheld:
+                state.withheld.remove(mid)
+            if mid not in state.promoted:
+                state.promoted.append(mid)
+        state.save(bank)
+        return ids
+
+
+async def unshare(entry: dict[str, Any] | None, bank: str, ids: list[str], store: Any) -> tuple[list[str], int]:
+    """Keep these memories (and their chunks) on this machine. One already
+    on the gateway is forgotten there (needs ``forget``), so every teammate's
+    copy goes at their next sync; yours stays. Returns (ids kept here, how
+    many were taken off the gateway). A teammate's memory can't be unshared."""
+    with _BankLock(bank):
+        state = SyncState.load(bank)
+        ids = _same_retain(await _all_items(store, bank), ids)
+        theirs = [i for i in ids if i in state.pulled]
+        if theirs:
+            raise TeamError(f"{theirs[0][:8]} is a teammate's memory: hide it here with "
+                            "`astrocyte memory forget <id> --local`")
+        on_gateway = [i for i in ids if state.pushed.get(i) in ("stored", "unchanged")]
+        if on_gateway:
+            if entry is None:
+                raise TeamError("these memories are on the team's gateway, but this project isn't joined any more")
+            async with _connect(bank, entry) as client:
+                await _call(client, "POST", "/v1/forget", json={"bank_id": bank, "memory_ids": on_gateway})
+        for mid in ids:
+            if mid in state.promoted:
+                state.promoted.remove(mid)
+            if mid not in state.withheld:
+                state.withheld.append(mid)
+            if mid in on_gateway:
+                state.pushed[mid] = "unshared"
+        state.save(bank)
+        return ids, len(on_gateway)
+
+
 # ── commands ─────────────────────────────────────────────────────────────
 
 
@@ -550,7 +622,8 @@ async def _join(args: Namespace, cfg: Path, pipeline: Any, brain: Any) -> int:
              "joined_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     state = SyncState.load(bank)
     items = await pending_push(pipeline.vector_store, bank, state, share_captured=entry["share_captured"])
-    print(f"Joining {bank} at {url}.")
+    already = load_memberships(cfg).get(bank)
+    print(f"Updating {bank}'s team settings ({url})." if already else f"Joining {bank} at {url}.")
     if items:
         print(f"This shares {len(items)} memories from this machine with everyone who can read the bank"
               + (" (captured conversation included)" if entry["share_captured"] else
@@ -591,8 +664,7 @@ async def _status(args: Namespace, cfg: Path, pipeline: Any, _brain: Any) -> int
     print(f"  from the team  {len(state.pulled)}")
     print("  captured turns " + ("shared" if entry.get("share_captured") else "stay on this machine"))
     try:
-        async with _connect(bank, entry) as client:
-            await probe(client, bank)
+        await check(bank, entry)
         print("  gateway        reachable, token accepted")
     except TeamError as e:
         print(f"  gateway        {e}")
