@@ -1,6 +1,6 @@
 # Automatic memory on Windows
 
-Status: **accepted** (October 2026; decisions in §7). W1–W4 implemented (transport and lifecycle; psutil ancestry; shell-neutral hook commands checked by doctor; a capture → recall round trip through every shell in the install smoke test). The per-agent check on a Windows machine is still to come.
+Status: **accepted** (October 2026; decisions in §7). W1–W4 implemented (transport and lifecycle; psutil ancestry; shell-neutral hook commands checked by doctor; a capture → recall round trip through every shell in the install smoke test). The per-agent check on a Windows machine is still to come (checklist in §8).
 
 On Windows, `astrocyte setup` registers the MCP server, but automatic memory does nothing. The hooks are installed, yet the agent daemon they talk to needs Unix domain sockets (`agentd.supported()` is false on Windows), so nothing is captured and nothing is recalled. `astrocyte doctor` says so. This design makes the hook path work on Windows. Every part can be tested on GitHub's `windows-latest` runners, except one: which shell each agent uses to run a hook. That is called out as needing a Windows user (§4).
 
@@ -94,5 +94,28 @@ The full test suite does not need to run on Windows: only the harness, the SQLit
 ## 7. Decisions (2026-10-04)
 
 1. **`psutil` as a Windows-only dependency** for process ancestry.
-2. **The one-time per-agent check on Windows is still unassigned.** Until someone with Windows and agent accounts runs it, each agent's row in §4 stays "not verified", and the docs say so.
+2. **The one-time per-agent check on Windows is Calvin's** (assigned 2026-10-05), using the checklist in §8. Until it is done, each agent's row in §4 stays "not verified", and the docs say so.
 3. **WSL is the recommended Windows path** in the docs until W1–W4 land and the per-agent check is done: an agent running inside WSL is Linux, and automatic memory works there today.
+
+## 8. Per-agent check on a Windows machine (checklist)
+
+About 15 minutes, on a Windows machine where at least one agent is installed and signed in. Use PowerShell, and a Windows user name with a space in it if one is available (it exercises the 8.3 short-path rule). Record each result in §4's table and in the PR that closes this check.
+
+**Install**
+1. Install uv: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`, then open a new terminal.
+2. `uv tool install astrocyte`, then `astrocyte --version` (0.20.0 or later).
+3. `astrocyte setup`. Note what it reports for each agent. For Codex, run `/hooks` in Codex and trust the astrocyte hooks.
+4. `astrocyte doctor`. Every hooks line should say "automatic memory on", and nothing should be reported as failing under cmd, PowerShell or Git Bash. Paste the output into the PR.
+
+**Per agent** (Claude Code, Codex, Antigravity: in that order of priority)
+5. In a git repository, start an interactive session (not `-p` / `exec`) and send: *"Note for later: our staging deploys go out on Tuesdays."* Let the agent answer, then end the session.
+6. `astrocyte memory list` in that repository: the turn is there, with the agent's name as its source, within about 20 seconds.
+7. Start a new session in the same repository. Its first context should include "Where you left off" with that exchange. Then ask: *"When do staging deploys go out?"* and check that the answer uses the memory.
+8. Claude Code only, optional: `astrocyte setup --claude --file-recall`, ask the agent to read a file it edited in step 5's session (if any), and check that the earlier turn is added after the read.
+
+**Copilot CLI** (recall only; it doesn't capture its own turns)
+9. After step 5 in another agent, start `copilot` in the same repository and ask the question from step 7. The memory should be added to the prompt.
+
+**Record**
+- Per agent: works / doesn't, and anything `astrocyte doctor` or `%USERPROFILE%\.local\state\astrocyte\agentd.log` said.
+- Which shell the agent ran the hook through is not visible from here, and doesn't need to be: the command is the same in all three, and `doctor` has already run it through each. If an agent still fails, the shell is not the cause: note the agent's version, its hook output if it shows any (Claude Code: `claude --debug`), and the end of `agentd.log`.
