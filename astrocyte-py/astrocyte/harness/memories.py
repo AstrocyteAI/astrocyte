@@ -182,17 +182,12 @@ async def _forget(args: Namespace, pipeline: Any, brain: Any) -> int:
     if not args.ids:
         print("Name the memories to remove (ids from `astrocyte memory`), or use --all.", file=sys.stderr)
         return 2
-    chosen: list[str] = []
-    for prefix in args.ids:
-        if len(prefix) < MIN_PREFIX:
-            print(f"  ✗ {prefix}: give at least {MIN_PREFIX} characters of the id", file=sys.stderr)
-            return 2
-        matches = [i.id for i in items if i.id.startswith(prefix)]
-        if len(matches) != 1:
-            why = "no memory in this project has that id" if not matches else f"matches {len(matches)} memories"
-            print(f"  ✗ {prefix}: {why}", file=sys.stderr)
-            return 1
-        chosen.append(matches[0])
+    if any(len(p) < MIN_PREFIX for p in args.ids):
+        print(f"  ✗ give at least {MIN_PREFIX} characters of each id", file=sys.stderr)
+        return 2
+    chosen = _resolve_ids(args, items)
+    if chosen is None:
+        return 1
     joined = _joined(args, bank)
     if joined is not None:
         team, entry = joined
@@ -213,6 +208,62 @@ async def _forget(args: Namespace, pipeline: Any, brain: Any) -> int:
     result = await brain.forget(bank, memory_ids=chosen)
     noun = "memory" if result.deleted_count == 1 else "memories"
     print(f"Removed {result.deleted_count} {noun} from {bank}.{await _erase(pipeline, bank, chosen)}")
+    return 0
+
+
+def _resolve_ids(args: Namespace, items: list[Any]) -> list[str] | None:
+    """Unique id prefixes to ids, as `forget` takes them; None after printing why not."""
+    chosen: list[str] = []
+    for prefix in args.ids:
+        if len(prefix) < MIN_PREFIX:
+            print(f"  ✗ {prefix}: give at least {MIN_PREFIX} characters of the id", file=sys.stderr)
+            return None
+        matches = [i.id for i in items if i.id.startswith(prefix)]
+        if len(matches) != 1:
+            why = "no memory in this project has that id" if not matches else f"matches {len(matches)} memories"
+            print(f"  ✗ {prefix}: {why}", file=sys.stderr)
+            return None
+        chosen.append(matches[0])
+    return chosen
+
+
+async def _share(args: Namespace, pipeline: Any, _brain: Any) -> int:
+    from . import team
+
+    bank = _bank(args)
+    chosen = _resolve_ids(args, await _all_items(pipeline.vector_store, bank))
+    if chosen is None:
+        return 1
+    try:
+        ids = await team.share(bank, chosen, pipeline.vector_store)
+    except team.TeamError as e:
+        print(f"astrocyte memory share: {e}", file=sys.stderr)
+        return 1
+    if not ids:
+        print("Nothing to share: those are teammates' memories.")
+        return 0
+    noun = "memory" if len(ids) == 1 else "memories (with the chunks retained together)"
+    when = ("at the next sync (`astrocyte team sync` sends it now)" if _joined(args, bank)
+            else "once this project joins a team (`astrocyte team join`)")
+    print(f"Shared {len(ids)} {noun}: goes to the team {when}.")
+    return 0
+
+
+async def _unshare(args: Namespace, pipeline: Any, _brain: Any) -> int:
+    from . import team
+
+    bank = _bank(args)
+    chosen = _resolve_ids(args, await _all_items(pipeline.vector_store, bank))
+    if chosen is None:
+        return 1
+    joined = _joined(args, bank)
+    try:
+        ids, removed = await team.unshare(joined[1] if joined else None, bank, chosen, pipeline.vector_store)
+    except team.TeamError as e:
+        print(f"astrocyte memory unshare: {e}", file=sys.stderr)
+        return 1
+    gone = f" Taken off the team's gateway: {removed}; teammates' copies go at their next sync." if removed else ""
+    print(f"Kept {len(ids)} {'memory' if len(ids) == 1 else 'memories'} on this machine only.{gone}")
     return 0
 
 
@@ -445,7 +496,8 @@ async def _export(args: Namespace, pipeline: Any, _brain: Any) -> int:
     return 0
 
 
-_COMMANDS = {"list": _list, "search": _search, "forget": _forget, "banks": _banks, "import": _import, "export": _export}
+_COMMANDS = {"list": _list, "search": _search, "forget": _forget, "banks": _banks, "import": _import, "export": _export,
+             "share": _share, "unshare": _unshare}
 
 
 def run(args: Namespace) -> int:
@@ -502,6 +554,14 @@ def register(sub) -> None:
                         help="a memory shared with the team: erase it on this machine only")
     scope(forget)
     scope(cmds.add_parser("banks", help="every bank with memories, this project's marked →"))
+    share = cmds.add_parser("share", help="share memories with the team that would stay here "
+                            "(a captured turn, or one tagged private)")
+    share.add_argument("ids", nargs="+", help="ids or unique prefixes, from `astrocyte memory`")
+    scope(share)
+    unshare = cmds.add_parser("unshare", help="keep memories on this machine only (taken off the team's "
+                              "gateway if they are already there)")
+    unshare.add_argument("ids", nargs="+", help="ids or unique prefixes, from `astrocyte memory`")
+    scope(unshare)
     imp = cmds.add_parser(
         "import",
         help="seed memory from Markdown/text files or directories (or an .ama.jsonl archive)",
