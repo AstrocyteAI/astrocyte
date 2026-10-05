@@ -189,3 +189,8 @@ Client:
 2. **Auth: per-user gateway tokens** (G1) for teams without an identity provider; OIDC remains supported for those with one.
 3. **Granularity: the whole project bank**, with per-memory `private` / `unshare` as the exception.
 4. **Leaving a team purges teammates' memories** from the local mirror by default; `--keep-mirror` keeps them.
+
+Added 2026-10-05, after the anchored-documents direction (`anchored-documents.md`):
+
+5. **A shared claim cites a shareable source when one exists, and a redacted excerpt otherwise.** Every claim cites evidence, but captured turns stay local (1), so a citation to a private turn would dangle on teammates' machines. A team claim cites a document, commit or PR every teammate can open; when there is none, it carries the PII-redacted verbatim excerpt of the turn it came from, and that claim's trust is capped below one with a shareable source.
+6. **C1 syncs memories, on G2/G3 as built.** Decisions, conventions and imported docs sync as memories now; claims and pages join the same push and changes feed later as rows with their own fields, rather than C1 waiting for the document layer.
