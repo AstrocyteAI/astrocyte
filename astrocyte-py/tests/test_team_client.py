@@ -62,6 +62,10 @@ class Gateway:
         if principal is None:
             return httpx.Response(401, json={"detail": "invalid token"})
         ctx = AstrocyteContext(principal=principal)
+        if request.url.path == "/v1/forget":
+            body = json.loads(request.content)
+            result = await self.brain.forget(body["bank_id"], memory_ids=body["memory_ids"], context=ctx)
+            return httpx.Response(200, json={"deleted_count": result.deleted_count})
         bank = request.url.path.split("/")[3].replace("%3A", ":")
         if request.url.path.endswith("/changes"):
             page = await self.brain.list_changes(bank, cursor=request.url.params.get("cursor"),
@@ -111,8 +115,9 @@ class User:
         pass
 
     async def save(self, mid: str, text: str, *, tags: list[str] | None = None, **meta) -> None:
+        [vector] = await self.pipeline.llm_provider.embed([text])
         await self.pipeline.vector_store.store_vectors([VectorItem(
-            id=mid, bank_id=BANK, vector=[0.1] * 8, text=text, tags=tags, metadata=meta or None,
+            id=mid, bank_id=BANK, vector=vector, text=text, tags=tags, metadata=meta or None,
             retained_at=datetime.now(UTC), memory_layer="fact")])
 
     async def items(self) -> dict[str, VectorItem]:
@@ -356,3 +361,158 @@ class TestStatusAndLeave:
         await bob.join("tok-bob")
         await bob.run("leave", keep_mirror=True)
         assert A1 in await bob.items()
+
+
+# ── C2: background sync, attribution, forget scopes ──────────────────────
+
+
+MINIMAL = "vector_store: in_memory\nllm_provider: mock\nbarriers:\n  pii:\n    mode: disabled\n"
+
+
+def _forget_args(user: User, ids: list[str], **kw) -> Namespace:
+    return Namespace(bank=BANK, project=None, config=str(user.cfg), ids=ids, all=kw.pop("all", False),
+                     yes=kw.pop("yes", False), team=kw.pop("team", False), local=kw.pop("local", False), json=False)
+
+
+async def _forget(user: User, ids: list[str], **kw) -> int:
+    from astrocyte.harness import memories
+
+    with user:
+        return await memories._forget(_forget_args(user, ids, **kw), user.pipeline, user.brain)
+
+
+class TestForgetScopes:
+    async def test_a_shared_memory_needs_a_scope(self, gateway, alice, bob, capsys):
+        await alice.save(A1, "The old key rotation runbook.")
+        await alice.join("tok-alice")
+        await bob.join("tok-bob")
+        capsys.readouterr()
+        assert await _forget(bob, [A1[:6]]) == 1
+        err = capsys.readouterr().err
+        assert "(saved by alice)" in err and "--team" in err and "--local" in err
+        assert A1 in await bob.items(), "nothing erased without a scope"
+
+    async def test_team_erases_it_for_everyone(self, gateway, alice, bob):
+        await alice.save(A1, "The old key rotation runbook.")
+        await alice.join("tok-alice")
+        await bob.join("tok-bob")
+        assert await _forget(bob, [A1], team=True) == 0
+        assert A1 not in await bob.items() and await gateway.texts() == set()
+        await alice.sync()
+        assert A1 not in await alice.items(), "the author's copy goes too"
+
+    async def test_local_erases_it_here_and_a_replayed_feed_does_not_bring_it_back(self, gateway, alice, bob):
+        await alice.save(A1, "Deploys go out on Tuesdays.")
+        await alice.join("tok-alice")
+        await bob.join("tok-bob")
+        assert await _forget(bob, [A1], local=True) == 0
+        assert A1 not in await bob.items() and "Deploys go out on Tuesdays." in await gateway.texts()
+        with bob:
+            state = team.SyncState.load(BANK)
+            state.cursor = None  # the whole feed again, as after a lost cursor
+            state.save(BANK)
+        await bob.sync()
+        assert A1 not in await bob.items()
+
+    async def test_a_memory_never_shared_is_forgotten_as_before(self, gateway, alice, capsys):
+        await alice.join("tok-alice")
+        await alice.save(A2, "A note not synced yet.")
+        assert await _forget(alice, [A2]) == 0
+        assert A2 not in await alice.items()
+
+    async def test_forget_all_on_a_shared_project_erases_this_machine_only(self, gateway, alice, bob, capsys):
+        await alice.save(A1, "Deploys go out on Tuesdays.")
+        await alice.join("tok-alice")
+        await bob.save(B1, "Staging is at staging.example.com.")
+        await bob.join("tok-bob")
+        assert await _forget(bob, [], all=True, yes=True) == 0
+        assert await bob.items() == {}
+        assert "stay on the gateway" in capsys.readouterr().out
+        assert await gateway.texts() == {"Deploys go out on Tuesdays.", "Staging is at staging.example.com."}
+        await bob.sync()
+        assert await bob.items() == {}, "and they aren't pulled back"
+
+
+class TestDaemon:
+    async def _daemon(self, user: User, *, sqlite: bool = False):
+        """The session summary needs a store that lists by recency (SQLite, the local default)."""
+        from astrocyte.harness.agentd import AgentDaemon
+
+        if sqlite:
+            pytest.importorskip("astrocyte_sqlite")
+            user.cfg.write_text(MINIMAL.replace("vector_store: in_memory", "vector_store: sqlite")
+                                + f"vector_store_config:\n  path: {user.cfg.parent / 'm.db'}\n")
+        else:
+            user.cfg.write_text(MINIMAL)
+        with user:
+            daemon = AgentDaemon(user.cfg)
+        user.pipeline, user.brain = daemon.pipeline, daemon.brain  # the daemon's store is the user's store
+        return daemon
+
+    async def test_syncs_joined_projects_in_the_background(self, gateway, alice, bob):
+        await alice.save(A1, "Deploys go out on Tuesdays.")
+        await alice.join("tok-alice")
+        daemon = await self._daemon(bob)
+        await bob.join("tok-bob")
+        await alice.save(A2, "Feature flags live in LaunchDarkly.")
+        await alice.sync()
+        with bob:
+            await daemon.team_sync()
+        assert {A1, A2} <= set(await bob.items())
+
+    async def test_skips_a_project_another_process_is_syncing(self, gateway, alice, caplog):
+        daemon = await self._daemon(alice)
+        await alice.join("tok-alice")
+        await alice.save(A1, "Deploys go out on Tuesdays.")
+        with alice, team._BankLock(BANK):
+            await daemon.team_sync()
+        assert await gateway.texts() == set() and "another sync is running" in caplog.text
+
+    async def test_a_failure_is_kept_for_status(self, gateway, alice, capsys):
+        daemon = await self._daemon(alice)
+        await alice.join("tok-alice")
+        gateway.status = 503
+        with alice:
+            await daemon.team_sync()
+        gateway.status = None
+        capsys.readouterr()
+        await alice.run("status")
+        assert "last error     the gateway answered 503" in capsys.readouterr().out
+
+    async def test_session_start_and_recall_name_the_teammate(self, gateway, alice, bob):
+        await alice.save(A1, "Deploys go out on Tuesdays.")
+        await alice.join("tok-alice")
+        daemon = await self._daemon(bob, sqlite=True)
+        # Bob's own memory saved through the MCP server carries its principal: no label.
+        await bob.save(B1, "Staging is at staging.example.com.", _actor="agent:mcp")
+        await bob.join("tok-bob")
+        with bob:
+            boot = (await daemon.op_boot({"bank": BANK, "session_id": "s1"}))["context"]
+            recall = (await daemon.op_recall({"bank": BANK, "session_id": "s2",
+                                              "prompt": "Deploys go out on Tuesdays."}))["context"]
+        assert "(alice) Deploys go out on Tuesdays." in boot
+        assert "] Staging is at staging.example.com." in boot, "your own memories carry no label"
+        assert "(alice) Deploys go out on Tuesdays." in recall
+
+    async def test_where_you_left_off_is_your_own_session(self, gateway, alice, bob):
+        daemon = await self._daemon(bob, sqlite=True)
+        await bob.save(B1, "**user**: what's next?\n\n**assistant**: Bob's plan.", tags=["captured"],
+                       session_id="bob-1")
+        await bob.join("tok-bob")
+        await alice.save(A1, "**user**: status?\n\n**assistant**: Alice's newer turn.", tags=["captured"],
+                         session_id="alice-9")
+        await alice.join("tok-alice", share_captured=True)
+        await bob.sync()
+        assert A1 in await bob.items()
+        with bob:
+            boot = (await daemon.op_boot({"bank": BANK, "session_id": "bob-2"}))["context"]
+        left_off = boot.split("Most recent memories")[0]
+        assert "Bob's plan" in left_off and "Alice's newer turn" not in left_off
+
+
+def test_who_saved():
+    from astrocyte.harness.agentd import who_saved
+
+    assert who_saved({"_actor": "user:alice"}) == "alice"
+    assert who_saved({"_actor": "service:ci"}) == "service:ci"
+    assert who_saved({}) is None and who_saved(None) is None

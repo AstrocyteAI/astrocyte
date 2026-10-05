@@ -1,6 +1,6 @@
 # Team memory
 
-Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth), G2 (batch push), G3 (changes feed) and C1 (`astrocyte team`, manual sync) implemented; G4, C2 and C3 not yet.
+Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth), G2 (batch push), G3 (changes feed), C1 (`astrocyte team`) and C2 (background sync, attribution, forget scopes) implemented; G4 and C3 not yet.
 
 A developer's coding agents already remember a project locally: one SQLite file, per-project banks, automatic capture and recall. Team memory shares a project's memory with the people working on it, through an Astrocyte gateway the team runs. A decision Alice's agent saved on Monday is recalled by Bob's agent on Tuesday, attributed to her. Nothing changes on the hot path: hooks and the MCP server still read and write only the local store.
 
@@ -182,6 +182,14 @@ Client:
 - **Metadata changes after the first pull are not applied yet**: a later upsert of a pulled id is answered `unchanged` locally. Status, trust and staleness fields don't exist yet; when they do, they need a local update path (C2).
 - **Each acknowledged push batch and each applied pull page is saved before the next request**, so a failure mid-sync resumes without re-sending or re-applying.
 | **C2** | Background sync in the agent daemon; tombstones purge mirrors; forget scopes; attribution in boot and recall |
+
+**C2 as built.** The agent daemon syncs every joined project on its first housekeeping pass and then every `ASTROCYTE_TEAM_SYNC_SECONDS` (300). Decisions made while building it:
+
+- **One sync per bank at a time**, across processes: a lock file beside the bank's sync state. The daemon skips a bank another sync holds; the CLI says so. A failed sync keeps its error in the state (`team status` shows it); the next interval retries.
+- **The daemon syncs through a second `Astrocyte` sharing its pipeline**, with noisy-bank detection off: a first pull of a team's memories is exactly the burst that check refuses, and the shared pipeline means no second embedding model.
+- **"Teammate's memory" means an id this machine pulled**, from the sync state, not "has `_actor`": local memories saved through the MCP server carry `_actor` too (`agent:mcp`, or the configured principal). Labels are `(alice)` for `user:alice` and the full principal otherwise (`(service:ci)`), in session-start, prompt recall, file recall and `astrocyte memory list` (`saved_by` in `--json`).
+- **"Where you left off" skips teammates' captured turns** (only shared when a project opts in), as §6 says: it is your own previous session.
+- **Forget scopes.** `forget <id>` on a memory that is on the gateway (pulled, or pushed and kept) refuses without `--team` or `--local`. `--team` forgets it on the gateway first (`/v1/forget`, needs `forget`; a legal hold or 403 stops it before anything local changes), then here; the ledger marks it `forgotten`. `--local` erases it here and adds it to the bank's suppression list, which pull honours even when the feed is replayed from the start. `forget --all` on a shared project is local only and suppresses what it erased; a memory never shared is forgotten as before, with no prompt.
 | **C3** | `share`/`unshare`; opt-in captured sharing; doctor's team section; docs |
 
 **Testing.** An end-to-end CI job runs the gateway container with two local users (two HOMEs) and checks that:
