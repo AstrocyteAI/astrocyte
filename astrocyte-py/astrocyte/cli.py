@@ -22,13 +22,15 @@ import os
 import sys
 import warnings
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from astrocyte.errors import ConfigError
-from astrocyte.mip import MipRouter, load_mip_config
-from astrocyte.mip.rule_engine import RuleEngineInput, evaluate_rules
-from astrocyte.mip.schema import ForgetSpec, PipelineSpec
-from astrocyte.types import MetadataValue
+
+# The `mip` commands import routing where they run: every agent hook enters
+# through this module (`python -m astrocyte.cli hook …`) and must not pay for it.
+if TYPE_CHECKING:
+    from astrocyte.mip.schema import ForgetSpec, PipelineSpec
+    from astrocyte.types import MetadataValue
 
 # ---------------------------------------------------------------------------
 # astrocyte mip lint
@@ -37,6 +39,8 @@ from astrocyte.types import MetadataValue
 
 def _cmd_mip_lint(args: argparse.Namespace) -> int:
     """Load and validate a mip.yaml. Returns 0 if clean, 1 on any error."""
+    from astrocyte.mip import load_mip_config
+
     path = Path(args.path)
     print(f"Linting MIP config: {path}")
 
@@ -133,6 +137,9 @@ def _format_forget(forget: ForgetSpec | None) -> list[str]:
 
 def _cmd_mip_explain(args: argparse.Namespace) -> int:
     """Show which rule(s) match a hypothetical input and the resulting decision."""
+    from astrocyte.mip import MipRouter, load_mip_config
+    from astrocyte.mip.rule_engine import RuleEngineInput, evaluate_rules
+
     path = Path(args.path)
     try:
         config = load_mip_config(path)

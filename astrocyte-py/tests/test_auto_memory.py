@@ -1053,6 +1053,21 @@ class TestSessionStartHook:
         assert got == [("prompt", '{"prompt": "x"}', "codex")]
 
 
+def test_a_hook_process_imports_only_what_it_needs():
+    """Every hook is a fresh interpreter, and UserPromptSubmit blocks the
+    user's prompt: importing the package's public API (httpx, providers,
+    every type) or asyncio cost ~60 ms per hook on top of ~30 ms of Python."""
+    probe = ("import runpy, sys\n"
+             "sys.argv = ['astrocyte', 'hook', 'prompt']\n"
+             "try:\n    runpy.run_module('astrocyte.cli', run_name='__main__')\nexcept SystemExit:\n    pass\n"
+             "heavy = ('asyncio', 'httpx', 'yaml', 'astrocyte.types', 'astrocyte._astrocyte')\n"
+             "print(' '.join(m for m in heavy if m in sys.modules), file=sys.stderr)")
+    proc = subprocess.run([sys.executable, "-I", "-c", probe], input='{"ping": true}', capture_output=True,
+                          text=True, check=True)
+    assert json.loads(proc.stdout) == hooks.PONG, "the probe ran a real hook"
+    assert proc.stderr.strip() == ""
+
+
 class TestAncestry:
     """Headless detection walks the process tree; every failure mode must
     read as "not found" (interactive), never raise inside a hook."""
