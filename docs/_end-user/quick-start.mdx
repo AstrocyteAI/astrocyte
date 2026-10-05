@@ -66,6 +66,25 @@ Memory starts empty. Seed it with what your project already tells agents:
 Each file becomes one memory per section, and re-importing a file syncs it. Move a project's
 memory between machines with `astrocyte memory export project.ama.jsonl` and `import` on the other.
 
+**Share a project's memory with your team** through an Astrocyte gateway the team runs
+(token mode; an admin creates each person a token, see
+[authentication setup](/end-user/authentication-setup/)):
+
+```bash
+astrocyte team join https://memory.example.com --token …   # in the project; previews, then asks
+astrocyte team sync                                         # push what's new, pull teammates' memories
+astrocyte team status                                       # last sync, what's waiting, token check
+astrocyte team leave                                        # stop; erases teammates' memories here
+```
+
+What an agent saved and what you imported are shared; captured conversation stays on your
+machine unless you join with `--share-captured`, and a memory tagged `private` never leaves it.
+Teammates' memories are copied into your local store under the same ids, marked with who saved
+them, so recall stays local and works offline. A memory forgotten on the gateway is erased from
+every teammate's machine at their next sync. Syncing is manual for now; the token goes to the OS
+keychain when the `keyring` package is installed, else to `team.json` beside your config (readable
+only by you).
+
 The rest of this page covers embedding Astrocyte in your own application or
 running it as a shared service.
 

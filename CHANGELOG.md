@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **`astrocyte team`: share a project's memory with your team through an Astrocyte gateway** (team-memory.md, C1). `astrocyte team join <gateway-url> --token …` checks the token against the project's bank, previews what would be shared (count and a sample) and asks before anything leaves the machine (`--yes` skips the question); `sync` pushes what's new and pulls teammates' memories; `status` shows the last sync, what's waiting and whether the token is accepted; `leave` stops and erases teammates' memories from this machine (`--keep-mirror` keeps them). Shared: what agents saved and what was imported. Captured conversation stays local unless the project joins with `--share-captured`; memories tagged `private` never leave. Teammates' memories are stored locally under the same ids with who saved them (`_actor`, stamped by the gateway), so recall stays local and offline; a memory forgotten on the gateway is erased from every teammate's machine at their next sync. Uses the gateway's token auth (G1), push (G2) and changes feed (G3). Sync is manual: background sync and attribution in recall come next (C2). The token is kept in the OS keychain when `keyring` is installed, else in `team.json` beside the config (0600).
+
 ## [0.21.0] — 2026-10-05 — Codex records edited files; faster hooks; the daemon follows upgrades
 
 Design and direction: `docs/_design/team-memory.md` §9.5–6 (shared claims cite a document, commit or PR, else a redacted excerpt; the first team client syncs memories) and `docs/_design/windows-local-install.md` §8 (the per-agent checklist for Windows).

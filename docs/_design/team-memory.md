@@ -1,6 +1,6 @@
 # Team memory
 
-Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth), G2 (batch push) and G3 (changes feed) implemented; G4 and the client (C1–C3) not yet.
+Status: **accepted** (October 2026; decisions in §9). G1 (gateway auth), G2 (batch push), G3 (changes feed) and C1 (`astrocyte team`, manual sync) implemented; G4, C2 and C3 not yet.
 
 A developer's coding agents already remember a project locally: one SQLite file, per-project banks, automatic capture and recall. Team memory shares a project's memory with the people working on it, through an Astrocyte gateway the team runs. A decision Alice's agent saved on Monday is recalled by Bob's agent on Tuesday, attributed to her. Nothing changes on the hot path: hooks and the MCP server still read and write only the local store.
 
@@ -173,6 +173,14 @@ Client:
 | PR | Content |
 |---|---|
 | **C1** | `astrocyte team join/status/sync/leave`: manual push and pull, preview, keychain token |
+
+**C1 as built** (`astrocyte/harness/team.py`). Membership is per project bank, in `team.json` beside the config; the token goes to the OS keychain (`keyring`, optional) or that file (0600). Sync state per bank is in the state directory: the push ledger (`id → stored | unchanged | duplicate:<id> | rejected:<reason> | forgotten`), the ids pulled from teammates, and the feed cursor. Decisions made while building it:
+
+- **Push sends `fact`-layer rows only**, never `observation`/`model` rows (derived locally, re-derivable on the server), and never a pulled id. A rejected or duplicate id is recorded and not re-sent; text is immutable, so it would get the same answer.
+- **Pull writes through the local `push_records`** with no caller context, so the teammate's `_actor` (stamped by the gateway) is kept, and the local policy layer and dedup apply. A teammate's memory that near-duplicates a local one is skipped (counted, not stored). Server-made observations and mental models are not mirrored (§8, G3 left this to the client).
+- **A tombstone erases the id here** (forget, then purge from disk), including a memory of yours that a teammate forgot for the team; your ledger then marks it `forgotten` so it is never pushed back.
+- **Metadata changes after the first pull are not applied yet**: a later upsert of a pulled id is answered `unchanged` locally. Status, trust and staleness fields don't exist yet; when they do, they need a local update path (C2).
+- **Each acknowledged push batch and each applied pull page is saved before the next request**, so a failure mid-sync resumes without re-sending or re-applying.
 | **C2** | Background sync in the agent daemon; tombstones purge mirrors; forget scopes; attribution in boot and recall |
 | **C3** | `share`/`unshare`; opt-in captured sharing; doctor's team section; docs |
 
