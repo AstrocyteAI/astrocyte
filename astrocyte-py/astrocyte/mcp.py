@@ -716,7 +716,7 @@ def create_mcp_server(
             """
             try:
                 bid = _resolve_bank(bank_id)
-                hold = brain.set_legal_hold(bid, hold_id, reason, set_by=set_by)
+                hold = await brain.place_legal_hold(bid, hold_id, reason, set_by=set_by)
                 return json.dumps(
                     {
                         "hold_id": hold.hold_id,
@@ -743,7 +743,7 @@ def create_mcp_server(
             """
             try:
                 bid = _resolve_bank(bank_id)
-                released = brain.release_legal_hold(bid, hold_id)
+                released = await brain.lift_legal_hold(bid, hold_id)
                 return json.dumps({"bank_id": bid, "hold_id": hold_id, "released": released})
             except Exception as exc:
                 logger.exception("memory_hold_release failed")

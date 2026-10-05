@@ -1141,6 +1141,14 @@
             "title": "Bank Id",
             "type": "string"
           },
+          "holds": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/LegalHold"
+            },
+            "title": "Holds",
+            "type": "array"
+          },
           "under_hold": {
             "title": "Under Hold",
             "type": "boolean"
@@ -2810,7 +2818,7 @@
     },
     "/v1/admin/banks/{bank_id}/hold": {
       "get": {
-        "description": "Check whether a bank is currently under legal hold.",
+        "description": "Check whether a bank is currently under legal hold, and list its holds.",
         "operationId": "admin_check_hold_v1_admin_banks__bank_id__hold_get",
         "parameters": [
           {
@@ -2909,7 +2917,7 @@
         "summary": "Admin Check Hold"
       },
       "post": {
-        "description": "Place a bank under legal hold \u2014 blocks forget() until released.\n\nBody:\n    hold_id (str, required): Unique identifier for this hold.\n    reason (str, required): Human-readable reason.\n    set_by (str, optional): Actor label, default \"user:api\".",
+        "description": "Place a bank under legal hold \u2014 blocks forget() until released.\n\nThe hold is persisted in the store (where it supports holds: Postgres,\nSQLite), so it survives restarts and binds every gateway replica.\nA right-to-erasure (DSAR) forget is not blocked.\n\nBody:\n    hold_id (str, required): Unique identifier for this hold.\n    reason (str, required): Human-readable reason.\n    set_by (str, optional): Actor label, default \"user:api\".",
         "operationId": "admin_set_hold_v1_admin_banks__bank_id__hold_post",
         "parameters": [
           {

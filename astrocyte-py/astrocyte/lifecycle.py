@@ -16,13 +16,17 @@ from astrocyte.types import LegalHold, LifecycleAction
 class LifecycleManager:
     """Manages memory lifecycle: TTL evaluation and legal holds.
 
-    Legal holds are stored in-memory. Persistence is out of scope for v1.
-    TTL evaluation is a pure sync function — no I/O, Rust-portable.
+    Holds come from two places: ones set in this process (``set_legal_hold``,
+    kept in memory) and ones persisted in the store (``Astrocyte.place_legal_hold``),
+    which the caller loads with :meth:`set_stored_holds` before each check so
+    every process and replica sees the same holds. A bank is under hold if
+    either has one. TTL evaluation is a pure sync function — no I/O, Rust-portable.
     """
 
     def __init__(self, config: LifecycleConfig) -> None:
         self._config = config
         self._holds: dict[str, LegalHold] = {}  # key: "{bank_id}\x00{hold_id}"
+        self._stored: dict[str, list[LegalHold]] = {}  # bank_id → holds as last read from the store
 
     # ── Legal holds (sync) ──
 
@@ -46,15 +50,20 @@ class LifecycleManager:
         key = f"{bank_id}{self._SEP}{hold_id}"
         return self._holds.pop(key, None) is not None
 
+    def set_stored_holds(self, bank_id: str, holds: list[LegalHold]) -> None:
+        """The bank's persisted holds, as just read from the store."""
+        self._stored[bank_id] = list(holds)
+
     def is_under_hold(self, bank_id: str) -> bool:
         """Check if any legal hold is active on this bank."""
-        prefix = f"{bank_id}{self._SEP}"
-        return any(k.startswith(prefix) for k in self._holds)
+        return bool(self.get_holds(bank_id))
 
     def get_holds(self, bank_id: str) -> list[LegalHold]:
-        """Get all active holds for a bank."""
+        """Get all active holds for a bank: this process's and the persisted ones."""
         prefix = f"{bank_id}{self._SEP}"
-        return [h for k, h in self._holds.items() if k.startswith(prefix)]
+        local = [h for k, h in self._holds.items() if k.startswith(prefix)]
+        ids = {h.hold_id for h in local}
+        return local + [h for h in self._stored.get(bank_id, []) if h.hold_id not in ids]
 
     def check_forget_allowed(self, bank_id: str) -> None:
         """Raise LegalHoldActive if bank is under hold."""

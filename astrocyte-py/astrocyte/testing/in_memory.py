@@ -24,6 +24,7 @@ from astrocyte.types import (
     ForgetResult,
     GraphHit,
     HealthStatus,
+    LegalHold,
     LLMCapabilities,
     MemoryChange,
     MemoryEntityAssociation,
@@ -84,6 +85,7 @@ class InMemoryVectorStore:
         # ``retained_at`` (the item's own, else the time it was stored) and
         # ``_changed_at`` its last change to any synced field.
         self._tombstones: dict[str, tuple[str, datetime]] = {}
+        self._legal_holds: dict[tuple[str, str], LegalHold] = {}
         self._retained_at: dict[str, datetime] = {}
         self._changed_at: dict[str, datetime] = {}
 
@@ -174,6 +176,15 @@ class InMemoryVectorStore:
                 self._tombstones[vid] = (bank_id, max(retained_at, now))
                 count += 1
         return count
+
+    async def save_legal_hold(self, hold: LegalHold) -> None:
+        self._legal_holds[(hold.bank_id, hold.hold_id)] = hold
+
+    async def delete_legal_hold(self, bank_id: str, hold_id: str) -> bool:
+        return self._legal_holds.pop((bank_id, hold_id), None) is not None
+
+    async def list_legal_holds(self, bank_id: str) -> list[LegalHold]:
+        return sorted((h for (b, _), h in self._legal_holds.items() if b == bank_id), key=lambda h: h.hold_id)
 
     async def erase(self, bank_id: str, ids: list[str]) -> int:
         """Erase forgotten memories, keeping their tombstones. A forget here

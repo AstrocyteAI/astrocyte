@@ -122,6 +122,15 @@ CREATE TABLE IF NOT EXISTS astrocyte_tombstones (
 );
 CREATE INDEX IF NOT EXISTS astrocyte_tombstones_bank_changed
     ON astrocyte_tombstones (bank_id, changed_at, id);
+-- Persisted legal holds: a hold binds every process using this file.
+CREATE TABLE IF NOT EXISTS astrocyte_legal_holds (
+    bank_id TEXT    NOT NULL,
+    hold_id TEXT    NOT NULL,
+    reason  TEXT    NOT NULL,
+    set_by  TEXT    NOT NULL,
+    set_at  INTEGER NOT NULL,
+    PRIMARY KEY (bank_id, hold_id)
+);
 """
 
 # Created after the upgrade step below: on a database that predates
@@ -651,6 +660,47 @@ class SqliteStore:
         local store, which is the trade for an erase that is one.
         """
         return await self._run(self._purge, bank_id, ids)
+
+    async def save_legal_hold(self, hold: Any) -> None:
+        """Persist a legal hold (replacing one with the same bank and id).
+        Optional VectorStore method; ``Astrocyte.place_legal_hold`` uses it."""
+        await self._run(self._exec, "INSERT OR REPLACE INTO astrocyte_legal_holds "
+                        "(bank_id, hold_id, reason, set_by, set_at) VALUES (?, ?, ?, ?, ?)",
+                        [hold.bank_id, hold.hold_id, hold.reason, hold.set_by, _to_us(hold.set_at)])
+
+    async def delete_legal_hold(self, bank_id: str, hold_id: str) -> bool:
+        return bool(await self._run(self._exec, "DELETE FROM astrocyte_legal_holds WHERE bank_id = ? AND hold_id = ?",
+                                    [bank_id, hold_id]))
+
+    async def list_legal_holds(self, bank_id: str) -> list[Any]:
+        return await self._run(self._list_legal_holds, bank_id)
+
+    def _exec(self, sql: str, params: list[Any]) -> int:
+        self._ensure_schema()
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            count = conn.execute(sql, params).rowcount or 0
+            conn.execute("COMMIT")
+            return count
+        finally:
+            conn.close()
+
+    def _list_legal_holds(self, bank_id: str) -> list[Any]:
+        from astrocyte.types import LegalHold
+
+        self._ensure_schema()
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT bank_id, hold_id, reason, set_by, set_at FROM astrocyte_legal_holds "
+                "WHERE bank_id = ? ORDER BY hold_id",
+                (bank_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [LegalHold(hold_id=r["hold_id"], bank_id=r["bank_id"], reason=r["reason"], set_by=r["set_by"],
+                          set_at=_from_us(r["set_at"])) for r in rows]
 
     async def erase(self, bank_id: str, ids: list[str]) -> int:
         """Erase forgotten memories from disk but keep their tombstones;

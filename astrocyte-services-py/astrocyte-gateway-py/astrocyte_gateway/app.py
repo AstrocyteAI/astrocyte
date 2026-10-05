@@ -20,6 +20,7 @@ from astrocyte.errors import (
     ConfigError,
     IngestError,
     InvalidCursor,
+    LegalHoldActive,
     PiiRejected,
     ProviderUnavailable,
     RateLimited,
@@ -330,6 +331,11 @@ def create_app(
     @app.exception_handler(AccessDenied)
     async def _access_denied(_request: Request, exc: AccessDenied) -> JSONResponse:
         return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    @app.exception_handler(LegalHoldActive)
+    async def _legal_hold(_request: Request, exc: LegalHoldActive) -> JSONResponse:
+        # 423 Locked: the bank is held, nothing was forgotten; lift the hold first.
+        return JSONResponse(status_code=423, content={"detail": str(exc), "hold_id": exc.hold_id})
 
     @app.exception_handler(RateLimited)
     async def _rate_limited(_request: Request, exc: RateLimited) -> JSONResponse:
@@ -1072,13 +1078,17 @@ def create_app(
     ) -> dict[str, Any]:
         """Place a bank under legal hold — blocks forget() until released.
 
+        The hold is persisted in the store (where it supports holds: Postgres,
+        SQLite), so it survives restarts and binds every gateway replica.
+        A right-to-erasure (DSAR) forget is not blocked.
+
         Body:
             hold_id (str, required): Unique identifier for this hold.
             reason (str, required): Human-readable reason.
             set_by (str, optional): Actor label, default "user:api".
         """
         _ = ctx
-        hold = brain.set_legal_hold(bank_id, body.hold_id, body.reason, set_by=body.set_by)
+        hold = await brain.place_legal_hold(bank_id, body.hold_id, body.reason, set_by=body.set_by)
         return to_jsonable(hold)
 
     @app.delete("/v1/admin/banks/{bank_id}/hold/{hold_id}", responses={200: {"model": rm.HoldReleasedResponse}, **rm.VALIDATION_ERROR})
@@ -1090,7 +1100,7 @@ def create_app(
     ) -> dict[str, Any]:
         """Release a legal hold from a bank. Returns whether the hold existed."""
         _ = ctx
-        released = brain.release_legal_hold(bank_id, hold_id)
+        released = await brain.lift_legal_hold(bank_id, hold_id)
         return {"bank_id": bank_id, "hold_id": hold_id, "released": released}
 
     @app.get("/v1/admin/banks/{bank_id}/hold", responses={200: {"model": rm.HoldStatusResponse}, **rm.VALIDATION_ERROR})
@@ -1099,9 +1109,10 @@ def create_app(
         _admin: Annotated[None, Depends(require_admin_if_configured)],
         ctx: Annotated[AstrocyteContext | None, Depends(get_astrocyte_context)],
     ) -> dict[str, Any]:
-        """Check whether a bank is currently under legal hold."""
+        """Check whether a bank is currently under legal hold, and list its holds."""
         _ = ctx
-        return {"bank_id": bank_id, "under_hold": brain.is_under_hold(bank_id)}
+        holds = await brain.legal_holds(bank_id)
+        return {"bank_id": bank_id, "under_hold": bool(holds), "holds": [to_jsonable(h) for h in holds]}
 
     @app.get("/v1/admin/sources")
     async def admin_sources(

@@ -405,6 +405,15 @@ class TestForgetScopes:
         await alice.sync()
         assert A1 not in await alice.items(), "the author's copy goes too"
 
+    async def test_a_legal_hold_on_the_gateway_is_explained_and_nothing_changes(self, gateway, alice, bob, capsys):
+        await alice.save(A1, "The old key rotation runbook.")
+        await alice.join("tok-alice")
+        await bob.join("tok-bob")
+        gateway.status = 423
+        assert await _forget(bob, [A1], team=True) == 1
+        assert "legal hold" in capsys.readouterr().err
+        assert A1 in await bob.items(), "nothing forgotten here either"
+
     async def test_local_erases_it_here_and_a_replayed_feed_does_not_bring_it_back(self, gateway, alice, bob):
         await alice.save(A1, "Deploys go out on Tuesdays.")
         await alice.join("tok-alice")

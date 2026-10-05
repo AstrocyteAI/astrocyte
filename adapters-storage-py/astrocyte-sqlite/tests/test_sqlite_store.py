@@ -378,3 +378,19 @@ async def test_an_existing_store_keeps_its_permissions(tmp_path):
     db.chmod(0o640)  # an operator's deliberate choice
     await SqliteStore(path=str(db)).store_vectors([_item("b", [0.0, 1.0])])
     assert oct(db.stat().st_mode & 0o777) == "0o640"
+
+
+async def test_legal_holds_persist_across_store_instances(db):
+    """Persisted legal holds (G4): every process opening the file sees them."""
+    from astrocyte.types import LegalHold
+
+    t = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
+    await SqliteStore(path=db).save_legal_hold(LegalHold(hold_id="case-7", bank_id="b", reason="litigation",
+                                                         set_at=t, set_by="user:counsel"))
+    other = SqliteStore(path=db)
+    [hold] = await other.list_legal_holds("b")
+    assert (hold.hold_id, hold.reason, hold.set_by, hold.set_at) == ("case-7", "litigation", "user:counsel", t)
+    assert await other.list_legal_holds("c") == []
+    assert await other.delete_legal_hold("b", "case-7") is True
+    assert await other.delete_legal_hold("b", "case-7") is False
+    assert await SqliteStore(path=db).list_legal_holds("b") == []
