@@ -333,6 +333,10 @@ def register(sub) -> None:
 
     register_memory(sub)
 
+    from .team import register as register_team
+
+    register_team(sub)
+
 
 def _run_hook(event: str, host: str) -> int:
     from .hooks import main
