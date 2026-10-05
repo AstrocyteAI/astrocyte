@@ -156,7 +156,7 @@ def cmd_setup(args: Namespace) -> int:
     else:
         fresh = {o.host for o in outcomes if o.status in ("installed", "updated")}
         notes = [h.next_step for h in targets if h.label in fresh and h.next_step]
-        notes += [h.hooks_next_step for h in hook_hosts if f"{h.label} hooks" in fresh and h.hooks_next_step]
+        notes += [h.hooks_hint() for h in hook_hosts if f"{h.label} hooks" in fresh and h.hooks_hint()]
         if notes:
             print("\nOne more step in some agents:")
             for note in notes:
@@ -309,7 +309,7 @@ def register(sub) -> None:
     setup.set_defaults(func=cmd_setup)
 
     hook = sub.add_parser("hook", help="(called by agent hooks) automatic memory for one lifecycle event")
-    hook.add_argument("event", choices=["session-start", "prompt", "stop", "file"])
+    hook.add_argument("event", choices=["session-start", "prompt", "stop", "file", "edit"])
     hook.add_argument("--host", choices=["claude", "codex", "antigravity", "copilot"], default="claude",
                       help="the agent firing the hook")
     hook.set_defaults(func=lambda a: _run_hook(a.event, a.host))

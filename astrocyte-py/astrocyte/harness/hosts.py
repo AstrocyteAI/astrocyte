@@ -230,14 +230,28 @@ class HookHost:
     #: Opt-in recall on file reads and edits: (event, tool matcher, extra entry
     #: fields), or None where the harness has no such hook (yet).
     FILE_HOOK: tuple[str, str, dict[str, Any]] | None = None
+    #: Hooks on tool calls, installed with the HOOK_EVENTS ones: event →
+    #: (``astrocyte hook`` subcommand, tool matcher, extra entry fields).
+    TOOL_HOOKS: dict[str, tuple[str, str, dict[str, Any]]] = {}
     # Matches the current ``<python> -I -m astrocyte.cli hook …`` form and the
     # earlier ``astrocyte hook …`` console-script form, with or without --host.
     _OURS = re.compile(
-        r"astrocyte(?:\.cli)?['\"]?\s+hook\s+(session-start|prompt|stop|file)(?:\s+--host\s+[a-z-]+)?\s*$"
+        r"astrocyte(?:\.cli)?['\"]?\s+hook\s+(session-start|prompt|stop|file|edit)(?:\s+--host\s+[a-z-]+)?\s*$"
     )
 
     @abstractmethod
     def hooks_file(self) -> Path: ...
+
+    def _events(self) -> dict[str, tuple[str, dict[str, Any]]]:
+        """Every always-installed hook: HOOK_EVENTS plus TOOL_HOOKS."""
+        return {**self.HOOK_EVENTS, **{e: (sub, extra) for e, (sub, _, extra) in self.TOOL_HOOKS.items()}}
+
+    def _matchers(self) -> dict[str, str]:
+        return {event: matcher for event, (_, matcher, _) in self.TOOL_HOOKS.items()}
+
+    def hooks_hint(self) -> str:
+        """What to do after installing new or changed hooks ("" for nothing)."""
+        return self.hooks_next_step
 
     @classmethod
     def _is_ours(cls, hook: Any) -> bool:
@@ -246,10 +260,10 @@ class HookHost:
     def hook_commands(self) -> dict[str, str | None]:
         """Our installed hook command per event (None where absent)."""
         hooks = _read_json(self.hooks_file()).get("hooks", {})
-        found: dict[str, str | None] = dict.fromkeys(self.HOOK_EVENTS)
+        found: dict[str, str | None] = dict.fromkeys(self._events())
         if not isinstance(hooks, dict):
             return found
-        for event in self.HOOK_EVENTS:
+        for event in self._events():
             for group in hooks.get(event) or []:
                 for hook in (group or {}).get("hooks") or []:
                     if self._is_ours(hook):
@@ -261,7 +275,7 @@ class HookHost:
         flag = f" --host {self.hook_dialect}" if self.hook_dialect else ""
         wanted = {
             event: {"type": "command", "command": f"{prefix} hook {sub}{flag}", **extra}
-            for event, (sub, extra) in self.HOOK_EVENTS.items()
+            for event, (sub, extra) in self._events().items()
         }
         if file_recall and self.FILE_HOOK is not None:
             event, _, extra = self.FILE_HOOK
@@ -316,7 +330,9 @@ class HookHost:
         verb: Status = "updated" if any(current.values()) else "installed"
         if dry_run:
             return Outcome(label, "planned", f"would {_VERB[verb]} {self.hooks_file()}")
-        matcher = {self.FILE_HOOK[0]: self.FILE_HOOK[1]} if self.FILE_HOOK else {}
+        matcher = self._matchers()
+        if file_recall and self.FILE_HOOK:
+            matcher[self.FILE_HOOK[0]] = self.FILE_HOOK[1]
 
         def change(data: dict) -> None:
             self._strip_ours(data)  # replace stale entries; never touch the user's own hooks
@@ -435,18 +451,25 @@ class CodexHost(HookHost, _CliHost):
     # Codex speaks Claude Code's hook contract (same events, same
     # ``hookSpecificOutput.additionalContext``; verified on codex-cli 0.160),
     # but its Stop payload carries the reply as ``last_assistant_message``
-    # rather than a transcript we can parse — hence its own dialect.
-    # Timeouts are seconds.
+    # rather than a transcript we can parse — hence its own dialect — and
+    # names no files, so PostToolUse on apply_patch (its one file-writing
+    # tool; reads go through the shell) notes them. Timeouts are seconds.
     HOOK_EVENTS = {
         "SessionStart": ("session-start", {"timeout": 15}),
         "UserPromptSubmit": ("prompt", {"timeout": 5}),
         "Stop": ("stop", {"timeout": 10}),
     }
+    TOOL_HOOKS = {"PostToolUse": ("edit", "apply_patch", {"timeout": 5})}
     hook_dialect = "codex"
+    # The released value (public API); hooks_hint() is what setup prints.
     hooks_next_step = (
         "Codex runs new or changed hooks only once you trust them: in Codex, run /hooks and trust "
         "the three astrocyte hooks."
     )
+
+    def hooks_hint(self) -> str:
+        return ("Codex runs new or changed hooks only once you trust them: in Codex, run /hooks and trust "
+                "the four astrocyte hooks.")
 
     # Codex reads hooks from hooks.json and from config.toml, and warns on
     # every run when both define some ("prefer a single representation"). So
@@ -488,12 +511,12 @@ class CodexHost(HookHost, _CliHost):
         return self._json_file() if self._has_foreign_hooks(_read_json(self._json_file())) else self.config_file()
 
     def hook_commands(self) -> dict[str, str | None]:
-        found: dict[str, str | None] = dict.fromkeys(self.HOOK_EVENTS)
+        found: dict[str, str | None] = dict.fromkeys(self._events())
         for data in (_read_json(self._json_file()), self._toml()[1]):
             hooks = data.get("hooks")
             if not isinstance(hooks, dict):
                 continue
-            for event in self.HOOK_EVENTS:
+            for event in self._events():
                 for group in hooks.get(event) or []:
                     for hook in (group or {}).get("hooks") or []:
                         if self._is_ours(hook):
@@ -513,7 +536,10 @@ class CodexHost(HookHost, _CliHost):
     def _block(self, wanted: dict[str, dict[str, Any]]) -> str:
         lines = [self._BEGIN, "# Automatic memory, managed by `astrocyte setup` (remove: astrocyte setup --no-hooks)."]
         for event, entry in wanted.items():
-            lines += ["", f"[[hooks.{event}]]", "", f"[[hooks.{event}.hooks]]"]
+            lines += ["", f"[[hooks.{event}]]"]
+            if event in self._matchers():
+                lines.append(f"matcher = {json.dumps(self._matchers()[event])}")
+            lines += ["", f"[[hooks.{event}.hooks]]"]
             # JSON string escapes are valid TOML basic-string escapes.
             lines += [f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in entry.items()]
         return "\n".join([*lines, self._END]) + "\n"
@@ -588,7 +614,8 @@ class CodexHost(HookHost, _CliHost):
             self._strip_ours(expected)
             hooks = expected.setdefault("hooks", {})
             for event, entry in wanted.items():
-                hooks.setdefault(event, []).append({"hooks": [entry]})
+                group = {"matcher": self._matchers()[event]} if event in self._matchers() else {}
+                hooks.setdefault(event, []).append({**group, "hooks": [entry]})
             body = self._unmarked(text)
             body = body.rstrip("\n") + "\n\n" if body.strip() else ""
             self._write_toml(body + self._block(wanted), expected)

@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Codex turns record the files they edited.** Codex reports no files at Stop, so setup adds a fourth Codex hook, `PostToolUse` on `apply_patch` (its only file-writing tool), which notes the files each successful patch adds, updates, deletes or moves to; Stop keeps them on the captured turn as metadata `files`, relative to the project, like Claude Code's and Antigravity's. Files Codex only reads are not recorded: it reads through shell commands, whose paths can only be guessed. Checked against a live codex-cli 0.160 session. Existing installs get the hook from the next `astrocyte setup` or `astrocyte doctor --fix` (until then `doctor` reports it missing), and Codex runs it only once it is trusted in `/hooks`.
+
 ### Fixed
 
 - **The agent daemon restarts after an upgrade.** It exited only when idle for 30 minutes or when its config changed, so on a machine with an agent open all day the daemon kept running the old version's code after an upgrade, and new hooks asked it for operations it didn't have (seen on 0.19.0 → 0.20.0: file recall got no answers). It now checks the installed version alongside the config every 20 seconds and exits when it changes; the next hook starts the new one. Captures wait in the spool meanwhile, so nothing is lost.
