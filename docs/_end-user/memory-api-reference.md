@@ -815,6 +815,29 @@ curl -X POST https://gateway.example.com/v1/forget \
   }'
 ```
 
+### Erase: remove forgotten memories from storage for good
+
+`forget` is a soft delete on the SQL stores: a forgotten memory leaves recall, but its text stays on disk so `as_of` (point-in-time) recall can still see the past. To remove it for good, **erase** it after forgetting it, with `"erase": true` (only together with `memory_ids`) or `Astrocyte.erase()`:
+
+```bash
+curl -X POST https://gateway.example.com/v1/forget \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ASTROCYTE_TOKEN" \
+  -d '{"bank_id": "project:api-1a2b3c", "memory_ids": ["9f2c41d07ab3e815"], "erase": true}'
+# {"deleted_count": 1, "archived_count": 0, "erased_count": 1}
+```
+
+```python
+await ast.forget("project:api-1a2b3c", memory_ids=["9f2c41d07ab3e815"], context=ctx)
+erased = await ast.erase("project:api-1a2b3c", ["9f2c41d07ab3e815"], context=ctx)
+```
+
+Erase removes the text, embedding, metadata and temporal facts, and on Postgres refreshes the BM25 views. It keeps only a **tombstone** (id, bank, time of the forget): the [change feed](#list_changes----read-a-banks-change-feed) still reports the memory deleted, so teammates' mirrors erase their copies too, and the id can never be stored again (a re-push is `rejected`). Only memories already forgotten are erased. It needs the `forget` permission, is logged for the audit trail, and needs a vector store with the optional `erase` method (`PostgresStore`, `SqliteStore`, the in-memory store; otherwise 501). `astrocyte memory forget <id> --team` and `astrocyte memory unshare` erase on the gateway.
+
+### Right to erasure (DSAR)
+
+`POST /v1/dsar/forget_principal` with `{"tenant_id": "project", "principal": "user:alice"}` sweeps every bank whose id starts with `project:` (the configured banks, and every bank the store holds when it can list them, such as team `project:*` banks). In each, it forgets and then erases the memories **saved by** the principal (`metadata._actor`, stamped by an authenticated retain or push) and those **tagged** `principal:user:alice`. A legal hold does not block it (right to erasure overrides retention), and the caller is recorded in the audit log. The response gives `memories_deleted`, `memories_erased`, and per bank `deleted` and `erased` (`null` where the store can't erase). Memories forgotten before the request no longer appear in listings, so the sweep doesn't find them; behind an engine provider only the tag is matched.
+
 ---
 
 ## list_changes() -- Read a bank's change feed

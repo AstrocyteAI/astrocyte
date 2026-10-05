@@ -469,6 +469,17 @@
             "title": "Deleted",
             "type": "integer"
           },
+          "erased": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erased"
+          },
           "error": {
             "anyOf": [
               {
@@ -523,6 +534,11 @@
           },
           "memories_deleted": {
             "title": "Memories Deleted",
+            "type": "integer"
+          },
+          "memories_erased": {
+            "default": 0,
+            "title": "Memories Erased",
             "type": "integer"
           },
           "principal": {
@@ -706,6 +722,11 @@
             "title": "Bank Id",
             "type": "string"
           },
+          "erase": {
+            "default": false,
+            "title": "Erase",
+            "type": "boolean"
+          },
           "memory_ids": {
             "anyOf": [
               {
@@ -753,7 +774,8 @@
         "title": "ForgetBody",
         "type": "object"
       },
-      "ForgetResult": {
+      "ForgetResponse": {
+        "description": "``POST /v1/forget``: ``erased_count`` only when the request asked to erase.",
         "properties": {
           "archived_count": {
             "default": 0,
@@ -763,12 +785,23 @@
           "deleted_count": {
             "title": "Deleted Count",
             "type": "integer"
+          },
+          "erased_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erased Count"
           }
         },
         "required": [
           "deleted_count"
         ],
-        "title": "ForgetResult",
+        "title": "ForgetResponse",
         "type": "object"
       },
       "GapItem": {
@@ -3910,7 +3943,7 @@
     },
     "/v1/dsar/forget_principal": {
       "post": {
-        "description": "DSAR right-to-erasure for a single principal across a tenant's banks.\n\nCalled from Cerebro's ``Synapse.DSAR.DeletionWorker`` when an erasure\nrequest is approved. Sweeps every configured bank whose name starts\nwith ``{tenant_id}:`` (Cerebro's multi-tenant naming convention) and\ndeletes memories tagged ``principal:{principal}``.\n\n## Tag convention\n\nFor a memory to be erasable by this endpoint, it must have been\nretained with the tag ``principal:{principal}`` (e.g.\n``principal:user:alice``). Callers that want their data covered by\nDSAR must apply this tag at retain time. Memories without the tag\nare NOT deleted \u2014 by design \u2014 and are reported as ``deleted: 0`` in\nthe per-bank breakdown.\n\n## Response\n\n    {\n      \"tenant_id\": \"...\",\n      \"principal\": \"user:alice\",\n      \"tag_convention\": \"principal:user:alice\",\n      \"banks_processed\": 3,\n      \"memories_deleted\": 12,\n      \"details\": [\n        {\"bank_id\": \"tenant-acme:decisions\", \"deleted\": 7},\n        ...\n      ]\n    }\n\n## Compliance bypass\n\nCalls into ``forget`` with ``compliance=True`` so legal holds are\nbypassed (right-to-erasure overrides retention obligations) AND the\nactor is recorded in the audit log for proof-of-deletion.",
+        "description": "DSAR right-to-erasure for a single principal across a tenant's banks.\n\nCalled from Cerebro's ``Synapse.DSAR.DeletionWorker`` when an erasure\nrequest is approved. Sweeps every bank whose name starts with\n``{tenant_id}:`` (the configured banks, and every bank the store holds\nwhen it can list them, such as team-memory ``project:*`` banks) and\nforgets, then erases from storage, the memories the principal saved\nor that carry their tag.\n\n## What is matched\n\n- Memories saved by the principal: ``metadata._actor`` equals it, as\n  stamped by an authenticated retain or team-memory push.\n- Memories tagged ``principal:{principal}`` (e.g.\n  ``principal:user:alice``), the convention for content about a\n  principal that someone else saved.\n\nMemories forgotten before the request (soft-deleted) are not listed\nany more and are not found by this sweep.\n\n## Response\n\n    {\n      \"tenant_id\": \"...\",\n      \"principal\": \"user:alice\",\n      \"tag_convention\": \"principal:user:alice\",\n      \"banks_processed\": 3,\n      \"memories_deleted\": 12,\n      \"details\": [\n        {\"bank_id\": \"tenant-acme:decisions\", \"deleted\": 7},\n        ...\n      ]\n    }\n\n## Compliance bypass\n\nForgets with ``compliance=True`` so legal holds are bypassed\n(right-to-erasure overrides retention obligations) and the actor is\nrecorded in the audit log for proof-of-deletion; the erase is logged\ntoo. ``erased`` is null for a bank whose store can't erase.",
         "operationId": "dsar_forget_principal_v1_dsar_forget_principal_post",
         "parameters": [
           {
@@ -4114,6 +4147,7 @@
     },
     "/v1/forget": {
       "post": {
+        "description": "Forget memories by id, tag or ``scope: \"all\"``. A forget is a soft\ndelete: the text stays in storage for point-in-time recall. With\n``erase: true`` (only with ``memory_ids``) the forgotten memories are\nthen erased from storage for good, keeping only their tombstones (the\nchanges feed still reports them deleted, and their ids can't be\nstored again); ``erased_count`` says how many. Requires ``forget``;\n501 when the store can't erase.",
         "operationId": "forget_v1_forget_post",
         "parameters": [
           {
@@ -4180,7 +4214,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForgetResult",
+                  "$ref": "#/components/schemas/ForgetResponse",
                   "additionalProperties": true,
                   "title": "Response Forget V1 Forget Post",
                   "type": "object"

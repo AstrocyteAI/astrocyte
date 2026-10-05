@@ -116,6 +116,8 @@ class ExportResponse(BaseModel):
 class DsarBankDetail(BaseModel):
     bank_id: str
     deleted: int
+    #: Erased from storage (text, embedding, metadata); None where the store can't erase.
+    erased: int | None = None
     error: str | None = None
 
 
@@ -125,7 +127,16 @@ class DsarForgetPrincipalResponse(BaseModel):
     tag_convention: str
     banks_processed: int
     memories_deleted: int
+    memories_erased: int = 0
     details: list[DsarBankDetail]
+
+
+class ForgetResponse(BaseModel):
+    """``POST /v1/forget``: ``erased_count`` only when the request asked to erase."""
+
+    deleted_count: int
+    archived_count: int = 0
+    erased_count: int | None = None
 
 
 class MentalModelListResponse(BaseModel):

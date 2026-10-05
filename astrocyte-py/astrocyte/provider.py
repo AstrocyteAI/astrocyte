@@ -122,6 +122,14 @@ class VectorStore(Protocol):
       first is detected rather than clobbered.
       ``Astrocyte.push_records`` (``POST /v1/banks/{bank_id}/sync/push``)
       needs both, and raises ``CapabilityNotSupported`` without them.
+    - ``erase(bank_id, ids) -> int`` — erase already-forgotten memories of
+      ``ids`` from storage for good (text, embedding, metadata and anything
+      derived from them), keeping each one's tombstone: ``list_changes`` and
+      ``lookup_ids`` still report it deleted, and ``insert_vectors`` never
+      stores the id again. Live rows are untouched, so erase never bypasses
+      forget. Returns how many were erased. ``Astrocyte.erase`` (a gateway
+      forget with ``erase: true``, a DSAR erasure) raises
+      ``CapabilityNotSupported`` without it.
     """
 
     SPI_VERSION: ClassVar[int] = 1

@@ -2367,6 +2367,105 @@ class Astrocyte:
             next_cursor = cursor
         return MemoryChangePage(changes=changes, next_cursor=next_cursor, has_more=has_more)
 
+    async def erase(
+        self,
+        bank_id: str,
+        memory_ids: list[str],
+        *,
+        context: AstrocyteContext | None = None,
+        reason: str | None = None,
+    ) -> int:
+        """Erase forgotten memories from storage for good, keeping their tombstones.
+
+        ``forget`` is a soft delete on the SQL stores: a forgotten memory's
+        text stays on disk so ``as_of`` recall can still see the past. Erase
+        removes it, with its embedding, metadata and what was derived from it
+        (``VectorStore.erase``), and keeps only the tombstone, so the changes
+        feed still reports it deleted (mirrors erase it too) and the id is
+        never stored again. Only memories already forgotten are erased: forget
+        first. Requires ``forget`` on the bank; logged for the audit trail.
+        Returns how many were erased. Raises ``CapabilityNotSupported`` when
+        the vector store has no ``erase``.
+        """
+        validate_bank_id(bank_id)
+        self._policy.check_access(bank_id, "forget", context)
+        store = self._sync_vector_store("erase")
+        erase = getattr(store, "erase", None)
+        if erase is None:
+            raise CapabilityNotSupported(self._provider_name, "erase")
+        ids = list(dict.fromkeys(memory_ids))
+        if not ids:
+            return 0
+        erased = await erase(bank_id, ids)
+        self._logger.log(
+            "astrocyte.erase",
+            bank_id=bank_id,
+            data={"actor": context_principal_label(context) if context else "anonymous",
+                  "reason": reason or "erase", "requested": len(ids), "erased": erased},
+            level=logging.WARNING,
+        )
+        return erased
+
+    async def forget_principal(
+        self,
+        principal: str,
+        *,
+        bank_prefix: str,
+        context: AstrocyteContext | None = None,
+        reason: str | None = None,
+    ) -> list[tuple[str, int, int | None]]:
+        """Right to erasure for one principal: forget, then erase, what they saved.
+
+        In every bank whose id starts with ``bank_prefix`` (the configured
+        banks, and every bank the vector store holds when it can list them),
+        the live memories saved by ``principal`` (``_actor``, stamped by an
+        authenticated retain or push) or tagged ``principal:<principal>`` (the
+        older convention) are forgotten with ``compliance=True`` (legal holds
+        do not block an erasure), then erased from storage where the store
+        can (:meth:`erase`). Returns ``(bank_id, forgotten, erased)`` for
+        every bank swept; ``erased`` is None where the store can't erase.
+        Behind an engine provider only the tag is matched. Memories
+        forgotten before (soft-deleted) are no longer listed, so they are not
+        found here.
+        """
+        if not bank_prefix:
+            raise ValueError("bank_prefix is required: an erasure is scoped to one tenant's banks")
+        tag = f"principal:{principal}"
+        why = reason or f"erasure for {principal}"
+        banks = {b for b in (self._config.banks or {}) if b.startswith(bank_prefix)}
+        try:
+            store = self._sync_vector_store("forget_principal")
+        except CapabilityNotSupported:
+            # An engine provider: nothing to list or erase here, so the tag
+            # convention is all that can be matched (the engine forgets by tag).
+            out: list[tuple[str, int, int | None]] = []
+            for bank_id in sorted(banks):
+                result = await self.forget(bank_id, tags=[tag], compliance=True, reason=why, context=context)
+                out.append((bank_id, result.deleted_count, None))
+            return out
+        lister = getattr(store, "list_banks", None)
+        if lister is not None:
+            banks |= {row[0] for row in await lister() if row[0].startswith(bank_prefix)}
+        out = []
+        for bank_id in sorted(banks):
+            ids, offset = [], 0
+            while True:
+                page = await store.list_vectors(bank_id, offset=offset, limit=500)
+                ids += [i.id for i in page if (i.metadata or {}).get("_actor") == principal or tag in (i.tags or ())]
+                if len(page) < 500:
+                    break
+                offset += 500
+            if not ids:
+                out.append((bank_id, 0, 0 if getattr(store, "erase", None) else None))
+                continue
+            result = await self.forget(bank_id, memory_ids=ids, compliance=True, reason=why, context=context)
+            try:
+                erased: int | None = await self.erase(bank_id, ids, context=context, reason=why)
+            except CapabilityNotSupported:
+                erased = None
+            out.append((bank_id, result.deleted_count, erased))
+        return out
+
     async def push_records(
         self,
         bank_id: str,

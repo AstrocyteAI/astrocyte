@@ -175,6 +175,11 @@ class InMemoryVectorStore:
                 count += 1
         return count
 
+    async def erase(self, bank_id: str, ids: list[str]) -> int:
+        """Erase forgotten memories, keeping their tombstones. A forget here
+        already keeps nothing but the tombstone, so this only counts them."""
+        return sum(1 for vid in dict.fromkeys(ids) if self._tombstones.get(vid, ("",))[0] == bank_id)
+
     async def list_changes(
         self,
         bank_id: str,
