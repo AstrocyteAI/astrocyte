@@ -17,7 +17,7 @@
     "astro": "^7.3.5",
     "astro-mermaid": "^2.1.0",
     "mermaid": "^11.17.0",
-    "starlight-sidebar-topics": "^0.8.0"
+    "starlight-sidebar-topics": "^0.9.0"
   },
   "pnpm": {
     "overrides": {
