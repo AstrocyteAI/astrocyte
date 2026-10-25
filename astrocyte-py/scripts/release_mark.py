@@ -77,7 +77,6 @@ KNOWN_PACKAGES = (
     "astrocyte-qdrant",
     "astrocyte-neo4j",
     "astrocyte-elasticsearch",
-    "astrocyte-llm-litellm",
     "astrocyte-ingestion-s3",
     "astrocyte-ingestion-kafka",
     "astrocyte-ingestion-redis",

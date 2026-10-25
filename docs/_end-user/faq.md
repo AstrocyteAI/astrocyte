@@ -20,7 +20,7 @@ A bank is an isolated namespace for memories — like a folder. Each bank has it
 
 ### Is Astrocyte an LLM gateway? An agent runtime?
 
-Neither. Astrocyte is a **memory framework** — it sits between your agent and your storage backend. It does not route LLM traffic (that's LiteLLM, OpenRouter, etc.) and does not run agent loops (that's LangGraph, CrewAI, etc.). Astrocyte owns long-term memory, governed retrieval, and synthesis. See [How it works](/end-user/how-it-works/).
+Neither. Astrocyte is a **memory framework** — it sits between your agent and your storage backend. It does not route LLM traffic (that's AISIX, OpenRouter, etc.) and does not run agent loops (that's LangGraph, CrewAI, etc.). Astrocyte owns long-term memory, governed retrieval, and synthesis. See [How it works](/end-user/how-it-works/).
 
 ### What agent frameworks are supported?
 
@@ -64,7 +64,7 @@ Most teams start with pgvector. See [Storage backend setup](/end-user/storage-ba
 
 For **retain**, yes — the pipeline uses an LLM to generate embeddings (and optionally for fact extraction). For **recall**, embeddings are needed for query vectors. For **reflect**, an LLM generates the synthesized answer.
 
-The default config uses a **mock LLM** (returns empty embeddings). For real use, configure the built-in OpenAI provider or install `astrocyte-llm-litellm` for Anthropic, Bedrock, Vertex, Ollama, and other LiteLLM-supported endpoints. See [Configuration reference](/end-user/configuration-reference/).
+The default config uses a **mock LLM** (returns empty embeddings). For real use, configure the built-in OpenAI provider, and for Anthropic, Bedrock, Vertex, Ollama, and other providers point it at an AISIX gateway with `base_url`. See [Configuration reference](/end-user/configuration-reference/).
 
 ### What happens if I don't configure anything — what are the defaults?
 

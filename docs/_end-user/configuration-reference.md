@@ -70,7 +70,7 @@ provider_config:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `llm_provider` | string \| null | `null` | LLM provider for reflect and extraction: `openai`, `claude_cli`, `local_embeddings`, `litellm`, `mock`, or any installed adapter. Also accepts a direct `module:Class` import path. |
+| `llm_provider` | string \| null | `null` | LLM provider for reflect and extraction: `openai`, `claude_cli`, `local_embeddings`, `mock`, or any installed adapter. Also accepts a direct `module:Class` import path. |
 | `llm_provider_config` | dict \| null | `null` | API key, model name, endpoint, etc. |
 | `embedding_provider` | string \| null | `null` | Separate embedding provider (if different from LLM) |
 | `embedding_provider_config` | dict \| null | `null` | Embedding-specific settings (dimensions, model, etc.) |
@@ -81,18 +81,35 @@ llm_provider_config:
   api_key: ${OPENAI_API_KEY}
   model: gpt-4o-mini
 # The OpenAI provider handles both chat completions and embeddings.
-# Use astrocyte-llm-litellm for Anthropic, Bedrock, Vertex, Ollama, and other providers.
+# For Anthropic, Bedrock, Vertex, Ollama, and other providers, point this provider
+# at an AISIX gateway (see "LLM gateway (AISIX)" below).
 ```
 
 ### Built-in providers
 
 | Name | Completions | Embeddings | Requires |
 |------|:---:|:---:|----------|
-| `openai` | ✅ | ✅ | `OPENAI_API_KEY` |
-| `litellm` | ✅ | ✅ | `astrocyte-llm-litellm` + the backing provider's key |
+| `openai` | ✅ | ✅ | `OPENAI_API_KEY`, or a gateway caller key with `base_url` (see below) |
 | `claude_cli` | ✅ | — | Claude Code CLI on `PATH` (subscription auth — **no API key**) |
 | `local_embeddings` | — | ✅ | `sentence-transformers` (`pip install 'astrocyte[rerank]'`) |
 | `mock` | ✅ | ✅ | nothing (tests only) |
+
+### LLM gateway (AISIX)
+
+To reach Anthropic, Bedrock, Vertex, Azure, Ollama or any other provider, run an OpenAI-compatible gateway such as [AISIX](https://github.com/api7/aisix) and point the built-in `openai` provider at it. The gateway holds the provider credentials and maps model aliases to upstream models; Astrocyte only needs the gateway URL, a gateway caller key, and the aliases.
+
+```yaml
+llm_provider: openai
+llm_provider_config:
+  base_url: http://localhost:4000/v1
+  api_key: ${GATEWAY_API_KEY}        # a gateway caller key, not a provider key
+  model: chat-default              # an AISIX model alias
+  embedding_model: embed-default   # an AISIX model alias
+```
+
+The matching AISIX `resources.yaml` defines the aliases (`models`), the upstream credentials (`provider_keys`) and the caller key (`api_keys`). Check it offline with `aisix validate --resources resources.yaml`.
+
+Name the caller key's environment variable something other than `AISIX_*` on the gateway side: AISIX reads that prefix as setting overrides and warns about names it doesn't recognise.
 
 ### Splitting completions and embeddings
 

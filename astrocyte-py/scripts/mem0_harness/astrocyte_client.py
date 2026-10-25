@@ -156,7 +156,7 @@ def _build_llm_provider_from_env() -> Any:
 
     - ``ASTROCYTE_LLM_PROVIDER`` — entry-point name in the
       ``astrocyte.llm_providers`` group (``openai`` | ``claude_cli`` |
-      ``local_embeddings`` | ``litellm`` | ``mock`` | …) or a direct
+      ``local_embeddings`` | ``mock`` | …) or a direct
       ``module:Class`` import path. Hyphens are normalized to
       underscores for entry-point lookup. Default: ``openai``
       (pre-existing bench behavior).

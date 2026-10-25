@@ -48,7 +48,6 @@ The `astrocyte` package keeps its core install thin (~11 packages, framework + i
 | `pip install "astrocyte[qdrant]"` | Just the Qdrant adapter. | Qdrant-backed deployments. |
 | `pip install "astrocyte[neo4j]"` | Just the Neo4j adapter. | Neo4j-backed deployments. |
 | `pip install "astrocyte[elasticsearch]"` | Just the Elasticsearch adapter. | Elasticsearch-backed deployments. |
-| `pip install "astrocyte[litellm]"` | LiteLLM multi-provider LLM adapter. | Routing across multiple LLM vendors. |
 | `pip install "astrocyte[kafka]"` | Kafka stream-ingestion adapter. | Real-time event streams. |
 | `pip install "astrocyte[redis]"` | Redis stream-ingestion adapter. | Redis Streams ingestion. |
 | `pip install "astrocyte[github]"` | GitHub poll-ingestion adapter. | GitHub repos / issues / PRs ingestion. |
@@ -87,7 +86,7 @@ flowchart TB
   CORE["astrocyte - core framework"]
   T1["Tier 1: astrocyte-postgres, -neo4j, -qdrant, …"]
   T2["Tier 2: astrocyte-mem0, -zep, -mystique, …"]
-  LLM["LLM: astrocyte-llm-litellm, -openai, -anthropic, …"]
+  LLM["LLM: built-in openai (also via an AISIX gateway), -anthropic, …"]
   TR["Optional: astrocyte-transport-*"]
   SK["Optional: astrocyte-sink-*"]
   AP["Optional: astrocyte-access-policy-*"]
@@ -190,15 +189,11 @@ astrocyte-mem0/                       # Community engine
 ### 2.4 LLM providers
 
 ```
-astrocyte-llm-litellm/                    # Unified gateway (100+ models)
-├── astrocyte_llm_litellm/
-│   ├── __init__.py                    # LiteLLMProvider (implements LLMProvider)
-├── pyproject.toml
-
-# The core `astrocyte` package also ships a built-in `openai` provider.
+# No separate LLM packages ship today. The core `astrocyte` package contains the
+# built-in `openai` provider (astrocyte/providers/openai.py).
 ```
 
-Note: AWS Bedrock, Azure OpenAI, Google Vertex AI, Anthropic, and many self-hosted models are accessed via `astrocyte-llm-litellm`. OpenAI-compatible endpoints can also use the built-in `openai` provider with a custom `base_url`. See `provider-spi.md` section 4.6-4.7 for configuration details.
+Note: AWS Bedrock, Azure OpenAI, Google Vertex AI, Anthropic, and many self-hosted models are accessed through an AISIX gateway, which exposes them on an OpenAI-compatible endpoint. Use the built-in `openai` provider with a custom `base_url`. See `provider-spi.md` section 4.6-4.7 for configuration details.
 
 ### 2.5 Outbound transport plugins
 
@@ -293,9 +288,9 @@ mem0 = "astrocyte_mem0:Mem0Provider"
 ### 3.3 LLM providers
 
 ```toml
-# astrocyte-llm-litellm/pyproject.toml
+# my-llm-adapter/pyproject.toml
 [project.entry-points."astrocyte.llm_providers"]
-litellm = "astrocyte_llm_litellm:LiteLLMProvider"
+myprovider = "my_llm_adapter:MyProvider"
 ```
 
 ### 3.4 Outbound transport providers (optional)
@@ -631,7 +626,6 @@ DTOs use `dataclass` with default values for all optional fields. New fields are
 | astrocyte-mystique | EngineProvider | TBD | EP 1 | Planned |
 | astrocyte-mem0 | EngineProvider | TBD | EP 1 | Planned |
 | astrocyte-zep | EngineProvider | TBD | EP 1 | Planned |
-| astrocyte-llm-litellm | LLMProvider | >=0.1 | LP 1 | Official |
 | built-in `openai` provider | LLMProvider | core | LP 1 | Official |
 
 ---
@@ -658,7 +652,7 @@ llm_provider_config:
 ### Tier 1: With graph retrieval
 
 ```bash
-pip install astrocyte astrocyte-postgres astrocyte-neo4j astrocyte-llm-litellm
+pip install astrocyte astrocyte-postgres astrocyte-neo4j
 ```
 
 ```yaml
@@ -670,18 +664,19 @@ vector_store_config:
 graph_store: neo4j
 graph_store_config:
   uri: bolt://localhost:7687
-llm_provider: litellm
+llm_provider: openai
 llm_provider_config:
-  api_key: ${ANTHROPIC_API_KEY}
-  model: claude-sonnet-4-20250514
+  base_url: http://aisix.internal:4000/v1
+  api_key: ${GATEWAY_API_KEY}
+  model: claude-sonnet               # AISIX alias
 ```
 
 ### Tier 1: With a model gateway
 
-Use `astrocyte-llm-litellm` when you want Anthropic, Bedrock, Vertex, Azure, Ollama, or another LiteLLM-supported endpoint behind the same Astrocyte LLMProvider SPI.
+Use an AISIX gateway when you want Anthropic, Bedrock, Vertex, Azure, Ollama, or another provider behind the same Astrocyte LLMProvider SPI. The built-in `openai` provider talks to the gateway's OpenAI-compatible endpoint.
 
 ```bash
-pip install astrocyte astrocyte-postgres astrocyte-llm-litellm
+pip install astrocyte astrocyte-postgres "astrocyte[openai]"
 ```
 
 ```yaml
@@ -690,16 +685,17 @@ provider_tier: storage
 vector_store: postgres
 vector_store_config:
   dsn: postgresql://localhost/memories
-llm_provider: litellm
+llm_provider: openai
 llm_provider_config:
-  api_key: ${ANTHROPIC_API_KEY}
-  model: claude-sonnet-4-20250514
+  base_url: http://aisix.internal:4000/v1
+  api_key: ${GATEWAY_API_KEY}
+  model: claude-sonnet               # AISIX alias
 ```
 
 ### Tier 1: Enterprise with AWS Bedrock
 
 ```bash
-pip install astrocyte astrocyte-postgres astrocyte-llm-litellm
+pip install astrocyte astrocyte-postgres "astrocyte[openai]"
 ```
 
 ```yaml
@@ -708,10 +704,12 @@ provider_tier: storage
 vector_store: postgres
 vector_store_config:
   dsn: postgresql://rds-host/memories
-llm_provider: litellm
+llm_provider: openai
 llm_provider_config:
-  model: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
-  # Uses AWS IAM credentials from environment
+  base_url: http://aisix.internal:4000/v1
+  api_key: ${GATEWAY_API_KEY}
+  model: bedrock-claude-sonnet       # AISIX alias → a Bedrock model
+  # The gateway holds the AWS credentials
 ```
 
 ### Tier 1: Fully local (air-gapped / privacy-sensitive)

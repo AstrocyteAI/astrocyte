@@ -213,7 +213,7 @@ v0.15.0 reuses **M19's bench cycle** in `BENCH_PARITY.yaml` (RELEASING.md §122 
 The 8-cycle arc validated the capability-analysis recommendation: **bench-side prompt engineering is ROI-exhausted; the next leverage is product-experience and architectural infrastructure**, not more bench tuning. Next cycle directions:
 
 - **Embed-CLI-controlplane triad** — `astrocyte-embed` (zero-config local mode), finish `astrocyte-rs` CLI, minimal admin UI. Closes the developer-adoption gap with Hindsight.
-- **Native LLM provider breadth** — Anthropic, Gemini, Ollama, Vertex direct (not just LiteLLM).
+- **Native LLM provider breadth** — Anthropic, Gemini, Ollama, Vertex direct (not just through a gateway).
 - **OTel tracing + Prometheus metrics** — Hindsight has it; we don't.
 - **Coreference + alias resolution at retain time** (capability-analysis #5) — would help cross-session reasoning more cleanly than M27's link-expansion did.
 - **Background retain-time enrichment** (capability-analysis #3) — decouple inline LLM calls so retain critical path returns fast.

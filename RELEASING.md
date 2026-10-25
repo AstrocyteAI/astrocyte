@@ -192,8 +192,6 @@ Developer / contributor extras (not shipped to end users):
 
 ## Known constraints
 
-- **`astrocyte-llm-litellm`** is not in the extras matrix (no `astrocyte[litellm]`) due to upstream litellm pinning `python-dotenv==1.0.1` in the secure-`aiohttp` window, which conflicts with `fastmcp>=3.0`'s `python-dotenv>=1.1.0`. Users who want LiteLLM install it directly: `pip install astrocyte-stack astrocyte-llm-litellm`. Track the upstream fix at <https://github.com/BerriAI/litellm/issues/26190>; once resolved, re-add the `[litellm]` extra to `astrocyte-py/pyproject.toml`.
-
 - **Apache AGE** was removed in M9 (ADR-008). The `astrocyte-age` package, its publish workflow, and the `[age]` extra are deleted. Operators with AGE-backed banks rebuild from raw `memory_units`; no migration tool ships.
 
 ## The MCP plugin (Claude Code / Cursor / Codex)

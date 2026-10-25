@@ -24,7 +24,7 @@ Astrocyte is an **open-source memory framework** that sits between AI agents and
 - **AuthN / AuthZ integration:** **Authentication (AuthN)** - external IdPs and middleware map credentials to **`AstrocyteContext`** (opaque **principal** and/or structured fields — [ADR-002](./adr/adr-002-identity-model.md)); Astrocyte does not validate passwords or issue tokens. **Authorization (AuthZ)** - per-bank `read` / `write` / `forget` / `admin` checks run in the core against `access_grants`; an optional **AccessPolicyProvider** can delegate allow/deny to enterprise PDPs (OPA, Cerbos, Casbin, …) — see section 4.6.
 - A **policy layer** that enforces neuroscience-inspired governance (homeostasis, barriers, pruning, observability) regardless of which backend is plugged in.
 
-Astrocyte is **not** an LLM gateway. It does not route completion requests, track LLM spend, or normalize chat formats. That is the job of **LLM gateways and model aggregators** — for example LiteLLM, Portkey, OpenRouter, Vercel AI Gateway, or your cloud provider’s unified model APIs — and of **direct** first-party SDKs when you call each vendor without an intermediary.
+Astrocyte is **not** an LLM gateway. It does not route completion requests, track LLM spend, or normalize chat formats. That is the job of **LLM gateways and model aggregators** — for example AISIX, Portkey, OpenRouter, Vercel AI Gateway, or your cloud provider’s unified model APIs — and of **direct** first-party SDKs when you call each vendor without an intermediary.
 
 Astrocyte is **not** an agent runtime. It does **not** define agent orchestration: graphs, steps, tool loops, checkpoints, scheduling, or multi-agent routing. Those concerns belong to **agent frameworks and your application** (LangGraph, CrewAI, Pydantic AI, custom orchestrators, …). The framework contract is **memory**, **governance**, and **provider SPIs**; thin adapters connect frameworks to that API - see `agent-framework-middleware.md`.
 
@@ -197,7 +197,7 @@ The diagram below shows how Astrocyte relates to the systems around it: agent fr
 
 - **Agent frameworks** and **presentation platforms** (Tavus, ElevenLabs, …) are **peers** inside your application orchestrator. The orchestrator calls Astrocyte for memory and the presentation vendor for video/voice — Astrocyte and the vendor do not call each other directly.
 - **Tier 1** (built-in pipeline) and **Tier 2** (memory engine providers) are **alternative paths** through Astrocyte. Governance applies to both.
-- **LLM adapters** are pluggable: `astrocyte-llm-litellm` (recommended, 100+ models via gateway), the built-in `openai` provider, or custom adapters. LiteLLM is not mandatory.
+- **LLM adapters** are pluggable: the built-in `openai` provider (recommended; with `base_url` pointed at an AISIX gateway it reaches 100+ models), or custom adapters. A gateway is not mandatory.
 - **Export sinks** (Iceberg, Delta, warehouse) are designed but **not yet wired** into core — dashed lines indicate future integration.
 
 ```mermaid
@@ -289,9 +289,9 @@ flowchart TB
 
   subgraph LLM_ADAPTERS["LLM Adapters — complete and embed"]
     direction LR
-    A_LITELLM["astrocyte-llm-litellm — 100+ models via gateway (recommended)"]
+    A_AISIX["AISIX gateway — 100+ models, reached through the openai provider (recommended)"]
     A_OPENAI["built-in openai provider — direct SDK / compatible endpoint"]
-    A_ANTHROPIC["Anthropic via astrocyte-llm-litellm"]
+    A_ANTHROPIC["Anthropic via an AISIX gateway"]
     A_CUSTOM["Custom Adapter"]
   end
 
@@ -331,7 +331,7 @@ flowchart TB
   TIER2 -. "engine manages its own LLM and storage" .-> MODELS
   TIER2 -. "engine manages its own storage" .-> STORAGE
 
-  A_LITELLM --> MODELS
+  A_AISIX --> MODELS
   A_OPENAI --> OAI
   A_ANTHROPIC --> ANT
   A_CUSTOM --> MODELS
@@ -365,7 +365,7 @@ flowchart TB
   subgraph BACK["Provider backends"]
     VEC["Vector and graph DBs - pgvector, Pinecone, Qdrant, Weaviate, Neo4j, …"]
     ENG["Full engines - Mystique, Mem0, Zep, Letta, Cognee, …"]
-    LLM["LLM backends - gateways or aggregators (LiteLLM, Portkey, OpenRouter, …), direct OpenAI / Anthropic / Bedrock / Azure adapters, local embedders, …"]
+    LLM["LLM backends - gateways or aggregators (AISIX, Portkey, OpenRouter, …), direct OpenAI / Anthropic / Bedrock / Azure adapters, local embedders, …"]
     WH["Warehouse / lakehouse sinks - Snowflake, BigQuery, Iceberg, Delta, … (analytics)"]
   end
 
@@ -424,7 +424,7 @@ A secondary plugin surface for LLM access. Used by the Astrocyte core for:
 
 This is **not** an LLM gateway. It is a narrow internal dependency with two methods: `complete()` and `embed()`. Adapters exist for:
 
-- **Unified gateways and aggregators**: products that front many models behind one API or control plane — e.g. **LiteLLM**, **Portkey**, **OpenRouter**, **Vercel AI Gateway**, cloud **AI Gateway** / router services, or comparable layers — not only LiteLLM.
+- **Unified gateways and aggregators**: products that front many models behind one API or control plane — e.g. **AISIX**, **Portkey**, **OpenRouter**, **Vercel AI Gateway**, cloud **AI Gateway** / router services, or comparable layers — not only AISIX.
 - **Direct SDKs**: OpenAI, Anthropic, Google Gemini, Mistral, Cohere
 - **Self-hosted**: Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, TGI) via the OpenAI provider with custom `base_url`
 - **Local embeddings**: Built-in sentence-transformers support (no API cost for embeddings)
@@ -456,7 +456,7 @@ Astrocyte exposes an **optional** `OutboundTransportProvider` interface applied 
 
 ## 5. Relationship to LLM gateways
 
-Astrocyte and **LLM gateways** (LiteLLM, Portkey, OpenRouter, Vercel AI Gateway, cloud model routers, …) occupy **different layers** with a narrow overlap:
+Astrocyte and **LLM gateways** (AISIX, Portkey, OpenRouter, Vercel AI Gateway, cloud model routers, …) occupy **different layers** with a narrow overlap:
 
 | Concern | LLM gateway / aggregator | Astrocyte |
 |---|---|---|
@@ -540,7 +540,7 @@ Skip **API gateway** when the agent embeds Astrocyte **in-process** (no public H
 
 **Credential gateways vs. LLM gateways:** Products that inject API keys into outbound HTTP (OneCLI-class) are **outbound transport** concerns - they sit **under** whatever SDK the LLM adapter uses. They do **not** replace LLM gateways or direct provider adapters; see `outbound-transport.md`.
 
-**LLM gateways vs. multimodal / video / voice APIs:** Gateways such as **LiteLLM**, **OpenRouter**, **Portkey**, and **Vercel AI Gateway** target **text (and embedding) model** routing. **Conversational video** (Tavus, HeyGen, D-ID, …) and **voice** (ElevenLabs, …) products are **presentation or modality layers** - integrate them **next to** Astrocyte in your application, not as drop-in `LLMProvider` implementations unless they expose a **compatible chat/embedding HTTP API** you configure explicitly. See `presentation-layer-and-multimodal-services.md`.
+**LLM gateways vs. multimodal / video / voice APIs:** Gateways such as **AISIX**, **OpenRouter**, **Portkey**, and **Vercel AI Gateway** target **text (and embedding) model** routing. **Conversational video** (Tavus, HeyGen, D-ID, …) and **voice** (ElevenLabs, …) products are **presentation or modality layers** - integrate them **next to** Astrocyte in your application, not as drop-in `LLMProvider` implementations unless they expose a **compatible chat/embedding HTTP API** you configure explicitly. See `presentation-layer-and-multimodal-services.md`.
 
 ---
 
@@ -648,7 +648,7 @@ Beyond intelligence and governance, the framework provides capabilities that no 
 | Outbound transport | Optional plugins for credential gateways and enterprise HTTP/TLS; env-only path without plugins | `outbound-transport.md` |
 | AuthN wiring + external AuthZ | Map IdP claims to principals / `AstrocyteContext`; optional PDP/Casbin adapters beyond config grants | [ADR-002](./adr/adr-002-identity-model.md); see [access control setup](/end-user/access-control-setup/) |
 | Presentation / multimodal (non-LLM API) | How Tavus-class video, voice (e.g. ElevenLabs), and related APIs compose **beside** the LLM SPI | `presentation-layer-and-multimodal-services.md` |
-| Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for multi-provider gateways (LiteLLM / OpenRouter–class and similar) | `multimodal-llm-spi.md` |
+| Multimodal LLM (vision/audio in chat) | `ContentPart`, `Message` extensions, `LLMCapabilities`, adapter mapping for multi-provider gateways (AISIX / OpenRouter–class and similar) | `multimodal-llm-spi.md` |
 | **Time travel** | `retained_at` + `forgotten_at` soft-delete + `as_of: datetime` on `VectorFilters` + `brain.history()` — point-in-time queries and audit trails (v1.0.0, M9) | `product-roadmap.md` §M9 |
 | **Gap analysis** | `brain.audit(scope, bank_id)` — reasons about absent topics, returns `AuditResult(gaps, coverage_score)` (v1.0.0, M10) | `product-roadmap.md` §M10 |
 | **Entity resolution** | Retain-time `EntityResolver` — extracts entities, confirms aliases via LLM with evidence quotes, writes `EntityLink` to graph; `astrocyte-age` default graph adapter on same PostgreSQL instance as pgvector (v1.0.0, M11) | `product-roadmap.md` §M11 |
@@ -700,7 +700,6 @@ These capabilities exist at the **framework layer** — they apply regardless of
 | Letta memory engine provider | `astrocyte-letta` | Planned |
 | Cognee memory engine provider | `astrocyte-cognee` | Planned |
 | **LLM providers** | | |
-| LiteLLM adapter | `astrocyte-llm-litellm` | Apache 2.0 |
 | OpenAI direct provider | built into `astrocyte` as `llm_provider: openai` | Apache 2.0 |
 | Anthropic direct adapter | `astrocyte-anthropic` | Planned |
 | **Outbound transport** | | |

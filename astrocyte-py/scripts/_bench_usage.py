@@ -138,7 +138,7 @@ class MeteredProvider:
 
     Signature-agnostic: ``complete``/``embed`` forward ``*args/**kwargs``
     verbatim, everything else delegates via ``__getattr__`` — so it wraps any
-    provider (OpenAI, LiteLLM, a reflect-model sibling) without drift.
+    provider (OpenAI, an AISIX-backed OpenAI client, a reflect-model sibling) without drift.
     """
 
     def __init__(self, inner: Any, meter: UsageMeter) -> None:

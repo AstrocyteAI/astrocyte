@@ -1,7 +1,7 @@
 """OpenAI-compatible memory wrapper.
 
 This module intentionally targets the common ``client.chat.completions.create``
-shape used by OpenAI-compatible and LiteLLM clients while keeping memory policy
+shape used by OpenAI-compatible clients while keeping memory policy
 inside Astrocyte.
 """
 

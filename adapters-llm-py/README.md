@@ -1,24 +1,20 @@
 # LLM provider adapters
 
-Optional LLM provider adapters for Astrocyte. Each package implements the `LLMProvider` protocol (`complete()` + `embed()`) and is installed separately so users only pull in the dependencies they need.
+Optional LLM provider adapters for Astrocyte. Each package would implement the `LLMProvider` protocol (`complete()` + `embed()`) and be installed separately. There are none today.
 
-| Package | Wraps | Models |
-|---|---|---|
-| [`astrocyte-llm-litellm`](./astrocyte-llm-litellm/) | [LiteLLM](https://github.com/BerriAI/litellm) | 100+ models across OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, and more |
-
-## Install
+For models beyond the built-in providers, run an OpenAI-compatible gateway such as [AISIX](https://github.com/api7/aisix) and point the built-in `openai` provider at it. The gateway holds the provider credentials and maps model aliases to upstream models (OpenAI, Anthropic, Bedrock, Vertex, Azure, Ollama and more), so Astrocyte needs no per-provider package:
 
 ```bash
-pip install astrocyte-llm-litellm
+pip install "astrocyte[openai]"
 ```
-
-## Configure
 
 ```yaml
-llm_provider: litellm
+llm_provider: openai
 llm_provider_config:
-  model: openai/gpt-4o-mini
-  embedding_model: openai/text-embedding-3-small
+  base_url: http://localhost:4000/v1
+  api_key: ${GATEWAY_API_KEY}          # an AISIX caller key, not a provider key
+  model: chat-default                # an AISIX model alias
+  embedding_model: embed-default     # an AISIX model alias
 ```
 
-See each package's README for provider-specific configuration (Bedrock, Vertex, self-hosted, etc.).
+See the [AISIX guide](../docs/_end-user/configuration-reference.md#llm-gateway-aisix) for the gateway side.

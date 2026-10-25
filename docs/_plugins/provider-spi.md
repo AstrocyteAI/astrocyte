@@ -641,7 +641,7 @@ The Astrocyte LLM SPI is intentionally minimal (`complete()` + `embed()`) so tha
 
 | Category | Examples | Adapter approach |
 |---|---|---|
-| **Unified gateways** | LiteLLM, OpenRouter | Single adapter wraps 100+ models. Best for users with diverse model needs. |
+| **Unified gateways** | AISIX, OpenRouter | One OpenAI-compatible endpoint fronts 100+ models; the built-in `openai` provider with `base_url` reaches it. Best for users with diverse model needs. |
 | **Direct provider SDKs** | OpenAI, Anthropic, Google Gemini, Groq, Mistral, Cohere | One adapter per SDK. Minimal dependencies, no gateway overhead. |
 | **Cloud-managed endpoints** | AWS Bedrock, Azure OpenAI, Google Vertex AI | Adapter wraps the cloud SDK. Handles cloud auth (IAM roles, managed identity, service accounts). |
 | **Self-hosted inference** | Ollama, vLLM, LM Studio, TGI, llama.cpp | Adapter calls local HTTP endpoint. No API key needed. |
@@ -652,37 +652,27 @@ The Astrocyte LLM SPI is intentionally minimal (`complete()` + `embed()`) so tha
 
 | Package | Wraps | Models / Coverage | Dependency |
 |---|---|---|---|
-| `astrocyte-llm-litellm` | LiteLLM | 100+ models across all providers (OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, etc.) | `litellm` |
-| built-in `openai` provider | OpenAI-compatible SDK | GPT-4o, GPT-4o-mini, o-series, text-embedding-3-*; custom `base_url` for compatible servers | `openai` extra |
+| built-in `openai` provider | OpenAI-compatible SDK | GPT-4o, GPT-4o-mini, o-series, text-embedding-3-*; custom `base_url` for compatible servers and gateways (an AISIX gateway reaches OpenAI, Anthropic, Bedrock, Vertex, Azure, Groq, Ollama, etc.) | `openai` extra |
 
-**Recommendation:** Use `astrocyte-llm-litellm` if you need flexibility across providers or plan to switch models. Use the built-in `openai` provider when you want a minimal direct dependency or an OpenAI-compatible endpoint.
+**Recommendation:** Use the built-in `openai` provider for everything: directly against OpenAI, against an OpenAI-compatible server, or against an AISIX gateway when you need flexibility across providers or plan to switch models.
 
 ### 4.6 Cloud-managed LLM endpoints
 
 For enterprise users on AWS Bedrock, Azure OpenAI, or Google Vertex AI, there are two paths:
 
-**Option A: Via LiteLLM (recommended).** LiteLLM natively supports Bedrock, Azure, and Vertex with their respective auth mechanisms:
+**Option A: Via an AISIX gateway (recommended).** The gateway supports Bedrock, Azure, and Vertex with their respective auth mechanisms and holds those credentials, so Astrocyte only sees an alias and a gateway key:
 
 ```yaml
-llm_provider: litellm
+llm_provider: openai
 llm_provider_config:
-  # AWS Bedrock
-  model: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
-  # Uses AWS credentials from environment (IAM role, env vars, etc.)
-
-  # Azure OpenAI
-  model: azure/gpt-4o
-  api_base: https://my-resource.openai.azure.com
-  api_key: ${AZURE_OPENAI_API_KEY}
-  api_version: "2024-10-21"
-
-  # Google Vertex AI
-  model: vertex_ai/gemini-2.0-flash
-  vertex_project: my-project
-  vertex_location: us-central1
+  base_url: http://aisix.internal:4000/v1
+  api_key: ${GATEWAY_API_KEY}          # a gateway caller key
+  model: bedrock-claude-sonnet       # alias defined in the gateway's resources.yaml
 ```
 
-**Option B: Direct cloud SDK adapter.** For users who cannot take a LiteLLM dependency, community adapters can wrap cloud SDKs directly:
+The gateway's `resources.yaml` maps each alias to a provider key (`bedrock`, `azure-openai`, `vertex`, …) and its upstream model.
+
+**Option B: Direct cloud SDK adapter.** For users who cannot run a gateway, community adapters can wrap cloud SDKs directly:
 
 ```yaml
 # Hypothetical community adapter
@@ -697,16 +687,7 @@ llm_provider_config:
 
 For users running local inference (privacy, cost, air-gapped environments):
 
-**Via LiteLLM:**
-
-```yaml
-llm_provider: litellm
-llm_provider_config:
-  model: ollama/llama3.2
-  api_base: http://localhost:11434
-```
-
-**Via direct adapter:**
+**Via the built-in provider:**
 
 ```yaml
 # OpenAI-compatible endpoint (works with vLLM, LM Studio, Ollama, TGI, etc.)
@@ -721,7 +702,7 @@ Most self-hosted inference servers expose an OpenAI-compatible API, so the built
 
 ### 4.8 Separate completion and embedding providers
 
-The config schema reserves `embedding_provider` and `embedding_provider_config` for deployments that split completion and embedding services. The reference Tier 1 pipeline currently uses the configured `llm_provider` for both `complete()` and `embed()` calls, so use a provider that implements both methods (for example the built-in `openai` provider or `astrocyte-llm-litellm` with an embedding-capable backend).
+The config schema reserves `embedding_provider` and `embedding_provider_config` for deployments that split completion and embedding services. The reference Tier 1 pipeline currently uses the configured `llm_provider` for both `complete()` and `embed()` calls, so use a provider that implements both methods (for example the built-in `openai` provider, directly or through an AISIX gateway with an embedding-capable backend).
 
 ```yaml
 llm_provider: openai
@@ -783,7 +764,7 @@ Users install exactly one LLM provider (or none if using Tier 2 with no LLM-depe
 
 ### 4.10 Presentation and multimodal services (not the LLM SPI)
 
-**LiteLLM**, **OpenRouter**, and direct adapters integrate **text** completion and **embedding** APIs. Products such as **conversational video avatars** (e.g. Tavus, HeyGen, D-ID), **enterprise avatar video** (e.g. Synthesia, Hour One), and **voice-first** platforms (e.g. ElevenLabs for TTS/agents) are **different**: they expose **session, video, audio, or avatar** APIs, not a substitute for `complete()` / `embed()` unless they also publish an **OpenAI-compatible chat** (or similar) endpoint you deliberately configure.
+**AISIX**, **OpenRouter**, and direct adapters integrate **text** completion and **embedding** APIs. Products such as **conversational video avatars** (e.g. Tavus, HeyGen, D-ID), **enterprise avatar video** (e.g. Synthesia, Hour One), and **voice-first** platforms (e.g. ElevenLabs for TTS/agents) are **different**: they expose **session, video, audio, or avatar** APIs, not a substitute for `complete()` / `embed()` unless they also publish an **OpenAI-compatible chat** (or similar) endpoint you deliberately configure.
 
 **How to combine them with Astrocyte:** keep **memory and text LLM** on the **`LLMProvider`** path; call **presentation vendors from your application** using their SDKs/REST, optionally feeding **`recall()` / `reflect()`** output into their conversations. If a vendor documents **custom LLM** or **OpenAI-compatible** URLs for *their* dialogue stack, you may reuse the **same** text endpoint for Astrocyte **when** it matches the adapter’s HTTP shape.
 
@@ -791,7 +772,7 @@ See **`presentation-layer-and-multimodal-services.md`** for the competitive land
 
 ### 4.11 Multimodal LLM inputs (first-class image / audio)
 
-**Gateways** (LiteLLM, OpenRouter, …) can route **vision and audio** models when messages use **structured content parts**, not only strings. Astrocyte extends the DTOs accordingly:
+**Gateways** (AISIX, OpenRouter, …) can route **vision and audio** models when messages use **structured content parts**, not only strings. Astrocyte extends the DTOs accordingly:
 
 - **`ContentPart`** - tagged union: `TextPart`, `ImageUrlPart`, `ImageBase64Part`, `AudioUrlPart`, `AudioBase64Part`, optional `DocumentUrlPart`.
 - **`Message.content`** - `str` (**backward compatible**) or `list[ContentPart]`.

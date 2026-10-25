@@ -100,21 +100,6 @@ sqlite = ["astrocyte-sqlite>=0.15.2,<2"]
 qdrant = ["astrocyte-qdrant>=0.1.0,<1"]
 neo4j = ["astrocyte-neo4j>=0.1.0,<1"]
 elasticsearch = ["astrocyte-elasticsearch>=0.1.0,<1"]
-# litellm extra removed: ``astrocyte-llm-litellm`` is incompatible with the
-# ``mcp`` extra. The adapter pins litellm to the secure-aiohttp window
-# (1.83.5–1.83.7) per https://github.com/BerriAI/litellm/issues/26190, and
-# litellm in that window pins ``python-dotenv==1.0.1`` while ``fastmcp>=3.0``
-# (the mcp extra) requires ``python-dotenv>=1.1.0``. Declaring extras as
-# mutually exclusive via [tool.uv] conflicts works for the direct pair
-# (litellm vs mcp), but ``dev`` / ``bench`` / ``all`` transitively pull
-# ``mcp``, which makes lockfile generation unmanageable.
-#
-# Until upstream litellm relaxes its dotenv pin (the parent issue), users
-# who want LiteLLM install the adapter directly alongside astrocyte:
-#
-#     pip install astrocyte-stack astrocyte-llm-litellm
-#
-# Confirm your install does NOT also pull the mcp / fastmcp extras.
 kafka = ["astrocyte-ingestion-kafka>=0.1.0,<1"]
 redis = ["astrocyte-ingestion-redis>=0.1.0,<1"]
 github = ["astrocyte-ingestion-github>=0.1.0,<1"]
@@ -143,7 +128,7 @@ stream = ["astrocyte[kafka,redis]"]
 poll = ["astrocyte[github]"]
 
 # ``all`` is everything published to PyPI today, except ``dev`` / ``bench``.
-# Local-only adapters (``litellm``, ``s3-ingest``, ``documents``) are excluded
+# Local-only adapters (``s3-ingest``, ``documents``) are excluded
 # until their publish workflows ship — otherwise ``pip install astrocyte[all]``
 # from PyPI fails to resolve. The narrow per-adapter extras above keep working
 # for in-repo dev via ``[tool.uv.sources]``.

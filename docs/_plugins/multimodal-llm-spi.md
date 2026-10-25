@@ -1,6 +1,6 @@
 # Multimodal LLM SPI and DTOs
 
-This document specifies **first-class image and audio** (and optional document) payloads for the **LLM Provider SPI** and the **built-in pipeline**, so gateways such as LiteLLM and OpenRouter can pass **vision / audio** inputs to multimodal models **without** ad-hoc string encoding. For **non-LLM** video/voice platforms (Tavus, ElevenLabs TTS-only, etc.), see `presentation-layer-and-multimodal-services.md`.
+This document specifies **first-class image and audio** (and optional document) payloads for the **LLM Provider SPI** and the **built-in pipeline**, so gateways such as AISIX and OpenRouter can pass **vision / audio** inputs to multimodal models **without** ad-hoc string encoding. For **non-LLM** video/voice platforms (Tavus, ElevenLabs TTS-only, etc.), see `presentation-layer-and-multimodal-services.md`.
 
 **Related:** [Provider SPI](/plugins/provider-spi/) (LLM and multimodal sections), [Outbound transport](/plugins/outbound-transport/) (HTTP client configuration for provider SDKs).
 
@@ -11,7 +11,7 @@ This document specifies **first-class image and audio** (and optional document) 
 | Principle | Implication |
 |---|---|
 | **Backward compatible** | `Message.content: str` remains valid; all existing adapters and configs work unchanged. |
-| **Gateway-aligned** | DTOs map cleanly to **OpenAI-style** chat messages (text + `image_url` / `input_audio` parts) and to LiteLLM’s multimodal completion API. |
+| **Gateway-aligned** | DTOs map cleanly to **OpenAI-style** chat messages (text + `image_url` / `input_audio` parts) and to the multimodal completion APIs of OpenAI-compatible gateways. |
 | **Explicit capability** | Providers declare **`LLMCapabilities`** so the pipeline can degrade or refuse when a model cannot accept a modality. |
 | **Text-first pipeline default** | Tier 1 pipeline stages that need plain text (chunking, NER, BM25) use **deterministic extraction** from multimodal turns (see §6). |
 | **No video generation in SPI** | This SPI covers **inputs to multimodal LLMs** (vision/audio understanding). **Video generation** as output is out of scope for `complete()` unless folded into provider-specific extensions later. |
@@ -194,14 +194,14 @@ If `embed_multimodal` is not implemented, the pipeline uses **text-only** embedd
 
 ---
 
-## 5. Adapter convention (LiteLLM, OpenRouter, OpenAI SDK)
+## 5. Adapter convention (AISIX, OpenRouter, OpenAI SDK)
 
 ### 5.1 `complete()` mapping
 
 1. Walk `messages`; for each `Message`, if `content` is `str`, build a single user/system message with string content.
 2. If `content` is `list[ContentPart]`, map to provider JSON:
    - **OpenAI-compatible:** `content: [{"type":"text","text":...},{"type":"image_url","image_url":{"url":...}}, ...]`
-   - **LiteLLM:** pass the same structure; LiteLLM forwards to provider-specific format.
+   - **AISIX and other gateways:** pass the same structure; the gateway forwards to the provider-specific format.
    - **Anthropic:** map parts to Anthropic `content` blocks per their SDK.
 3. Call the gateway SDK **once** per `complete()` request.
 
@@ -213,7 +213,7 @@ If `embed_multimodal` is not implemented, the pipeline uses **text-only** embedd
 ### 5.3 Capability discovery
 
 - **Static:** config flag `llm_provider_config.multimodal: true` + model name pattern.
-- **Dynamic:** optional `llm_capabilities()` calling provider metadata or `litellm.supports_vision(model=...)`.
+- **Dynamic:** optional `llm_capabilities()` calling provider or gateway metadata.
 
 ---
 
@@ -264,7 +264,7 @@ Entity extraction, BM25 document store, and similar steps consume **`message_tex
 
 - **DTOs:** `ContentPart` union + `Message.content: str | list[ContentPart]`.
 - **SPI:** `llm_capabilities()`, optional `embed_multimodal()`, same `complete()` entrypoint with richer messages.
-- **Adapters:** Map DTOs → OpenAI-compatible / LiteLLM / provider SDKs.
+- **Adapters:** Map DTOs → OpenAI-compatible gateways / provider SDKs.
 - **Pipeline:** Text-first defaults; **caption** or **multimodal embed** strategies for retain.
 
 ---

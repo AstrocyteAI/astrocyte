@@ -107,7 +107,7 @@ C4Container
     Rel(astro_plugin, pgvector, "retain() from response")
 ```
 
-#### 2c. Standalone Gateway (LiteLLM-style)
+#### 2c. Standalone Gateway (AISIX-style)
 
 ```mermaid
 C4Container

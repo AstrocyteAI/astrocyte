@@ -1,8 +1,7 @@
 """B-1 recommendation-shape detection for preference-anchor pinning.
 
 Standalone module (no heavy deps) so unit tests don't have to import
-``astrocyte_client.py`` — which transitively pulls ``pageindex`` and
-``litellm``. Keeping this regex helper in its own file keeps the shape
+``astrocyte_client.py`` — which transitively pulls ``pageindex``. Keeping this regex helper in its own file keeps the shape
 detector test cheap and independently runnable.
 
 The detector is consumed by :meth:`AstrocyteClient.search` to decide

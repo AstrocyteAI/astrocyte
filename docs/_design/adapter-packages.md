@@ -377,7 +377,7 @@ Before tagging a release:
 - [ ] Entry-point key added to [`ecosystem-and-packaging.md`](/plugins/ecosystem-and-packaging/) install matrix table.
 - [ ] Narrow per-adapter extra added to `astrocyte-py/pyproject.toml`:
       `mybackend = ["astrocyte-myvector>=0.1.0,<1"]`
-- [ ] [`RELEASING.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/RELEASING.md) updated if there are known cross-package constraints (see the `astrocyte-llm-litellm` example).
+- [ ] [`RELEASING.md`](https://github.com/AstrocyteAI/astrocyte/blob/main/RELEASING.md) updated if there are known cross-package constraints.
 
 Cut the tag (`v0.X.Y`); `release.yml` fans out automatically. Each publish job idempotency-checks PyPI before pushing, so re-runs after a partial failure are safe.
 

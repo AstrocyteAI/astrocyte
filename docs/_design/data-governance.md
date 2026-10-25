@@ -194,15 +194,17 @@ governance:
   residency:
     llm_routing:
       eu:
-        llm_provider: litellm
+        llm_provider: openai
         llm_provider_config:
-          model: azure/gpt-4o
-          base_url: https://eu-west.openai.azure.com  # EU endpoint
+          base_url: https://aisix.eu-west.example.com/v1  # EU gateway
+          api_key: ${GATEWAY_EU_API_KEY}
+          model: chat-default                             # alias → an EU-hosted model
       sg:
-        llm_provider: litellm
+        llm_provider: openai
         llm_provider_config:
-          model: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
-          aws_region: ap-southeast-1                     # Singapore
+          base_url: https://aisix.ap-southeast-1.example.com/v1  # Singapore gateway
+          api_key: ${GATEWAY_SG_API_KEY}
+          model: chat-default                                    # alias → a Singapore-hosted model
 ```
 
 ### 3.4 Cross-border transfer controls

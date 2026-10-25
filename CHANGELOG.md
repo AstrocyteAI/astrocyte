@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Removed
+
+- **`astrocyte-llm-litellm` and the `litellm` LLM provider.** LiteLLM is retired in favour of [AISIX](https://github.com/api7/aisix). No new adapter is needed: the built-in `openai` provider already takes a `base_url`, so point it at an AISIX gateway and use the gateway's model aliases (`llm_provider: openai`, `base_url: …/v1`, `api_key:` a gateway caller key). Chat and embeddings go through the same endpoint. The package was never published to PyPI, so only checkouts that installed it from the repo are affected; `llm_provider: litellm` configs must change to the form above. The Dependabot entry, the `release_mark` package name, the bench-runner install step and the docs that recommended it are gone. See "LLM gateway (AISIX)" in the configuration reference.
+
 ## [0.22.0] — 2026-10-05 — team memory: share a project's memory through a gateway
 
 Design: `docs/_design/team-memory.md`, now fully implemented (G1–G4 on the gateway, C1–C3 in the client). Get started in the end-user quick start, "Share a project's memory with your team".

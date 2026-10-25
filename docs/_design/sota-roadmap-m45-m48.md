@@ -1169,9 +1169,9 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
    **does not compose a provider with itself** — naming the same provider for both
    roles returns it bare.
 
-   **Already present and larger than any of the above: `litellm`** (separate
-   `astrocyte-llm-litellm` package) routes to 100+ backends. Reach for it before
-   writing a new first-party provider.
+   **Already present and larger than any of the above: an AISIX gateway** behind
+   the built-in `openai` provider's `base_url` routes to 100+ backends. Reach for
+   it before writing a new first-party provider.
 
    **Local models are viable but not fast** (measured 2026-09-08, M4 Max):
    `qwen3:8b` via Ollama runs the full path with zero code change and zero
@@ -1698,8 +1698,8 @@ Principles: (1) routing/calibration before model spend; (2) never pay for breadt
     - **Capture differs by tool.** Claude Code (and Codex) have lifecycle hooks,
       so capture is automatic. Over MCP alone, something is stored only when the
       model chooses to call the tool. Consumer apps without hooks are reachable
-      only through the gateway, the LiteLLM adapter, or the LLM-wrapper
-      integration acting as an API proxy. Automatic capture everywhere needs a
+      only through the gateway or the LLM-wrapper integration acting as an API
+      proxy. Automatic capture everywhere needs a
       **capture route per tool type**, and a statement of which tools get which.
     - **One identity across tools.** The same person in Claude and ChatGPT must
       map to one identity and the same team grants, ideally through company SSO.

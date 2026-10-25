@@ -128,7 +128,7 @@ async def memory_retrieve(question: str) -> str:
 **Key design decisions to resolve**:
 1. Trajectory format — AMA-Bench episodes include action/observation pairs; need to decide how to chunk these (one memory per turn vs. one per episode segment).
 2. Bank isolation — one bank per episode (clean slate) or shared bank across episodes? The benchmark assumes clean-per-episode.
-3. Judge — Qwen3-32B locally or proxy through an OpenAI-compatible endpoint via LiteLLM.
+3. Judge — Qwen3-32B locally or proxy through an OpenAI-compatible endpoint via an AISIX gateway.
 
 **Estimated effort**: 2–3 days. The dataset loading and eval loop are well-defined; the main work is the trajectory-to-memory chunking strategy.
 

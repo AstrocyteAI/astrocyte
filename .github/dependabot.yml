@@ -67,12 +67,6 @@ updates:
     schedule:
       interval: weekly
 
-  # LLM adapters
-  - package-ecosystem: pip
-    directory: /adapters-llm-py/astrocyte-llm-litellm
-    schedule:
-      interval: weekly
-
   # Integration adapters
   - package-ecosystem: pip
     directory: /adapters-integration-py/astrocyte-integration-tavus
