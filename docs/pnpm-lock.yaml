@@ -25,8 +25,8 @@ importers:
         specifier: ^7.3.5
         version: 7.3.5(@types/node@24.19.1)(yaml@2.9.0)
       astro-mermaid:
-        specifier: ^2.1.0
-        version: 2.1.0(astro@7.3.5(@types/node@24.19.1)(yaml@2.9.0))(mermaid@11.17.2)
+        specifier: ^2.2.0
+        version: 2.2.0(astro@7.3.5(@types/node@24.19.1)(yaml@2.9.0))(mermaid@11.17.2)
       mermaid:
         specifier: ^11.17.0
         version: 11.17.2
@@ -918,12 +918,12 @@ packages:
     peerDependencies:
       astro: ^4.0.0-beta || ^5.0.0-beta || ^3.3.0 || ^6.0.0-beta || ^7.0.0
 
-  astro-mermaid@2.1.0:
-    resolution: {integrity: sha512-fFRUN0BTZh+DZhDiLyblXoO26XqJ1Rr+qK3JGgSu7OBspKHDm59jkztg/aHsrdo1vO/tIq/+xhP/vgT8Mp92XA==}
+  astro-mermaid@2.2.0:
+    resolution: {integrity: sha512-EqkDnv7BaSIW3dQicT4u8zJDfaeoIpyeRVYL0YosJU109TGlxKAUR5xF2qf0LlhJEoG+new41mHNIW7LwPuVwA==}
     peerDependencies:
-      '@mermaid-js/layout-elk': ^0.2.0
+      '@mermaid-js/layout-elk': ^0.2.0 || ^1.0.0
       astro: '>=4'
-      mermaid: ^10.0.0 || ^11.0.0
+      mermaid: ^10.0.0 || ^11.0.0 || ^12.0.0
     peerDependenciesMeta:
       '@mermaid-js/layout-elk':
         optional: true
@@ -1962,8 +1962,14 @@ packages:
   unist-util-visit-parents@6.0.2:
     resolution: {integrity: sha512-goh1s1TBrqSqukSc8wrjwWhL0hiJxgA8m4kFxGlQ+8FYQ3C/m11FcTs4YYem7V664AhHVvgoQLk890Ssdsr2IQ==}
 
+  unist-util-visit-parents@6.1.0:
+    resolution: {integrity: sha512-vKXxz6O38sKDj1mtx/k2cWvkkFBuYGx6uGrlzBkVeWCRF/F8sdI0j3Wbkz/5rVNRRuVc8UrgRdbCxNhmYXgP3w==}
+
   unist-util-visit@5.1.0:
     resolution: {integrity: sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==}
+
+  unist-util-visit@5.2.0:
+    resolution: {integrity: sha512-fpsYs/VVoZxfGY9/j3FQpZmN8wdLJaV1Pt38AaJNZu9uKIHcFU3halCdBveEq1HGKO1OEfJY65w1zvoFV1b3qQ==}
 
   unstorage@1.17.5:
     resolution: {integrity: sha512-0i3iqvRfx29hkNntHyQvJTpf5W9dQ9ZadSoRU8+xVlhVtT7jAX57fazYO9EHvcRCfBCyi5YRya7XCDOsbTgkPg==}
@@ -2440,8 +2446,8 @@ snapshots:
       hastscript: 9.0.1
       postcss: 8.5.28
       postcss-nested: 6.2.0(postcss@8.5.28)
-      unist-util-visit: 5.1.0
-      unist-util-visit-parents: 6.0.2
+      unist-util-visit: 5.2.0
+      unist-util-visit-parents: 6.1.0
 
   '@expressive-code/plugin-frames@0.44.2':
     dependencies:
@@ -2900,13 +2906,13 @@ snapshots:
       rehype-expressive-code: 0.44.2
       url-extras: 0.1.0
 
-  astro-mermaid@2.1.0(astro@7.3.5(@types/node@24.19.1)(yaml@2.9.0))(mermaid@11.17.2):
+  astro-mermaid@2.2.0(astro@7.3.5(@types/node@24.19.1)(yaml@2.9.0))(mermaid@11.17.2):
     dependencies:
       astro: 7.3.5(@types/node@24.19.1)(yaml@2.9.0)
       import-meta-resolve: 4.2.0
       mdast-util-to-string: 4.0.0
       mermaid: 11.17.2
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
 
   astro@7.3.5(@types/node@24.19.1)(yaml@2.9.0):
     dependencies:
@@ -3694,7 +3700,7 @@ snapshots:
       micromark-util-sanitize-uri: 2.0.1
       trim-lines: 3.0.1
       unist-util-position: 5.0.0
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
       vfile: 6.0.3
 
   mdast-util-to-markdown@2.2.0:
@@ -4055,7 +4061,7 @@ snapshots:
     dependencies:
       '@types/nlcst': 2.0.3
       nlcst-to-string: 4.0.0
-      unist-util-visit: 5.1.0
+      unist-util-visit: 5.2.0
 
   robust-predicates@3.0.3: {}
 
@@ -4265,11 +4271,22 @@ snapshots:
       '@types/unist': 3.0.3
       unist-util-is: 6.0.1
 
+  unist-util-visit-parents@6.1.0:
+    dependencies:
+      '@types/unist': 3.0.3
+      unist-util-is: 6.0.1
+
   unist-util-visit@5.1.0:
     dependencies:
       '@types/unist': 3.0.3
       unist-util-is: 6.0.1
       unist-util-visit-parents: 6.0.2
+
+  unist-util-visit@5.2.0:
+    dependencies:
+      '@types/unist': 3.0.3
+      unist-util-is: 6.0.1
+      unist-util-visit-parents: 6.1.0
 
   unstorage@1.17.5:
     dependencies:
